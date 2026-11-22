@@ -36,7 +36,6 @@
 
 #include "rsys/parseopt.h"
 #include "rsys/refresh.h"
-#include "rsys/soundopts.h"
 #include "rsys/version.h"
 #include "rsys/cquick.h"
 #include "rsys/vdriver.h"
@@ -91,7 +90,7 @@ static const char* field_labels[] = {
     "Reported system version",
     "Refresh rate",
     "Comments",
-    "Sound (0 off, 1 pretend, 2 on)",
+    NULL,
     "Updates (0 normal/1 trap/2 anim)",
     "Colors (bits per pixel)",
     "Display scale (0.25x..16x)",
@@ -211,11 +210,11 @@ int ROMlib_extra_preferences_valid(ROMlib_extra_preferences* prefs, unsigned* ba
                 return FALSE;
         }
         else if (!parse_integer(prefs->fields[i], 0,
-                                i == 2               ? 255
-                                : i == 3             ? 65535
-                                : i == 15 || i == 16 ? 2
-                                : i == 13            ? 32767
-                                                     : INT_MAX,
+                                i == 2    ? 255
+                                : i == 3  ? 65535
+                                : i == 16 ? 2
+                                : i == 13 ? 32767
+                                          : INT_MAX,
                                 &value))
             return FALSE;
     }
@@ -252,7 +251,6 @@ void ROMlib_extra_preferences_init(ROMlib_extra_preferences* prefs)
     snprintf(prefs->fields[12], 256, "%u.%u.%u", (system_version >> 8) & 15, (system_version >> 4) & 15,
              system_version & 15);
     snprintf(prefs->fields[13], 256, "%d", ROMlib_refresh);
-    snprintf(prefs->fields[15], 256, "%d", ROMlib_PretendSound);
     snprintf(prefs->fields[16], 256, "%d",
              ROMlib_when == WriteAtEndOfTrap                              ? 1
              : ROMlib_when == WriteInBltrgn || ROMlib_when == WriteAlways ? 2
@@ -345,9 +343,6 @@ int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs)
                 break;
             case 13:
                 set_refresh_rate(numbers[i]);
-                break;
-            case 15:
-                ROMlib_PretendSound = numbers[i];
                 break;
             case 16:
                 ROMlib_WriteWhen(numbers[i] == 2 ? WriteInBltrgn : numbers[i] == 1 ? WriteAtEndOfTrap : WriteInOSEvent);

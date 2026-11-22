@@ -52,8 +52,4 @@ void sound_init(void)
 
     /* At least the fake sound driver must always match! */
     gui_assert(found_one_p);
-
-    /* Enable playback by default when the selected driver has real audio.
-     Application configuration can still select SoundOff or PretendSound. */
-    ROMlib_PretendSound = SOUND_WORKS_P() ? soundon : soundpretend;
 }

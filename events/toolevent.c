@@ -267,17 +267,6 @@ int saveprefvalues(char* savefilename, LONGINT locationx, LONGINT locationy)
             fprintf(fp, "BlitAtTrapEnd=1\n");
             break;
         }
-        switch (ROMlib_PretendSound) {
-        case soundoff:
-            fprintf(fp, "SoundOff=1\n");
-            break;
-        case soundpretend:
-            fprintf(fp, "PretendSound=1\n");
-            break;
-        case soundon:
-            fprintf(fp, "SoundOn=1\n");
-            break;
-        }
         if (ROMlib_passpostscript)
             fprintf(fp, "PassPostscript=1\n");
         if (ROMlib_newlinetocr)

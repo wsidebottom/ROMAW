@@ -29,7 +29,7 @@ int ROMlib_noclock, ROMlib_passpostscript, ROMlib_newlinetocr;
 int ROMlib_directdiskaccess, ROMlib_nowarn32, ROMlib_flushoften;
 int ROMlib_fontsubstitution, ROMlib_cacheheuristic;
 int ROMlib_pretend_help, ROMlib_pretend_edition, ROMlib_pretend_script, ROMlib_pretend_alias;
-int ROMlib_PretendSound, ROMlib_refresh, ROMlib_desired_bpp = 8;
+int ROMlib_refresh, ROMlib_desired_bpp = 8;
 int ROMlib_prefer_m68k;
 int vdriver_bpp = 8;
 int ROMlib_display_scale = 100;
@@ -142,6 +142,7 @@ int main(void)
         prefs.flags |= extra_options[i].bit;
     for (i = 4; i <= 9; ++i)
         assert(!ROMlib_preferences_field_label(i));
+    assert(!ROMlib_preferences_field_label(15));
     unsigned advanced = 0;
     for (i = 0; ROMlib_preferences_check_label(i); ++i) {
         const char* label = ROMlib_preferences_check_label(i);

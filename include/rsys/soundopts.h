@@ -102,7 +102,6 @@ struct hunger_info {
 
 extern syn68k_addr_t sound_callback(syn68k_addr_t, void*);
 
-extern boolean_t sound_disabled_p;
 extern INTEGER ROMlib_sysbeep_state;
 
 extern int ROMlib_get_snd_cmds(Handle sndh, SndCommand** cmdsp);

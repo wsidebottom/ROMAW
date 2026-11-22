@@ -23,7 +23,6 @@ BitsPerPixel=8
 SystemVersion=6.0.7
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -33,7 +32,6 @@ Comments="Photoshop needs Pretend{Help,Edition,Script,Alias} + System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 PretendHelp=1
@@ -47,7 +45,6 @@ Comments="Bloodsuckers needs Sound On and No 32-bit warnings"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -57,7 +54,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 Gestalt('fs  ')={0,1};
@@ -68,7 +64,6 @@ WindowName="Adobe Dimensions%AA 2.0"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -78,7 +73,6 @@ WindowName="America Online v2.6"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -88,7 +82,6 @@ WindowName="Adobe Illustrator%AA 5.5"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 PretendHelp=1
@@ -102,7 +95,6 @@ Comments="Arashi wants Sound On."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -112,7 +104,6 @@ WindowName="A-Train"
 BitsPerPixel=4
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -123,7 +114,6 @@ Comments="Address Book"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -133,7 +123,6 @@ Comments="Apeiron writes directly to the screen."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -143,14 +132,12 @@ Comments="Beamwars wants Sound On and Animation"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
 [APPL.BOBO]
 Comments="Thanks to DaveSueJ"
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 NoPrefPanel=1
@@ -163,7 +150,6 @@ BitsPerPixel=8
 SystemVersion=6.0.7
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -173,7 +159,6 @@ Comments="Bachman writes directly to the screen and wants Sound On."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -183,7 +168,6 @@ Comments="Bedlam needs System 7, writes directly to the screen and wants Sound O
 BitsPerPixel=1
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -193,7 +177,6 @@ Comments="BinHex 5.0"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -204,7 +187,6 @@ WindowName="Cricket Graph"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -214,7 +196,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitOften=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -224,7 +205,6 @@ Comments="Compact Pro"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -234,7 +214,6 @@ WindowName="CA-Cricket Draw III"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -244,7 +223,6 @@ WindowName="Carmen Time"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -255,7 +233,6 @@ WindowName="Carmen USA"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -266,14 +243,12 @@ WindowName="Carmen World"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
 
 [APPL.CYQS]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.CvMM]
@@ -281,7 +256,6 @@ WindowName="Civilization%AA"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -291,7 +265,6 @@ WindowName="Data Desk%A8 5.0"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -301,7 +274,6 @@ Comments="Deliverance wants sound on"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -310,7 +282,6 @@ NoWarn32=1
 Comments="Diamonds 1.6 seems to run OK."
 RefreshNumber=6
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -320,7 +291,6 @@ Comments="Doll's House is Black and White"
 BitsPerPixel=1
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -331,13 +301,11 @@ Comments="Asymptote Demo appears to work fine"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
 [APPL.DanG]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.EGAD]
@@ -345,7 +313,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -356,7 +323,6 @@ Comments="OIC"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -367,7 +333,6 @@ Comments="Beebop 2 wants sound on"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -376,7 +341,6 @@ NoWarn32=1
 Comments="Eric's Ultimate Solitaire prefers Sound On"
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -386,7 +350,6 @@ Comments="Fatty Bear wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -396,7 +359,6 @@ Comments="Swoop needs System 7 and wants Sound On"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -406,7 +368,6 @@ Comments="Fungus wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -417,7 +378,6 @@ Comments="GIFConverter 2.3.7 needs Pretend{Help,Edition,Script,Alias}"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 PretendHelp=1
@@ -429,7 +389,6 @@ PretendAlias=1
 [APPL.GOGO]
 Comments="Direct Disk needed to format floppies."
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 DirectDiskAccess=1
@@ -440,13 +399,11 @@ Comments="FA-18 Needs System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
 [APPL.GunS]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.0x483444c6]
@@ -455,7 +412,6 @@ Comments="Spaceward Ho 4.x requires System 7.  Sound On is good, too."
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -464,7 +420,6 @@ NewLineToCR=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 PretendHelp=1
@@ -478,7 +433,6 @@ Comments="Cyclone wants Sound On.  It will write directly to the screen, too."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -488,7 +442,6 @@ Comments="Space Madness writes directly to the screen and wants Sound On."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -498,7 +451,6 @@ Comments="Lightning Paint"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -508,7 +460,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 NoSuspend=1
@@ -519,7 +470,6 @@ Comments="NIH Image 1.59 needs System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -535,7 +485,6 @@ Gestalt('prty')={0,0};
 
 [APPL.JKTE]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 // Gravitation Ltd. 5.0
@@ -544,7 +493,6 @@ Comments="Gravitation Limited 5.0"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -555,7 +503,6 @@ Comments="Jetpack wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -565,7 +512,6 @@ WindowName="SlideShow"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -577,7 +523,6 @@ MacSize=574,530
 ScreenLocation=222,79
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -588,7 +533,6 @@ WindowName="Leprechaun%AA V3.0"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NoWarn32=1
 
@@ -597,7 +541,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -608,7 +551,6 @@ BitsPerPixel=4
 [APPL.MKDN]
 // SuperColumns
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -618,7 +560,6 @@ WindowName="MW C%2FC++ 68K 1.2"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -628,7 +569,6 @@ WindowName="Introduction to ClarisWorks"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -639,7 +579,6 @@ MacSize=512,342
 ScreenLocation=128,36
 RefreshNumber=20
 BlitOften=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoClock=1
@@ -654,7 +593,6 @@ WindowName="Microsoft Word"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 
 [APPL.Mael]
@@ -663,7 +601,6 @@ Comments="Maelstrom wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -674,7 +611,6 @@ Comments="5 of a Kind wants Sound On and Animation"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -685,7 +621,6 @@ Comments="Chiral wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -694,7 +629,6 @@ NewLineToCR=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -702,7 +636,6 @@ NewLineToCR=1
 // WindowName = "Poing!";
 BitsPerPixel=8
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -712,7 +645,6 @@ Comments="PowerGrade"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -723,14 +655,12 @@ ScreenSize=512,342
 MacSize=512,342
 ScreenLocation=369,177
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 FlushOften=1
 
 [APPL.PNC1]
 BlitInOSEvent=1
-SoundOff=1
 DirectDiskAccess=1
 NoClock=1
 NoWarn32=1
@@ -741,13 +671,11 @@ Comments="PowerPoint Viewer"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
 [APPL.PVmt]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.PgLg]
@@ -756,7 +684,6 @@ Comments="Pegleg writes directly to the screen and wants Sound On."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -766,7 +693,6 @@ WindowName="Prince of Persia"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -777,7 +703,6 @@ Comments="Oh No, More Lemmings wants Sound On and Flush Cache Often set"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 FlushOften=1
@@ -788,7 +713,6 @@ WindowName="Quicken Deluxe 6"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -798,7 +722,6 @@ Comments="BBEdit Lite wants System 6.0.7, but BBEdit demo wants System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -808,7 +731,6 @@ Comments="Dr. Razz requires System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -818,7 +740,6 @@ Comments="Risk II benefits from Animation"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -827,7 +748,6 @@ NoWarn32=1
 // Citadel of Dead Demo
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -836,14 +756,12 @@ NewLineToCR=1
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
 
 [APPL.RVRS]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.Rj01]
@@ -852,7 +770,6 @@ Comments="Jewlbox wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -862,7 +779,6 @@ WindowName="SimAnt%AA Color"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -872,7 +788,6 @@ Comments="Stuffit Lite 3.x will get confused if System 7 is turned on."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -882,7 +797,6 @@ Comments="Stuffit Expander"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoSuspend=1
@@ -893,7 +807,6 @@ WindowName="SimLife%AA Color"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -903,7 +816,6 @@ Comments="Needs a Gestalt fix"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoPrefPanel=1
@@ -916,14 +828,12 @@ BitsPerPixel=4
 SystemVersion=6.0.7
 RefreshNumber=10
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
 
 [APPL.ShSz]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.SpJK]
@@ -932,7 +842,6 @@ Comments="Space Junkie wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -943,7 +852,6 @@ BitsPerPixel=8
 SystemVersion=6.0.7
 RefreshNumber=6
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -953,7 +861,6 @@ Comments="Color Globe"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -964,7 +871,6 @@ Comments="Tex-Edit 2.7.2 doesn't need System 7"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -974,7 +880,6 @@ Comments="Tex-Edit Plus needs System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -982,7 +887,6 @@ NewLineToCR=1
 // TechnoManiac
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -990,7 +894,6 @@ NewLineToCR=1
 // Tetrad 0.2
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1000,7 +903,6 @@ WindowName="SimTower"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1010,7 +912,6 @@ Comments="UpWord"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1021,7 +922,6 @@ Comments="Ultima III wants Sound On.  May need lots of memory, though."
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1031,7 +931,6 @@ Comments="ChemEdit"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1042,7 +941,6 @@ Comments="HyperCard will not work if System is set to 7.0"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1052,7 +950,6 @@ Comments="Wolfenstein wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1063,7 +960,6 @@ Comments="WordPerfect 3.x"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1073,7 +969,6 @@ Comments="Droit Romain must be 6.0.7 in order to work. (Stephane Rieppi)"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1083,7 +978,6 @@ WindowName="Microsoft Excel"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOff=1
 PassPostscript=1
 
 [APPL.XPR3]
@@ -1093,7 +987,6 @@ PassPostscript=1
 WindowName="QuarkXPress%AA"
 SystemVersion=7.0
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoPrefPanel=1
@@ -1104,7 +997,6 @@ PrVers=7.0
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOff=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1115,7 +1007,6 @@ Comments="PGA Tour Golf wants Sound On"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1125,7 +1016,6 @@ NoWarn32=1
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 FlushOften=1
@@ -1137,7 +1027,6 @@ Comments="Tetris Max wants Sound On"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1147,7 +1036,6 @@ Comments="Glider Wants Sound On and System 7"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1157,7 +1045,6 @@ WindowName="PowerPOKER"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1167,7 +1054,6 @@ Comments="Super MANDELZOOM is black and white"
 BitsPerPixel=1
 SystemVersion=6.0.7
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1178,7 +1064,6 @@ Comments="Speedometer"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitInOSEvent=1
-PretendSound=1
 PassPostscript=1
 NewLineToCR=1
 
@@ -1188,7 +1073,6 @@ Comments="Bert wants Sound"
 BitsPerPixel=8
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1
@@ -1200,13 +1084,11 @@ Comments="Solarian.  Refresh is important"
 SystemVersion=6.0.7
 RefreshNumber=10
 BlitInOSEvent=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 
 [APPL.0xac7e5ea0]
 BlitOften=1
-SoundOff=1
 NoWarn32=1
 
 [APPL.0xf5536b69]
@@ -1215,7 +1097,6 @@ Comments="Ingemar's Skiing Game"
 BitsPerPixel=8
 SystemVersion=6.0.7
 BlitOften=1
-SoundOn=1
 PassPostscript=1
 NewLineToCR=1
 NoWarn32=1

@@ -221,7 +221,6 @@ static option_t common_opts[] = {
     {"mount-ro", "mount a disk image read-only", opt_sep, NULL},
     {"mount-rw", "request read/write disk image access (including optical images)", opt_sep, NULL},
     {"nodiskcache", "disable internal disk cache.", opt_no_arg, NULL},
-    {"nosound", "disable any sound hardware", opt_no_arg, NULL},
     {"ramlog",
      "log debugging information to RAM; alt-shift-7 dumps the "
      "accrued error log out via the normal mechanism.",
@@ -1115,13 +1114,6 @@ A2(PUBLIC, int, main, int, argc, char**, argv)
     }
 
 #endif
-
-    {
-        int skip;
-        skip = 0;
-        opt_int_val(common_db, "nosound", &skip, &bad_arg_p);
-        sound_disabled_p = (skip != 0);
-    }
 
     {
         int nocache;

@@ -166,7 +166,6 @@ static void check_amplitude(SndChannelPtr channel)
 int main(void)
 {
     HIDDEN_SndChannelPtr channel = {0};
-    ROMlib_PretendSound = soundon;
     sound_driver.sound_go = go;
     SndCommand quiet = {CWC(quietCmd), 0, 0};
     assert(C_SndDoImmediate(NULL, &quiet) == badChannel);
@@ -269,16 +268,6 @@ int main(void)
     remove_channel(&provided);
     remove_channel(first);
     assert(!HIDDEN_RAW(allchans) && !live);
-    ROMlib_PretendSound = soundpretend;
-    HIDDEN_RAW_SET(channel, 0);
-    assert(!C_SndNewChannel(&channel, sampledSynth, 0, NULL));
-    assert(!C_SndChannelStatus(MR(HIDDEN_RAW(channel)), sizeof *status, status));
-    assert(!C_SndDisposeChannel(MR(HIDDEN_RAW(channel)), TRUE));
-    ROMlib_PretendSound = soundoff;
-    HIDDEN_RAW_SET(channel, 0);
-    assert(C_SndNewChannel(&channel, sampledSynth, 0, NULL) == notEnoughHardware);
-    assert(!HIDDEN_RAW(channel) && !live);
-    assert(C_SndManagerStatus(6, manager) == notEnoughHardware);
     puts("Sound: channel allocation rollback, real status and beep state passed");
     return 0;
 }

@@ -53,7 +53,7 @@ const char* ROMlib_preferences_field_label(unsigned field)
                                    "System version",
                                    "Refresh",
                                    "Comments",
-                                   "Sound",
+                                   NULL,
                                    "Updates",
                                    "Colors",
                                    "Display scale"};

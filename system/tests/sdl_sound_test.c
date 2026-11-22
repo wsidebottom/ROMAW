@@ -37,7 +37,6 @@ static void test_close_audio(void);
 
 CPUState cpu_state;
 sound_driver_t sound_driver;
-boolean_t sound_disabled_p;
 uintptr_t ROMlib_offset;
 uint32 syn68k_address_mask = 0xFFFFFFFF;
 unsigned syn68k_host_alias_count;

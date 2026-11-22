@@ -371,9 +371,6 @@ boolean_t sound_sdl_init(sound_driver_t* s)
 
     have_sound_p = FALSE;
 
-    if (sound_disabled_p)
-        goto fail;
-
     test_output = ROMlib_sdl_audio_test_mode();
     if (test_output) {
         const char* capture = getenv("ROMAW_TEST_AUDIO_CAPTURE");

@@ -584,25 +584,34 @@ function Invoke-Check-fileplay-capture {
     $MaceTest = (Resolve-Path -LiteralPath $MaceTest).Path
     foreach ($executionMode in @('-ppc-jit', '-no-ppc-jit')) {
         $fixture = Join-Path $workspace ('build\fileplay-capture.' + [guid]::NewGuid().ToString('N'))
-        & python (Join-Path $PSScriptRoot 'make_ppc_fileplay_probe.py') $fixture
+        $profile = Join-Path $fixture '.romaw'
+        $apps = Join-Path $profile 'Apps'
+        New-Item -ItemType Directory -Path (Join-Path $apps 'System Folder') -Force | Out-Null
+        $legacyMode = if ($executionMode -eq '-ppc-jit') { 'SoundOff' } else { 'PretendSound' }
+        Set-Content -LiteralPath (Join-Path $profile 'ROMAW.prefs') -Encoding ascii -Value @(
+            '[HostDrives]', 'SidecarDrives=none', '[APPL.PPRB]', "$legacyMode=1"
+        )
+        & python (Join-Path $PSScriptRoot 'make_ppc_fileplay_probe.py') $apps
         if ($LASTEXITCODE -ne 0) { throw 'Could not generate file-playback probe' }
         & $MaceTest (Join-Path $fixture 'reference-mac3.pcm') (Join-Path $fixture 'reference-mac6.pcm')
         if ($LASTEXITCODE -ne 0) { throw 'MACE reference export failed; build it with check-media.sh mace' }
         $launch = [Diagnostics.ProcessStartInfo]::new()
         $launch.FileName = $ROMAW
-        $launch.Arguments = $executionMode + ' -sdlaudio test -debug trace "' + (Join-Path $fixture 'PPC Fileplay Probe') + '"'
+        $launch.Arguments = $executionMode + ' -syszone 8m -applzone 64m -sdlaudio test -debug trace "' +
+            (Join-Path $apps 'PPC Fileplay Probe') + '"'
         $launch.WorkingDirectory = $fixture
         $launch.UseShellExecute = $false
         $launch.CreateNoWindow = $true
         $launch.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
         $launch.EnvironmentVariables['ROMAW_TEST_AUDIO_CAPTURE'] = Join-Path $fixture 'output.raw'
+        $launch.EnvironmentVariables['USERPROFILE'] = $fixture
         $process = [Diagnostics.Process]::Start($launch)
         try {
             if (-not $process.WaitForExit(15000)) { throw "Playback capture timed out: $fixture" }
             if ($process.ExitCode -ne 0) { throw "Playback capture exited with $($process.ExitCode): $fixture" }
             & python (Join-Path $PSScriptRoot 'check_fileplay_capture.py') $fixture
             if ($LASTEXITCODE -ne 0) { throw "Captured samples differ: $fixture" }
-            Write-Output "${executionMode}: silent capture passed"
+            Write-Output "${executionMode}: sample capture passed with legacy $legacyMode"
         }
         finally {
             if (-not $process.HasExited) { $process.Kill() }

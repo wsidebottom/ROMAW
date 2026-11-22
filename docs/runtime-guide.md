@@ -227,9 +227,11 @@ BitsPerPixel=8
 ScreenLocation=0,0
 SystemVersion=7.0.0
 BlitInOSEvent=1
-SoundOff=1
 PretendHelp=1
 ```
+
+ROMAW always enables playback. Older profiles containing sound-mode flags
+still load.
 
 Option flags accept 0 or 1. The first flag in a section starts a fresh option
 list; Options=0 explicitly clears it. Zero heap/depth values mean default and

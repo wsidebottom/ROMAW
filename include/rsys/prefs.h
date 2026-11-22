@@ -25,7 +25,7 @@ typedef enum {
 } WriteWhenType; /* This is an extension */
 
 extern WriteWhenType ROMlib_when;
-extern int ROMlib_PretendSound;
+extern const int ROMlib_PretendSound;
 extern int ROMlib_cacheheuristic;
 extern int ROMlib_clock;
 extern int ROMlib_directdiskaccess;

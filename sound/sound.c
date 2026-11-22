@@ -36,9 +36,6 @@
 #include "rsys/fileplay.h"
 #include <math.h>
 
-/* TRUE when we want to pretend this host has no sound support. */
-boolean_t sound_disabled_p;
-
 /*
  * TODO: The flag values below are just ctm guesses.  We need to run
  *	 tests on a Mac to see whether or not these flags are present
@@ -68,7 +65,8 @@ A1(PUBLIC, void, SetSoundVol, INTEGER, vol)
 }
 #endif
 
-PUBLIC int ROMlib_PretendSound = soundpretend;
+/* ROMAW always uses the playback path, even with legacy sound flags in a profile. */
+PUBLIC const int ROMlib_PretendSound = soundon;
 
 static inline boolean_t qfull_p(SndChannelPtr chanp)
 {

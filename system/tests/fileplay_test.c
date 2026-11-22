@@ -325,7 +325,6 @@ int main(void)
     memcpy(file_bytes + 38, "SSND", 4);
     put_long(file_bytes + 42, 16);
     memset(file_bytes + 54, 0x7f, 8);
-    ROMlib_PretendSound = soundon;
     sound_driver.sound_go = go;
     HIDDEN_SndChannelPtr channel = {0};
     assert(!C_SndNewChannel(&channel, sampledSynth, 0, NULL));

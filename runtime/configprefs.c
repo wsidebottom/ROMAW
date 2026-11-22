@@ -1088,7 +1088,7 @@ const char* config_prefs_parameter_help(void)
            "Numbers: BitsPerPixel, RefreshNumber, Delay, AppleChar, CacheProblems, DongleFamily, MacCDROM, RightButtonModifier.\n"
            "Versions: SystemVersion, PrVers (for example 7.1.1). Memory: SysZone, ApplZone (bytes or k/m suffix).\n"
            "Coordinates: ScreenLocation=x,y; ScreenSize=w,h; MacSize=w,h. Host window: Size=WxH; Location=x,y. DisplayScale=100 (percent, 25..1600; 150 means 1.5x).\n"
-           "Flags (0/1): Accelerated, BlitAtTrapEnd, BlitInOSEvent, BlitOften, CloseIsQuit, Debug, DirectDiskAccess, DirtyVariant, DisposHandleHack, FlushOften, NewLineToCR, NoClock, NoLower, NoPrefPanel, NoSuspend, NoWarn32, PassPostscript, PretendAlias, PretendEdition, PretendHelp, PretendScript, PretendSound, PrintingHack, RectScreen, Refresh, SoundOff, SoundOn, StripAddress, TextDisableHack.\n"
+           "Flags (0/1): Accelerated, BlitAtTrapEnd, BlitInOSEvent, BlitOften, CloseIsQuit, Debug, DirectDiskAccess, DirtyVariant, DisposHandleHack, FlushOften, NewLineToCR, NoClock, NoLower, NoPrefPanel, NoSuspend, NoWarn32, PassPostscript, PretendAlias, PretendEdition, PretendHelp, PretendScript, PrintingHack, RectScreen, Refresh, StripAddress, TextDisableHack.\n"
            "Advanced: Gestalt('fs  ')={0,1}; and Rule000000=Version(...){...};. Use the same syntax as ROMAW.prefs. Existing window geometry and other application sections are retained.";
 }
 

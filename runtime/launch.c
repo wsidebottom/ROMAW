@@ -213,12 +213,6 @@ PRIVATE void ParseConfigFile(StringPtr exefname, OSType creator, OSType file_typ
             ROMlib_dirtyvariant = TRUE;
         else
             ROMlib_dirtyvariant = FALSE;
-        if (ROMlib_options & ROMLIB_SOUNDOFF_BIT)
-            ROMlib_PretendSound = soundoff;
-        if (ROMlib_options & ROMLIB_PRETENDSOUND_BIT)
-            ROMlib_PretendSound = soundpretend;
-        if (ROMlib_options & ROMLIB_SOUNDON_BIT)
-            ROMlib_PretendSound = SOUND_WORKS_P() ? soundon : soundpretend;
         /* #warning ROMlib_passpostscript wired to TRUE */
         ROMlib_passpostscript = TRUE;
         if (ROMlib_options & ROMLIB_NEWLINETOCR_BIT)

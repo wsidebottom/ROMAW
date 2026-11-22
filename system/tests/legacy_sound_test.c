@@ -35,7 +35,7 @@ uint32 syn68k_address_mask = 0xffffff;
 unsigned syn68k_host_alias_count = 1;
 uint32 syn68k_host_alias_base = 0xe0000000, syn68k_host_alias_size = 0x10000000;
 int ROMlib_SND_RATE = 22255;
-int ROMlib_PretendSound = soundon;
+const int ROMlib_PretendSound = soundon;
 sound_driver_t sound_driver;
 static int starts, completions, waits;
 
