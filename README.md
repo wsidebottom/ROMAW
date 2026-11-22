@@ -23,6 +23,28 @@ Extract the entire ZIP, then run `ROMAW.exe`. Windows 10 or later is required.
 See the [version 1.0 release](https://github.com/wsidebottom/ROMAW/releases/tag/v1.0)
 for release notes and the SHA-256 checksum.
 
+## Screenshots
+
+### Super ResEdit 2.1.3
+
+![Super ResEdit 2.1.3 showing its About window in ROMAW](docs/screenshots/super-resedit.png)
+
+### ClarisWorks 5.0
+
+![ClarisWorks 5.0 showing a word-processing document and its About window in ROMAW](docs/screenshots/clarisworks.png)
+
+### StuntCopter 2.0
+
+![StuntCopter 2.0 showing its title screen in ROMAW](docs/screenshots/stuntcopter.png)
+
+### SimFarm
+
+![SimFarm showing a farm and map window in ROMAW](docs/screenshots/simfarm.png)
+
+### Tetris
+
+![Spectrum HoloByte Tetris showing its title screen in ROMAW](docs/screenshots/tetris.png)
+
 ## Build and run
 
 Build from WSL at `/mnt/d/Source/ROMAW` after preparing the dependencies in
