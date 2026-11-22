@@ -46,7 +46,7 @@ shared_icons_dir = $(abspath $(srcdir)/bitmaps)
 system_resources_dir = $(abspath $(srcdir)/system/resources/system)
 shared_tools_dir = $(abspath $(srcdir)/tools)
 shared_icon_inputs = $(shell $(PYTHON) $(srcdir)/tools/romaw/system_resources.py --icon-inputs "$(shared_icons_dir)")
-shared_icon_tool_inputs = $(shared_tools_dir)/mac_icons.py $(shared_tools_dir)/build_version.py $(shared_tools_dir)/resource_catalog.py $(shared_tools_dir)/rez_types.py $(shared_icons_dir)/mac-palettes.r
+shared_icon_tool_inputs = $(shared_tools_dir)/mac_icons.py $(shared_tools_dir)/build_version.py $(shared_tools_dir)/resource_catalog.py $(shared_tools_dir)/rez_types.py $(shared_tools_dir)/rez_system_types.py $(shared_icons_dir)/mac-palettes.r
 
 bitmap_files = $(ctl_bitmap_c_files) $(wind_bitmap_c_files) generated/apple.inc
 $(bitmap_files): generated/%.inc: $(shared_icons_dir)/%.icns $(srcdir)/tools/romaw/icns_to_c.py $(shared_icon_tool_inputs)

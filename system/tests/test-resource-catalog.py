@@ -214,11 +214,11 @@ class ResourceCatalogTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             for kind in ("ALRT", "DLOG", "STR ", "STR#", "vers", "MACS"):
                 self.assertNotIn("data '" + kind + "'", source)
-        source = (catalog.DIRECTORY / "system/interface.r").read_text()
-        self.assertEqual(len(re.findall(r"data 'DITL'", source)), 4)
+        source = (catalog.DIRECTORY / "system/interface.r").read_text(encoding="utf-8")
+        self.assertEqual(len(re.findall(r"data 'DITL'", source)), 0)
         for identifier in (-6043, -6042, -4063, -4062):
-            self.assertIn(f"data 'DITL' ({identifier}", source)
-        self.assertNotIn("data 'vers'", (catalog.DIRECTORY / "system/payloads.r").read_text())
+            self.assertIn(f"resource 'DITL' ({identifier}", source)
+        self.assertNotIn("data 'vers'", (catalog.DIRECTORY / "system/payloads.r").read_text(encoding="utf-8"))
 
     def test_typed_native_label_menu(self):
         path = catalog.native_path("label_menu")

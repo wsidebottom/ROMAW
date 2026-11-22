@@ -205,7 +205,10 @@ def read_rez(path, root=None, _active=None):
                     raise ValueError("System-error artwork must be an ICNS file")
                 return resource(resource_path(root, filename).read_bytes(), b"ICON")
 
-            payload = compile_resource(entry["type"], body, rez_string, read_icon)
+            payload = compile_resource(
+                entry["type"], body, rez_string, read_icon,
+                lambda filename: resource_path(root, filename).read_bytes(),
+            )
             if payload is not None:
                 if native_localization:
                     if len(payload) != INTL1_LOCALIZATION_OFFSET + 2 or payload[-2:] != b"\x4e\x75":

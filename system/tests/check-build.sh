@@ -236,8 +236,21 @@ EOF
         grep -q -- '--alert-table' "$fixture/syserr-rebuild.log"
         grep -q -- '-c.*diagnostics/syserr.c' "$fixture/syserr-rebuild.log"
       done
+      # New typed encoders and exported pattern artwork must rebuild the fork and consumer.
+      for input in tools/rez_system_types.py bitmaps/system-patterns/*.png; do
+        if make -C "$obj" -q -W "$workspace/$input" generated/system_resources.inc; then
+          echo "Changing $input did not invalidate the embedded System." >&2
+          exit 1
+        else
+          status=$?
+          test "$status" -eq 1
+        fi
+        make -C "$obj" -n -W "$workspace/$input" resources/system_resources.o >"$fixture/pattern-rebuild.log"
+        grep -q 'system_resources.py' "$fixture/pattern-rebuild.log"
+        grep -q -- '-c.*resources/system_resources.c' "$fixture/pattern-rebuild.log"
+      done
       # Every maintained System Rez file must invalidate both the fork and its consumer.
-      for source in catalog.r interface.r payloads.r artwork.r; do
+      for source in catalog.r interface.r payloads.r artwork.r resource_types.r; do
         if make -C "$obj" -q -W "$workspace/system/resources/system/$source" generated/system_resources.inc; then
           echo "Changing $source did not invalidate the embedded System." >&2
           exit 1

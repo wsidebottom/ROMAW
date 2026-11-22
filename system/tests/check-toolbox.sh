@@ -136,6 +136,7 @@ case "$check" in
       root=$(cd "$(dirname "$0")/../.." && pwd)
       python3 "$root/system/tests/test-resource-catalog.py"
       python3 "$root/system/tests/test-system-typed-resources.py"
+      python3 "$root/system/tests/test-system-typed-resources.py"
       python3 "$root/system/tests/test-system-resources.py"
       python3 "$root/system/tests/test-edited-icons.py"
       bash "$root/system/tests/check-toolbox.sh" toolbox-additions parameter_preferences

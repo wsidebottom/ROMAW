@@ -22,6 +22,8 @@ Unknown types remain available to the native Finder's layout readers.
 import re
 import struct
 
+from rez_system_types import NATIVE_OFFSETS, SYSTEM_TYPES, compile_system_resource
+
 QUOTED = r'"(?:\\.|[^"\\])*"'
 SYMBOLS = {
     "documentProc": 0,
@@ -48,7 +50,10 @@ SYMBOLS = {
     "verUS": 0,
     "verBritain": 2,
 }
+SYMBOLS.update(NATIVE_OFFSETS)
+
 ITEM_TYPES = {
+    "HelpItem": 1,
     "UserItem": 0,
     "Button": 4,
     "CheckBox": 5,
@@ -77,14 +82,28 @@ LABEL_MENU_FIELDS = (
     "icon_resource",
     "icon_color_index",
 )
-SUPPORTED_TYPES = {"STR ", "STR#", "MACS", "vers", "ALRT", "DLOG", "DITL", "lMnu", "clut", "DSAT"}
+SUPPORTED_TYPES = SYSTEM_TYPES | {
+    "STR ",
+    "STR#",
+    "MACS",
+    "vers",
+    "ALRT",
+    "DLOG",
+    "DITL",
+    "lMnu",
+    "clut",
+    "wctb",
+    "DSAT",
+}
 
 
 class RezFields:
     """Consume fields strictly, with checked integer widths and byte strings."""
 
     def __init__(self, source, decode_string):
-        pattern = re.compile(QUOTED + r"|\$\$icon|-?(?:0[xX][0-9a-fA-F]+|[0-9]+)|[A-Za-z_][A-Za-z_0-9]*|[{}(),;]")
+        pattern = re.compile(
+            QUOTED + r"|\$\$(?:icon|pattern|pixels)|-?(?:0[xX][0-9a-fA-F]+|[0-9]+)|[A-Za-z_][A-Za-z_0-9]*|[{}(),;]"
+        )
         self.tokens = []
         position = 0
         for match in pattern.finditer(source):
@@ -237,11 +256,13 @@ def compile_alert_table(fields, read_icon=None):
     return struct.pack(">h", len(records)) + b"".join(records)
 
 
-def compile_resource(kind, body, decode_string, read_icon=None):
+def compile_resource(kind, body, decode_string, read_icon=None, read_artwork=None):
     """Return encoded bytes for a supported layout, or None for an unknown type."""
     if kind not in SUPPORTED_TYPES:
         return None
     fields = RezFields(body, decode_string)
+    if kind in SYSTEM_TYPES:
+        return compile_system_resource(kind, fields, read_artwork)
     result = bytearray()
     if kind == "DSAT":
         result.extend(compile_alert_table(fields, read_icon))
@@ -323,21 +344,32 @@ def compile_resource(kind, body, decode_string, read_icon=None):
             if item_type in {4, 5, 6, 8, 16}:
                 fields.expect(",")
                 data = fields.string()
+            elif item_type == 1:
+                fields.expect(",")
+                subtype = fields.number(-32768, 32767)
+                fields.expect(",")
+                data = b"\x04" + struct.pack(">hh", subtype, fields.number(-32768, 32767))
             elif item_type in {7, 32, 64}:
                 fields.expect(",")
                 data = b"\x02" + struct.pack(">h", fields.number(-32768, 32767))
             else:
                 data = b"\0"
+            padding = None
+            if fields.peek() == ",":
+                fields.expect(",")
+                padding = fields.number(0, 255)
             fields.expect("}")
             fields.expect(";")
             item = b"\0" * 4 + rect + bytes([flags]) + data
-            items.append(item + b"\0" * (len(item) & 1))
+            if padding is not None and not len(item) & 1:
+                raise ValueError("Dialog alignment byte supplied for an already aligned item")
+            items.append(item + bytes((0 if padding is None else padding,)) * (len(item) & 1))
         fields.expect("}")
         if len(items) > 32768:
             raise ValueError("Typed Rez item list exceeds signed count")
         result.extend(struct.pack(">h", len(items) - 1))
         result.extend(b"".join(items))
-    elif kind == "clut":
+    elif kind in {"clut", "wctb"}:
         seed = fields.number(-2147483648, 4294967295)
         fields.expect(",")
         flags = fields.number(-32768, 65535)

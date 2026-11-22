@@ -14,6 +14,7 @@
 ===================================================================+*/
 
 #include "Types.r"
+#include "resource_types.r"
 
 /* Classic System interface resources. */
 
@@ -101,35 +102,37 @@ resource 'ALRT' (-3000) {
     centerMainScreen
 };
 
-/* Literal data preserves extended item records not representable by the standard DITL layout. */
-data 'DITL' (-6043, purgeable) {
-    $"000B0000000000A100FC00B5014C0404"
-    $"5361766500000000008200FC0096014C"
-    $"040643616E63656C0000000000000000"
-    $"0000000081040001E865000000000008"
-    $"00EB00180151000000000000002000FC"
-    $"0034014C0405456A6563740000000000"
-    $"003C00FC0050014C04074465736B746F"
-    $"700000000000001D000C007F00E60000"
-    $"000000000006000C001900E600000000"
-    $"0000007700FA0078014EC002000B0000"
-    $"0000009D000F00AD00E3100000000000"
-    $"0088000F009800E38808536176652061"
-    $"733A00000000005800FC006C014C8000"
+/* Extended items and nonzero alignment bytes are explicit typed fields. */
+resource 'DITL' (-6043, purgeable) {
+    {
+        { 161, 252, 181, 332 }, Button { enabled, "Save" };
+        { 130, 252, 150, 332 }, Button { enabled, "Cancel" };
+        { 0, 0, 0, 0 }, HelpItem { disabled, 1, -6043 };
+        { 8, 235, 24, 337 }, UserItem { enabled };
+        { 32, 252, 52, 332 }, Button { enabled, "Eject" };
+        { 60, 252, 80, 332 }, Button { enabled, "Desktop" };
+        { 29, 12, 127, 230 }, UserItem { enabled };
+        { 6, 12, 25, 230 }, UserItem { enabled };
+        { 119, 250, 120, 334 }, Picture { disabled, 11 };
+        { 157, 15, 173, 227 }, EditText { enabled, "" };
+        { 136, 15, 152, 227 }, StaticText { disabled, "Save as:" };
+        { 88, 252, 108, 332 }, UserItem { disabled };
+    }
 };
 
-/* Literal data preserves extended item records not representable by the standard DITL layout. */
-data 'DITL' (-6042, purgeable) {
-    $"000800000000008700FC009B014C0404"
-    $"4F70656E00000000006800FC007C014C"
-    $"040643616E63656C0000000000000000"
-    $"0000000081040001E866000000000008"
-    $"00EB00180151000000000000002000FC"
-    $"0034014C0405456A6563740000000000"
-    $"003C00FC0050014C04074465736B746F"
-    $"700000000000001D000C009F00E60000"
-    $"000000000006000C001900E600000000"
-    $"0000005B00FB005C014DC002000B"
+/* Extended items and nonzero alignment bytes are explicit typed fields. */
+resource 'DITL' (-6042, purgeable) {
+    {
+        { 135, 252, 155, 332 }, Button { enabled, "Open" };
+        { 104, 252, 124, 332 }, Button { enabled, "Cancel" };
+        { 0, 0, 0, 0 }, HelpItem { disabled, 1, -6042 };
+        { 8, 235, 24, 337 }, UserItem { enabled };
+        { 32, 252, 52, 332 }, Button { enabled, "Eject" };
+        { 60, 252, 80, 332 }, Button { enabled, "Desktop" };
+        { 29, 12, 159, 230 }, UserItem { enabled };
+        { 6, 12, 25, 230 }, UserItem { enabled };
+        { 91, 251, 92, 333 }, Picture { disabled, 11 };
+    }
 };
 
 resource 'DITL' (-4065) {
@@ -219,114 +222,59 @@ resource 'DITL' (-4064) {
 };
 
 /* Literal data preserves nonzero alignment bytes not representable by the standard DITL layout. */
-data 'DITL' (-4063, sysheap, preload) {
-    $"00240000000000E100BE00F500FA0402"
-    $"4F4B0000000000E1006900F500A50406"
-    $"43616E63656C0000000000E1001400F5"
-    $"005004045361766500000000004C0016"
-    $"0061008006064E6F726D616C00000000"
-    $"00000000000100018000000000000060"
-    $"00160075008E0609416E696D6174696F"
-    $"6E0300000000004600AB005B00E70603"
-    $"4F66660700000000005F00AB00740105"
-    $"060750726574656E6402000000000078"
-    $"00AB008D010E860B4F6E202873696C65"
-    $"6E7429000000000027160112272B016D"
-    $"05084E6F20436C6F636B00000000002A"
-    $"05DC003F6A10850F5061737320506F73"
-    $"745363726970740F0000000000340110"
-    $"004901A8850F4E65776C696E65204D61"
-    $"7070696E67110000000000480110005D"
-    $"01A50511466C75736820436163686520"
-    $"4F6674656E1200000000005C01100071"
-    $"01B50512446972656374204469736B20"
-    $"41636365737300000000007001100085"
-    $"01B105124E6F2033322D626974205761"
-    $"726E696E677300000000008401100099"
-    $"01AB8511466F6E742053756273746974"
-    $"7574696F6E100000000000B904FB00CF"
-    $"05900510436163686520486575726973"
-    $"74696373000000000093005100A3007E"
-    $"1000000000000092001600A8004E0807"
-    $"526566726573680E0000000000330016"
-    $"00480081080E53637265656E20557064"
-    $"6174657300000000003200AB004700E8"
-    $"0805536F756E641000000000009A0092"
-    $"00AA010688104E756D626572206F6620"
-    $"436F6C6F72730000000000A9009B00BB"
-    $"00C4060132010000000000A900CC00BB"
-    $"00F1060134020000000000BA009B00CC"
-    $"00C7060231360000000000BA00CC00CC"
-    $"00FF0603323536000000000000B5004D"
-    $"00C5008A100000000000010200170124"
-    $"01A610000000000000B5001600C50049"
-    $"880653797374656D0000000000A227A4"
-    $"00B4280E060974686F7573616E647308"
-    $"0000000000B327A400C5280E06086D69"
-    $"6C6C696F6E73000000000098011000AD"
-    $"017A050C50726574656E642048656C70"
-    $"0000000000AC011000C1018D050F5072"
-    $"6574656E642045646974696F6E0E0000"
-    $"000000C0011000D5018A050E50726574"
-    $"656E64205363726970740000000000D4"
-    $"011000E90182050D50726574656E6420"
-    $"416C696173090000000000C427A400D6"
-    $"280E0509677261797363616C65000000"
-    $"000000110015002201A8881250726566"
-    $"6572656E63657320666F72205E30"
+resource 'DITL' (-4063, sysheap, preload) {
+    {
+        { 225, 190, 245, 250 }, Button { enabled, "OK" };
+        { 225, 105, 245, 165 }, Button { enabled, "Cancel" };
+        { 225, 20, 245, 80 }, Button { enabled, "Save" };
+        { 76, 22, 97, 128 }, RadioButton { enabled, "Normal" };
+        { 0, 0, 1, 1 }, UserItem { disabled };
+        { 96, 22, 117, 142 }, RadioButton { enabled, "Animation", 3 /* preserved alignment byte */ };
+        { 70, 171, 91, 231 }, RadioButton { enabled, "Off", 7 /* preserved alignment byte */ };
+        { 95, 171, 116, 261 }, RadioButton { enabled, "Pretend", 2 /* preserved alignment byte */ };
+        { 120, 171, 141, 270 }, RadioButton { disabled, "On (silent)" };
+        { 10006, 274, 10027, 365 }, CheckBox { enabled, "No Clock" };
+        { 42, 1500, 63, 27152 }, CheckBox { disabled, "Pass PostScript", 15 /* preserved alignment byte */ };
+        { 52, 272, 73, 424 }, CheckBox { disabled, "Newline Mapping", 17 /* preserved alignment byte */ };
+        { 72, 272, 93, 421 }, CheckBox { enabled, "Flush Cache Often", 18 /* preserved alignment byte */ };
+        { 92, 272, 113, 437 }, CheckBox { enabled, "Direct Disk Access" };
+        { 112, 272, 133, 433 }, CheckBox { enabled, "No 32-bit Warnings" };
+        { 132, 272, 153, 427 }, CheckBox { disabled, "Font Substitution", 16 /* preserved alignment byte */ };
+        { 185, 1275, 207, 1424 }, CheckBox { enabled, "Cache Heuristics" };
+        { 147, 81, 163, 126 }, EditText { enabled, "" };
+        { 146, 22, 168, 78 }, StaticText { enabled, "Refresh", 14 /* preserved alignment byte */ };
+        { 51, 22, 72, 129 }, StaticText { enabled, "Screen Updates" };
+        { 50, 171, 71, 232 }, StaticText { enabled, "Sound", 16 /* preserved alignment byte */ };
+        { 154, 146, 170, 262 }, StaticText { disabled, "Number of Colors" };
+        { 169, 155, 187, 196 }, RadioButton { enabled, "2", 1 /* preserved alignment byte */ };
+        { 169, 204, 187, 241 }, RadioButton { enabled, "4", 2 /* preserved alignment byte */ };
+        { 186, 155, 204, 199 }, RadioButton { enabled, "16" };
+        { 186, 204, 204, 255 }, RadioButton { enabled, "256" };
+        { 181, 77, 197, 138 }, EditText { enabled, "" };
+        { 258, 23, 292, 422 }, EditText { enabled, "" };
+        { 181, 22, 197, 73 }, StaticText { disabled, "System" };
+        { 162, 10148, 180, 10254 }, RadioButton { enabled, "thousands", 8 /* preserved alignment byte */ };
+        { 179, 10148, 197, 10254 }, RadioButton { enabled, "millions" };
+        { 152, 272, 173, 378 }, CheckBox { enabled, "Pretend Help" };
+        { 172, 272, 193, 397 }, CheckBox { enabled, "Pretend Edition", 14 /* preserved alignment byte */ };
+        { 192, 272, 213, 394 }, CheckBox { enabled, "Pretend Script" };
+        { 212, 272, 233, 386 }, CheckBox { enabled, "Pretend Alias", 9 /* preserved alignment byte */ };
+        { 196, 10148, 214, 10254 }, CheckBox { enabled, "grayscale" };
+        { 17, 21, 34, 424 }, StaticText { disabled, "Preferences for ^0" };
+    }
 };
 
 /* Literal data preserves nonzero alignment bytes not representable by the standard DITL layout. */
-data 'DITL' (-4062, sysheap, preload) {
-    $"000600000000008A0118009E01540402"
-    $"4F4B000000000009000C008D00C80875"
-    $"4578656375746F72A82F444F53206D2E"
-    $"6E6E780DA920313938362D3139393620"
-    $"415244490D416C6C2052696768747320"
-    $"52657365727665640D0D652D6D61696C"
-    $"3A20696E666F40617264692E636F6D0D"
-    $"0D576F726C642057696465205765623A"
-    $"2020687474703A2F2F7777772E617264"
-    $"692E636F6D0000000000000900D10077"
-    $"017C086C415244490D53756974652034"
-    $"2D3130310D3136353020556E69766572"
-    $"7369747920426C76642E2C204E450D41"
-    $"6C6275717565727175652C204E4D2020"
-    $"38373130320D0D2B3120353035203736"
-    $"3620393131352050686F6E650D2B3120"
-    $"35303520373636203531353320464158"
-    $"00000000000B0184008E01EF08674D61"
-    $"7420486F737465747465722073696E67"
-    $"6C652D68616E6465646C792064657369"
-    $"676E65642C20696D706C656D656E7465"
-    $"6420616E642064656275676765642074"
-    $"68652073796E74686574696320435055"
-    $"20706F7274696F6E206F662045786563"
-    $"75746F722E800000000000E7000C011D"
-    $"01F008B14170706C6520616E64204D61"
-    $"63696E746F7368206172652072656769"
-    $"7374657265642074726164656D61726B"
-    $"73206F66204170706C6520436F6D7075"
-    $"7465722C20496E632E0D457865637574"
-    $"6F722069732061207265676973746572"
-    $"65642074726164656D61726B206F660D"
-    $"20202020202020202020202020202020"
-    $"20202020202020202020202020202020"
-    $"41626163757320526573656172636820"
-    $"616E6420446576656C6F706D656E742C"
-    $"20496E632E000000000000B1000C00D7"
-    $"01F00883112D53686966742D313A2041"
-    $"626F757420426F782020202020202020"
-    $"202020202020202020202020112D5368"
-    $"6966742D323A205363616E20666F7220"
-    $"466C6F70706965730D112D5368696674"
-    $"2D333A2053637265656E2044756D7020"
-    $"746F2046696C6520202020112D536869"
-    $"66742D353A20507265666572656E6365"
-    $"732050616E656C00000000000098000C"
-    $"00AB00F008234C6566742D416C74203D"
-    $"2011202020202052696768742D416C74"
-    $"203D204F7074696F6E00"
+resource 'DITL' (-4062, sysheap, preload) {
+    {
+        { 138, 280, 158, 340 }, Button { enabled, "OK" };
+        { 9, 12, 141, 200 }, StaticText { enabled, "Executor®/DOS m.nnx\r© 1986-1996 ARDI\rAll Rights Reserved\r\re-mail: info@ardi.com\r\rWorld Wide Web:  http://www.ardi.com" };
+        { 9, 209, 119, 380 }, StaticText { enabled, "ARDI\rSuite 4-101\r1650 University Blvd., NE\rAlbuquerque, NM  87102\r\r+1 505 766 9115 Phone\r+1 505 766 5153 FAX" };
+        { 11, 388, 142, 495 }, StaticText { enabled, "Mat Hostetter single-handedly designed, implemented and debugged the synthetic CPU portion of Executor.", 128 /* preserved alignment byte */ };
+        { 231, 12, 285, 496 }, StaticText { enabled, "Apple and Macintosh are registered trademarks of Apple Computer, Inc.\rExecutor is a registered trademark of\r                                Abacus Research and Development, Inc." };
+        { 177, 12, 215, 496 }, StaticText { enabled, "\0x11-Shift-1: About Box                    \0x11-Shift-2: Scan for Floppies\r\0x11-Shift-3: Screen Dump to File    \0x11-Shift-5: Preferences Panel" };
+        { 152, 12, 171, 240 }, StaticText { enabled, "Left-Alt = \0x11     Right-Alt = Option" };
+    }
 };
 
 resource 'DITL' (-4061, sysheap, preload) {
@@ -577,39 +525,59 @@ resource 'DLOG' (-3999, purgeable) {
     centerMainScreen
 };
 
-data 'PAT ' (16, sysheap, purgeable) {
-    $"AA55AA55AA55AA55"
+resource 'PAT ' (16, sysheap, purgeable) {
+    $$pattern("system-patterns/PAT-16.png")
 };
 
-data 'PAT ' (17, sysheap, purgeable) {
-    $"8822882288228822"
+resource 'PAT ' (17, sysheap, purgeable) {
+    $$pattern("system-patterns/PAT-17.png")
 };
 
-data 'PAT ' (19, sysheap) {
-    $"4000040040000400"
+resource 'PAT ' (19, sysheap) {
+    $$pattern("system-patterns/PAT-19.png")
 };
 
-data 'PAT#' (0, purgeable) {
-    $"0026FFFFFFFFFFFFFFFFDDFF77FFDDFF"
-    $"77FFDD77DD77DD77DD77AA55AA55AA55"
-    $"AA5555FF55FF55FF55FFAAAAAAAAAAAA"
-    $"AAAAEEDDBB77EEDDBB77888888888888"
-    $"8888B130031BD8C00C8D801002200108"
-    $"4004FF888888FF888888FF808080FF08"
-    $"08088000000000000000804020000204"
-    $"08008244394482010101F87422478F17"
-    $"227155A04040550A0404205088888888"
-    $"0502BF00BFBFB0B0B0B0000000000000"
-    $"00008000080080000800880022008800"
-    $"22008822882288228822AA00AA00AA00"
-    $"AA00FF00FF00FF00FF00112244881122"
-    $"4488FF000000FF000000010204081020"
-    $"4080AA00800088008000FF8080808080"
-    $"8080081C22C180010204881422418800"
-    $"AA0040A00000040A0000038448300C02"
-    $"01018080413E080814E3102054AAFF02"
-    $"040877898F8F7798F8F80008142A552A"
-    $"1408"
+resource 'PAT#' (0, purgeable) {
+    {
+        $$pattern("system-patterns/PAT-list-0-01.png");
+        $$pattern("system-patterns/PAT-list-0-02.png");
+        $$pattern("system-patterns/PAT-list-0-03.png");
+        $$pattern("system-patterns/PAT-list-0-04.png");
+        $$pattern("system-patterns/PAT-list-0-05.png");
+        $$pattern("system-patterns/PAT-list-0-06.png");
+        $$pattern("system-patterns/PAT-list-0-07.png");
+        $$pattern("system-patterns/PAT-list-0-08.png");
+        $$pattern("system-patterns/PAT-list-0-09.png");
+        $$pattern("system-patterns/PAT-list-0-10.png");
+        $$pattern("system-patterns/PAT-list-0-11.png");
+        $$pattern("system-patterns/PAT-list-0-12.png");
+        $$pattern("system-patterns/PAT-list-0-13.png");
+        $$pattern("system-patterns/PAT-list-0-14.png");
+        $$pattern("system-patterns/PAT-list-0-15.png");
+        $$pattern("system-patterns/PAT-list-0-16.png");
+        $$pattern("system-patterns/PAT-list-0-17.png");
+        $$pattern("system-patterns/PAT-list-0-18.png");
+        $$pattern("system-patterns/PAT-list-0-19.png");
+        $$pattern("system-patterns/PAT-list-0-20.png");
+        $$pattern("system-patterns/PAT-list-0-21.png");
+        $$pattern("system-patterns/PAT-list-0-22.png");
+        $$pattern("system-patterns/PAT-list-0-23.png");
+        $$pattern("system-patterns/PAT-list-0-24.png");
+        $$pattern("system-patterns/PAT-list-0-25.png");
+        $$pattern("system-patterns/PAT-list-0-26.png");
+        $$pattern("system-patterns/PAT-list-0-27.png");
+        $$pattern("system-patterns/PAT-list-0-28.png");
+        $$pattern("system-patterns/PAT-list-0-29.png");
+        $$pattern("system-patterns/PAT-list-0-30.png");
+        $$pattern("system-patterns/PAT-list-0-31.png");
+        $$pattern("system-patterns/PAT-list-0-32.png");
+        $$pattern("system-patterns/PAT-list-0-33.png");
+        $$pattern("system-patterns/PAT-list-0-34.png");
+        $$pattern("system-patterns/PAT-list-0-35.png");
+        $$pattern("system-patterns/PAT-list-0-36.png");
+        $$pattern("system-patterns/PAT-list-0-37.png");
+        $$pattern("system-patterns/PAT-list-0-38.png");
+    }
 };
 
 data 'PICT' (11) {

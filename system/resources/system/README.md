@@ -8,17 +8,48 @@ patterns, keyboard maps, international tables, pictures and code are retained.
 These are the installed ROMAW support resources, not a complete bootable
 Apple operating system.
 
-Alerts, dialogs, ordinary item lists and strings use typed Rez declarations in
-`interface.r`. Rectangles, procedures, item types, enabled states, text and
-positioning are directly editable. Four item lists remain literal `data` to
-preserve extended records or nonzero alignment bytes; comments identify them.
-Patterns and pictures also retain their opaque payloads.
+All `*.r` files in this directory are free of literal hex blocks. `interface.r`
+uses typed alerts, dialogs, item lists, strings and pattern references. Help items
+include their subtype/resource ID; an optional final byte inside an odd-length
+item preserves its original alignment byte, including historical nonzero values.
 
-The remaining non-artwork payloads use literal Rez `data` declarations in
-`payloads.r`, except version resources, which use typed `vers` definitions.
-The checked field encoder in `tools/rez_types.py` produces Macintosh byte order
-without an external Rez compiler. Names and attributes come from the same
-declarations as the payloads.
+`payloads.r` exposes native definition-table entries, international number/date
+formats, keyboard modifiers and character/dead-key tables, color tables and
+pixel-pattern metadata as typed fields. Native definition symbols name the
+existing C implementations. Keyboard tables are split into sixteen-key rows;
+counts and resource-relative pattern offsets are derived by the encoder.
+The inherited `fwst` window rectangle is named, while its remaining state words
+and the unidentified `movp` preference words retain explicit signed 16-bit fields.
+Their undocumented meanings are not guessed.
+
+`resource_types.r` documents these layouts and native definition symbols.
+`tools/rez_types.py` and `tools/rez_system_types.py` check fields and emit
+Macintosh byte order without an external Rez SDK. PNG expressions, explicit
+DITL padding and pixel-pattern layout synthesis are native builder extensions.
+Existing external artwork declarations and native code expressions remain
+`data` declarations; they contain no embedded hexadecimal payloads.
+
+Forty-seven exported PNG inputs live in `bitmaps/system-patterns/`:
+three individual monochrome patterns, 38 pattern-list entries, three pixel
+patterns and their three monochrome fallbacks. `$$pattern` reads opaque 8x8
+black/white pixels; `$$pixels` reads the indexed PNG without quantizing or
+reordering its palette. Keep color patterns indexed and at their declared size.
+RGB colors are regenerated from the PNG palette; color-table indexes, seed,
+flags and PixMap state remain explicit in Rez. These palettes originally used
+8-bit-expanded 16-bit components, so their reconstruction is exact.
+
+`system/tests/system-typed-resources.json` records original hashes, sizes and
+metadata for all 55 converted resources. The reporting suite checks exact
+reconstruction, image edits, malformed fields and absence of raw hex blocks:
+
+```bash
+python3 system/tests/test-system-typed-resources.py
+```
+
+Conversion preserves historical quirks, including the unused selector 8 in the
+eight-table keyboard layouts 136/137, nonzero dialog alignment bytes and legacy
+preference words. It does not silently repair these resources. INTL 1's native
+localization hook is audited separately from its unchanged 330-byte data record.
 
 Icon and cursor families live in the
 workspace-root `bitmaps/` as ICNS files containing all available
