@@ -33,6 +33,11 @@ a two-byte result. The hcsl installer returns without consuming its single
 argument, matching its original plain RTS. Callbacks preserve callee-saved
 registers across nested Toolbox calls.
 
+Toolbox calls use patch-aware dispatch and arguments stored in reserved guest
+stack memory. Register-based Memory Manager and NewGestalt operations execute
+real A-line dispatch with their original trap-word flags. Guest trap patches
+therefore observe the same calls and valid guest argument addresses.
+
 Writable state belongs to each resource, not a global host map:
 
 * gest retains its cached Handle at offset 0x80. Its private selectors return
@@ -83,5 +88,6 @@ Retro68 application and executes it through the selected Windows ROMAW.
 It exercises resource loading/reloading, real QuickDraw drawing and regions,
 guest Pascal calls, selector tables, malformed table boundaries, independent
 resource-instance state and actual Gestalt registration/failure paths.
+Guest-installed HLock, FrameRect and NewGestalt trap hooks verify patch dispatch.
 Reports and trace logs stay in build/finder-guest/. This focused suite does
 not establish complete classic Finder application compatibility.

@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: main
+  Functions: main, finder_hlock_hook, finder_gestalt_hook (assembly trap hooks).
 
   Origin:    ROMAW Finder guest integration regression fixture using Retro68.
 
@@ -26,6 +26,34 @@
 
 static short report;
 static int failures, checks;
+static long frame_calls;
+static Rect patched_frame_rect;
+static ProcPtr original_frame;
+static volatile long hlock_calls __asm__("finder_hlock_calls");
+static volatile long gestalt_calls __asm__("finder_gestalt_calls");
+static ProcPtr original_hlock __asm__("finder_original_hlock");
+static ProcPtr original_gestalt __asm__("finder_original_gestalt");
+extern void finder_hlock_hook(void) __asm__("finder_hlock_hook");
+extern void finder_gestalt_hook(void) __asm__("finder_gestalt_hook");
+
+/* Register-ABI OS trap patches tail-chain without disturbing A0 or D1. */
+__asm__(".globl finder_hlock_hook\n"
+        "finder_hlock_hook:\n\t"
+        "addq.l #1,finder_hlock_calls\n\t"
+        "move.l finder_original_hlock,-(%sp)\n\t"
+        "rts\n"
+        ".globl finder_gestalt_hook\n"
+        "finder_gestalt_hook:\n\t"
+        "addq.l #1,finder_gestalt_calls\n\t"
+        "move.l finder_original_gestalt,-(%sp)\n\t"
+        "rts\n");
+
+static pascal void frame_patch(Rect* rect)
+{
+    ++frame_calls;
+    patched_frame_rect = *rect;
+    ((pascal void (*)(Rect*))original_frame)(rect);
+}
 
 static void check(int passed, const char* name)
 {
@@ -94,7 +122,12 @@ static void test_controls(WindowPtr window)
     if (!control)
         return;
     HLock(code);
+    original_hlock = GetOSTrapAddress(0xa029);
+    hlock_calls = 0;
+    SetOSTrapAddress((ProcPtr)finder_hlock_hook, 0xa029);
     check(definition(*code, 0, (Handle)control, 1, (20L << 16) | 30) == 10, "CDEF interior hit");
+    SetOSTrapAddress(original_hlock, 0xa029);
+    check(hlock_calls == 1, "CDEF honors guest HLock trap patch");
     check(definition(*code, 0, (Handle)control, 1, (20L << 16) | 77) == 0, "CDEF right edge excluded");
     RgnHandle region = NewRgn();
     check(region != 0, "region allocated");
@@ -106,7 +139,12 @@ static void test_controls(WindowPtr window)
     }
     RGBColor before, after;
     GetForeColor(&before);
+    original_frame = GetToolTrapAddress(0xa8a1);
+    SetToolTrapAddress((ProcPtr)frame_patch, 0xa8a1);
     check(definition(*code, 0, (Handle)control, 0, 0) == 10, "CDEF draws using real QuickDraw");
+    SetToolTrapAddress(original_frame, 0xa8a1);
+    check(frame_calls == 1 && !memcmp(&patched_frame_rect, &bounds, sizeof(bounds)),
+          "CDEF honors FrameRect patch with readable guest rectangle");
     GetForeColor(&after);
     check(!memcmp(&before, &after, sizeof(before)), "CDEF restores foreground color");
     HiliteControl(control, 255);
@@ -195,7 +233,12 @@ static void test_hcsl(void)
         check(query(*application_copy + 26, 'test', &response) == 0 && response == 123,
               "failed installation still retains instance response");
     }
+    original_gestalt = GetOSTrapAddress(0xa1ad);
+    gestalt_calls = 0;
+    SetOSTrapAddress((ProcPtr)finder_gestalt_hook, 0xa1ad);
     install(*code, 0x11223344);
+    SetOSTrapAddress(original_gestalt, 0xa1ad);
+    check(gestalt_calls == 1, "hcsl installer honors guest NewGestalt trap patch");
     check(Gestalt('hcsl', &response) == 0 && response == 0x11223344, "hcsl registers through real NewGestalt");
     install(*code, 0x55667788);
     check(Gestalt('hcsl', &response) == 0 && response == 0x55667788, "duplicate installation updates stored response");

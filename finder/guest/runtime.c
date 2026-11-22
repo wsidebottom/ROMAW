@@ -24,6 +24,7 @@
 typedef struct {
     OSErr error;
     uint32 resource;
+    uint32 scratch;
     uint32 table_handle, table_begin, table_size;
 } FinderBridge;
 
@@ -79,27 +80,44 @@ static Handle guest_handle(FinderBridge* bridge, uint32 address)
     return (Handle)SYN68K_TO_US(address);
 }
 
+static void os_trap(FinderBridge* bridge, uint16 trap)
+{
+    /* Execute the real A-line dispatch so patches, register arguments and
+     * trap-word flags (Sys/Clear/NewGestalt) have their normal semantics.
+     * The two-instruction veneer and Toolbox buffers live below the caller's
+     * stack frame; nested guest calls grow below this reserved storage.
+     */
+    uint32 entry = bridge->scratch + 32;
+    WRITEUW(entry, trap);
+    WRITEUW(entry + 2, 0x4e75);
+    destroy_blocks(entry, 4);
+    CALL_EMULATOR(entry);
+}
+
 static void lock(void* context, uint32_t handle)
 {
     Handle native = guest_handle(context, handle);
-    if (native)
-        HLock(native);
+    if (native) {
+        EM_A0 = handle;
+        os_trap(context, 0xa029);
+    }
 }
 
 static void unlock(void* context, uint32_t handle)
 {
     Handle native = guest_handle(context, handle);
-    if (native)
-        HUnlock(native);
+    if (native) {
+        EM_A0 = handle;
+        os_trap(context, 0xa02a);
+    }
 }
 
 static int16_t new_handle(void* context, uint32_t size, uint32_t* result)
 {
-    (void)context;
-    Handle handle = NewHandleSysClear(size);
-    OSErr error = MemError();
-    *result = handle ? US_TO_SYN68K(handle) : 0;
-    return error;
+    EM_D0 = size;
+    os_trap(context, 0xa522);
+    *result = EM_A0;
+    return (int16_t)EM_D0;
 }
 
 static int32_t handle_size(void* context, uint32_t address)
@@ -108,10 +126,11 @@ static int32_t handle_size(void* context, uint32_t address)
     Handle handle = guest_handle(bridge, address);
     if (!handle)
         return paramErr;
-    Size size = GetHandleSize(handle);
-    OSErr error = MemError();
-    if (error)
-        return error;
+    EM_A0 = address;
+    os_trap(bridge, 0xa025);
+    int32 size = EM_D0;
+    if (size < 0)
+        return size;
     uint32 begin = guest_read32(bridge, address);
     if (size && !valid_range(bridge, begin, size))
         return paramErr;
@@ -127,81 +146,90 @@ static uint16_t rom85(void* context)
     return CW(ROM85);
 }
 
-static Rect guest_rect(const FinderCodeRect* source)
+static Rect* guest_rect(FinderBridge* bridge, const FinderCodeRect* source)
 {
-    return (Rect){CW(source->top), CW(source->left), CW(source->bottom), CW(source->right)};
+    Rect* rect = SYN68K_TO_US(bridge->scratch);
+    *rect = (Rect){CW(source->top), CW(source->left), CW(source->bottom), CW(source->right)};
+    return rect;
 }
 
 static void pen_size(void* context, int16_t width, int16_t height)
 {
     if (!((FinderBridge*)context)->error)
-        C_PenSize(width, height);
+        PenSize(width, height);
 }
 
 static void frame_rect(void* context, const FinderCodeRect* source)
 {
-    Rect rect = guest_rect(source);
+    Rect* rect = guest_rect(context, source);
     if (!((FinderBridge*)context)->error)
-        C_FrameRect(&rect);
+        FrameRect(rect);
 }
 
 static void pen_normal(void* context)
 {
     if (!((FinderBridge*)context)->error)
-        C_PenNormal();
+        PenNormal();
 }
 
 static void erase_rect(void* context, const FinderCodeRect* source)
 {
-    Rect rect = guest_rect(source);
+    Rect* rect = guest_rect(context, source);
     if (!((FinderBridge*)context)->error)
-        C_EraseRect(&rect);
+        EraseRect(rect);
 }
 
 static void paint_rect(void* context, const FinderCodeRect* source)
 {
-    Rect rect = guest_rect(source);
+    Rect* rect = guest_rect(context, source);
     if (!((FinderBridge*)context)->error)
-        C_PaintRect(&rect);
+        PaintRect(rect);
 }
 
 static void fill_rect(void* context, const FinderCodeRect* source, const uint8_t pattern[8])
 {
-    Rect rect = guest_rect(source);
-    if (!((FinderBridge*)context)->error)
-        C_FillRect(&rect, (Byte*)pattern);
+    FinderBridge* bridge = context;
+    Rect* rect = guest_rect(bridge, source);
+    Byte* guest_pattern = SYN68K_TO_US(bridge->scratch + 8);
+    memcpy(guest_pattern, pattern, 8);
+    if (!bridge->error)
+        FillRect(rect, guest_pattern);
 }
 
 static void get_fore_color(void* context, uint16_t color[3])
 {
-    RGBColor native = {0};
-    if (!((FinderBridge*)context)->error)
-        C_GetForeColor(&native);
-    color[0] = CW(native.red);
-    color[1] = CW(native.green);
-    color[2] = CW(native.blue);
+    FinderBridge* bridge = context;
+    RGBColor* native = SYN68K_TO_US(bridge->scratch + 16);
+    memset(native, 0, sizeof(*native));
+    if (!bridge->error)
+        GetForeColor(native);
+    color[0] = CW(native->red);
+    color[1] = CW(native->green);
+    color[2] = CW(native->blue);
 }
 
 static void pm_fore_color(void* context, int16_t index)
 {
     if (!((FinderBridge*)context)->error)
-        C_PmForeColor(index);
+        PmForeColor(index);
 }
 
 static void rgb_fore_color(void* context, const uint16_t color[3])
 {
-    RGBColor native = {CW(color[0]), CW(color[1]), CW(color[2])};
-    if (!((FinderBridge*)context)->error)
-        C_RGBForeColor(&native);
+    FinderBridge* bridge = context;
+    RGBColor* native = SYN68K_TO_US(bridge->scratch + 16);
+    *native = (RGBColor){CW(color[0]), CW(color[1]), CW(color[2])};
+    if (!bridge->error)
+        RGBForeColor(native);
 }
 
 static void rect_region(void* context, uint32_t address, const FinderCodeRect* source)
 {
     FinderBridge* bridge = context;
     Handle region = guest_handle(bridge, address);
-    Rect rect = guest_rect(source);
+    Rect* rect = guest_rect(bridge, source);
     if (region && valid_range(bridge, guest_read32(bridge, address), 10))
-        C_RectRgn((RgnHandle)region, &rect);
+        RectRgn((RgnHandle)region, rect);
 }
 
 static int failed(void* context)
@@ -235,9 +263,10 @@ static int16_t register_hcsl(void* context, uint32_t selector, FinderHcsl0* stat
 {
     FinderBridge* bridge = context;
     guest_write32(bridge, bridge->resource + 22, state->response);
-    OSErr error = NewGestalt(selector, (ProcPtr)SYN68K_TO_US(bridge->resource + 26));
-    EM_D0 = (EM_D0 & 0xffff0000) | (uint16)error;
-    return error;
+    EM_D0 = selector;
+    EM_A0 = bridge->resource + 26;
+    os_trap(bridge, 0xa3ad);
+    return (int16_t)EM_D0;
 }
 
 static syn68k_addr_t finder_callback(syn68k_addr_t pc, void* argument)
@@ -249,8 +278,10 @@ static syn68k_addr_t finder_callback(syn68k_addr_t pc, void* argument)
     /* Keep callee-saved registers across any nested Toolbox/guest calls. */
     M68kReg saved[16];
     memcpy(saved, cpu_state.regs, sizeof(saved));
-    if (!valid_range(&bridge, stack, index < 2 ? 20 : 14))
+    if (stack < 64 || !valid_range(&bridge, stack - 64, 64 + (index < 2 ? 20 : 14)))
         gui_fatal("Invalid Finder procedure stack");
+    bridge.scratch = stack - 64;
+    EM_A7 = bridge.scratch;
     syn68k_addr_t ret = READUL(stack);
     int32 result = 0;
     uint32 consumed = index < 2 ? 16 : 12;
