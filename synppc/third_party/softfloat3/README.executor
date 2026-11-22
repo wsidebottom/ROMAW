@@ -1,0 +1,22 @@
+Berkeley SoftFloat Release 3e, John R. Hauser, 2018-01-20.
+
+Source: https://www.jhauser.us/arithmetic/SoftFloat-3e.zip
+Archive SHA-256:
+21130ce885d35c1fe73fc1e1bf2244178167e05c6747cad5f450cc991714c746
+
+COPYING.txt retains the complete upstream BSD-3-Clause license. Every imported
+source/header/notice is byte-for-byte identical to the official archive;
+manifest.json records their SHA-256 hashes. Preserve their CRLF bytes. Local
+configuration/adaptation belongs outside this directory, under platform/ or src/.
+
+This subset provides binary32, binary64, extended80 and selected binary128
+operations. The 93 C files are the link dependency closure of the operations listed in
+tools/import-softfloat.py. The selected ARM-VFPv2 specialization supplies a
+positive default NaN; Executor must apply PowerPC's own NaN preference and
+exception interpretation. Selecting these portable C files does not emulate
+an ARM processor. No ARM assembly or optional __int128 primitives are used.
+
+Offline import: extract the verified archive, build the upstream generic
+reference as documented by tools/import-softfloat.py, then run that importer.
+It checks archive/source bytes and refuses different existing vendor files.
+Normal builds require no network access or upstream build scripts.

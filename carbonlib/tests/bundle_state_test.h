@@ -1,0 +1,23 @@
+/*+===================================================================
+  File:      bundle_state_test.h
+
+  Summary:   Test hooks for the bundle state and load batch. ifndef ROMAW_CARBON_BUNDLE_STATE_TEST_H
+
+  Classes:   None.
+
+  Functions: Interface declarations and inline definitions; see the declarations below.
+
+  Origin:    Existing repository source in packages/carbonlib/tests; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Test hooks for the bundle state and load batch. */
+#ifndef ROMAW_CARBON_BUNDLE_STATE_TEST_H
+#define ROMAW_CARBON_BUNDLE_STATE_TEST_H
+#include "carbonlib.h"
+int ROMlib_carbon_bundle_test_reference(const char* library, const char* name, ROMlib_carbon_reference* reference);
+int ROMlib_carbon_bundle_test_callback(void* procedure, const uint32_t* arguments, unsigned count, uint32_t* result);
+void ROMlib_carbon_bundle_state_tests(void);
+#endif

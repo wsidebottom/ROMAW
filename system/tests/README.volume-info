@@ -1,0 +1,42 @@
+Host-volume GetVolInfo compatibility
+===================================
+
+check-files.ps1 volume-info probes the staged Windows ROMAW under GDB.
+It compares root valence with PBGetCatInfo, checks that modification and
+backup dates occupy their separate HFS fields, and verifies that a working-directory GetVolInfo returns that directory's valence while preserving the
+WD reference. HGetVolInfo resolves the reference to the volume.
+
+An isolated mounted folder checks external additions/removals, sidecar
+filtering and modification-date refresh without opening Finder Get Info.
+The fixture does not modify the contents of existing mounted volumes.
+
+The calling and field semantics were checked against the user's reference:
+Y:/Source Code/supermario/base/SuperMarioProj.1994-02-09/OS/HFS/TFSVOL.a,
+GetVolInfo/RetVolInfo/retVRef and the working-directory valence path.
+
+These checks cover root/working-directory metadata, not a recursive count
+of all files on a host volume or complete Finder interaction.
+
+GetVolParms is checked against OS/HFS/TFS.a and Interfaces/CIncludes/Files.h:
+the complete version-2 record includes the unrated speed field and advertises
+no unimplemented foreign privilege model. Requests return a contiguous prefix,
+including odd lengths. Guards cover zero/negative/large lengths and null buffers.
+The bNoDeskItems flag is clear for sidecar-capable host volumes and set for DOS
+volumes. Toolbox/AliasMgr/FolderMgr.a checks it before looking up Desktop Folder. Finder was also checked displaying an
+existing application from the ROMAW volume's Desktop Folder.
+
+Host drive-root Finder information is stored below the user's
+.romaw/volume-metadata directory. Root names are normalized and encoded;
+long names use a fixed-size key with an exact volume.path identity check.
+root.appledouble is the active record. Valid legacy %%2F records and their
+._%%2F companions are imported into legacy-root.appledouble and legacy-sidecar.appledouble
+before removal from the drive. Existing active records take priority;
+conflicting, unrelated or malformed originals are retained. Ordinary file
+and directory resource forks keep their existing sidecar locations.
+
+check-files.sh root-metadata checks migration, complete fork preservation,
+backup conflicts, identity checks, malformed input and profile failures on
+Linux with ASan/UBSan and on Windows. It also checks catalog filtering of
+legacy root records under netatalk conventions. The staged volume-info
+probe writes, reads and restores a C-drive icon position and verifies the
+actual FinderInfo bytes in the per-user record.

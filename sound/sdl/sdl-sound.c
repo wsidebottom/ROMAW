@@ -1,0 +1,525 @@
+/*+===================================================================
+  File:      sdl-sound.c
+
+  Summary:   Implements sdl sound support for host-platform configuration and integration.
+
+  Classes:   None.
+
+  Functions: ROMlib_set_sdl_audio_driver_name, ROMlib_sdl_audio_test_mode, sound_sdl_init
+
+  Origin:    Existing repository source in executor/src/config/sound/sdl; original attribution and provenance comments
+             are preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1995-2005 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+/*
+ * This is a hacked up copy of linux-sound.c that is being used to test
+ * a different way to drive SDL's sound.
+ */
+
+#include "rsys/common.h"
+
+#if defined(__MINGW32__)
+#include <semaphore.h>
+#else
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#endif
+#include <signal.h>
+#include <sched.h>
+#include <pthread.h>
+
+#include "rsys/vdriver.h"
+#include "rsys/sounddriver.h"
+#include "rsys/m68kint.h"
+#include "sdl-sound.h"
+
+#define LOGBUFSIZE 11 /* Must be between 7 and 17 decimal */
+
+/*
+ * There's what appears to be a bug in some of the SDLs out there that
+ * results in SDL choosing to use one half the number of samples that we ask
+ * for.  As such, we're going to make room for twice the amount we want and
+ * then ask for twice the amount.  If we get it, oh well, it just means
+ * more latency.
+ */
+
+static int num_samples;
+
+#define BUFSIZE (1 << (LOGBUFSIZE + 1)) /* +1 as bug workaround */
+
+#if defined(__MINGW32__)
+static sem_t semid;
+#else
+static int semid = -1; /* Semaphore id */
+#endif
+static int sound_on = 0;       /* 1 if we are generating interrupts */
+static boolean_t have_sound_p; /* TRUE if sound is supported */
+static SDL_mutex* audio_mutex;
+static SDL_cond *audio_ready, *audio_filled;
+static boolean_t audio_closing, thread_started;
+static pthread_t audio_thread;
+static Uint8* sdl_stream;
+static boolean_t test_output, output_thread_started;
+static pthread_t output_thread;
+static FILE* capture_file;
+
+enum { NON_RUNNING_SOUND_RATE = 22255 };
+
+PRIVATE char* sdl_audio_driver_name = NULL;
+
+PUBLIC int ROMlib_sdl_audio_test_mode(void)
+{
+    return sdl_audio_driver_name && !strcmp(sdl_audio_driver_name, "test");
+}
+
+PUBLIC void ROMlib_set_sdl_audio_driver_name(const char* str)
+{
+    if (sdl_audio_driver_name)
+        free(sdl_audio_driver_name);
+    if (str)
+        sdl_audio_driver_name = strdup(str);
+    else
+        sdl_audio_driver_name = NULL;
+}
+
+PUBLIC int ROMlib_SND_RATE = NON_RUNNING_SOUND_RATE; /* we need to set this to something,
+				       in case we don't succeed when we
+				       try to initialize.  May as well set
+				       it to the common Mac value. */
+
+/* Wait on the semaphore (atomic decrement) */
+
+static void patl_wait(void)
+{
+#if defined(__MINGW32__)
+    while (sem_wait(&semid) < 0) {
+        if (errno != EINTR)
+            gui_fatal("Semaphore wait failure");
+    }
+#else
+    struct sembuf op_wait[] = {{0, -1, 0}};
+
+    while (semop(semid, op_wait, 1) < 0) {
+        if (errno == EINTR)
+            continue;
+        if (errno != EIDRM)
+            perror("semop failed");
+        pthread_exit(NULL);
+    }
+#endif
+}
+
+/* Signal the semaphore (atomic increment) */
+
+static void patl_signal(void)
+{
+#if defined(__MINGW32__)
+    if (sem_post(&semid) < 0)
+        gui_fatal("Signal failure");
+#else
+    struct sembuf op_signal[] = {{0, 1, 0}};
+
+    while (semop(semid, op_signal, 1) < 0) {
+        if (errno == EINTR)
+            continue;
+        gui_fatal("Signal failure");
+    }
+#endif
+}
+
+static snd_time t1 = 0;
+
+static boolean_t sound_sdl_works_p(sound_driver_t* s)
+{
+    return have_sound_p;
+}
+
+static void sound_sdl_go(sound_driver_t* s)
+{
+    SDL_LockMutex(audio_mutex);
+    if (!sound_on) {
+        sound_on = 1;
+        patl_signal();
+    }
+    SDL_UnlockMutex(audio_mutex);
+
+    if (!test_output)
+        SDL_PauseAudio(0);
+}
+
+static void sound_sdl_stop(sound_driver_t* s)
+{
+    SDL_LockMutex(audio_mutex);
+    sound_on = 0;
+    /* An outstanding SDL callback must return silence, rather than leave the
+     device repeating its previous buffer while the emulator is idle. */
+    if (sdl_stream)
+        memset(sdl_stream, 0x80, num_samples);
+    sdl_stream = NULL;
+    SDL_CondBroadcast(audio_filled);
+    SDL_CondBroadcast(audio_ready);
+    SDL_UnlockMutex(audio_mutex);
+}
+
+/* Do any bookkeeping needed to start feeding a hungry device */
+
+static void sound_sdl_hunger_start(sound_driver_t* s)
+{
+    t1 += num_samples;
+}
+
+static unsigned char buf[7 * BUFSIZE];
+
+/* Figure out how to feed the hungry output device. */
+
+static struct hunger_info sound_sdl_get_hunger_info(sound_driver_t* s)
+{
+    struct hunger_info info;
+
+    info.buf = buf;
+    info.bufsize = 7 * num_samples;
+
+    info.t2 = t1 + num_samples;
+    info.t3 = info.t2 + num_samples;
+    info.t4 = info.t3;
+
+    return info;
+}
+
+static ssize_t sdl_write(const void* buf, size_t len)
+{
+    //  fprintf (stderr, "sdl_write: stream = %p, len = %d, buf[0]= 0x%02x, buf[1] = 0x%02x\n", sdl_stream, (int) len, ((uint8_t *) buf)[0], ((uint8_t *) buf)[1]);
+
+    SDL_LockMutex(audio_mutex);
+    if (sdl_stream) {
+        memcpy(sdl_stream, buf, len);
+        sdl_stream = NULL;
+        SDL_CondSignal(audio_filled);
+    }
+    SDL_UnlockMutex(audio_mutex);
+
+    return len;
+}
+
+/* Assuming that the information returned by snd_get_hunger_info was
+   honored, send the samples off to the device. */
+
+static void sound_sdl_hunger_finish(sound_driver_t* s)
+{
+    struct hunger_info info;
+
+    info = sound_sdl_get_hunger_info(s);
+
+    while (sdl_write(info.buf + (info.t2 % info.bufsize), num_samples) < 0) {
+        if (errno != EINTR)
+            gui_fatal("Write failed");
+    }
+
+    memset(info.buf + (info.t2 % info.bufsize), 0x80, num_samples);
+
+    patl_signal();
+}
+
+#if !defined(__MINGW32__) && defined(_SEM_SEMUN_UNDEFINED)
+union semun {
+    int unused_baggage;
+};
+#endif
+
+static void sound_sdl_shutdown(sound_driver_t* s)
+{
+    if (!audio_mutex)
+        return;
+    sound_sdl_stop(s);
+    SDL_LockMutex(audio_mutex);
+    audio_closing = TRUE;
+    SDL_CondBroadcast(audio_ready);
+    SDL_UnlockMutex(audio_mutex);
+    patl_signal();
+    if (thread_started)
+        pthread_join(audio_thread, NULL);
+    thread_started = FALSE;
+    if (output_thread_started)
+        pthread_join(output_thread, NULL);
+    output_thread_started = FALSE;
+    if (capture_file)
+        fclose(capture_file);
+    capture_file = NULL;
+    if (!test_output)
+        SDL_CloseAudio();
+#if defined(__MINGW32__)
+    sem_destroy(&semid);
+#else
+    if (semid >= 0)
+        semctl(semid, 0, IPC_RMID, (union semun)0);
+#endif
+
+    if (have_sound_p) {
+        have_sound_p = FALSE;
+    }
+
+    SDL_DestroyCond(audio_ready);
+    SDL_DestroyCond(audio_filled);
+    SDL_DestroyMutex(audio_mutex);
+    audio_mutex = NULL;
+}
+
+static void sound_sdl_clear_pending(sound_driver_t* s)
+{
+}
+
+static boolean_t sound_sdl_silent_p(sound_driver_t* s)
+{
+    return FALSE;
+}
+
+static void sound_sdl_shutdown_at_exit(void)
+{
+    sound_sdl_shutdown(&sound_driver);
+}
+
+PRIVATE boolean_t sdl_wait_until_callback_has_been_called(void)
+{
+    /* Called with audio_mutex held. Stop/shutdown also wake this wait. */
+    while (!sdl_stream && sound_on && !audio_closing)
+        SDL_CondWait(audio_ready, audio_mutex);
+    return sdl_stream && sound_on && !audio_closing;
+}
+
+/* Infinite loop for the "sound" thread.  Waits until the audio device
+   is ready to accept input, then set a flag for the emulator
+   thread. */
+
+static void* loop(void* unused)
+{
+    while (TRUE) {
+        patl_wait();
+        SDL_LockMutex(audio_mutex);
+        if (sdl_wait_until_callback_has_been_called()) {
+            cpu_state.interrupt_pending[M68K_SOUND_PRIORITY] = 1;
+            cpu_state.interrupt_status_changed = INTERRUPT_STATUS_CHANGED;
+        }
+        if (audio_closing) {
+            SDL_UnlockMutex(audio_mutex);
+            break;
+        }
+        SDL_UnlockMutex(audio_mutex);
+    }
+
+    return NULL; /* won't get here */
+}
+
+static void sound_sdl_hunger_callback(void* unused, Uint8* stream, int len)
+{
+    //  FILE *fp;
+    //  int fd;
+
+    //  fd = -1;
+    //  fd = open("/tmp/sdl-sound.log", O_CREAT|O_WRONLY, 0644);
+    //  fp = fopen ("/tmp/sdl-sound.log", "w");
+    //  fprintf (stderr,  "callback: stream = %p, len = %d, BUFSIZE = %d\n", stream,
+    //	   len, BUFSIZE);
+    //  fclose (fp);
+    //  close (fd);
+    //  fprintf (stderr, "callback: stream = %p\n", stream);
+
+    if (len != num_samples)
+        gui_fatal("len = %d, expected %d", len, num_samples);
+    SDL_LockMutex(audio_mutex);
+    memset(stream, 0x80, len);
+    if (sound_on && !audio_closing) {
+        sdl_stream = stream;
+        SDL_CondSignal(audio_ready);
+        while (sdl_stream && sound_on && !audio_closing)
+            SDL_CondWait(audio_filled, audio_mutex);
+    }
+    SDL_UnlockMutex(audio_mutex);
+}
+
+/* Exercise the normal callback/mixer handshake without opening a host audio
+   device. Optional raw unsigned mono PCM capture is owned by this thread. */
+static void* test_output_loop(void* unused)
+{
+    Uint8 samples[BUFSIZE];
+    while (TRUE) {
+        SDL_LockMutex(audio_mutex);
+        boolean_t closing = audio_closing;
+        SDL_UnlockMutex(audio_mutex);
+        if (closing)
+            break;
+        SDL_Delay((num_samples * 1000U + ROMlib_SND_RATE - 1) / ROMlib_SND_RATE);
+        sound_sdl_hunger_callback(NULL, samples, num_samples);
+        if (capture_file && fwrite(samples, 1, num_samples, capture_file) != num_samples) {
+            fprintf(stderr, "SDL test audio capture write failed\n");
+            break;
+        }
+    }
+    return NULL;
+}
+
+boolean_t sound_sdl_init(sound_driver_t* s)
+{
+    SDL_AudioSpec spec;
+    syn68k_addr_t my_callback;
+    int sysret;
+
+    have_sound_p = FALSE;
+
+    if (sound_disabled_p)
+        goto fail;
+
+    test_output = ROMlib_sdl_audio_test_mode();
+    if (test_output) {
+        const char* capture = getenv("ROMAW_TEST_AUDIO_CAPTURE");
+        if (capture && *capture) {
+            capture_file = fopen(capture, "wb");
+            if (!capture_file)
+                goto fail;
+        }
+        num_samples = BUFSIZE;
+        fprintf(stderr, "SDL test audio: no host device, %d Hz unsigned mono PCM\n", ROMlib_SND_RATE);
+        goto initialize_buffers;
+    }
+
+    if (SDL_AudioInit(sdl_audio_driver_name) != 0) {
+        char* err;
+
+        err = SDL_GetError();
+        fprintf(stderr, "SDL_Init(SDL_INIT_AUDIO) failed: '%s'\n", err ? err : "(NULL)");
+        return FALSE;
+    }
+
+    if (sdl_audio_driver_name) {
+        char* sanity_check_name;
+        int sanity_len;
+        boolean_t success;
+
+        /* we add 3 below due to ambiguity in the documentation for
+	 SDL_AudioDriverName.  It doesn't hurt to add 3 here. */
+
+        sanity_len = strlen(sdl_audio_driver_name) + 3;
+        sanity_check_name = alloca(sanity_len);
+        success = SDL_AudioDriverName(sanity_check_name, sanity_len) != NULL &&
+                  strcmp(sdl_audio_driver_name, sanity_check_name) == 0;
+        if (!success) {
+            fprintf(stderr, "Requested SDL audio driver '%s' is unavailable\n", sdl_audio_driver_name);
+            return FALSE;
+        }
+    }
+
+    memset(&spec, 0, sizeof spec);
+
+    spec.freq = ROMlib_SND_RATE;
+    spec.format = AUDIO_U8;
+    spec.channels = 1;
+    spec.samples = BUFSIZE;
+    spec.callback = sound_sdl_hunger_callback;
+    spec.userdata = NULL;
+
+#if !defined(HAS_OPENAUDIO_EX)
+#define SDL_OpenAudioEx(a, b, c, d) SDL_OpenAudio(a, b)
+#endif
+
+    if (SDL_OpenAudioEx(&spec, NULL, sdl_audio_driver_name, 0) < 0) {
+        if (!sdl_audio_driver_name || SDL_OpenAudioEx(&spec, NULL, NULL, 0) < 0) {
+            fprintf(stderr, "SDL_OpenAudio failed '%s'\n", SDL_GetError());
+            goto fail;
+        }
+    }
+
+    num_samples = spec.samples;
+    if (spec.samples != BUFSIZE / 2) {
+        if (spec.samples == BUFSIZE)
+            fprintf(stderr, "Got number of samples we asked for\n");
+        else if (spec.samples == 0 || spec.samples > BUFSIZE) {
+            fprintf(stderr, "Failing: Got %d samples, asked for %d\n", spec.samples, BUFSIZE);
+            goto fail;
+        }
+        else
+            fprintf(stderr, "Got %d samples\n", spec.samples);
+    }
+
+initialize_buffers:
+    memset(buf, 0x80, sizeof(buf));
+
+#if defined(__MINGW32__)
+    if (sem_init(&semid, 0, 0) < 0)
+        gui_fatal("Couldn't create sound semaphore.");
+#else
+    semid = semget(IPC_PRIVATE, 1, IPC_CREAT | IPC_EXCL | 0666);
+    if (semid < 0)
+        gui_fatal("Couldn't get semaphore.  Kernel needs to have System V IPC "
+                  "compiled in (CONFIG_SYSVIPC).  "
+                  "Until you recompile your kernel, try using the "
+                  "\"-nosound\" command line option.");
+#endif
+
+    audio_mutex = SDL_CreateMutex();
+    audio_ready = SDL_CreateCond();
+    audio_filled = SDL_CreateCond();
+    if (!audio_mutex || !audio_ready || !audio_filled)
+        gui_fatal("Couldn't create audio synchronization objects.");
+    audio_closing = FALSE;
+
+    my_callback = callback_install(sound_callback, NULL);
+    *(syn68k_addr_t*)SYN68K_TO_US(M68K_SOUND_VECTOR * 4) = CL(my_callback);
+
+    {
+#if !defined(__MINGW32__)
+        sigset_t all_signals, current_mask;
+#endif
+
+#if !defined(__MINGW32__)
+        sigfillset(&all_signals);
+        sigdelset(&all_signals, SIGIO);
+        sigprocmask(SIG_SETMASK, &all_signals, &current_mask);
+#endif
+        //    fprintf (stderr, "about to start thread\n");
+        sysret = pthread_create(&audio_thread, NULL, loop, NULL);
+#if !defined(__MINGW32__)
+        sigprocmask(SIG_SETMASK, &current_mask, 0);
+#endif
+    }
+    if (sysret != 0) {
+        sound_sdl_shutdown(s);
+        goto fail;
+    }
+    thread_started = TRUE;
+    if (test_output) {
+        if (pthread_create(&output_thread, NULL, test_output_loop, NULL)) {
+            sound_sdl_shutdown(s);
+            goto fail;
+        }
+        output_thread_started = TRUE;
+    }
+    atexit(sound_sdl_shutdown_at_exit);
+
+    /*patl_signal ();*/
+
+    have_sound_p = TRUE;
+
+    s->sound_init = sound_sdl_init;
+    s->sound_shutdown = sound_sdl_shutdown;
+    s->sound_works_p = sound_sdl_works_p;
+    s->sound_silent_p = sound_sdl_silent_p;
+    s->sound_hunger_finish = sound_sdl_hunger_finish;
+    s->sound_go = sound_sdl_go;
+    s->sound_stop = sound_sdl_stop;
+    s->sound_hunger_start = sound_sdl_hunger_start;
+    s->sound_get_hunger_info = sound_sdl_get_hunger_info;
+    s->sound_clear_pending = sound_sdl_clear_pending;
+
+    /* Success! */
+    return TRUE;
+
+fail:
+#warning TODO some sort of sdl shutdown
+    fprintf(stderr, "failure of some sort\n");
+    return FALSE;
+}

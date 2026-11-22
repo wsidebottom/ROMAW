@@ -1,0 +1,24 @@
+Motorola MC68040 Floating-Point Software Package
+==============================================
+
+These 42 files are unmodified copies from Linux v6.12, commit
+adc218676eef25575469234709c2d87185ca223a, arch/m68k/fpsp040:
+https://github.com/torvalds/linux/tree/adc218676eef25575469234709c2d87185ca223a/arch/m68k/fpsp040
+
+Every imported file was checked against its upstream Git blob hash.
+Motorola's complete copyright and permission notice is retained in README.
+The Linux Makefile and Linux-specific skeleton.S are not included.
+
+Executor's adapter/installer live in ../../src/runtime, with the image builder
+under ../../tools and integration tests under ../../tests, outside this directory.
+They assemble and relocate the original guest code; they do
+not replace the package's arithmetic with host floating-point functions.
+Generated objects, linked images and C includes belong in
+../../obj/src/runtime/generated; test outputs belong in ../../obj/tests/fpsp.
+
+Run bash syn68k/tests/check-core.sh fpsp from the workspace root. This needs
+m68k-linux-gnu GCC/binutils in addition to the normal Windows build tools.
+Executor installs the package in system memory after its final vector reset.
+Real exceptions are forwarded to the previous vector handlers. Motorola's notice
+is staged beside Executor under licenses/motorola-fpsp.txt.
+Passing the tests does not establish complete FPSP exception compatibility.

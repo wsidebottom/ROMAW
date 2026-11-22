@@ -1,0 +1,63 @@
+# +===================================================================
+#   File:      system-resource-restore.gdb.in
+#
+#   Summary:   Provides system resource restore.gdb debugger commands for regression tests and test fixtures.
+#
+#   Classes:   None.
+#
+#   Functions: Debugger command sequence; no exported functions.
+#
+#   Origin:    Existing repository source in executor/tests; original attribution and provenance comments are preserved
+#              below.
+#
+#   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+# ===================================================================+
+
+set pagination off
+set confirm off
+set print thread-events off
+break C_WaitNextEvent
+run "__APP__"
+set $sys = *(unsigned short *)(ROMlib_offset + 0xA58)
+set $sys = (short)(($sys >> 8) | ($sys << 8))
+call C_UseResFile($sys)
+call ROMlib_sdl_apply_window_position()
+call ROMlib_sdl_save_window_position()
+set $position=(int *)malloc(8)
+if (int)window_prefs_location($position,$position+1) == 0
+quit 1
+end
+if $position[0] != 100 || $position[1] != 100
+printf "WINDOW_LOCATION_NOT_RESTORED\n"
+quit 1
+end
+printf "WINDOW_LOCATION_RESTORED_OK\n"
+if (void *)C_Get1Resource(0x464f4e54,30000) == 0
+printf "FONT_SUITCASE_NOT_LOADED\n"
+quit 1
+end
+if (void *)C_Get1Resource(0x54737421,30001) != 0
+printf "NON_FONT_RESOURCE_IMPORTED\n"
+quit 1
+end
+printf "FONT_SUITCASE_FILTERING_OK\n"
+set $h=(void *)C_Get1Resource(0x54737421,30000)
+if $h == 0
+printf "MISSING_PREFERENCE_RESOURCE\n"
+quit 1
+end
+set $raw = *(unsigned int *)$h
+set $addr = (($raw & 255)<<24) | (($raw & 65280)<<8) | (($raw >> 8)&65280) | (($raw >>24)&255)
+set $data = (unsigned char *)(ROMlib_offset + $addr)
+if $data[0] != 1 || $data[1] != 2 || $data[2] != 3 || $data[3] != 4
+quit 1
+end
+printf "RESOURCE_PREFERENCES_RESTORED_OK\n"
+call C_RmveResource($h)
+call C_UpdateResFile($sys)
+set $err = *(unsigned short *)(ROMlib_offset + 0xA60)
+if $err != 0
+quit 1
+end
+printf "RESOURCE_PREFERENCES_REMOVED_OK\n"
+quit 0

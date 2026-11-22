@@ -1,0 +1,658 @@
+/*+===================================================================
+  File:      dialHandle.c
+
+  Summary:   Implements dial handle support for Macintosh Dialog Manager operations.
+
+  Classes:   None.
+
+  Functions: BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext, dialog_draw_item, get_item_style_info
+
+  Origin:    Existing repository source in executor/src/dialogs; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1986-1996 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+/* Forward declarations in DialogMgr.h (DO NOT DELETE THIS LINE) */
+
+/* HLock checked by ctm on Mon May 13 17:54:22 MDT 1991 */
+
+#include "rsys/common.h"
+#include "EventMgr.h"
+#include "DialogMgr.h"
+#include "ControlMgr.h"
+#include "MemoryMgr.h"
+#include "OSUtil.h"
+#include "ToolboxUtil.h"
+#include "ToolboxEvent.h"
+#include "Iconutil.h"
+#include "PrintMgr.h"
+#include "StdFilePkg.h"
+#include "FontMgr.h"
+
+#include "rsys/cquick.h"
+#include "rsys/ctl.h"
+#include "rsys/wind.h"
+#include "rsys/mman.h"
+#include "rsys/itm.h"
+#include "rsys/prefs.h"
+#include "rsys/pstuff.h"
+#include "rsys/stdfile.h"
+#include "rsys/print.h"
+#include "rsys/hook.h"
+#include "rsys/romaw.h"
+#include "rsys/osevent.h"
+
+static void dialog_track_cursor(DialogPeek dialog, Point point)
+{
+    bool editable = false;
+    const Handle items = DIALOG_ITEMS(dialog);
+    if (items && STARH(items)) {
+        const GrafPtr previous = thePort;
+        SetPort((GrafPtr)dialog);
+        GlobalToLocal(&point);
+        SetPort(previous);
+        point = (Point){CW(point.v), CW(point.h)};
+
+        const SignedByte flags = hlock_return_orig_state(items);
+        const INTEGER* count = (const INTEGER*)STARH(items);
+        itmp item = (itmp)(count + 1);
+        for (int i = CW(*count) + 1; i > 0; --i, BUMPIP(item)) {
+            if ((ITEM_TYPE(item) & (editText | itemDisable)) == editText && PtInRect(point, &item->itmr)) {
+                editable = true;
+                break;
+            }
+        }
+        HSetState(items, flags);
+    }
+
+    CursHandle beam = editable ? GetCursor(iBeamCursor) : NULL;
+    if (beam && STARH(beam))
+        SetCursor(STARH(beam));
+    else
+        InitCursor();
+}
+
+P3(PUBLIC pascal, BOOLEAN, ROMlib_myfilt, DialogPeek, dp, EventRecord*, evt, INTEGER*, ith) /* IMI-415 */
+{
+    const ROMlib_window_metadata* metadata = ROMlib_window_get_metadata((WindowPtr)dp);
+    const uint16 options = metadata ? metadata->dialog_options : 0;
+    if (options & ROMLIB_DIALOG_TRACKS_CURSOR)
+        dialog_track_cursor(dp, evt->where);
+
+    if (CW(evt->what) != keyDown)
+        return FALSE;
+    const Byte key = CL(evt->message) & 0xff;
+    const bool cancel = key == 0x1b || (key == '.' && (CW(evt->modifiers) & cmdKey));
+    const int16 number = cancel ? options & ROMLIB_DIALOG_CANCEL_ITEM : DIALOG_ADEF_ITEM(dp);
+    if (!number || (!cancel && key != '\r' && key != NUMPAD_ENTER))
+        return FALSE;
+
+    const Handle items = DIALOG_ITEMS(dp);
+    if (!items || !STARH(items))
+        return FALSE;
+    SignedByte flags;
+    const itmstr* item = ROMlib_dpnotoip(dp, number, &flags);
+    const ControlHandle control =
+        item && (ITEM_TYPE(item) & (ctrlItem | itemDisable)) == ctrlItem ? (ControlHandle)PPR(item->itmhand) : NULL;
+    const BOOLEAN pressed = control && STARH(control) && CTL_VIS(control) && CTL_HILITE(control) != INACTIVE;
+    if (pressed) {
+        const WriteWhenType when = ROMlib_when;
+        if (when != WriteNever)
+            ROMlib_WriteWhen(WriteInBltrgn);
+        HiliteControl(control, inButton);
+        Delay(5, NULL);
+        HiliteControl(control, 0);
+        ROMlib_WriteWhen(when);
+        *ith = CW(number);
+    }
+    HSetState(items, flags);
+    return pressed ? (BOOLEAN)-1 : FALSE;
+}
+
+#define DIALOGEVTS (mDownMask | mUpMask | keyDownMask | autoKeyMask | updateMask | activMask)
+
+typedef pascal BOOLEAN (*modalprocp)(DialogPtr dial, EventRecord* evtp, INTEGER* iht);
+
+#define CALLMODALPROC(dp, evtp, ip, fp2) ROMlib_CALLMODALPROC((dp), (evtp), (ip), (modalprocp)(fp2))
+
+static inline BOOLEAN ROMlib_CALLMODALPROC(DialogPtr dp, EventRecord* evtp, INTEGER* ip, modalprocp fp)
+{
+    BOOLEAN retval;
+
+    if (fp == (modalprocp)P_ROMlib_myfilt)
+        retval = C_ROMlib_myfilt((DialogPeek)dp, evtp, ip);
+    else if (fp == (modalprocp)P_ROMlib_stdffilt)
+        retval = C_ROMlib_stdffilt((DialogPeek)dp, evtp, ip);
+    else if (fp == (modalprocp)P_ROMlib_numsonlyfilterproc)
+        retval = C_ROMlib_numsonlyfilterproc((DialogPeek)dp, evtp, ip);
+    else if (fp == (modalprocp)P_ROMlib_stlfilterproc)
+        retval = C_ROMlib_stlfilterproc((DialogPeek)dp, evtp, ip);
+    else {
+        ROMlib_hook(dial_modalnumber);
+        HOOKSAVEREGS();
+        retval = CToPascalCall(fp, CTOP_ROMlib_myfilt, dp, evtp, ip);
+        HOOKRESTOREREGS();
+    }
+    return retval;
+}
+
+typedef pascal void (*useritemp)(WindowPtr wp, INTEGER item);
+
+#define CALLUSERITEM(dp, inum, temph) ROMlib_CALLUSERITEM(dp, inum, (useritemp)(temph))
+
+static inline void ROMlib_CALLUSERITEM(DialogPtr dp, INTEGER inum, useritemp temph)
+{
+    if (temph == (useritemp)P_ROMlib_filebox)
+        C_ROMlib_filebox((DialogPeek)dp, inum);
+    else if (temph == (useritemp)P_ROMlib_circle_ok)
+        C_ROMlib_circle_ok((DialogPeek)dp, inum);
+    else if (temph == (useritemp)P_ROMlib_orientation)
+        C_ROMlib_orientation((DialogPeek)dp, inum);
+    else {
+        ROMlib_hook(dial_usernumber);
+        CToPascalCall(temph, CTOP_ROMlib_filebox, dp, inum);
+    }
+}
+
+#define _FindWindow(pt, wp)             \
+    ({                                  \
+        HIDDEN_WindowPtr __wp;          \
+        int retval;                     \
+                                        \
+        retval = FindWindow(pt, &__wp); \
+        *(wp) = MR(HIDDEN_RAW(__wp));   \
+                                        \
+        retval;                         \
+    })
+
+P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
+   INTEGER*, item)
+{
+    /*
+   * The code used to save thePort and restore it at the end of the
+   * function, but CALLMODALPROC expects thePort to be unchanged which
+   * caused a bug in Macwrite II when size/fontsize... and clicking on
+   * a size on the left.
+   */
+
+    THEGDEVICE_SAVE_EXCURSION(MR(MainDevice), {
+        EventRecord evt;
+        DialogPeek dp;
+        HIDDEN_DialogPtr ndp;
+        TEHandle idle;
+        ProcPtr fp2;
+        Point whereunswapped;
+        boolean_t done;
+
+        dp = (DialogPeek)FrontWindow();
+        if (dp->window.windowKind != CWC(dialogKind) && CW(dp->window.windowKind) >= 0)
+            *item = CWC(-1);
+        else {
+            idle = (Cx(dp->editField) == -1) ? 0 : PPR(dp->textH);
+            if (fp)
+                fp2 = fp;
+            else
+                fp2 = (ProcPtr)P_ROMlib_myfilt;
+            for (done = FALSE; !done;) {
+                WindowPtr temp_wp;
+                boolean_t mousedown_p;
+                int mousedown_where;
+
+                if (idle)
+                    TEIdle(idle);
+                GetNextEvent(DIALOGEVTS, &evt);
+                whereunswapped.h = CW(evt.where.h);
+                whereunswapped.v = CW(evt.where.v);
+
+                mousedown_p = (CW(evt.what) == mouseDown);
+
+                /* dummy initializations to keep gcc happy */
+                temp_wp = NULL;
+                mousedown_where = inContent;
+
+                if (mousedown_p)
+                    mousedown_where = _FindWindow(whereunswapped, &temp_wp);
+
+                if (CALLMODALPROC((DialogPtr)dp, &evt, item, fp2)) {
+                    /* #### not sure what this means */
+                    /* above callpascal might need to be `& 0xF0' */
+
+                    done = TRUE;
+                    break;
+                }
+                else if (mousedown_p && mousedown_where != inMenuBar &&
+                         !(mousedown_where == inContent && temp_wp == (WindowPtr)dp))
+                    BEEP(1);
+                else {
+                    if (IsDialogEvent(&evt) && DialogSelect(&evt, &ndp, item))
+                        done = TRUE;
+                }
+            }
+        }
+    });
+}
+
+P1(PUBLIC pascal trap, BOOLEAN, IsDialogEvent, /* IMI-416 */
+   EventRecord*, evt)
+{
+    HIDDEN_WindowPtr wp;
+    DialogPeek dp;
+    Point p;
+
+    if (evt->what == CWC(activateEvt) || evt->what == CWC(updateEvt))
+        /*-->*/ return ((WindowPeek)MR(evt->message))->windowKind == CWC(dialogKind);
+    dp = (DialogPeek)FrontWindow();
+    if (dp && dp->window.windowKind == CWC(dialogKind)) {
+        if (dp->editField != -1)
+            TEIdle(PPR(dp->textH));
+        p.h = CW(evt->where.h);
+        p.v = CW(evt->where.v);
+        /*-->*/ return evt->what != CWC(mouseDown) ||
+            (FindWindow(p, &wp) == inContent && MR(HIDDEN_RAW(wp)) == (WindowPtr)dp);
+    }
+    return FALSE;
+}
+
+boolean_t get_item_style_info(DialogPtr dp, int item_no, uint16* flags_return, item_style_info_t* style_info)
+{
+    AuxWinHandle aux_win_h;
+
+    aux_win_h = HIDDEN_NATIVE(*lookup_aux_win(dp));
+    if (aux_win_h && PP_RAW(HxX(aux_win_h, dialogCItem))) {
+        Handle items_color_info_h;
+        item_color_info_t *items_color_info, *item_color_info;
+
+        items_color_info_h = HxP(aux_win_h, dialogCItem);
+        Size size = GetHandleSize(items_color_info_h);
+        items_color_info = (item_color_info_t*)STARH(items_color_info_h);
+        if (!items_color_info || item_no < 1 || item_no > size / (Size)sizeof *items_color_info)
+            return FALSE;
+
+        item_color_info = &items_color_info[item_no - 1];
+        if (item_color_info->data || item_color_info->offset) {
+            uint16 flags;
+            int style_info_offset;
+
+            flags = CW(item_color_info->data);
+            style_info_offset = CW(item_color_info->offset);
+            if (style_info_offset <= 0 || style_info_offset > size - (Size)sizeof *style_info)
+                return FALSE;
+
+            *style_info = *(item_style_info_t*)((char*)items_color_info + style_info_offset);
+            if (flags & doFontName) {
+                char* font_name;
+
+                int font_offset = CW(style_info->font);
+                if (font_offset < 0 || font_offset >= size)
+                    return FALSE;
+                font_name = (char*)items_color_info + font_offset;
+                if ((uint8)*font_name > size - font_offset - 1)
+                    return FALSE;
+                GetFNum((StringPtr)font_name, &style_info->font);
+            }
+
+            *flags_return = flags;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+void ROMlib_drawiptext(DialogPtr dp, itmp ip, int item_no)
+{
+    boolean_t restore_draw_state_p = FALSE;
+    draw_state_t draw_state;
+    uint16 flags;
+    item_style_info_t style_info;
+    Rect r;
+
+    if (get_item_style_info(dp, item_no, &flags, &style_info)) {
+        draw_state_save(&draw_state);
+        restore_draw_state_p = TRUE;
+
+        if (flags & TEdoFont)
+            TextFont(CW(style_info.font));
+        if (flags & TEdoFace)
+            TextFace(CB(style_info.face));
+        if (flags & TEdoSize)
+            TextSize(CW(style_info.size));
+        if (flags & TEdoColor)
+            RGBForeColor(&style_info.foreground);
+#if 1
+        /* NOTE: this code has been "#if 0"d out since it was first written,
+	 but testing on the Mac leads me to believe that this works properly.
+	 Perhaps we should only do this if we're pretending to be  running
+	 System 7, but other than that possibility, I don't see a downside
+	 to including this. */
+
+        if (flags & doBColor)
+            RGBBackColor(&style_info.background);
+#endif
+    }
+
+    r = ip->itmr;
+    if (CB(ip->itmtype) & statText) {
+        Handle nh;
+        LONGINT l;
+        char subsrc[2], *sp;
+        HIDDEN_Handle* hp;
+
+        *subsrc = '^';
+        sp = subsrc + 1;
+        nh = (Handle)PPR(ip->itmhand);
+
+        HandToHand(&nh);
+
+        for (*sp = '0', hp = (HIDDEN_Handle*)DAStrings_H; *sp != '4'; ++*sp, hp++) {
+            if (HIDDEN_RAW(*(hp))) {
+                for (l = 0; l >= 0; l = Munger(nh, l, (Ptr)subsrc, (LONGINT)2, STARH(STARH(hp)) + 1,
+                                               (LONGINT)(unsigned char)*STARH(STARH(hp))))
+                    ;
+            }
+        }
+        HLock(nh);
+        TextBox(STARH(nh), GetHandleSize(nh), &r, teFlushDefault);
+        HUnlock(nh);
+        DisposHandle(nh);
+    }
+    else if (CB(ip->itmtype) & editText) {
+        Handle text_h;
+
+        text_h = PPR(ip->itmhand);
+        LOCK_HANDLE_EXCURSION_1(text_h, { TextBox(STARH(text_h), GetHandleSize(text_h), &r, teFlushDefault); });
+
+        PORT_PEN_SIZE(thePort).h = PORT_PEN_SIZE(thePort).v = CWC(1);
+        InsetRect(&r, -3, -3);
+        FrameRect(&r);
+    }
+
+    if (restore_draw_state_p)
+        draw_state_restore(&draw_state);
+}
+
+void dialog_draw_item(DialogPtr dp, itmp itemp, int itemno)
+{
+    if (itemp->itmtype & ctrlItem) {
+        /* controls will already have been drawn */
+    }
+    else if (itemp->itmtype & (statText | editText)) {
+        Rect r;
+
+#warning This fix helps Energy Scheming, but we really should find out the
+#warning exact semantics for when we should try to draw items, different
+#warning item types may have different behaviors, we also might want to
+#warning look at visRgn and clipRgn.  BTW, we should also test to see
+#warning whether SectRect will really write to location 0
+
+        if (SectRect(&itemp->itmr, &dp->portRect, &r))
+            ROMlib_drawiptext(dp, itemp, itemno);
+    }
+    else if (itemp->itmtype & iconItem) {
+        Handle icon;
+
+        icon = PPR(itemp->itmhand);
+        if (CICON_P(icon))
+            PlotCIcon(&itemp->itmr, (CIconHandle)icon);
+        else
+            PlotIcon(&itemp->itmr, icon);
+    }
+    else if (itemp->itmtype & picItem) {
+        DrawPicture((PicHandle)PPR(itemp->itmhand), &itemp->itmr);
+    }
+    else {
+        Handle h;
+
+        /* useritem */
+        h = PPR(itemp->itmhand);
+        if (h)
+            CALLUSERITEM(dp, itemno, h);
+    }
+}
+
+/* #### look into having DrawDialog not draw stuff that can't be seen */
+
+P1(PUBLIC pascal trap, void, DrawDialog, DialogPtr, dp) /* IMI-418 */
+{
+    INTEGER *intp, i, inum;
+    itmp ip;
+    GrafPtr gp;
+    SignedByte state;
+
+    if (dp) {
+        gp = thePort;
+        SetPort((GrafPtr)dp);
+        if (Cx(((DialogPeek)dp)->editField) != -1)
+            TEDeactivate(PPR(((DialogPeek)dp)->textH));
+        DrawControls((WindowPtr)dp);
+        state = HGetState(PPR(((DialogPeek)dp)->items));
+        HSetState(PPR(((DialogPeek)dp)->items), state | LOCKBIT);
+        intp = (INTEGER*)STARH(PPR(((DialogPeek)dp)->items));
+        ip = (itmp)(intp + 1);
+        for (i = Cx(*intp), inum = 1; i-- >= 0; inum++, BUMPIP(ip)) {
+            dialog_draw_item(dp, ip, inum);
+        }
+        AuxWinHandle aux = HIDDEN_NATIVE(*lookup_aux_win((WindowPtr)dp));
+        if (aux && (Hx(aux, awFlags) & ROMlib_appearance_dialog_frame) && DIALOG_ADEF_ITEM(dp) > 0) {
+            INTEGER type;
+            HIDDEN_Handle handle;
+            Rect bounds;
+            GetDItem(dp, DIALOG_ADEF_ITEM(dp), &type, &handle, &bounds);
+            if ((CW(type) & ctrlItem) && HIDDEN_RAW(handle)) {
+                ControlHandle control = (ControlHandle)HIDDEN_NATIVE(handle);
+                if (CTL_VIS(control)) {
+                    draw_state_t saved;
+                    draw_state_save(&saved);
+                    bounds = CTL_RECT(control);
+                    InsetRect(&bounds, -4, -4);
+                    PenNormal();
+                    PenSize(3, 3);
+                    RGBForeColor(&ROMlib_black_rgb_color);
+                    ROMlib_frame_default_button(&bounds);
+                    draw_state_restore(&saved);
+                }
+            }
+        }
+        if (Cx(((DialogPeek)dp)->editField) != -1)
+            TEActivate(PPR(((DialogPeek)dp)->textH));
+        HSetState(PPR(((DialogPeek)dp)->items), state);
+        SetPort(gp);
+    }
+}
+
+P2(PUBLIC pascal trap, INTEGER, FindDItem, DialogPtr, dp, /* IMIV-60 */
+   Point, pt)
+{
+    INTEGER *intp, i, inum;
+    itmp ip;
+
+    intp = (INTEGER*)STARH(PPR(((DialogPeek)dp)->items));
+    ip = (itmp)(intp + 1);
+    for (i = Cx(*intp), inum = 0; i-- >= 0; inum++, BUMPIP(ip))
+        if (PtInRect(pt, &ip->itmr))
+            /*-->*/ return inum;
+    return -1;
+}
+
+P2(PUBLIC pascal trap, void, UpdtDialog, DialogPtr, dp, /* IMIV-60 */
+   RgnHandle, rgn)
+{
+    INTEGER *intp, i, inum;
+    itmp ip;
+    GrafPtr gp;
+    SignedByte state;
+    BOOLEAN draw_all_p;
+
+    gp = thePort;
+    SetPort((GrafPtr)dp);
+    ShowWindow((WindowPtr)dp);
+    DrawControls((WindowPtr)dp);
+    draw_all_p = !rgn || !STARH(rgn);
+    if (draw_all_p) {
+        fprintf(stderr, "trace: UpdtDialog drawing all items for empty update region rgn=%p\n", (void*)rgn);
+        fflush(stderr);
+    }
+    state = HGetState(PPR(((DialogPeek)dp)->items));
+    HSetState(PPR(((DialogPeek)dp)->items), state | LOCKBIT);
+    intp = (INTEGER*)STARH(PPR(((DialogPeek)dp)->items));
+    ip = (itmp)(intp + 1);
+    for (i = Cx(*intp), inum = 1; i-- >= 0; inum++, BUMPIP(ip)) {
+        if (draw_all_p || RectInRgn(&ip->itmr, rgn)) {
+            dialog_draw_item(dp, ip, inum);
+        }
+    }
+    HSetState(PPR(((DialogPeek)dp)->items), state);
+    SetPort(gp);
+}
+
+P3(PUBLIC pascal trap, BOOLEAN, DialogSelect, /* IMI-417 */
+   EventRecord*, evt, HIDDEN_DialogPtr*, dpp, INTEGER*, itemp)
+{
+    DialogPeek dp;
+    Byte c;
+    itmp ip;
+    INTEGER *intp, i, iend;
+    Point localp;
+    GrafPtr gp;
+    BOOLEAN itemenabled, retval;
+    SignedByte flags;
+
+    dp = (DialogPeek)FrontWindow();
+    retval = FALSE;
+    *itemp = CWC(-1);
+    switch (Cx(evt->what)) {
+    case mouseDown:
+        localp = evt->where;
+        gp = thePort;
+        SetPort((GrafPtr)dp);
+        GlobalToLocal(&localp);
+        localp.h = CW(localp.h);
+        localp.v = CW(localp.v);
+        SetPort(gp);
+        intp = (INTEGER*)STARH(PPR(dp->items));
+        iend = Cx(*intp) + 2;
+        ip = (itmp)(intp + 1);
+        for (i = 0; ++i != iend; BUMPIP(ip)) {
+            const Rect* bounds = &ip->itmr;
+            if (ip->itmtype & ctrlItem) {
+                ControlHandle control = (ControlHandle)PPR(ip->itmhand);
+                if (!control || !CTL_VIS(control))
+                    continue;
+                int kind = ROMlib_native_control_kind(control) & ~15;
+                if (kind == ROMlib_group_box_proc || kind == ROMlib_separator_proc ||
+                    (kind == ROMlib_tabs_proc && !TestControl(control, localp)))
+                    continue;
+                bounds = &CTL_RECT(control);
+            }
+            if (PtInRect(localp, bounds))
+                break;
+        }
+        if (i == iend)
+            break;
+        itemenabled = !(CB(ip->itmtype) & itemDisable);
+        if (CB(ip->itmtype) & editText) {
+            if (Cx(dp->editField) != i - 1)
+                ROMlib_dpntoteh(dp, i);
+            TEClick(localp, (Cx(evt->modifiers) & shiftKey) ? TRUE : FALSE, PPR(dp->textH));
+        }
+        else if (CB(ip->itmtype) & ctrlItem) {
+            ControlHandle c;
+
+            c = (ControlHandle)PPR(ip->itmhand);
+            if (CTL_HILITE(c) == INACTIVE || !TrackControl(c, localp, CTL_ACTION(c)))
+                break;
+        }
+        if (itemenabled) {
+            *itemp = CW(i);
+            retval = TRUE;
+            break;
+        }
+        break;
+    case keyDown:
+    case autoKey:
+        if (Cx(dp->editField) == -1)
+            break;
+        c = Cx(evt->message) & 0xff;
+        switch (c) {
+        case '\t':
+            ROMlib_dpntoteh(dp, 0);
+            TESetSelect((LONGINT)0, (LONGINT)32767, DIALOG_TEXTH(dp));
+            break;
+        default:
+            TEKey(c, DIALOG_TEXTH(dp));
+        }
+        *itemp = CW(CW(dp->editField) + 1);
+        ip = ROMlib_dpnotoip(dp, CW(*itemp), &flags);
+        if (ip)
+            retval = !(CB(ip->itmtype) & itemDisable);
+        else {
+            warning_unexpected("couldn't resolve editField -- dp = %p, "
+                               "CW (*itemp) = %d",
+                               dp, CW(*itemp));
+            retval = FALSE;
+        }
+        HSetState(PPR(((DialogPeek)dp)->items), flags);
+        break;
+    case updateEvt:
+        dp = (DialogPeek)MR(evt->message);
+        BeginUpdate((WindowPtr)dp);
+        DrawDialog((DialogPtr)dp);
+        if (dp->editField != -1)
+            TEUpdate(&dp->window.port.portRect, PPR(dp->textH));
+        EndUpdate((WindowPtr)dp);
+        break;
+    case activateEvt:
+        dp = (DialogPeek)MR(evt->message);
+        if (dp->editField != -1) {
+            if (Cx(evt->modifiers) & activeFlag)
+                TEActivate(PPR(dp->textH));
+            else
+                TEDeactivate(PPR(dp->textH));
+        }
+        break;
+    }
+    HIDDEN_RAW_SET(*(dpp), (DialogPtr)RM(dp));
+    return retval;
+}
+
+A1(PUBLIC, void, DlgCut, DialogPtr, dp) /* IMI-418 */
+{
+    if ((((DialogPeek)dp)->editField) != -1)
+        TECut(PPR(((DialogPeek)dp)->textH));
+}
+
+A1(PUBLIC, void, DlgCopy, DialogPtr, dp) /* IMI-418 */
+{
+    if ((((DialogPeek)dp)->editField) != -1)
+        TECopy(PPR(((DialogPeek)dp)->textH));
+}
+
+A1(PUBLIC, void, DlgPaste, DialogPtr, dp) /* IMI-418 */
+{
+    if ((((DialogPeek)dp)->editField) != -1)
+        TEPaste(PPR(((DialogPeek)dp)->textH));
+}
+
+A1(PUBLIC, void, DlgDelete, DialogPtr, dp) /* IMI-418 */
+{
+    if ((((DialogPeek)dp)->editField) != -1)
+        TEDelete(PPR(((DialogPeek)dp)->textH));
+}
+
+void BEEPER(INTEGER n)
+{
+    if (DABeeper) {
+        if ((pascal void (*)(INTEGER))MR(DABeeper) == P_ROMlib_mysound)
+            C_ROMlib_mysound((n));
+        else {
+            HOOKSAVEREGS();
+            ROMlib_hook(dial_soundprocnumber);
+            CToPascalCall((soundprocp)MR(DABeeper), CTOP_ROMlib_mysound, n);
+            HOOKRESTOREREGS();
+        }
+    }
+}

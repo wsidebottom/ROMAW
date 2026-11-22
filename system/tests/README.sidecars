@@ -1,0 +1,171 @@
+Host sidecar regression tests
+============================
+
+Absent forks
+------------
+
+Host catalogs accept resource/metadata-only files in ._name, %name,
+.AppleDouble/name and .finf/.rsrc layouts. Indexed enumeration and directory
+counts include these files once, using a valid companion as their catalog
+entry. Invalid/truncated AppleDouble files do not become orphan catalog entries.
+Opening an absent fork supplies empty read/seek semantics without creating its
+named host file. A nonzero write, SetEOF or allocation materializes it, preserving
+independent marks on other open references. Renaming/deleting an unmaterialized
+open fork returns fBsyErr; close it first.
+
+New files initially have only an empty data fork. Creating a file with no requested
+Finder type or creator uses the host entry's timestamps and creates no metadata
+sidecar. Explicit metadata or resource writes create their companions when needed.
+Existing resource-only files remain supported; when their data is first written,
+a proven empty metadata anchor may be retired. Nonempty FinderInfo, dates, unknown
+descriptors, ATTR data and resources are retained. Reading/opening ordinary data
+files does not create empty resource sidecars. Existing files are not swept or
+bulk converted.
+
+The focused Windows tests in the Existing coverage section include absent forks and first-write transitions.
+For an actual staged File Manager lifecycle test, generate a disposable GDB probe:
+
+  python system/tests/create-empty-fork-probe.py BUILD_DIRECTORY APPLICATION
+  gdb -batch -x BUILD_DIRECTORY/probe.gdb --args windows-binaries/bin/ROMAW.exe
+
+Run these commands on Windows with absolute BUILD_DIRECTORY and APPLICATION
+paths, using an application such as Browser that reaches WaitNextEvent. The probe
+checks all four formats, resource-only rename, data/resource preservation,
+duplicate creation and deletion. Use a new build directory for every run.
+
+The separately deployed Netatalk patch and its AFP locking exception are
+documented in tools/netatalk/README.md.
+
+Existing coverage
+-----------------
+
+After configuring the Windows build, run in WSL with Windows interop enabled:
+
+  bash system/tests/check-files.sh sidecar
+
+The test compiles the actual fileDouble.c implementation into a Windows
+executable, using CRT filesystem calls in place of ROMAW's host path
+wrappers. It creates disposable fixtures under the workspace build directory.
+No existing application files are modified.
+
+Coverage: per-file and per-directory Netatalk, BasiliskII/SheepShaver and OS X
+detection; compact 18-byte Finder records; raw resource forks at offset zero;
+16-byte AppleDouble Finder records; unordered descriptors; truncated tables;
+resource growth that preserves following metadata; and preserving the source
+sidecar convention for a rename or move into a different-style directory;
+moving/deleting companion pairs; and removing empty sidecar containers when
+deleting a Macintosh directory.
+
+The copy regression allocates a fresh AppleDouble resource fork, sets its EOF
+again before writing, and reopens its descriptor. It checks the physical file
+length, logical fork length and preserved seek position, then shrinks the fork.
+
+For integration testing, launch a copy of a Macintosh application whose
+metadata/resource forks are represented as .finf/name plus .rsrc/name, then
+repeat with ._name AppleDouble. Confirm Finder type/creator, resource loading,
+hidden sidecar entries, and no win_exception entries in stderr.txt.
+
+Existing companions are preferred in this order: .AppleDouble/name,
+.finf/name (or .rsrc/name), then ._name. New companions use the containing
+directory's convention, detected from .AppleDouble, .finf/.rsrc, valid ._*
+AppleDouble files, or .DS_Store. Unmarked directories retain ROMAW's
+configured convention (OS X ._name by default; -netatalk or -afpd selects
+.AppleDouble/name). Renames/moves preserve the individual file's format.
+
+Use tools/convert-appledouble.py APPS --backup BACKUP to migrate Netatalk
+and legacy percent sidecars to OS X naming. The tool validates descriptors,
+backs up every source, rejects conflicting targets and verifies exact bytes
+before removing sources. Directory .Parent metadata becomes the directory's
+sibling ._name, including ._Apps beside the Apps directory. It does not
+rename data forks or convert Basilisk raw companions. --replace-conflicts backs
+up conflicting OS X targets before using the source metadata.
+Run python3 system/tests/test-appledouble-conversion.py for migration fixtures.
+
+Tiger interoperability: AppleDouble permits FinderInfo after a resource fork,
+but OS X 10.4.11's GetAppleDoubleBulk crashes when FinderInfo is far beyond its
+initial metadata buffer. This was reproduced on the user's PowerPC Mac for
+Retro68's ROMAW Finder and the installed System file. A valid .DS_Store was
+not the cause. Put FinderInfo next to the descriptor table and resource data last:
+
+  python3 tools/normalize-appledouble.py SOURCE NEW_OUTPUT
+  python3 system/tests/test-appledouble-normalization.py
+
+The normalizer requires a new destination and emits exactly two descriptors:
+FinderInfo (ID 9, offset 50, 32 bytes), then resource fork (ID 2, offset 82).
+It validates all source extents/overlaps and preserves FinderInfo/resource data
+(16-byte FinderInfo is padded to 32). Legacy-only records such as names, comments
+and dates remain in the unchanged source/backup; they are not included in the
+native OS X output. Extended FinderInfo/ATTR layouts are rejected, since their
+embedded offsets need separate handling. The name-conversion tool above only
+renames sidecars; normalize its output separately for native OS X writing.
+
+ROMAW Finder's sidecar converter also supports modern FinderInfo/ATTR
+records (including com.apple.provenance). Unlike the standalone normalizer,
+it validates the bounded ATTR header, names and data extents, then relocates
+absolute offsets when rewriting the AppleDouble table. Attribute values stream
+without a 64-KiB payload limit and remain in OS X, percent and Netatalk output.
+Compact Basilisk/SheepShaver metadata cannot represent these attributes; its
+conversion retains the automatic recovery backup containing the original.
+Native sidecars tests cover relocation, large attributes, malformed offsets
+and compact-format recovery. The optional test argument accepts a copy of the
+reported empty-resource-fork specimen with FinderInfo at offset 50.
+Format reference: https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_xattr.c
+
+Netatalk adEA index/value companions exposed as literal `::EA` filenames
+(including SMB's U+F022 colon spelling) are auxiliary extended attributes,
+not AppleDouble resource forks. Conversion keeps these files in place and
+includes them in requested backups; it does not migrate them into ATTR.
+The native sidecars fixture accepts `--netatalk-ea APPLEDOUBLE_FILE` to test
+copies of the matching real-world index/value files without changing originals.
+
+Close every local/remote client using the files before replacing sidecars,
+including ResEdit/Classic over SMB. Keep verified original backups. Existing
+foreign-format forks remain readable by ROMAW; new ._ forks use the native
+two-entry layout, while Netatalk and Basilisk keep their own conventions.
+
+The classic Finder CMake build normalizes generated percent sidecars before
+staging. Both Apps/.DS_Store and Apps/System Folder/.DS_Store were valid and were
+not the source of the crashes. Tiger opened both folders after normalization.
+
+Read/copy success is insufficient: a writable Carbon Resource Manager save on
+10.4.11 damaged both tested multi-entry layouts and the resource-first two-entry
+layout. Only FinderInfo-first/resource-second survived. This reproduced in new,
+disposable fixtures, so cached handles were not the only issue. The source of
+Tiger's native two-entry xattr layout is Apple's xnu-792.25.20/bsd/vfs/vfs_xattr.c.
+
+Run the write/reopen/remove fixture on Tiger's Python 2.3:
+
+  ssh USER@MAC python - /path/to/disposable/SystemProbe < system/tests/tiger_resource_roundtrip.py
+
+First create a disposable SystemProbe data fork and ._SystemProbe from a known
+resource file. The script refuses other basenames and removes its test resource.
+Then compare every original resource payload with the resulting fork, rather
+than just counting resources. The System test retained all 35 types/297 resource
+payloads exactly after saving, reopening and removing the added resource.
+
+On 2026-10-23, 763 installed sidecars were backed up and normalized to the native
+layout. FinderInfo/resource payloads matched exactly; full originals, including
+legacy metadata, remain in build/tiger-native-sidecars-20261023-110240. The
+previously damaged System resource was recovered from the earlier verified
+backup. ROMAW Finder and all four installed accessory probes passed startup
+and close tests afterward.
+
+Resource-map EOF follow-up: UpdateResFile now truncates the resource fork at the
+written map's end after a successful write. Previously, shrinking/compaction left
+stale map/data bytes beyond the live map, which real Super ResEdit flagged.
+The repaired System retains all 297 resource payloads; only unused trailing bytes
+were removed. A trimmed test copy opened in Super ResEdit 2.1.3 without a damage
+warning. check-toolbox.sh resource-map compiles the actual implementation natively
+in WSL and covers truncation plus seek/write/truncate failures and invalid EOFs.
+The same fixture also passed as a Windows executable. A staged ROMAW GDB
+probe rewrote a deliberately oversized disposable fork, returned noErr, and
+reduced its logical length exactly to mapOffset + mapLength.
+
+Resource-fork deny opens
+-----------------------
+
+HFSDispatch selector 0x39 now opens a resource fork through OpenRFDeny instead
+of returning paramErr. It shares the existing OpenDeny permission mapping and
+parameter-block forwarding; this does not add stronger sharing-lock semantics.
+Run `bash system/tests/check-files.sh open-deny` for intercepted native tests.
+Active ROMAW tests do not build or launch the archived classic Finder.

@@ -1,0 +1,238 @@
+/*+===================================================================
+  File:      component_entries.h
+
+  Summary:   Adapts CarbonLib Component Manager calls to the shared component registry.
+
+  Classes:   None.
+
+  Functions: Private PowerPC frame adapters for the export registry.
+
+  Origin:    CarbonLib 1.4 InterfaceLib re-exports, Universal Interfaces 3.4.2
+             Components.h and Executor's classic Component Manager.
+
+  Copyright and Legal notices: See COPYING.
+===================================================================+*/
+
+#ifndef ROMAW_CARBON_COMPONENT_ENTRIES_H
+#define ROMAW_CARBON_COMPONENT_ENTRIES_H
+
+#include "rsys/component.h"
+
+static int carbon_component_call(ROMlib_carbon_ppc_frame* call, unsigned selector)
+{
+    const char* signature = ROMlib_component_signature(selector);
+    uint32_t arguments[6] = {0}, result;
+    for (unsigned index = 1; signature[index]; ++index) {
+        uint32_t word = call->words[index - 1];
+        arguments[index - 1] = signature[index] == '2' ? (uint16_t)word : word;
+    }
+    if (!ROMlib_component_service(selector, arguments, &result))
+        return 0;
+    switch (signature[0]) {
+    case '2':
+        call->words[0] = (int16_t)result;
+        break;
+    case '4':
+        call->words[0] = result;
+        break;
+    }
+    return 1;
+}
+
+#define CARBON_COMPONENT(name, selector)                                    \
+    static int carbon_component_##name(ROMlib_carbon_ppc_frame* call_frame) \
+    {                                                                       \
+        return carbon_component_call(call_frame, selector);                 \
+    }
+
+CARBON_COMPONENT(RegisterComponent, 1)
+CARBON_COMPONENT(UnregisterComponent, 2)
+CARBON_COMPONENT(CountComponents, 3)
+CARBON_COMPONENT(FindNextComponent, 4)
+CARBON_COMPONENT(GetComponentInfo, 5)
+CARBON_COMPONENT(GetComponentListModSeed, 6)
+CARBON_COMPONENT(OpenComponent, 7)
+CARBON_COMPONENT(CloseComponent, 8)
+CARBON_COMPONENT(GetComponentInstanceError, 10)
+CARBON_COMPONENT(SetComponentInstanceError, 11)
+CARBON_COMPONENT(GetComponentInstanceStorage, 12)
+CARBON_COMPONENT(SetComponentInstanceStorage, 13)
+CARBON_COMPONENT(GetComponentRefcon, 16)
+CARBON_COMPONENT(SetComponentRefcon, 17)
+CARBON_COMPONENT(RegisterComponentResource, 18)
+CARBON_COMPONENT(CountComponentInstances, 19)
+CARBON_COMPONENT(RegisterComponentResourceFile, 20)
+CARBON_COMPONENT(SetDefaultComponent, 30)
+CARBON_COMPONENT(OpenDefaultComponent, 33)
+CARBON_COMPONENT(OpenAComponent, 45)
+CARBON_COMPONENT(OpenADefaultComponent, 46)
+
+#undef CARBON_COMPONENT
+
+static int carbon_component_message(ROMlib_carbon_ppc_frame* call, int16_t selector, unsigned layout)
+{
+    /* Parameters appear in Pascal stack order, with the last argument first. */
+    _Alignas(16) unsigned char parameters[4 + sizeof call->words - sizeof call->words[0]] = {0};
+    const uint16_t guest_selector = CW(selector);
+    memcpy(parameters + 2, &guest_selector, 2);
+    unsigned count = 0;
+    for (unsigned spec = layout; spec; spec >>= 3)
+        ++count;
+    for (unsigned index = count; index; --index, layout >>= 3) {
+        uint32_t word = call->words[index];
+        const unsigned type = layout & 7;
+        const unsigned width = type == 1 ? 2 : type;
+        if (type == 1)
+            word = (word & 0xff) << 8;
+        unsigned end = 4 + parameters[1] + width;
+        parameters[1] += width;
+        for (unsigned byte = 0; byte < width; ++byte, word >>= 8)
+            parameters[--end] = (uint8_t)word;
+    }
+    call->words[0] = ROMlib_component_call(call->words[0], parameters);
+    return 1;
+}
+
+#define CARBON_COMPONENT_MESSAGE(name, selector, layout)                    \
+    static int carbon_component_##name(ROMlib_carbon_ppc_frame* call_frame) \
+    {                                                                       \
+        return carbon_component_message(call_frame, selector, layout);      \
+    }
+
+CARBON_COMPONENT_MESSAGE(CallComponentOpen, -1, 4)
+CARBON_COMPONENT_MESSAGE(CallComponentClose, -2, 4)
+CARBON_COMPONENT_MESSAGE(CallComponentCanDo, -3, 2)
+CARBON_COMPONENT_MESSAGE(CallComponentVersion, -4, 0)
+CARBON_COMPONENT_MESSAGE(CallComponentRegister, -5, 0)
+CARBON_COMPONENT_MESSAGE(CallComponentTarget, -6, 4)
+CARBON_COMPONENT_MESSAGE(CallComponentUnregister, -7, 0)
+CARBON_COMPONENT_MESSAGE(CallComponentGetMPWorkFunction, -8, 044)
+CARBON_COMPONENT_MESSAGE(CallComponentGetPublicResource, -10, 0424)
+CARBON_COMPONENT_MESSAGE(ComponentFunctionImplemented, -3, 2)
+CARBON_COMPONENT_MESSAGE(GetComponentVersion, -4, 0)
+CARBON_COMPONENT_MESSAGE(ComponentSetTarget, -6, 4)
+
+/* Internet Config places byte flags in the first byte of a two-byte Pascal slot. */
+#define CARBON_IC_MESSAGE(name, selector, layout) CARBON_COMPONENT_MESSAGE(name, selector, layout)
+CARBON_IC_MESSAGE(ICGetVersion, 0x32, 044)
+CARBON_IC_MESSAGE(ICGetConfigName, 0x23, 014)
+CARBON_IC_MESSAGE(ICGetSeed, 0x4, 04)
+CARBON_IC_MESSAGE(ICGetPerm, 0xd, 04)
+CARBON_IC_MESSAGE(ICBegin, 0x5, 01)
+CARBON_IC_MESSAGE(ICGetPref, 0x6, 04444)
+CARBON_IC_MESSAGE(ICSetPref, 0x7, 04444)
+CARBON_IC_MESSAGE(ICFindPrefHandle, 0x24, 0444)
+CARBON_IC_MESSAGE(ICGetPrefHandle, 0x1a, 0444)
+CARBON_IC_MESSAGE(ICSetPrefHandle, 0x1b, 0444)
+CARBON_IC_MESSAGE(ICCountPref, 0x8, 04)
+CARBON_IC_MESSAGE(ICGetIndPref, 0x9, 044)
+CARBON_IC_MESSAGE(ICDeletePref, 0xc, 04)
+CARBON_IC_MESSAGE(ICEnd, 0xa, 0)
+CARBON_IC_MESSAGE(ICGetDefaultPref, 0x31, 044)
+CARBON_IC_MESSAGE(ICEditPreferences, 0xf, 04)
+CARBON_IC_MESSAGE(ICLaunchURL, 0x11, 044444)
+CARBON_IC_MESSAGE(ICParseURL, 0x10, 0444444)
+CARBON_IC_MESSAGE(ICCreateGURLEvent, 0x33, 0444)
+CARBON_IC_MESSAGE(ICSendGURLEvent, 0x34, 04)
+CARBON_IC_MESSAGE(ICMapFilename, 0x18, 044)
+CARBON_IC_MESSAGE(ICMapTypeCreator, 0x19, 04444)
+CARBON_IC_MESSAGE(ICMapEntriesFilename, 0x1c, 0444)
+CARBON_IC_MESSAGE(ICMapEntriesTypeCreator, 0x1d, 044444)
+CARBON_IC_MESSAGE(ICCountMapEntries, 0x12, 044)
+CARBON_IC_MESSAGE(ICGetIndMapEntry, 0x13, 04444)
+CARBON_IC_MESSAGE(ICGetMapEntry, 0x14, 0444)
+CARBON_IC_MESSAGE(ICSetMapEntry, 0x15, 0444)
+CARBON_IC_MESSAGE(ICDeleteMapEntry, 0x16, 044)
+CARBON_IC_MESSAGE(ICAddMapEntry, 0x17, 044)
+CARBON_IC_MESSAGE(ICGetCurrentProfile, 0x25, 04)
+CARBON_IC_MESSAGE(ICSetCurrentProfile, 0x26, 04)
+CARBON_IC_MESSAGE(ICCountProfiles, 0x27, 04)
+CARBON_IC_MESSAGE(ICGetIndProfile, 0x28, 044)
+CARBON_IC_MESSAGE(ICGetProfileName, 0x29, 044)
+CARBON_IC_MESSAGE(ICSetProfileName, 0x2a, 044)
+CARBON_IC_MESSAGE(ICAddProfile, 0x2b, 044)
+CARBON_IC_MESSAGE(ICDeleteProfile, 0x2c, 04)
+#undef CARBON_IC_MESSAGE
+
+static int carbon_component_ICStart(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t output = call->words[0];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1)) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+    if (!cfp_write(output, 0))
+        return 0;
+    const uint32_t component[] = {TICK("PREF"), TICK("ICAp")};
+    uint32_t instance;
+    if (!ROMlib_component_service(33, component, &instance))
+        return 0;
+    if (!instance) {
+        ROMlib_carbon_reference saved;
+        if (ROMlib_carbon_probe_reference("CarbonLib", "ICStart", &saved))
+            return ROMlib_carbon_invoke_frame(saved.function, call);
+        call->words[0] = UINT32_C(0x80008001);
+        return 1;
+    }
+
+    if (!cfp_write(output, instance))
+        return 0;
+    ROMlib_carbon_ppc_frame message = {0};
+    message.words[0] = instance;
+    message.words[1] = call->words[1];
+    if (!carbon_component_message(&message, 0, 4))
+        return 0;
+    uint32_t result = message.words[0];
+    if (!result) {
+        _Alignas(32) uint32_t version = 0;
+        message.words[0] = instance;
+        message.words[1] = 0;
+        message.words[2] = US_TO_SYN68K(&version);
+        if (!carbon_component_message(&message, 0x32, 044))
+            return 0;
+        result = message.words[0];
+        if (result == UINT32_C(0x80008002)) {
+            message.words[0] = instance;
+            message.words[1] = 0;
+            message.words[2] = 0;
+            if (!carbon_component_message(&message, 2, 041))
+                return 0;
+            result = message.words[0];
+        }
+    }
+    if (result) {
+        uint32_t ignored;
+        ROMlib_component_service(8, &instance, &ignored);
+        if (!cfp_write(output, 0))
+            return 0;
+    }
+    call->words[0] = result;
+    return 1;
+}
+
+static int carbon_component_ICStop(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t instance = call->words[0];
+    uint32_t close_result;
+    if (!carbon_component_message(call, 1, 0) || !ROMlib_component_service(8, &instance, &close_result))
+        return 0;
+    if (!call->words[0])
+        call->words[0] = (int16_t)close_result;
+    return 1;
+}
+
+#undef CARBON_COMPONENT_MESSAGE
+
+static int carbon_component_DelegateComponentCall(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t address = call->words[0];
+    const unsigned char* parameters = address ? ROMlib_carbon_guest_memory(address, 4, 0) : NULL;
+    if (!parameters || (parameters[1] & 1) || !ROMlib_carbon_guest_memory(address, 4 + parameters[1], 0)) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+    call->words[0] = ROMlib_component_call(call->words[1], parameters);
+    return 1;
+}
+
+#endif

@@ -1,0 +1,99 @@
+# +===================================================================
+#   File:      itl2-sort-probe.gdb.in
+#
+#   Summary:   Provides itl2 sort probe.gdb debugger commands for regression tests and test fixtures.
+#
+#   Classes:   None.
+#
+#   Functions: Debugger command sequence; no exported functions.
+#
+#   Origin:    Existing repository source in executor/tests; original attribution and provenance comments are preserved
+#              below.
+#
+#   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+# ===================================================================+
+
+set pagination off
+set confirm off
+set print thread-events off
+set environment USERPROFILE @FIXTURE@
+break C_WaitNextEvent
+run @OPTIONS@ "@APPLICATION@"
+disable 1
+set $data=(unsigned char *)_NewPtr_flags(1024,1,1)
+python
+import gdb,struct
+mem=gdb.selected_inferior()
+base=int(gdb.parse_and_eval('ROMlib_offset'))
+data=int(gdb.parse_and_eval('$data'))
+def ptr(n): return '(void *)'+str(n)
+def call(s): return int(gdb.parse_and_eval(s))
+def action(s): gdb.execute('call '+s,to_string=True)
+binary=open('@FIXTURE@/hooks.bin','rb').read()
+h=call('(void *)_NewHandle_flags('+str(len(binary))+',0,0)')
+resource=int.from_bytes(mem.read_memory(h,4),'big')+base
+mem.write_memory(resource,binary)
+registers=int(gdb.parse_and_eval('(uintptr_t)&cpu_state.regs[0]'))
+register_size=int(gdb.parse_and_eval('sizeof(cpu_state.regs)'))
+flag_names=('ccnz','ccn','ccc','ccv','ccx')
+assert call('(int)syn68k_native_code_enabled()')==@NATIVE@
+native_before=int(gdb.parse_and_eval('syn68k_x64_executions'))
+def compare(a,b,projection=0,vernier=0,exit_mode=0,identity=False):
+ mem.write_memory(data,a)
+ mem.write_memory(data+256,b)
+ mem.write_memory(resource+512,struct.pack('>3H',projection,vernier,exit_mode))
+ mem.write_memory(resource+520,bytes(20))
+ saved=bytes(mem.read_memory(registers,register_size))
+ flags=tuple(int(gdb.parse_and_eval('cpu_state.'+name)) for name in flag_names)
+ state=call('(int)HGetState('+ptr(h)+')')
+ function='C_IUMagIDPString' if identity else 'C_IUMagPString'
+ result=call('(int)'+function+'('+ptr(data)+','+ptr(data+256)+','+str(len(a))+','+str(len(b))+','+ptr(h)+')')
+ assert bytes(mem.read_memory(registers,register_size))==saved,'guest register corruption'
+ assert tuple(int(gdb.parse_and_eval('cpu_state.'+name)) for name in flag_names)==flags,'guest flags corrupted'
+ assert call('(int)HGetState('+ptr(h)+')')==state,'resource lock not restored'
+ counters=struct.unpack('>5I',bytes(mem.read_memory(resource+520,20)))
+ assert counters[0]==1 and counters[4]==1,('init/exit',counters)
+ assert counters[1]>=2 and counters[3]>=2,('fetch/project',counters)
+ return result,counters
+assert compare(b'a',b'b',projection=1)[0]>0
+assert compare(b'a',b'b',projection=1,exit_mode=1)[0]<0
+assert compare(b'A',b'a',projection=2,identity=True)[0]==0
+result,counters=compare(b'A',b'a')
+assert result<0 and counters[2]==2,('default vernier',result,counters)
+assert compare(b'A',b'a',vernier=1)[0]>0
+assert compare(b'#',b'A')[0]>0,'fetch extension not honored'
+assert compare(bytes([0xae]),b'AE',identity=True)[0]==0,'ligature expansion'
+assert compare(bytes([0xae]),b'AE')[0]>0,'ligature ordering'
+saved=bytes(mem.read_memory(registers,register_size))
+mem.write_memory(data,b'a')
+mem.write_memory(data+256,b'b')
+mem.write_memory(resource+512,struct.pack('>3H',1,0,0))
+for index,value in ((0,1),(1,1),(8,data-base),(9,data+256-base),(10,h-base)):
+ gdb.execute('set variable cpu_state.regs['+str(index)+'].ul.n = '+str(value))
+action('CToPascalCall('+ptr(resource+384)+',0)')
+assert int(gdb.parse_and_eval('cpu_state.regs[0].sl.n'))>0,'68K Pack6 dispatch'
+mem.write_memory(registers,saved)
+host='@FIXTURE@/sort-@NATIVE@'
+path=(host[:2]+host[3:].replace('/',':')).encode('mac_roman')
+mem.write_memory(data,bytes([len(path)])+path)
+action('C_HCreateResFile(0,0,'+ptr(data)+')')
+assert call('(int)C_ResError()')==0
+ref=call('(int)C_HOpenResFile(0,0,'+ptr(data)+',3)')
+assert ref>0
+sort_id=call('(long)C_GetScript(0,20)')
+mem.write_memory(data+512,b'\0')
+action('C_AddResource('+ptr(h)+',0x69746c32,'+str(sort_id)+','+ptr(data+512)+')')
+assert call('(int)C_ResError()')==0
+assert call('(void *)C_GetResource(0x69746c32,'+str(sort_id)+')')==h
+resource=int.from_bytes(mem.read_memory(h,4),'big')+base
+mem.write_memory(resource+512,struct.pack('>3H',1,0,0))
+mem.write_memory(data,b'a')
+mem.write_memory(data+256,b'b')
+assert call('(int)C_IUTextOrder('+ptr(data)+','+ptr(data+256)+',1,1,0,0,0,0)')>0,'selected itl2 resource'
+if @NATIVE@:
+ assert int(gdb.parse_and_eval('syn68k_x64_executions'))>native_before,'no x64 execution'
+action('C_CloseResFile('+str(ref)+')')
+print('ITL2_GUEST_HOOKS_OK native=@NATIVE@',flush=True)
+end
+call DisposPtr($data)
+quit 0

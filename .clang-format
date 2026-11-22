@@ -1,0 +1,25 @@
+---
+# C++ Core Guidelines NL.4, NL.17, NL.18 and NL.20; shared C/C++ layout.
+BasedOnStyle: LLVM
+BreakBeforeBraces: Stroustrup
+IndentWidth: 4
+TabWidth: 8
+UseTab: Never
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+SeparateDefinitionBlocks: Always
+ColumnLimit: 120
+SortIncludes: Never
+IncludeBlocks: Preserve
+ReflowComments: false
+FixNamespaceComments: false
+BreakStringLiterals: false
+IndentPPDirectives: None
+AlignEscapedNewlines: Left
+InsertNewlineAtEOF: true
+LineEnding: LF

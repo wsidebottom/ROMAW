@@ -1,0 +1,137 @@
+/*+===================================================================
+  File:      atsu.h
+
+  Summary:   Declares the native ATSUI operations over CarbonLib guest records.
+
+  Classes:   None.
+
+  Functions: Declares the ATSUI frame dispatcher.
+
+  Origin:    CarbonLib 1.4 ATSUnicodeLib.CL and ATSGlue.CL fragments, and
+             Universal Interfaces 3.4.2 ATSUnicode.h.
+
+  Copyright and Legal notices: See COPYING.
+===================================================================+*/
+
+#ifndef ROMAW_CARBON_ATSU_H
+#define ROMAW_CARBON_ATSU_H
+
+#include "carbonlib.h"
+
+enum ats_operation {
+    ats_create_style,
+    ats_dispose_style,
+    ats_get_style_refcon,
+    ats_set_style_refcon,
+    ats_style_empty,
+    ats_set_attributes,
+    ats_get_feature,
+    ats_get_all_features,
+    ats_get_variation,
+    ats_get_all_variations,
+    ats_clone_style,
+    ats_compare_styles,
+    ats_copy_attributes,
+    ats_overwrite_attributes,
+    ats_underwrite_attributes,
+    ats_clear_style,
+    ats_get_attribute,
+    ats_get_attributes,
+    ats_clear_attributes,
+    ats_set_features,
+    ats_clear_features,
+    ats_set_variations,
+    ats_clear_variations,
+    ats_get_layout_refcon,
+    ats_set_layout_refcon,
+    ats_get_text_location,
+    ats_get_matching,
+    ats_set_matching,
+    ats_get_soft_breaks,
+    ats_get_fallbacks,
+    ats_set_fallbacks,
+    ats_create_layout,
+    ats_create_layout_pointer,
+    ats_create_layout_handle,
+    ats_copy_layout,
+    ats_dispose_layout,
+    ats_set_text_pointer,
+    ats_set_text_handle,
+    ats_copy_layout_controls,
+    ats_text_moved,
+    ats_set_run_style,
+    ats_get_run_style,
+    ats_set_layout_controls,
+    ats_get_layout_control,
+    ats_get_layout_controls,
+    ats_clear_layout_controls,
+    ats_set_line_controls,
+    ats_get_line_control,
+    ats_get_line_controls,
+    ats_clear_line_controls,
+    ats_set_soft_break,
+    ats_clear_soft_breaks,
+    ats_draw_text,
+    ats_get_text_highlight,
+    ats_measure_text,
+    ats_measure_text_image,
+    ats_fond_to_font,
+    ats_clear_layout_cache,
+    ats_idle,
+    ats_text_deleted,
+    ats_text_inserted,
+    ats_copy_line_controls,
+    ats_highlight,
+    ats_unhighlight,
+    ats_position_to_offset,
+    ats_offset_to_position,
+    ats_next_cursor,
+    ats_previous_cursor,
+    ats_right_cursor,
+    ats_left_cursor,
+    ats_break_line,
+    ats_load_glyph_vector,
+    ats_convert_characters,
+    ats_get_curve_paths,
+    ats_get_quadratic_paths,
+    ats_get_cubic_paths,
+    ats_copy_to_handle,
+    ats_paste_from_handle,
+    ats_continuous_attributes,
+    ats_match_fonts,
+    ats_draw_glyph_info,
+    ats_get_glyph_info,
+    ats_get_glyph_bounds,
+    ats_get_ideal_metrics,
+    ats_get_screen_metrics,
+    ats_baseline_deltas,
+    ats_get_style_group,
+    ats_dispose_style_group,
+    ats_get_style_index,
+    ats_get_native_curve,
+    ats_font_count,
+    ats_count_font_names,
+    ats_get_font_ids,
+    ats_font_to_fond,
+    ats_get_font_name,
+    ats_find_font_name,
+    ats_find_font,
+    ats_count_font_features,
+    ats_get_font_features,
+    ats_count_font_selectors,
+    ats_get_font_selectors,
+    ats_font_feature_name,
+    ats_count_font_tracking,
+    ats_get_font_tracking,
+    ats_count_font_variations,
+    ats_get_font_variation,
+    ats_font_variation_name,
+    ats_count_font_instances,
+    ats_get_font_instance,
+    ats_font_instance_name,
+};
+
+int ROMlib_carbon_atsu(enum ats_operation operation, const char* name, uint32_t reference_offset,
+                       ROMlib_carbon_ppc_frame* call);
+
+#endif

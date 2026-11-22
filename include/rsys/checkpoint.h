@@ -1,0 +1,49 @@
+/*+===================================================================
+  File:      checkpoint.h
+
+  Summary:   Declares checkpoint support for public and internal interfaces.
+
+  Classes:   None.
+
+  Functions: Interface declarations and inline definitions; see the declarations below.
+
+  Origin:    Existing repository source in executor/src/include/rsys; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+#if !defined(_CHECKPOINT_H_)
+#define _CHECKPOINT_H_
+
+/*
+ * Copyright 1997 by Abacus Research and Development, Inc.
+ * All rights reserved.
+ *
+ * $Id: checkpoint.h 63 2004-12-24 18:19:43Z ctm $
+ */
+
+#define CHECKPOINT_FILE "failure.txt"
+
+typedef struct {
+    boolean_t sound_fails;
+    boolean_t aspi_fails;
+    uint32 bad_macdrives;
+    uint32 bad_dosdrives;
+} checkpoint_t;
+
+typedef enum {
+    begin,
+    end,
+} checkpoint_option;
+
+extern checkpoint_t* checkpointp;
+
+extern checkpoint_t* checkpoint_init(void);
+extern void checkpoint_sound(checkpoint_t* cp, checkpoint_option option);
+extern void checkpoint_aspi(checkpoint_t* cp, checkpoint_option option);
+extern void checkpoint_macdrive(checkpoint_t* cp, checkpoint_option option, uint32 drive);
+extern void checkpoint_dosdrives(checkpoint_t* cp, checkpoint_option option, uint32 drive);
+extern void disable_checkpointing(void);
+
+#endif

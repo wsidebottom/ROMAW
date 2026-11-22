@@ -1,0 +1,110 @@
+/*+===================================================================
+  File:      soundopts.h
+
+  Summary:   Declares soundopts support for public and internal interfaces.
+
+  Classes:   None.
+
+  Functions: Interface declarations and inline definitions; see the declarations below.
+
+  Origin:    Existing repository source in executor/src/include/rsys; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+#if !defined(__RSYS_SOUNDOPTS__)
+#define __RSYS_SOUNDOPTS__
+
+#include "SoundMgr.h"
+#include "rsys/pstuff.h"
+/* to get extern for `ROMlib_PretendSound' */
+#include "rsys/prefs.h"
+
+typedef enum { soundoff, soundpretend, soundon } sound_t;
+
+#define ROMlib_outbuffer(buf, nsamp, rate, chanp) ROMlib_soundcomplete(chanp)
+#define ROMlib_callcompletion(chanp) ROMlib_soundcomplete(chanp)
+
+extern void ROMlib_soundcomplete(void* chanp);
+
+#define CHAN_ALLOC_FLAG (1 << 0)
+#define CHAN_BUSY_FLAG (1 << 1)
+#define CHAN_IMMEDIATE_FLAG (1 << 2)
+#define CHAN_CMDINPROG_FLAG (1 << 3)
+#define CHAN_DBINPROG_FLAG (1 << 4)
+#define CHAN_PAUSED_FLAG (1 << 5)
+#define CHAN_DISPOSING_FLAG (1 << 6)
+
+extern void ROMlib_MUTEX_CONDITION_CREATE(LONGINT* lp);
+extern void ROMlib_MUTEX_LOCK(LONGINT lp);
+extern void ROMlib_MUTEX_UNLOCK(LONGINT lp);
+extern void ROMlib_CONDITION_SIGNAL(LONGINT lp);
+extern void ROMlib_CONDITION_WAIT(LONGINT lp);
+extern void ROMlib_MUTEX_CONDITION_DESTROY(LONGINT lp);
+
+extern void C_sound_timer_handler(void);
+extern void clear_pending_sounds(void);
+
+/* patl stuff */
+
+extern HIDDEN_SndChannelPtr allchans;
+
+typedef uint64_t snd_time;
+
+#define SND_PROMOTE(x) (((snd_time)x) << (4 * sizeof(snd_time)))
+#define SND_DEMOTE(x) (((snd_time)x) >> (4 * sizeof(snd_time)))
+
+typedef LONGINT TimeL;
+
+typedef struct PACKED _ModifierStub {
+    struct _ModifierStub* nextStub;
+    ProcPtr code;
+    LONGINT userInfo;
+    TimeL count;
+    TimeL every;
+    SignedByte flags;
+    SignedByte hState;
+    snd_time current_start;
+    snd_time time;
+    uint8 prev_samp;
+    SndDoubleBufferHeader* dbhp;
+    int current_db;
+    uint16 amplitude;
+} ModifierStub, *ModifierStubPtr;
+
+extern BOOLEAN C_snth5(SndChannelPtr, SndCommand*, ModifierStubPtr);
+
+#define SND_CHAN_FIRSTMOD(c) ((ModifierStubPtr)PPR((c)->firstMod))
+#define SND_CHAN_CURRENT_START(c) (SND_CHAN_FIRSTMOD(c)->current_start)
+#define SND_CHAN_TIME(c) (SND_CHAN_FIRSTMOD(c)->time)
+#define SND_CHAN_PREV_SAMP(c) (SND_CHAN_FIRSTMOD(c)->prev_samp)
+#define SND_CHAN_CURRENT_DB(c) (SND_CHAN_FIRSTMOD(c)->current_db)
+#define SND_CHAN_DBHP(c) (SND_CHAN_FIRSTMOD(c)->dbhp)
+
+#define SND_CHAN_CMDINPROG_P(c) (SND_CHAN_FLAGS_X(c) & CWC(CHAN_CMDINPROG_FLAG))
+#define SND_CHAN_DBINPROG_P(c) (SND_CHAN_FLAGS_X(c) & CWC(CHAN_DBINPROG_FLAG))
+
+#if !defined(SDL)
+#define SND_RATE 22255
+#else
+extern int ROMlib_SND_RATE;
+#define SND_RATE ROMlib_SND_RATE
+#endif
+
+struct hunger_info {
+    snd_time t2;        /* Time of earliest sample which can be provided */
+    snd_time t3;        /* Time of latest sample which must be provided */
+    snd_time t4;        /* Time of latest sample which can be provided */
+    unsigned char* buf; /* NULL means there is no buffer; just "pretend" */
+    int bufsize;        /* to fill it in; (!buf && bufsize) is possible! */
+};
+
+extern syn68k_addr_t sound_callback(syn68k_addr_t, void*);
+
+extern boolean_t sound_disabled_p;
+extern INTEGER ROMlib_sysbeep_state;
+
+extern int ROMlib_get_snd_cmds(Handle sndh, SndCommand** cmdsp);
+
+#endif /* !defined(__RSYS_SOUNDOPTS__) */

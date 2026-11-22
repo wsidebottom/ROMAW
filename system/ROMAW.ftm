@@ -1,0 +1,300 @@
+1ST,,TEXT,ttxt,x,x,"Text Readme",host
+669,,6669,SNPL,x,x,"669 MOD Music",host
+8MED,,STrk,SCPL,x,x,"Amiga OctaMed music",host
+8SVX,,8SVX,SCPL,x,x,"Amiga 8-bit sound",host
+A,,TEXT,ttxt,x,x,"Assembly Source",host
+AIF,,AIFF,SCPL,x,x,"AIFF Sound",host
+AIFC,,AIFC,SCPL,x,x,"AIFF Sound Compressed",host
+AIFF,,AIFF,SCPL,x,x,"AIFF Sound",host
+AL,,ALAW,SCPL,x,x,"ALAW Sound",host
+ANI,,ANIi,GKON,x,x,"Animated NeoChrome",host
+APD,,TEXT,ALD3,x,x,"Aldus Printer Description",host
+ARC,,mArc,SITx,x,x,"PC ARChive",host
+ARJ,,BINA,DArj,x,x,"ARJ Archive",host
+ARR,,ARR ,GKON,x,x,"Amber ARR image",host
+ART,,ART ,GKON,x,x,"First Publisher",host
+ASC,,TEXT,ttxt,x,x,"ASCII Text",host
+ASCII,,TEXT,ttxt,x,x,"ASCII Text",host
+ASF,,ASF_,Ms01,x,x,"Netshow Player",host
+ASM,,TEXT,ttxt,x,x,"Assembly Source",host
+ASX,,ASX_,Ms01,x,x,"Netshow Player",host
+AU,,ULAW,TVOD,x,x,"Sun Sound",host
+AVI,,VfW ,TVOD,x,x,"AVI Movie",host
+BAR,,BARF,S691,x,x,"Unix BAR Archive",host
+BAS,,TEXT,ttxt,x,x,"BASIC Source",host
+BAT,,TEXT,ttxt,x,x,"MS-DOS Batch File",host
+BGA,,BMPp,ogle,x,x,"OS/2 Bitmap",host
+BIB,,TEXT,ttxt,x,x,"BibTex Bibliography",host
+BINARY,,BINA,hDmp,x,x,"Untyped Binary Data",host
+BMP,,BMPp,ogle,x,x,"Windows Bitmap",host
+BOO,,TEXT,ttxt,x,x,"BOO encoded",host
+BST,,TEXT,ttxt,x,x,"BibTex Style",host
+BW,,SGI ,GKON,x,x,"SGI Image",host
+C,,TEXT,CWIE,x,x,"C Source",host
+CGM,,CGMm,GKON,x,x,"Computer Graphics Meta",host
+CLASS,,Clss,CWIE,x,x,"Java Class File",host
+CLP,,CLPp,GKON,x,x,"Windows Clipboard",host
+CMD,,TEXT,ttxt,x,x,"OS/2 Batch File",host
+COM,,PCFA,SWIN,x,x,"MS-DOS Executable",host
+CP,,TEXT,CWIE,x,x,"C++ Source",host
+CPP,,TEXT,CWIE,x,x,"C++ Source",host
+CPT,,PACT,SITx,x,x,"Compact Pro Archive",host
+CSV,,TEXT,XCEL,x,x,"Comma Separated Vars",host
+CT,,..CT,GKON,x,x,"Scitex-CT",host
+CUT,,Halo,GKON,x,x,"Dr Halo Image",host
+CVS,,drw2,DAD2,x,x,"Canvas Drawing",host
+DBF,,COMP,FOX+,x,x,"DBase Document",host
+DCX,,DCXx,GKON,x,x,"Some PCX Images",host
+DIF,,TEXT,XCEL,x,x,"Data Interchange Format",host
+DIZ,,TEXT,R*Ch,x,x,"BBS Descriptive Text",host
+DL,,DL  ,AnVw,x,x,"DL Animation",host
+DLL,,PCFL,SWIN,x,x,"Windows DLL",host
+DOC,,WDBN,MSWD,x,x,"Word Document",host
+DOT,,sDBN,MSWD,x,x,"Word for Windows Template",host
+DVI,,ODVI,xdvi,x,x,"TeX DVI Document",host
+DWT,,TEXT,DmWr,x,x,"Dreamweaver Template",host
+DXF,,TEXT,SWVL,x,x,"AutoCAD 3D Data",host
+EPS,,EPSF,vgrd,x,x,"Postscript",host
+EPSF,,EPSF,vgrd,x,x,"Postscript",host
+ETX,,TEXT,ezVu,x,x,"SEText",host
+EVY,,EVYD,ENVY,x,x,"Envoy Document",host
+EXE,,PCFA,SWIN,x,x,"MS-DOS Executable",host
+FAQ,,TEXT,ttxt,x,x,"ASCII Text",host
+FIT,,FITS,GKON,x,x,"Flexible Image Transport",host
+FLA,,SPA ,MFL2,x,x,"Flash source",host
+FLC,,FLI ,TVOD,x,x,"FLIC Animation",host
+FLI,,FLI ,TVOD,x,x,"FLI Animation",host
+FM,,FMPR,FMPR,x,x,"FileMaker Pro Database",host
+FOR,,TEXT,MPS ,x,x,"Fortran Source",host
+FTS,,FITS,GKON,x,x,"Flexible Image Transport",host
+GEM,,GEM-,GKON,x,x,"GEM Metafile",host
+GIF,,GIFf,ogle,x,x,"GIF Picture",host
+GL,,GL  ,AnVw,x,x,"GL Animation",host
+GRP,,GRPp,GKON,x,x,"GRP Image",host
+GZ,,SIT!,SITx,x,x,"Gnu ZIP Archive",host
+H,,TEXT,CWIE,x,x,"C Include File",host
+HCOM,,FSSD,SCPL,x,x,"SoundEdit Sound ex SOX",host
+HP,,TEXT,CWIE,x,x,"C Include File",host
+HPGL,,HPGL,GKON,x,x,"HP GL/2",host
+HPP,,TEXT,CWIE,x,x,"C Include File",host
+HQX,,TEXT,SITx,x,x,"BinHex",host
+HTM,,TEXT,MOSS,x,x,"HyperText",host
+HTML,,TEXT,MOSS,x,x,"HyperText",host
+I3,,TEXT,R*ch,x,x,"Modula 3 Interface",host
+IC1,,IMAG,GKON,x,x,"Atari Image",host
+IC2,,IMAG,GKON,x,x,"Atari Image",host
+IC3,,IMAG,GKON,x,x,"Atari Image",host
+ICN,,ICO ,GKON,x,x,"Windows Icon",host
+ICO,,ICO ,GKON,x,x,"Windows Icon",host
+IEF,,IEF ,GKON,x,x,"IEF image",host
+IFF,,ILBM,GKON,x,x,"Amiga IFF Image",host
+ILBM,,ILBM,GKON,x,x,"Amiga ILBM Image",host
+IMAGE,,DDim,ddsk,x,x,"Apple DiskCopy Image",host
+IMG,,IMGg,GKON,x,x,"GEM bit image/XIMG",host
+INI,,TEXT,ttxt,x,x,"Windows INI File",host
+JAVA,,TEXT,CWIE,x,x,"Java Source File",host
+JFIF,,JPEG,ogle,x,x,"JFIF Image",host
+LATEX,,TEXT,OTEX,x,x,"Latex",host
+LBM,,ILBM,GKON,x,x,"Amiga IFF Image",host
+LHA,,LHA ,SITx,x,x,"LHArc Archive",host
+LZH,,LHA ,SITx,x,x,"LHArc Archive",host
+M1A,,MPEG,TVOD,x,x,"MPEG-1 audiostream",host
+M1S,,MPEG,TVOD,x,x,"MPEG-1 systemstream",host
+M1V,,M1V ,TVOD,x,x,"MPEG-1 IPB videostream",host
+M2,,TEXT,R*ch,x,x,"Modula 2 Source",host
+M2V,,MPG2,MPG2,x,x,"MPEG-2 IPB videostream",host
+M3,,TEXT,R*ch,x,x,"Modula 3 Source",host
+MAC,,PICT,ogle,x,x,"PICT Picture",host
+MAK,,TEXT,R*ch,x,x,"Makefile",host
+MCW,,WDBN,MSWD,x,x,"Mac Word Document",host
+ME,,TEXT,ttxt,x,x,"Text Readme",host
+MED,,STrk,SCPL,x,x,"Amiga MED Sound",host
+MF,,TEXT,*MF*,x,x,"Metafont",host
+MID,,Midi,TVOD,x,x,"MIDI Music",host
+MIDI,,Midi,TVOD,x,x,"MIDI Music",host
+MIF,,TEXT,Fram,x,x,"FrameMaker MIF",host
+MIME,,TEXT,SITx,x,x,"MIME Message",host
+ML,,TEXT,R*ch,x,x,"ML Source",host
+MOD,,STrk,SCPL,x,x,"MOD Music",host
+MOL,,TEXT,RSML,x,x,"MDL Molfile",host
+MOOV,,MooV,TVOD,x,x,"QuickTime Movie",host
+MOV,,MooV,TVOD,x,x,"QuickTime Movie",host
+MP2,,MPEG,TVOD,x,x,"MPEG-1 audiostream",host
+MP3,,MPG3,TVOD,x,x,"MPEG-3 audiostream",host
+MPA,,MPEG,TVOD,x,x,"MPEG-1 audiostream",host
+MPE,,MPEG,TVOD,x,x,"MPEG Movie of some sort",host
+MPEG,,MPEG,TVOD,x,x,"MPEG Movie of some sort",host
+MPG,,MPEG,TVOD,x,x,"MPEG Movie of some sort",host
+MSP,,MSPp,GKON,x,x,"Microsoft Paint",host
+MTM,,MTM ,SNPL,x,x,"MultiMOD Music",host
+MW,,MW2D,MWII,x,x,"MacWrite Document",host
+MWII,,MW2D,MWII,x,x,"MacWrite Document",host
+NEO,,NeoC,GKON,x,x,"Atari NeoChrome",host
+NFO,,TEXT,ttxt,x,x,"Info Text",host
+NST,,STrk,SCPL,x,x,"MOD Music",host
+OBJ,,PCFL,SWIN,x,x,"Object (DOS/Windows)",host
+ODA,,ODIF,ODA ,x,x,"ODA Document",host
+OKT,,OKTA,SCPL,x,x,"Oktalyser MOD Music",host
+OUT,,BINA,hDmp,x,x,"Output File",host
+OVL,,PCFL,SWIN,x,x,"Overlay (DOS/Windows)",host
+P,,TEXT,CWIE,x,x,"Pascal Source",host
+PAC,,STAD,GKON,x,x,"Atari STAD Image",host
+PAS,,TEXT,CWIE,x,x,"Pascal Source",host
+PBM,,PPGM,GKON,x,x,"Portable Bitmap",host
+PC1,,Dega,GKON,x,x,"Atari Degas Image",host
+PC2,,Dega,GKON,x,x,"Atari Degas Image",host
+PC3,,Dega,GKON,x,x,"Atari Degas Image",host
+PCS,,PICS,GKON,x,x,"Animated PICTs",host
+PCT,,PICT,ogle,x,x,"PICT Picture",host
+PCX,,PCXx,GKON,x,x,"PC PaintBrush",host
+PDB,,TEXT,RSML,x,x,"Brookhaven PDB file",host
+PDF,,PDF ,CARO,x,x,"Portable Document Format",host
+PDX,,TEXT,ALD5,x,x,"Printer Description",host
+PF,,CSIT,SITx,x,x,"Private File",host
+PGM,,PPGM,GKON,x,x,"Portable Graymap",host
+PI1,,Dega,GKON,x,x,"Atari Degas Image",host
+PI2,,Dega,GKON,x,x,"Atari Degas Image",host
+PI3,,Dega,GKON,x,x,"Atari Degas Image",host
+PIC,,PICT,ogle,x,x,"PICT Picture",host
+PICT,,PICT,ogle,x,x,"PICT Picture",host
+PIT,,PIT ,SITx,x,x,"PackIt Archive",host
+PKG,,HBSF,SITx,x,x,"AppleLink Package",host
+PL,,TEXT,McPL,x,x,"Perl Source",host
+PLT,,HPGL,GKON,x,x,"HP GL/2",host
+PM,,PMpm,GKON,x,x,"Bitmap from xv",host
+PM3,,ALB3,ALD3,x,x,"PageMaker 3 Document",host
+PM4,,ALB4,ALD4,x,x,"PageMaker 4 Document",host
+PM5,,ALB5,ALD5,x,x,"PageMaker 5 Document",host
+PNG,,PNG ,ogle,x,x,"Portable Network Graphic",host
+PNTG,,PNTG,ogle,x,x,"Macintosh Painting",host
+PPD,,TEXT,ALD5,x,x,"Printer Description",host
+PPM,,PPGM,GKON,x,x,"Portable Pixmap",host
+PRN,,TEXT,R*ch,x,x,"Printer Output File",host
+PS,,TEXT,vgrd,x,x,"PostScript",host
+PSD,,8BPS,8BIM,x,x,"PhotoShop Document",host
+PT4,,ALT4,ALD4,x,x,"PageMaker 4 Template",host
+PT5,,ALT5,ALD5,x,x,"PageMaker 5 Template",host
+PXR,,PXR ,8BIM,x,x,"Pixar Image",host
+QDV,,QDVf,GKON,x,x,"QDV image",host
+QT,,MooV,TVOD,x,x,"QuickTime Movie",host
+QXD,,XDOC,XPR3,x,x,"QuarkXpress Document",host
+QXT,,XTMP,XPR3,x,x,"QuarkXpress Template",host
+RAW,,BINA,GKON,x,x,"Raw Image",host
+README,,TEXT,ttxt,x,x,"Text Readme",host
+RGB,,SGI ,GKON,x,x,"SGI Image",host
+RGBA,,SGI ,GKON,x,x,"SGI Image",host
+RIB,,TEXT,RINI,x,x,"Renderman 3D Data",host
+RIF,,RIFF,GKON,x,x,"RIFF Graphic",host
+RLE,,RLE ,GKON,x,x,"RLE image",host
+RME,,TEXT,ttxt,x,x,"Text Readme",host
+RPL,,FRL!,REP!,x,x,"Replica Document",host
+RSC,,rsrc,RSED,x,x,"Resource File",host
+RSRC,,rsrc,RSED,x,x,"Resource File",host
+RTF,,TEXT,MSWD,x,x,"Rich Text Format",host
+RTX,,TEXT,R*ch,x,x,"Rich Text",host
+S3M,,S3M ,SNPL,x,x,"ScreamTracker 3 MOD",host
+SCC,,MSX ,GKON,x,x,"MSX pitcure",host
+SCG,,RIX3,GKON,x,x,"ColoRIX",host
+SCI,,RIX3,GKON,x,x,"ColoRIX",host
+SCP,,RIX3,GKON,x,x,"ColoRIX",host
+SCR,,RIX3,GKON,x,x,"ColoRIX",host
+SCU,,RIX3,GKON,x,x,"ColoRIX",host
+SEA,,APPL,????,x,x,"Self-Extracting Archive",host
+SF,,IRCM,SDHK,x,x,"IRCAM Sound",host
+SGI,,.SGI,ogle,x,x,"SGI Image",host
+SHA,,TEXT,UnSh,x,x,"Unix Shell Archive",host
+SHAR,,TEXT,UnSh,x,x,"Unix Shell Archive",host
+SHP,,SHPp,GKON,x,x,"Printmaster Icon Library",host
+SIT,,SIT!,SITx,x,x,"StuffIt 1.5.1 Archive",host
+SITHQX,,TEXT,SITx,x,x,"BinHexed StuffIt Archive",host
+SIX,,SIXE,GKON,x,x,"SIXEL image",host
+SLK,,TEXT,XCEL,x,x,"SYLK Spreadsheet",host
+SND,,BINA,SCPL,x,x,"Sound of various types",host
+SPC,,Spec,GKON,x,x,"Atari Spectrum 512",host
+SR,,SUNn,GKON,x,x,"Sun Raster Image",host
+STY,,TEXT,*TEX,x,x,"TeX Style",host
+SUN,,SUNn,GKON,x,x,"Sun Raster Image",host
+SUP,,SCRN,GKON,x,x,"StartupScreen",host
+SVX,,8SVX,SCPL,x,x,"Amiga IFF Sound",host
+SYK,,TEXT,XCEL,x,x,"SYLK Spreadsheet",host
+SYLK,,TEXT,XCEL,x,x,"SYLK Spreadsheet",host
+TARGA,,TPIC,GKON,x,x,"Truevision Image",host
+TAZ,,ZIVU,SITx,x,x,"Compressed Tape ARchive",host
+TEX,,TEXT,OTEX,x,x,"TeX Document",host
+TEXI,,TEXT,OTEX,x,x,"TeX Document",host
+TEXINFO,,TEXT,OTEX,x,x,"TeX Document",host
+TEXT,,TEXT,ttxt,x,x,"ASCII Text",host
+TGA,,TPIC,GKON,x,x,"Truevision Image",host
+TGZ,,Gzip,SITx,x,x,"Gnu ZIPed Tape ARchive",host
+TIF,,TIFF,ogle,x,x,"TIFF Picture",host
+TIFF,,TIFF,ogle,x,x,"TIFF Picture",host
+TNY,,TINY,GKON,x,x,"Atari TINY Bitmap",host
+TSV,,TEXT,XCEL,x,x,"Tab Separated Values",host
+TX8,,TEXT,ttxt,x,x,"8-bit ASCII Text",host
+TXT,,TEXT,ttxt,x,x,"ASCII Text",host
+UL,,ULAW,TVOD,x,x,"Mu-Law Sound",host
+URL,,AURL,Arch,x,x,"URL Bookmark",host
+UU,,TEXT,SITx,x,x,"UUEncode",host
+UUE,,TEXT,SITx,x,x,"UUEncode",host
+VFF,,VFFf,GKON,x,x,"DESR VFF Greyscale Image",host
+VGA,,BMPp,ogle,x,x,"OS/2 Bitmap",host
+VOC,,VOC ,SCPL,x,x,"VOC Sound",host
+W51,,.WP5,WPC2,x,x,"WordPerfect PC 5.1 Doc",host
+WAV,,WAVE,TVOD,x,x,"Windows WAV Sound",host
+WK1,,XLBN,XCEL,x,x,"Lotus Spreadsheet r2.1",host
+WKS,,XLBN,XCEL,x,x,"Lotus Spreadsheet r1.x",host
+WMF,,WMF ,GKON,x,x,"Windows Metafile",host
+WP,,.WP5,WPC2,x,x,"WordPerfect PC 5.1 Doc",host
+WP4,,.WP4,WPC2,x,x,"WordPerfect PC 4.2 Doc",host
+WP5,,.WP5,WPC2,x,x,"WordPerfect PC 5.x Doc",host
+WP6,,.WP6,WPC2,x,x,"WordPerfect PC 6.x Doc",host
+WPG,,WPGf,GKON,x,x,"WordPerfect Graphic",host
+WPM,,WPD1,WPC2,x,x,"WordPerfect Mac",host
+WRI,,WDBN,MSWD,x,x,"MS Write/Windows",host
+WVE,,BINA,SCPL,x,x,"PSION sound",host
+X10,,XWDd,GKON,x,x,"X-Windows Dump",host
+X11,,XWDd,GKON,x,x,"X-Windows Dump",host
+XBM,,XBM ,GKON,x,x,"X-Windows Bitmap",host
+XL,,XLS ,XCEL,x,x,"Excel Spreadsheet",host
+XLC,,XLC ,XCEL,x,x,"Excel Chart",host
+XLM,,XLM ,XCEL,x,x,"Excel Macro",host
+XLS,,XLS ,XCEL,x,x,"Excel Spreadsheet",host
+XLW,,XLW ,XCEL,x,x,"Excel Workspace",host
+XM,,XM  ,SNPL,x,x,"FastTracker MOD Music",host
+XPM,,XPM ,GKON,x,x,"X-Windows Pixmap",host
+XWD,,XWDd,GKON,x,x,"X-Windows Dump",host
+Z,,ZIVU,SITx,x,x,"Unix Compress Archive",host
+ZOO,,Zoo ,Booz,x,x,"Zoo Archive",host
+BLD,,BLD ,GKON,x,x,"BLD",host
+BUM,,.bMp,GKON,x,x,"QuickTime Importer(QuickDraw)",host
+CEL,,CEL ,GKON,x,x,"KISS CEL",host
+CUR,,CUR ,GKON,x,x,"Windows Cursor",host
+CWJ,,CWSS,cwkj,x,x,"ClarisWorks Document",host
+DAT,,TCLl,GKON,x,x,"TCL image",host
+HR,,TR80,GKON,x,x,"TSR-80 HR",host
+ISS,,ISS ,GKON,x,x,"ISS",host
+JIF,,JIFf,GKON,x,x,"JIF99a",host
+LWF,,lwfF,GKON,x,x,"LuraWave(LWF)",host
+MBM,,MBM ,GKON,x,x,"PSION 5(MBM)",host
+NGG,,NGGC,GKON,x,x,"Mobile Phone(Nokia)Format",host
+NOL,,NOL ,GKON,x,x,"Mobile Phone(Nokia)Format",host
+PAL,,8BCT,8BIM,x,x,"Color Table",host
+PGC,,PGCF,GKON,x,x,"PGC/PGF Atari Portfolio PCG",host
+PICS,,PICS,GKON,x,x,"PICS-PICT Sequence",host
+SWF,,SWFL,SWF2,x,x,"Flash",host
+VPB,,VPB ,GKON,x,x,"VPB QUANTEL",host
+WBMP,,WBMP,GKON,x,x,"WBMP",host
+X-FACE,,TEXT,GKON,x,x,"X-Face",host
+ISO,,iImg,CDr3,x,x,"ISO Disk Image",host
+CDR,,iImg,CDr3,x,x,"ISO Disk Image",host
+DSK,,dimg,ddsk,x,x,"Apple DiskCopy Image",host
+TOAST,,GImg,CDr3,x,x,"Toast Disk Image",host
+BIN,,SIT!,SITx,x,x,"MacBinary",host
+XLSX,,XLSX,XCEL,x,x,"Excel Spreadsheet",host
+HFV,,hdrv,ddsk,x,x,"HFS Image",host
+TAR,,TARF,TAR ,x,x,"Unix Tape ARchive",host
+RAR,,RAR ,uRAR,x,x,"RAR Archive",host
+ZIP,,ZIP ,IZip,x,x,"PC ZIP Archive",host
+JPE,,JPEG,JVWR,x,x,"JPEG Picture",host
+JPEG,,JPEG,JVWR,x,x,"JPEG Picture",host
+JPG,,JPEG,JVWR,x,x,"JPEG Picture",host

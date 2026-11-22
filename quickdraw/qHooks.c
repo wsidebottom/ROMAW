@@ -1,0 +1,238 @@
+/*+===================================================================
+  File:      qHooks.c
+
+  Summary:   Implements q hooks support for Macintosh QuickDraw graphics.
+
+  Classes:   None.
+
+  Functions: ROMlib_CALLARC, ROMlib_CALLBITS, ROMlib_CALLCOMMENT, ROMlib_CALLLINE, ROMlib_CALLOVAL, ROMlib_CALLPOLY,
+             ROMlib_CALLRECT, ROMlib_CALLRGN, ROMlib_CALLRRECT, ROMlib_CALLTEXT, ROMlib_CALLTXMEAS, ROMlib_PICWRITE,
+             disable_stdtext, enable_stdtext
+
+  Origin:    Existing repository source in executor/src/quickdraw; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1994 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+#include "rsys/common.h"
+#include "QuickDraw.h"
+#include "rsys/quick.h"
+#include "rsys/hook.h"
+#include "rsys/print.h"
+#include "rsys/options.h"
+
+PRIVATE boolean_t text_is_enabled_p = TRUE;
+
+PUBLIC void disable_stdtext(void)
+{
+    if (ROMlib_options & ROMLIB_TEXT_DISABLE_BIT)
+        text_is_enabled_p = FALSE;
+}
+
+PUBLIC void enable_stdtext(void)
+{
+    text_is_enabled_p = TRUE;
+}
+
+void ROMlib_CALLTEXT(INTEGER bc, Ptr bufp, Point num, Point den)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(INTEGER, Ptr, Point, Point);
+
+    if (text_is_enabled_p) {
+        if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->textProc)) != P_StdText) {
+            ROMlib_hook(q_textprocnumber);
+            HOOKSAVEREGS();
+            CToPascalCall(pp, CTOP_StdText, bc, bufp, num, den);
+            HOOKRESTOREREGS();
+        }
+        else
+            C_StdText(bc, bufp, num, den);
+    }
+}
+
+void ROMlib_CALLLINE(Point p)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(Point);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->lineProc)) != P_StdLine) {
+        ROMlib_hook(q_lineprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdLine, p);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdLine(p);
+}
+
+void ROMlib_CALLRECT(GrafVerb v, Rect* rp)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, Rect*);
+
+    fprintf(stderr, "trace: ROMlib_CALLRECT v=%d rp=%p (%d,%d,%d,%d) port=%p gp=%p P_StdRect=%p\n", v, (void*)rp,
+            rp ? CW(rp->top) : 0, rp ? CW(rp->left) : 0, rp ? CW(rp->bottom) : 0, rp ? CW(rp->right) : 0,
+            (void*)thePort, thePort ? (void*)PPR(thePort->grafProcs) : NULL, (void*)P_StdRect);
+    fflush(stderr);
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->rectProc)) != P_StdRect) {
+        fprintf(stderr, "trace: ROMlib_CALLRECT patched pp=%p begin\n", (void*)pp);
+        fflush(stderr);
+        ROMlib_hook(q_rectprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdRect, v, rp);
+        HOOKRESTOREREGS();
+        fprintf(stderr, "trace: ROMlib_CALLRECT patched complete\n");
+        fflush(stderr);
+    }
+    else {
+        fprintf(stderr, "trace: ROMlib_CALLRECT native begin\n");
+        fflush(stderr);
+        C_StdRect(v, rp);
+        fprintf(stderr, "trace: ROMlib_CALLRECT native complete\n");
+        fflush(stderr);
+    }
+}
+
+void ROMlib_CALLOVAL(GrafVerb v, Rect* rp)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, Rect*);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->ovalProc)) != P_StdOval) {
+        ROMlib_hook(q_ovalprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdOval, v, rp);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdOval(v, rp);
+}
+
+void ROMlib_CALLRRECT(GrafVerb v, Rect* rp, INTEGER ow, INTEGER oh)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, Rect*, INTEGER, INTEGER);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->rRectProc)) != P_StdRRect) {
+        ROMlib_hook(q_rrectprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdRRect, v, rp, ow, oh);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdRRect(v, rp, ow, oh);
+}
+
+void ROMlib_CALLARC(GrafVerb v, Rect* rp, INTEGER starta, INTEGER arca)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, Rect*, INTEGER, INTEGER);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->arcProc)) != P_StdArc) {
+        ROMlib_hook(q_arcprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdArc, v, rp, starta, arca);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdArc(v, rp, starta, arca);
+}
+
+void ROMlib_CALLRGN(GrafVerb v, RgnHandle rh)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, RgnHandle);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->rgnProc)) != P_StdRgn) {
+        ROMlib_hook(q_rgnprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdRgn, v, rh);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdRgn(v, rh);
+}
+
+void ROMlib_CALLPOLY(GrafVerb v, PolyHandle rh)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(GrafVerb, PolyHandle);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->polyProc)) != P_StdPoly) {
+        ROMlib_hook(q_polyprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdPoly, v, rh);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdPoly(v, rh);
+}
+
+void ROMlib_CALLBITS(BitMap* bmp, const Rect* srcrp, const Rect* dstrp, INTEGER mode, RgnHandle maskrh)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(BitMap*, Rect*, Rect*, INTEGER, RgnHandle);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->bitsProc)) != P_StdBits) {
+        ROMlib_hook(q_bitsprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdBits, bmp, srcrp, dstrp, mode, maskrh);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdBits(bmp, srcrp, dstrp, mode, maskrh);
+}
+
+void ROMlib_CALLCOMMENT(INTEGER kind, INTEGER size, Handle datah)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(INTEGER, INTEGER, Handle);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->commentProc)) != P_StdComment) {
+        ROMlib_hook(q_commentprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdComment, kind, size, datah);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdComment(kind, size, datah);
+}
+
+INTEGER
+ROMlib_CALLTXMEAS(INTEGER bc, Ptr bufp, Point* nump, Point* denp, FontInfo* fip)
+{
+    QDProcsPtr gp;
+    pascal trap INTEGER (*pp)(INTEGER, Ptr, Point*, Point*, FontInfo*);
+    INTEGER retval;
+
+    if (thePort && (gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->txMeasProc)) != P_StdTxMeas) {
+        ROMlib_hook(q_txmeasprocnumber);
+        HOOKSAVEREGS();
+        retval = CToPascalCall(pp, CTOP_StdTxMeas, bc, bufp, nump, denp, fip);
+        HOOKRESTOREREGS();
+    }
+    else
+        retval = C_StdTxMeas(bc, bufp, nump, denp, fip);
+    return retval;
+}
+
+void ROMlib_PICWRITE(Ptr addr, INTEGER count)
+{
+    QDProcsPtr gp;
+    pascal trap void (*pp)(Ptr, INTEGER);
+
+    if ((gp = PPR(thePort->grafProcs)) && (pp = PPR(gp->putPicProc)) != P_StdPutPic) {
+        ROMlib_hook(q_putpicprocnumber);
+        HOOKSAVEREGS();
+        CToPascalCall(pp, CTOP_StdPutPic, addr, count);
+        HOOKRESTOREREGS();
+    }
+    else
+        C_StdPutPic(addr, count);
+}

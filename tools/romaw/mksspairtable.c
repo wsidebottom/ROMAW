@@ -1,0 +1,54 @@
+/*+===================================================================
+  File:      mksspairtable.c
+
+  Summary:   Implements mksspairtable support for development and source-generation tools.
+
+  Classes:   None.
+
+  Functions: main
+
+  Origin:    Existing repository source in executor/src/tools; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1994, 1995 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+#include <stdio.h>
+
+/*
+ * This program builds the table taht BitMapToRegion uses to map a byte
+ * of bitmap into start stop pairs.
+ * 
+ * The first 256 entries are for when the preceeding character did not have
+ * the low bit (bit 0) set.  The next 256 wntries are for when the preceeding
+ * character did have bit 0 set.  Each entry is an arrray of up to 9 elements
+ * that represent all the state changes +1 with 0 as a sentinel.
+ */
+
+int main(void)
+{
+    int lowbit, i, j, value, curbit;
+
+    printf("static unsigned char sspairtable[256*2][9] = {\n");
+    for (lowbit = 0; lowbit < 2; ++lowbit) {
+        for (i = 0; i < 256; i++) {
+            printf("    {");
+            value = i;
+            curbit = lowbit << 7;
+            for (j = 0; j < 8; ++j) {
+                if ((value & 0x80) != curbit) {
+                    printf(" %d,", j + 1);
+                    curbit ^= 0x80;
+                }
+                value <<= 1;
+            }
+            printf("},\n");
+        }
+    }
+    printf("};\n");
+    return 0;
+}

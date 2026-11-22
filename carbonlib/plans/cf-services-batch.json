@@ -1,0 +1,1628 @@
+{
+  "status": "validated_staged",
+  "baseline_main_exports": 655,
+  "scope": "100 remaining functional CoreFoundation entry bodies; placeholders and unimplemented runtime workers remain separate work",
+  "entries": [
+    {
+      "name": "CFAbsoluteTimeAddGregorianUnits",
+      "code_offset": 146652,
+      "main_import": 407,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeAddGregorianUnits",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 10,
+      "result": "double",
+      "abi_notes": "Timezone r5, five unit integers r6..r10, seconds stack words 8/9; native month normalization and day clamp before addition. Preserves reference fused hour/minute operation order.",
+      "remaining_workers": [
+        "non-null timezone/exception/nonfinite or overflowing calendar fallback"
+      ]
+    },
+    {
+      "name": "CFAbsoluteTimeGetDayOfWeek",
+      "code_offset": 147808,
+      "main_import": 268,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeGetDayOfWeek",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Absolute time f1 occupies r3/r4; timezone r5. Native integer Gregorian calendar; week-of-year preserves the reference early-January constant-53 behavior.",
+      "remaining_workers": [
+        "non-null timezone/exception/extreme-input fallback"
+      ]
+    },
+    {
+      "name": "CFAbsoluteTimeGetDayOfYear",
+      "code_offset": 148008,
+      "main_import": 425,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeGetDayOfYear",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Absolute time f1 occupies r3/r4; timezone r5. Native integer Gregorian calendar; week-of-year preserves the reference early-January constant-53 behavior.",
+      "remaining_workers": [
+        "non-null timezone/exception/extreme-input fallback"
+      ]
+    },
+    {
+      "name": "CFAbsoluteTimeGetDifferenceAsGregorianUnits",
+      "code_offset": 147256,
+      "main_import": 414,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeGetDifferenceAsGregorianUnits",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 7,
+      "result": "hidden Gregorian units",
+      "abi_notes": "Hidden 28-byte result; f1/f2 consume four parameter words; timezone r8 and flags r9. Native reference estimate/advance algorithm, unit flags and fused calendar addition. Bounded nonprogress and overflowing calendars preserve fallback before output publication.",
+      "remaining_workers": [
+        "non-null timezone/exception/extreme/nonprogress fallback"
+      ]
+    },
+    {
+      "name": "CFAbsoluteTimeGetGregorianDate",
+      "code_offset": 146244,
+      "main_import": 209,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeGetGregorianDate",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "hidden Gregorian struct",
+      "abi_notes": "Hidden result r3; double f1 consumes r4/r5; timezone r6. Native Gregorian decomposition, modulo arithmetic and packed 16-byte result.",
+      "remaining_workers": [
+        "non-null timezone/exception/extreme-input fallback"
+      ]
+    },
+    {
+      "name": "CFAbsoluteTimeGetWeekOfYear",
+      "code_offset": 148148,
+      "main_import": 27,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAbsoluteTimeGetWeekOfYear",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Absolute time f1 occupies r3/r4; timezone r5. Native integer Gregorian calendar; week-of-year preserves the reference early-January constant-53 behavior.",
+      "remaining_workers": [
+        "non-null timezone/exception/extreme-input fallback"
+      ]
+    },
+    {
+      "name": "CFBSearch",
+      "code_offset": 106788,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBSearch",
+      "source": "src/cfx_algorithms.c",
+      "abi": "PPC full frame",
+      "argument_words": 6,
+      "result": "word",
+      "abi_notes": "Key, element size, base, count, comparator, context. Short arrays compare in descending index order. Larger arrays reverse the low endpoint comparison and then search with descending powers of two.",
+      "remaining_workers": []
+    },
+    {
+      "name": "CFCharacterSetCompact",
+      "code_offset": 217236,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCharacterSetCompact",
+      "source": "src/cfx_charsets.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "void",
+      "abi_notes": "Native 65536-bit scan, compact run/single representation and reference summary masks. Host snapshot is never exposed to PPC; replacement allocation completes before publishing. Allocation failure preserves old representation.",
+      "remaining_workers": [
+        "Initialized reference bit-mask table at TOC+0x3964; allocator callbacks"
+      ]
+    },
+    {
+      "name": "CFCharacterSetFast",
+      "code_offset": 217832,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCharacterSetFast",
+      "source": "src/cfx_charsets.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "void",
+      "abi_notes": "Only reference compact form 0x40 is converted. Publishes allocated guest bitmap and clears inversion bit 0x8; allocation/callback failures retain prior storage.",
+      "remaining_workers": [
+        "Real representation-to-bitmap worker 0x2fbf4; allocator callbacks"
+      ]
+    },
+    {
+      "name": "CFCopyTypeIDDescription",
+      "code_offset": 340896,
+      "main_import": 148,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCopyTypeIDDescription",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "string construction and live class registry"
+      ]
+    },
+    {
+      "name": "CFDateCreate",
+      "code_offset": 144420,
+      "main_import": 423,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFDateCreate",
+      "source": "src/cfx_values.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Allocator in r3, absolute time raw IEEE bits in f1; no host FP conversion.",
+      "remaining_workers": [
+        "initialized native CF runtime allocation and class callbacks"
+      ]
+    },
+    {
+      "name": "CFGregorianDateGetAbsoluteTime",
+      "code_offset": 145956,
+      "main_import": 40,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFGregorianDateGetAbsoluteTime",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "double",
+      "abi_notes": "Four-word by-value Gregorian struct and timezone r7; native integer Gregorian day calculation and PPC-ordered arithmetic. Non-null timezones, nonfinite/extreme values and enabled exceptions preserve reference fallback.",
+      "remaining_workers": [
+        "Native PPC arithmetic; non-null timezone/exception/extreme-input reference fallback"
+      ]
+    },
+    {
+      "name": "CFGregorianDateIsValid",
+      "code_offset": 145688,
+      "main_import": 437,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFGregorianDateIsValid",
+      "source": "src/cfx_dates.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Gregorian struct by value in four GPR words, flags fifth word ignored by reference. Ordered comparisons preserve the reference NaN result/status; enabled exceptions retain complete-frame fallback.",
+      "remaining_workers": [
+        "Native PPC SoftFloat arithmetic; enabled-exception frame fallback"
+      ]
+    },
+    {
+      "name": "CFHashBytes",
+      "code_offset": 108600,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFHashBytes",
+      "source": "src/cfx_algorithms.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "ELF/PJW byte hash with unsigned wrap; nonpositive CFIndex length produces zero.",
+      "remaining_workers": []
+    },
+    {
+      "name": "CFLog",
+      "code_offset": 263164,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFLog",
+      "source": "src/cfx_logs.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "void",
+      "abi_notes": "Native process-prefix caching and variadic message orchestration; caller-owned argument homes preserve trailing PPC parameters and FP formatting state.",
+      "remaining_workers": [
+        "Native Process Manager; native format/show entries; real renderer and printf worker"
+      ]
+    },
+    {
+      "name": "CFMergeSortArray",
+      "code_offset": 321848,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFMergeSortArray",
+      "source": "src/cfx_algorithms.c",
+      "abi": "PPC full frame",
+      "argument_words": 6,
+      "result": "void",
+      "abi_notes": "Private 1.4 ABI: incoming r6 is ignored; comparator/context come from r7/r8 before the worker tail call.",
+      "remaining_workers": []
+    },
+    {
+      "name": "CFQSortArray",
+      "code_offset": 321888,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFQSortArray",
+      "source": "src/cfx_algorithms.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "void",
+      "abi_notes": "Comparator/context in r6/r7. Stable native merge ordering is valid for the quick-sort API; equal ordering is unspecified.",
+      "remaining_workers": []
+    },
+    {
+      "name": "CFShow",
+      "code_offset": 261816,
+      "main_import": 358,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFShow",
+      "source": "src/cfx_logs.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "void",
+      "abi_notes": "Native description selection and chunked UTF-16 diagnostic output; preserves U+FFFF iterator terminator and ASCII/escaped output formats.",
+      "remaining_workers": [
+        "Formatting description worker 0x537fc; description callbacks; reference fprintf import 0x58568 and stderr storage"
+      ]
+    },
+    {
+      "name": "CFShowStr",
+      "code_offset": 262448,
+      "main_import": 330,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFShowStr",
+      "source": "src/cfx_logs.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "void",
+      "abi_notes": "Native string-layout diagnostic fields; original printf formats and allocator/data/deallocator information preserved.",
+      "remaining_workers": [
+        "String length/cache worker; deallocator-slot helpers 0x35414/0x35434; printf import 0x584e8"
+      ]
+    },
+    {
+      "name": "CFStringAppendFormat",
+      "code_offset": 252084,
+      "main_import": 372,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringAppendFormat",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "void",
+      "abi_notes": "Variadic words r6..r10 are homed at caller r1+36; later words are already contiguous.",
+      "remaining_workers": [
+        "private format scanner/renderer 0x3ee90"
+      ]
+    },
+    {
+      "name": "CFStringAppendFormatAndArguments",
+      "code_offset": 257620,
+      "main_import": 234,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringAppendFormatAndArguments",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "void",
+      "abi_notes": "",
+      "remaining_workers": [
+        "private format scanner/renderer 0x3ee90"
+      ]
+    },
+    {
+      "name": "CFStringCreateWithFormat",
+      "code_offset": 227984,
+      "main_import": 230,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringCreateWithFormat",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Variadic GPR homes preserve integer, pointer and promoted floating argument words.",
+      "remaining_workers": [
+        "native format-create auxiliary entry; original private format scanner"
+      ]
+    },
+    {
+      "name": "CFStringCreateWithFormatAndArguments",
+      "code_offset": 227740,
+      "main_import": 220,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringCreateWithFormatAndArguments",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native format-create auxiliary entry; original private format scanner"
+      ]
+    },
+    {
+      "name": "CFStringFileSystemEncoding",
+      "code_offset": 218624,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringFileSystemEncoding",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native system encoding query; original TEC converter registry"
+      ]
+    },
+    {
+      "name": "CFStringGetDoubleValue",
+      "code_offset": 249976,
+      "main_import": 45,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringGetDoubleValue",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "double",
+      "abi_notes": "",
+      "remaining_workers": [
+        "private decimal scanner 0x42fb0; string inline-buffer refill workers"
+      ]
+    },
+    {
+      "name": "CFURLCreateDataAndPropertiesFromResource",
+      "code_offset": 17808,
+      "main_import": 81,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLCreateDataAndPropertiesFromResource",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 6,
+      "result": "word",
+      "abi_notes": "Native file-scheme validation, byte read and CFData ownership transfer. Read and property failures preserve reference error codes and independent outputs.",
+      "remaining_workers": [
+        "Native File Manager byte reader; resource properties worker 0x3f04; CFData constructor"
+      ]
+    },
+    {
+      "name": "CFURLCreatePropertyFromResource",
+      "code_offset": 18092,
+      "main_import": 146,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLCreatePropertyFromResource",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "Native single-property array request and retained dictionary lookup; releases request and property dictionary on every path.",
+      "remaining_workers": [
+        "Native data/property orchestration; resource properties worker 0x3f04"
+      ]
+    },
+    {
+      "name": "CFURLCreateStringByAddingPercentEscapes",
+      "code_offset": 23788,
+      "main_import": 231,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLCreateStringByAddingPercentEscapes",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Native public entry/context ABI; the shared percent-escape scanner and encoding worker remain real.",
+      "remaining_workers": [
+        "Shared percent-escape worker 0x56fc; callback at TOC+0x3f0"
+      ]
+    },
+    {
+      "name": "CFURLCreateStringByReplacingPercentEscapes",
+      "code_offset": 20556,
+      "main_import": 77,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLCreateStringByReplacingPercentEscapes",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Native percent triplet scan and replacement. Preserves reference first-character leave-set reuse, malformed-input NULL result, UTF-8 decoding limited to one UTF-16 unit and no-change copy behavior.",
+      "remaining_workers": [
+        "UTF-8 CFString decoder and native string mutation workers"
+      ]
+    },
+    {
+      "name": "CFURLDestroyResource",
+      "code_offset": 18792,
+      "main_import": 158,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLDestroyResource",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "Native scheme/path validation and native file/directory removal with reference error output.",
+      "remaining_workers": [
+        "Native File Manager delete; URL path conversion"
+      ]
+    },
+    {
+      "name": "CFURLWriteDataAndPropertiesToResource",
+      "code_offset": 18332,
+      "main_import": 377,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFURLWriteDataAndPropertiesToResource",
+      "source": "src/cfx_url_services.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "Native file/directory write orchestration. Non-null property dictionaries remain unsupported exactly as the reference 0x4468 worker; this is not native resource-property mutation.",
+      "remaining_workers": [
+        "Native File Manager writers; string/path conversion; resource property writes unsupported by reference"
+      ]
+    },
+    {
+      "name": "CFUUIDCreateWithBytes",
+      "code_offset": 309164,
+      "main_import": 83,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFUUIDCreateWithBytes",
+      "source": "src/cfx_values.c",
+      "abi": "PPC full frame",
+      "argument_words": 17,
+      "result": "word",
+      "abi_notes": "Allocator plus sixteen UInt8 arguments, including nine checked stack words; discard upper argument bits.",
+      "remaining_workers": [
+        "original UUID interning worker 0x4b684"
+      ]
+    },
+    {
+      "name": "CFUUIDGetConstantUUIDWithBytes",
+      "code_offset": 311016,
+      "main_import": 155,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFUUIDGetConstantUUIDWithBytes",
+      "source": "src/cfx_values.c",
+      "abi": "PPC full frame",
+      "argument_words": 17,
+      "result": "word",
+      "abi_notes": "Allocator plus sixteen UInt8 arguments, including nine checked stack words; discard upper argument bits.",
+      "remaining_workers": [
+        "original UUID interning worker 0x4b684"
+      ]
+    },
+    {
+      "name": "_CFAppendPathComponent",
+      "code_offset": 102416,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAppendPathComponent",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Five argument words: UTF16 buffer, length*, capacity, component, component length. No terminator is written.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFAppendPathExtension",
+      "code_offset": 102672,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFAppendPathExtension",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Capacity checked before stripping. Rejection can preserve an already stripped length; empty extension appends a dot.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFArgv",
+      "code_offset": 103528,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFArgv",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "Address of the live argv vector, not its first element.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFBundleCopyBuiltInPlugInsURL",
+      "code_offset": 64496,
+      "main_import": 534,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyBuiltInPlugInsURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Private 1.4 forwarding entry shares the already native public worker body.",
+      "remaining_workers": [
+        "existing native public Bundle body; remaining URL/filesystem/localization workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyBundleRegionsArray",
+      "code_offset": 83556,
+      "main_import": 518,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyBundleRegionsArray",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Private 1.4 forwarding entry shares the already native public worker body.",
+      "remaining_workers": [
+        "existing native public Bundle body; remaining URL/filesystem/localization workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyBundleURLForExecutableURL",
+      "code_offset": 52352,
+      "main_import": 504,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyBundleURLForExecutableURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "executable-path bundle discovery worker 0xca00; URL conversion"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyExecutableURLInDirectory",
+      "code_offset": 61640,
+      "main_import": 489,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyExecutableURLInDirectory",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Directory URL is passed as the third worker argument; allocator, bundle and executable-name arguments are zero.",
+      "remaining_workers": [
+        "executable-discovery worker 0xecb0"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyInfoDictionaryInResourceFork",
+      "code_offset": 86820,
+      "main_import": 490,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyInfoDictionaryInResourceFork",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Public/private wrapper fixes the resource reader allocator to default; reader remains a separate worker.",
+      "remaining_workers": [
+        "resource-fork property-list reader 0x15194"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyInfoPlistURL",
+      "code_offset": 63956,
+      "main_import": 520,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyInfoPlistURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native bundle information cache and CF runtime"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyLanguageSearchListInDirectory",
+      "code_offset": 79184,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyLanguageSearchListInDirectory",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "directory information worker 0x13a54; language matching worker 0x12e18; array operations"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyPrivateFrameworksURL",
+      "code_offset": 64028,
+      "main_import": 494,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyPrivateFrameworksURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Private 1.4 forwarding entry shares the already native public worker body.",
+      "remaining_workers": [
+        "existing native public Bundle body; remaining URL/filesystem/localization workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyResourceForkURL",
+      "code_offset": 60556,
+      "main_import": 529,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyResourceForkURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "bundle executable/resource URL worker 0xebcc"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyResourceURLForLanguage",
+      "code_offset": 71432,
+      "main_import": 510,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyResourceURLForLanguage",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Private entry forwards to the already native localization worker at 0x1172c.",
+      "remaining_workers": [
+        "native localization entry; original resource enumeration worker 0x11174"
+      ]
+    },
+    {
+      "name": "_CFBundleCopyResourceURLsOfTypeForLanguage",
+      "code_offset": 71796,
+      "main_import": 492,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopyResourceURLsOfTypeForLanguage",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "Private entry forwards to the already native localization worker at 0x11898.",
+      "remaining_workers": [
+        "native localization entry; original resource enumeration worker 0x11174"
+      ]
+    },
+    {
+      "name": "_CFBundleCopySharedFrameworksURL",
+      "code_offset": 64184,
+      "main_import": 509,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopySharedFrameworksURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Private 1.4 forwarding entry shares the already native public worker body.",
+      "remaining_workers": [
+        "existing native public Bundle body; remaining URL/filesystem/localization workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCopySharedSupportURL",
+      "code_offset": 64340,
+      "main_import": 516,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCopySharedSupportURL",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Private 1.4 forwarding entry shares the already native public worker body.",
+      "remaining_workers": [
+        "existing native public Bundle body; remaining URL/filesystem/localization workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCreateIfLooksLikeBundle",
+      "code_offset": 52480,
+      "main_import": 519,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCreateIfLooksLikeBundle",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native Bundle creation/information entry bodies; remaining factory/discovery workers"
+      ]
+    },
+    {
+      "name": "_CFBundleCreateWithExecutableURLIfLooksLikeBundle",
+      "code_offset": 52704,
+      "main_import": 547,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleCreateWithExecutableURLIfLooksLikeBundle",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "Compare resolved and requested executable filesystem spellings in bounded 256-byte buffers. Release owned intermediates.",
+      "remaining_workers": [
+        "native bundle URL/discovery entries; filesystem URL conversion"
+      ]
+    },
+    {
+      "name": "_CFBundleGetCFMFunctionPointerForName",
+      "code_offset": 63040,
+      "main_import": 493,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetCFMFunctionPointerForName",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "Only CFM executable kind one is accepted; worker flag two requests CFM procedure pointers.",
+      "remaining_workers": [
+        "native bundle executable-loading entry; original CFM symbol worker 0x10000"
+      ]
+    },
+    {
+      "name": "_CFBundleGetCFMFunctionPointersForNames",
+      "code_offset": 63296,
+      "main_import": 517,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetCFMFunctionPointersForNames",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "void",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native single-symbol CFM entry; array queries"
+      ]
+    },
+    {
+      "name": "_CFBundleGetHasChanged",
+      "code_offset": 58900,
+      "main_import": 505,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetHasChanged",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "file-property worker 0x18ce4; timestamp/date object comparison"
+      ]
+    },
+    {
+      "name": "_CFBundleGetLanguageAndRegionCodes",
+      "code_offset": 76144,
+      "main_import": 502,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetLanguageAndRegionCodes",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "void",
+      "abi_notes": "Both optional outputs are 32-bit guest values; derive a missing code from the other code before storing.",
+      "remaining_workers": [
+        "native main/language cache entries; locale mapping and Script Manager import workers"
+      ]
+    },
+    {
+      "name": "_CFBundleGetLanguageSearchList",
+      "code_offset": 56160,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetLanguageSearchList",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Returns the borrowed cached array, including development and default language insertion.",
+      "remaining_workers": [
+        "language matching worker 0x12e18; native bundle localization enumeration; array operations"
+      ]
+    },
+    {
+      "name": "_CFBundleGetLocalInfoDictionary",
+      "code_offset": 56708,
+      "main_import": 507,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetLocalInfoDictionary",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native resource URL entry; URL data reading and XML property-list parsing"
+      ]
+    },
+    {
+      "name": "_CFBundleGetMainBundleIfLooksLikeBundle",
+      "code_offset": 52636,
+      "main_import": 491,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetMainBundleIfLooksLikeBundle",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native main-bundle entry and its original discovery/cache worker"
+      ]
+    },
+    {
+      "name": "_CFBundleGetPackageInfoInDirectory",
+      "code_offset": 81624,
+      "main_import": 527,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetPackageInfoInDirectory",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "PkgInfo search order and exact eight-byte payload; fallback type uses case-sensitive suffixes. Avoid the original unbounded 256-unit stack copy.",
+      "remaining_workers": [
+        "URL/data file reading; native looks-like-bundle construction; string access"
+      ]
+    },
+    {
+      "name": "_CFBundleGetValueForInfoKey",
+      "code_offset": 57016,
+      "main_import": 511,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleGetValueForInfoKey",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native local/main information caches; dictionary queries"
+      ]
+    },
+    {
+      "name": "_CFBundleLayoutVersion",
+      "code_offset": 63948,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleLayoutVersion",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFBundleOpenBundleResourceFork",
+      "code_offset": 85952,
+      "main_import": 495,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleOpenBundleResourceFork",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native resource-map entry and remaining map-opening/insertion workers"
+      ]
+    },
+    {
+      "name": "_CFBundleURLLooksLikeBundle",
+      "code_offset": 79592,
+      "main_import": 544,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFBundleURLLooksLikeBundle",
+      "source": "src/cfx_bundles.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native looks-like-bundle construction entry"
+      ]
+    },
+    {
+      "name": "_CFContentsOfDirectory",
+      "code_offset": 100732,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFContentsOfDirectory",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Native catalog enumeration and owned relative URLs; stops before the reference signed-16-bit directory index wraps. Unused 256-byte extension encoding scratch is omitted; suffix filtering is unchanged.",
+      "remaining_workers": [
+        "Native File Manager PBGetCatInfo; string and relative URL workers"
+      ]
+    },
+    {
+      "name": "_CFCopyExtensionForAbstractType",
+      "code_offset": 99468,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCopyExtensionForAbstractType",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "initialized runtime and allocator callbacks"
+      ]
+    },
+    {
+      "name": "_CFCopySystemVersionDictionary",
+      "code_offset": 108956,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCopySystemVersionDictionary",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native file URL constructor; URL data reading; XML property-list parser"
+      ]
+    },
+    {
+      "name": "_CFCreateDirectory",
+      "code_offset": 99520,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCreateDirectory",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native File Manager create/delete; HFS path parser 0x17cd4; string encoding"
+      ]
+    },
+    {
+      "name": "_CFCreateURLFromFSSpec",
+      "code_offset": 50316,
+      "main_import": 525,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFCreateURLFromFSSpec",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "FSSpec to HFS path worker 0x180a4; native file URL construction"
+      ]
+    },
+    {
+      "name": "_CFDeleteFile",
+      "code_offset": 99864,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFDeleteFile",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native File Manager create/delete; HFS path parser 0x17cd4; string encoding"
+      ]
+    },
+    {
+      "name": "_CFEnviron",
+      "code_offset": 103544,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFEnviron",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "Address of the live environment pointer vector.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFGetEnvironmentVariable",
+      "code_offset": 103552,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFGetEnvironmentVariable",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Returns a borrowed pointer after an exact name= prefix. Malformed name-only entries are skipped.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFGetFSSpecFromURL",
+      "code_offset": 49396,
+      "main_import": 532,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFGetFSSpecFromURL",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "HFS path to FSSpec worker 0x17cd4; URL absolute/path conversion"
+      ]
+    },
+    {
+      "name": "_CFGetFileProperties",
+      "code_offset": 101604,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFGetFileProperties",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 8,
+      "result": "word",
+      "abi_notes": "Outputs: Boolean existence, 32-bit POSIX-style mode, signed 64-bit size, owned CFDate modification, owner=-1, owned child array. Optional outputs remain optional.",
+      "remaining_workers": [
+        "native File Manager catalog query; native date factory and directory enumeration; URL/FSSpec conversion"
+      ]
+    },
+    {
+      "name": "_CFIsAbsolutePath",
+      "code_offset": 102260,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFIsAbsolutePath",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFLengthAfterDeletingLastPathComponent",
+      "code_offset": 103280,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFLengthAfterDeletingLastPathComponent",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFLengthAfterDeletingPathExtension",
+      "code_offset": 103468,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFLengthAfterDeletingPathExtension",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFProcessName",
+      "code_offset": 104420,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFProcessName",
+      "source": "src/cfx_process.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "Borrowed cached C string; preserves reference default-allocator retains for global cache lifetime.",
+      "remaining_workers": [
+        "Native process-path cache"
+      ]
+    },
+    {
+      "name": "_CFProcessNameString",
+      "code_offset": 104508,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFProcessNameString",
+      "source": "src/cfx_process.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "Borrowed cached CFString using the live system string encoding.",
+      "remaining_workers": [
+        "Native process-name cache; string constructor"
+      ]
+    },
+    {
+      "name": "_CFProcessPath",
+      "code_offset": 103712,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFProcessPath",
+      "source": "src/cfx_process.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "Native cached process/environment lookup. Retains the allocator for reference-global cache lifetime. Omits the redundant path copy; allocation failures are checked instead of copying through NULL.",
+      "remaining_workers": [
+        "Native Process Manager; URL/FSSpec conversion and string workers"
+      ]
+    },
+    {
+      "name": "_CFPropertyListCreateFromXMLData",
+      "code_offset": 171924,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFPropertyListCreateFromXMLData",
+      "source": "src/cfx_plists.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Native parser orchestration with XML-first/OpenStep-second behavior and reference 36-byte parser context. Checks extent/allocation failures and optional error output; releases temporary strings, allocator retains and secondary parser errors leaked on reference failure paths.",
+      "remaining_workers": [
+        "Encoding detector 0x29c80; XML parser 0x29a84; OpenStep parser 0x2afc4; string decoders"
+      ]
+    },
+    {
+      "name": "_CFReadBytesFromFile",
+      "code_offset": 100032,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFReadBytesFromFile",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "Read min(file length, nonzero maximum). Empty files allocate four bytes and report length zero. Reject negative lengths; clear failed read buffers instead of publishing freed pointers.",
+      "remaining_workers": [
+        "native File Manager open/seek/read/close; allocator callbacks; native URL/FSSpec entry"
+      ]
+    },
+    {
+      "name": "_CFRemoveDirectory",
+      "code_offset": 99696,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFRemoveDirectory",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "native File Manager create/delete; HFS path parser 0x17cd4; string encoding"
+      ]
+    },
+    {
+      "name": "_CFStartOfLastPathComponent",
+      "code_offset": 103204,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStartOfLastPathComponent",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "The final unit is excluded from separator scanning.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFStartOfPathExtension",
+      "code_offset": 103372,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStartOfPathExtension",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "A dot immediately following a colon is not an extension.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFStringCreateWithBytesNoCopy",
+      "code_offset": 227684,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringCreateWithBytesNoCopy",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 6,
+      "result": "word",
+      "abi_notes": "Six incoming words; reduction=true, length/null prefix=false, no-copy=true, final word is deallocator.",
+      "remaining_workers": [
+        "private immutable string funnel 0x36eb8"
+      ]
+    },
+    {
+      "name": "_CFStringCreateWithFormatAndArgumentsAux",
+      "code_offset": 227800,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringCreateWithFormatAndArgumentsAux",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 5,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "private format scanner/renderer 0x3ee90; native/public string allocation and copying"
+      ]
+    },
+    {
+      "name": "_CFStringEncodingSetForceASCIICompatibility",
+      "code_offset": 263752,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringEncodingSetForceASCIICompatibility",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "void",
+      "abi_notes": "Only the low Boolean byte is observed; update the initialized converter compatibility global.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFStringGetFileSystemRepresentation",
+      "code_offset": 271744,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringGetFileSystemRepresentation",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "filesystem encoding cache; original/native string conversion"
+      ]
+    },
+    {
+      "name": "_CFStringIsLegalURLString",
+      "code_offset": 27564,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringIsLegalURLString",
+      "source": "src/cfx_strings.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Preserve the 1.4 final-invalid-unit/repeated-fragment quirk; malformed percent triplets fail.",
+      "remaining_workers": [
+        "string length and character access"
+      ]
+    },
+    {
+      "name": "_CFStripTrailingPathSlashes",
+      "code_offset": 102304,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStripTrailingPathSlashes",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 2,
+      "result": "word",
+      "abi_notes": "HFS colon separators; strip to one unit and report length change.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFTemporaryMemoryAllocator",
+      "code_offset": 96696,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFTemporaryMemoryAllocator",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "original temporary memory callbacks and allocator creation"
+      ]
+    },
+    {
+      "name": "_CFTransmutePathSlashes",
+      "code_offset": 103056,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFTransmutePathSlashes",
+      "source": "src/cfx_paths.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Return indicates collapsed length, not merely replaced characters.",
+      "remaining_workers": []
+    },
+    {
+      "name": "_CFWriteBytesToFile",
+      "code_offset": 100392,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFWriteBytesToFile",
+      "source": "src/cfx_files.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "word",
+      "abi_notes": "Missing files are created; truncate to the actual written count only after successful write. Every successful open closes.",
+      "remaining_workers": [
+        "native File Manager open/create/seek/write/truncate/close; native URL/FSSpec entry"
+      ]
+    },
+    {
+      "name": "__CFRangeMake",
+      "code_offset": 96820,
+      "main_import": 110,
+      "companion_only": false,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFRangeMake",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 3,
+      "result": "hidden aggregate",
+      "abi_notes": "Hidden first output pointer; two ordered guest-endian stores, including guest address zero.",
+      "remaining_workers": []
+    },
+    {
+      "name": "__CFStorageGetCapacity",
+      "code_offset": 305856,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStorageGetCapacity",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "Capacity sums leaf allocations, not the logical element count. Cycles/depth/size overflow fail safely.",
+      "remaining_workers": []
+    },
+    {
+      "name": "__CFStorageGetValueSize",
+      "code_offset": 305912,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStorageGetValueSize",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    },
+    {
+      "name": "__CFStringCheckMutableAndReplace",
+      "code_offset": 252152,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringCheckMutableAndReplace",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 4,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "private string replacement worker 0x38424"
+      ]
+    },
+    {
+      "name": "__CFStringComputeEightBitStringEncoding",
+      "code_offset": 219076,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringComputeEightBitStringEncoding",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 0,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": [
+        "TextCommon encoding/script import workers; native encoding size query"
+      ]
+    },
+    {
+      "name": "__CFStringIsEightBit",
+      "code_offset": 218196,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringIsEightBit",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "The Unicode storage flag is bit 0x10. Return one when it is clear.",
+      "remaining_workers": []
+    },
+    {
+      "name": "__CFStringIsMutable",
+      "code_offset": 218172,
+      "main_import": null,
+      "companion_only": true,
+      "status": "implemented",
+      "function": "ROMlib_cfx_CFStringIsMutable",
+      "source": "src/cfx_records.c",
+      "abi": "PPC full frame",
+      "argument_words": 1,
+      "result": "word",
+      "abi_notes": "",
+      "remaining_workers": []
+    }
+  ],
+  "deferred_exports": [
+    "CFCopyHomeDirectoryURLForUser",
+    "CFCopySearchPathForDirectoriesInDomains",
+    "CFGetUserName",
+    "CFTimeZoneCopyAbbreviation",
+    "CFTimeZoneCopyAbbreviationDictionary",
+    "CFTimeZoneCopyDefault",
+    "CFTimeZoneCopyKnownNames",
+    "CFTimeZoneCopySystem",
+    "CFTimeZoneCreate",
+    "CFTimeZoneCreateWithName",
+    "CFTimeZoneCreateWithTimeIntervalFromGMT",
+    "CFTimeZoneGetData",
+    "CFTimeZoneGetName",
+    "CFTimeZoneGetSecondsFromGMT",
+    "CFTimeZoneGetTypeID",
+    "CFTimeZoneIsDaylightSavingTime",
+    "CFTimeZoneResetSystem",
+    "CFTimeZoneSetAbbreviationDictionary",
+    "CFTimeZoneSetDefault",
+    "CFTreeSetContext",
+    "CFTreeSortChildren",
+    "CFUniCharMapTo",
+    "_CFArgc",
+    "_CFBundleCloseBundleResourceFork",
+    "_CFCreateHomeDirectoryURLForUser",
+    "_CFFindBundleResources",
+    "_CFHomeDirectory",
+    "_CFStringAppendFormatAndArgumentsAux",
+    "_CFStringCreateHostName",
+    "_CFUserName",
+    "__CFStringCreateImmutableFunnel2",
+    "__CFStringDecodeByteStream2",
+    "__CFStringEncodeByteStream",
+    "__som_check_ev",
+    "__som_check_new"
+  ],
+  "reference_placeholder_notes": {
+    "_CFBundleCloseBundleResourceFork": "1.4 only sets a global compatibility byte; no resource-close implementation is counted."
+  },
+  "checkpoint_validation": {
+    "archive_build": "passed",
+    "shared_host_application": "windows-test.exe",
+    "foreign_frame_entries": 100,
+    "foreign_frame_scenarios": 300,
+    "native_calendar_vectors": 63,
+    "native_calendar_entries": [
+      "CFAbsoluteTimeAddGregorianUnits",
+      "CFAbsoluteTimeGetDayOfWeek",
+      "CFAbsoluteTimeGetDayOfYear",
+      "CFAbsoluteTimeGetDifferenceAsGregorianUnits",
+      "CFAbsoluteTimeGetGregorianDate",
+      "CFAbsoluteTimeGetWeekOfYear",
+      "CFGregorianDateGetAbsoluteTime",
+      "CFGregorianDateIsValid"
+    ],
+    "native_real_library_comparisons": "All 100 service entries exercised in the shared Frameworks application on the interpreter and JIT, including file and URL resources, sorting callbacks, full Unicode BMP bitmaps and diagnostic output.",
+    "registered_service_entries": 100,
+    "enabled_main_export_coverage": 707,
+    "grouped_guest_applications": 4,
+    "engine_modes": [
+      "interpreter",
+      "jit"
+    ],
+    "grouped_assertions": 14514,
+    "frameworks_assertions_per_engine": 2564
+  }
+}

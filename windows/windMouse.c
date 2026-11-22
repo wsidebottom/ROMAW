@@ -1,0 +1,185 @@
+/*+===================================================================
+  File:      windMouse.c
+
+  Summary:   Implements wind mouse support for Macintosh Window Manager operations.
+
+  Classes:   None.
+
+  Functions: No externally linked function definitions.
+
+  Origin:    Existing repository source in executor/src/windows; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1986, 1989, 1990, 1995 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+/* Forward declarations in WindowMgr.h (DO NOT DELETE THIS LINE) */
+
+#include "rsys/common.h"
+#include "WindowMgr.h"
+#include "EventMgr.h"
+#include "OSEvent.h"
+#include "MemoryMgr.h"
+#include "MenuMgr.h"
+
+#include "rsys/cquick.h"
+#include "rsys/wind.h"
+#include "rsys/layers.h"
+#include "rsys/menu.h"
+
+#if !defined(No_STEF_zoommods)
+/* WINDOW_ZOOMED returns TRUE if w is currently in stdState (big) */
+
+#define WINDOW_ZOOMED(w) (ROMlib_window_zoomed(w))
+
+#endif
+
+P2(PUBLIC pascal trap, INTEGER, FindWindow, Point, p, HIDDEN_WindowPtr*, wpp)
+{
+    WindowPeek wp;
+    LONGINT pointaslong, val;
+    INTEGER retval;
+    HIDDEN_WindowPtr discarded_window;
+
+    /* Some applications only need the window part, not the window pointer. */
+    if (!wpp)
+        wpp = &discarded_window;
+
+    pointaslong = ((LONGINT)p.v << 16) | (unsigned short)p.h;
+
+    HIDDEN_RAW_SET((*wpp), 0);
+    if (MBDFCALL(mbHit, 0, pointaslong) != -1)
+        return inMenuBar;
+    for (wp = ROMlib_window_first_all(); wp; wp = ROMlib_window_next_all(wp)) {
+        if (WINDOW_VISIBLE_X(wp) && PtInRgn(p, WINDOW_STRUCT_REGION(wp))) {
+            HIDDEN_RAW_SET(*(wpp), RM((WindowPtr)wp));
+            if (WINDOW_KIND(wp) < 0) {
+                retval = inSysWindow;
+                goto DONE;
+            }
+            val = WINDCALL((WindowPtr)wp, wHit, pointaslong);
+            if (val == wNoHit)
+                retval = DeskHook ? inSysWindow : inDesk;
+            else
+                retval = val + 2; /* datadesk showed us that this is how it's
+				   done */
+            goto DONE;
+        }
+    }
+    retval = inDesk;
+DONE:
+    return retval;
+}
+
+A3(PRIVATE, BOOLEAN, xTrackBox, WindowPtr, wp, Point, pt, INTEGER, part) /* IMIV-50 */
+{
+    BOOLEAN inpart = TRUE, inp;
+    EventRecord ev;
+
+    THEPORT_SAVE_EXCURSION(MR(wmgr_port), {
+        SetClip(MR(GrayRgn));
+
+        WINDCALL(wp, wDraw, part);
+        while (!GetOSEvent(mUpMask, &ev)) {
+            ev.where.h = CW(ev.where.h);
+            ev.where.v = CW(ev.where.v);
+            CALLDRAGHOOK();
+            if (pt.h != ev.where.h || pt.v != ev.where.v) {
+                pt.h = ev.where.h;
+                pt.v = ev.where.v;
+                inp = (WINDCALL(wp, wHit, ((LONGINT)pt.v << 16) | (unsigned short)pt.h) == part);
+                if (inpart != inp) {
+                    WINDCALL(wp, wDraw, part);
+                    inpart = inp;
+                }
+            }
+        }
+    });
+    return inpart;
+}
+
+P3(PUBLIC pascal trap, BOOLEAN, TrackBox, WindowPtr, wp, /* IMIV-50 */
+   Point, pt, INTEGER, part)
+{
+    if (part)
+        part -= 2;
+    return xTrackBox(wp, pt, part);
+}
+
+P2(PUBLIC pascal trap, BOOLEAN, TrackGoAway, WindowPtr, w, Point, p)
+{
+    return xTrackBox(w, p, wInGoAway);
+}
+
+P3(PUBLIC pascal trap, void, ZoomWindow, WindowPtr, wp, /* IMIV-50 */
+   INTEGER, part, BOOLEAN, front)
+{
+    RgnHandle behind;
+#if !defined(No_STEF_zoommods)
+    Boolean instdstate;
+    Rect* u;
+#if !defined(THEPORTNEEDNTBEWMGRPORT)
+    /* Window-definition calls may change the current port. */
+    GrafPtr gp = thePort;
+#endif /* THEPORTNEEDNTBEWMGRPORT */
+
+    instdstate = WINDOW_ZOOMED((WindowPeek)wp);
+
+    if ((part == inZoomIn && instdstate) || (part == inZoomOut && !instdstate))
+#else  /* No_STEF_zoommods */
+
+    if ((part == inZoomIn && WINDOW_SPARE_FLAG(wp) == inZoomOut) ||
+        (part == inZoomOut && (WINDOW_SPARE_FLAG(wp) == inZoomIn)))
+#endif /* No_STEF_zoommods */
+    {
+#if !defined(No_STEF_zoommods)
+        /* Save userState if not in stdstate */
+        if (!instdstate) {
+            u = &((WStateData*)STARH(WINDOW_DATA(wp)))->userState;
+            u->top = CW(CW(PORT_RECT(wp).top) - CW(PORT_BOUNDS(wp).top));
+            u->left = CW(CW(PORT_RECT(wp).left) - CW(PORT_BOUNDS(wp).left));
+            u->bottom = CW(CW(PORT_RECT(wp).bottom) - CW(PORT_BOUNDS(wp).top));
+            u->right = CW(CW(PORT_RECT(wp).right) - CW(PORT_BOUNDS(wp).left));
+        }
+#endif
+        behind = NewRgn();
+        CopyRgn(WINDOW_STRUCT_REGION(wp), behind);
+        if (part == inZoomIn)
+            PORT_RECT(wp) = MR(*(WStateData**)WINDOW_DATA(wp))->userState;
+        else
+            PORT_RECT(wp) = MR(*(WStateData**)WINDOW_DATA(wp))->stdState;
+        OffsetRect(&PORT_BOUNDS(wp), -CW(PORT_RECT(wp).left) - CW(PORT_BOUNDS(wp).left),
+                   -CW(PORT_RECT(wp).top) - CW(PORT_BOUNDS(wp).top));
+
+        OffsetRect(&PORT_RECT(wp), -CW(PORT_RECT(wp).left), -CW(PORT_RECT(wp).top));
+        WINDCALL(wp, wCalcRgns, 0);
+        UnionRgn(behind, WINDOW_STRUCT_REGION(wp), behind);
+
+        CalcVisBehind((WindowPeek)wp, behind);
+        PaintBehind(ROMlib_window_next_all(wp), behind);
+
+#if !defined(THEPORTNEEDNTBEWMGRPORT)
+        SetPort(MR(wmgr_port));
+#endif /* THEPORTNEEDNTBEWMGRPORT */
+        SetClip(WINDOW_STRUCT_REGION(wp));
+        ClipAbove((WindowPeek)wp);
+        WINDCALL((WindowPtr)wp, wDraw, 0);
+        EraseRgn(WINDOW_CONT_REGION(wp));
+        CopyRgn(WINDOW_CONT_REGION(wp), WINDOW_UPDATE_REGION(wp));
+#if !defined(THEPORTNEEDNTBEWMGRPORT)
+        SetPort(gp);
+#endif /* THEPORTNEEDNTBEWMGRPORT */
+
+#if !defined(No_STEF_zoommods)
+#else
+        WINDOW_SPARE_FLAG_X(wp) = part;
+#endif /* No_STEF_zoommods */
+        DisposeRgn(behind);
+        if (front)
+            SelectWindow(wp);
+    }
+}

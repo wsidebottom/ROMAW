@@ -1,0 +1,103 @@
+/*+===================================================================
+  File:      mingw32.h
+
+  Summary:   Declares mingw32 support for host-platform configuration and integration.
+
+  Classes:   None.
+
+  Functions: Interface declarations and inline definitions; see the declarations below.
+
+  Origin:    Existing repository source in executor/src/config/os/mingw32; original attribution and provenance comments
+             are preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+#if !defined(_OS_CYGWIN32_H_)
+#define _OS_CYGWIN32_H_
+
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stddef.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <errno.h>
+#include <malloc.h>
+#include "platform/os/cygwin32/win_screen.h"
+
+/* win32 headers define NULL as 0, which we don't want.  That definition
+ * causes CLC(NULL) to generate warnings in some places.
+ */
+#undef NULL
+#define NULL ((void*)0)
+
+#if !defined(CYGWIN32)
+#define CYGWIN32
+#endif
+
+#if !defined(PRIVATE)
+#define PRIVATE static
+#endif
+
+typedef struct {
+    char* dptr;
+    unsigned dsize;
+} datum;
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#ifndef M_LOG2E
+#define M_LOG2E 1.4426950408889634074
+#endif
+
+typedef unsigned short uid_t;
+typedef unsigned short gid_t;
+
+#if !defined(__MINGW32__) && (!defined(USE_WINDOWS_NOT_MAC_TYPEDEFS_AND_DEFINES) || !defined(_WINSOCK_H))
+/*
+  time structures
+  */
+struct timeval {
+    long tv_sec;  /* seconds */
+    long tv_usec; /* microseconds */
+};
+
+#define _WINSOCK_H /* so we don't get another timeval declaration */
+
+#endif
+
+#if !defined(__MINGW32__)
+struct timezone {
+    int tz_minuteswest; /* minutes west of Greenwich */
+    int tz_dsttime;     /* type of dst correction */
+};
+#endif
+
+#define MAXPATHLEN (260 - 1)
+
+/* Specify which extra functions we need in float.h. */
+#define NEED_RINT
+#define NEED_LOGB
+#define NEED_SCALB
+#define NEED_LOG1P
+
+extern int geteuid(void);
+
+#define ST_INO(buf)                                         \
+    ({                                                      \
+        struct stat tmp;                                    \
+                                                            \
+        tmp = buf;                                          \
+        ((uint16)tmp.st_ino << 16) | ((uint16)tmp.st_rdev); \
+    })
+
+extern int ROMlib_set_realmodecd(int value);
+extern int ROMlib_launch_native_app(int n_filenames, char** filenames);
+
+#endif /* !_OS_CYGWIN32_H_ */

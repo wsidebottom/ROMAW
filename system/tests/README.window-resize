@@ -1,0 +1,11 @@
+check-ui.ps1 window-resize exercises the staged Window Manager under GDB.
+It creates both mono and color windows, gives them nonzero local origins,
+and checks growth, shrinking and update-disabled resizing. Pending damage
+must survive, unchanged interior pixels must not be added to the update
+region, and newly exposed strips must be included when updates are enabled.
+
+DrawNew's region and SaveUpdate semantics follow the user's reference:
+Y:/Source Code/supermario/base/SuperMarioProj.1994-02-09/Toolbox/WindowMgr/WindowMgr.a,
+DrawNew and SizeGuts. Finder uses SizeWindow for folder zooming. Replacing
+its pending update region with the entire content region requested painting
+over unchanged pixels that DrawNew had not erased.

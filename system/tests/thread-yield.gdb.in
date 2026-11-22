@@ -1,0 +1,50 @@
+# +===================================================================
+#   File:      thread-yield.gdb.in
+#
+#   Summary:   Verify the 68K Thread Manager yield trap's stack ABI.
+#
+#   Classes:   None.
+#
+#   Functions: Debugger command sequence; no exported functions.
+#
+#   Origin:    Regression fixture for SimpleText 1.4 document-open yields.
+#
+#   Copyright and Legal notices: See the repository license.
+# ===================================================================+
+
+set pagination off
+set confirm off
+set print thread-events off
+set substitute-path /mnt/d/Source/ROMAW "@ROOT@"
+tbreak C_WaitNextEvent
+run -syszone 8m -applzone 64m "@APP@"
+python
+import gdb, struct
+m = gdb.selected_inferior()
+def value(s): return int(gdb.parse_and_eval(s))
+offset = value('ROMlib_offset')
+saved_sp = value('cpu_state.regs[15].ul.n')
+saved_d0 = value('cpu_state.regs[0].ul.n')
+memory = value('(void *)_NewPtr_flags(64,1,1)')
+assert memory
+sp = memory - offset
+# Dispatch must use D0.w; MOVE.W in applications preserves its upper half.
+for selector in (0x0205, 0x01080205):
+    for thread in (0, 1, 2, 3, 0xffffffff):
+        m.write_memory(memory, bytes([0xa5]) * 64)
+        m.write_memory(memory + 16, struct.pack('>IIH', 0x12345678, thread, 0xcccc))
+        gdb.execute('set cpu_state.regs[15].ul.n = ' + str(sp + 16))
+        gdb.execute('set cpu_state.regs[0].ul.n = ' + str(selector))
+        assert value('(unsigned int)_ThreadDispatch(0,0)') == 0x12345678
+        assert value('cpu_state.regs[15].ul.n') == sp + 24
+        data = bytes(m.read_memory(memory, 64))
+        assert struct.unpack('>h', data[24:26])[0] == (0 if thread <= 2 else -618)
+        assert data[:16] == bytes([0xa5]) * 16
+        assert data[26:] == bytes([0xa5]) * 38
+gdb.execute('set cpu_state.regs[15].ul.n = ' + str(saved_sp))
+gdb.execute('set cpu_state.regs[0].ul.n = ' + str(saved_d0))
+gdb.execute('call (void)DisposPtr((void *)' + str(memory) + ')')
+assert value('(void *)toolstuff[0x3f2].ptoc.wheretogo == (void *)_ThreadDispatch')
+print('THREAD_YIELD_ABI_OK')
+end
+quit

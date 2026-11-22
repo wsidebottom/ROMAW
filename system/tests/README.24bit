@@ -1,0 +1,39 @@
+# Windows 24-bit Macintosh addressing
+
+ROMAW selects 24-bit addressing for applications without the 32-bit-compatible
+SIZE flag. `-24bit` and `-32bit` override selection. GetMMUMode, SwapMMUMode,
+StripAddress and Gestalt addressing attributes follow the active mode. In 24-bit
+mode, handles carry state bits in the master pointer's high byte.
+
+Host-pointer aliases published during startup keep their guest addresses across
+mode changes. The heap, stack, callback reservations and framebuffer must fit
+below 16 MiB; incompatible display/memory combinations are rejected. Automatic
+heap selection and explicit overrides are described in
+[the runtime guide](../../docs/runtime-guide.md#memory).
+
+## CPU fixture
+
+After building syn68k, run from the workspace root in WSL with Windows interop:
+
+```bash
+mkdir -p build
+x86_64-w64-mingw32-gcc -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+  syn68k/tests/address24.c syn68k/obj/src/runtime/libsyn68k.a -o build/address24-test.exe
+./build/address24-test.exe
+```
+
+The fixture executes real 68K instructions for tagged byte/word/long accesses,
+indexed and absolute addressing, LEA, low-memory reads, PEA and RTE. It also checks
+host aliases created before switching modes and retained afterward. Run the
+[syn68k integer CRC checks](../../syn68k/README.md#validation) for broader coverage.
+
+## Memory Manager fixture
+
+```bash
+bash system/tests/check-runtime.sh 24bit-memory
+```
+
+This links the production Memory Manager and syn68k. It checks tagged handle
+locking, relocation with retained data/state, 24/32-bit state conversion, purging,
+empty master pointers and reallocation. UI/resource diagnostics and patched-trap
+callbacks are stubbed; passing it does not establish a full application workflow.

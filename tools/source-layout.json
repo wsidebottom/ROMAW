@@ -1,0 +1,12 @@
+{
+  "source_roots": [
+    "system", "syn68k", "synppc", "tools", "packages", "include",
+    "carbonlib", "classic-ui", "disk-images", "finder-metadata",
+    "controls", "dialogs", "files", "hfs", "lists", "menus", "printing",
+    "quickdraw", "resources", "textedit", "windows", "appleevents", "sound",
+    "numerics", "runtime", "options", "memory", "events", "services", "movies",
+    "devices", "text", "host", "display", "ui", "diagnostics", "platform", "frontend-sdl", "finder",
+    "archives", "stuffit"
+  ],
+  "root_build_files": ["Makefile", "Makefile.am", "configure.ac"]
+}

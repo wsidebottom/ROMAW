@@ -1,0 +1,97 @@
+SuperMario comparison follow-ups
+================================
+
+Run bash system/tests/check-toolbox.sh toolbox-additions from WSL. With no
+arguments it runs Linux ASan/UBSan alias/date parser checks and Windows x64
+fixtures for the actual Roman script, international comparison/table, alias
+update, partial-resource and date/time trap entry points. Individual Windows
+fixtures can be selected by name, for example date_api or partial_resource.
+
+The independent reference is the user's local SuperMarioProj.1994-02-09:
+Toolbox/ScriptMgr/InternationalPACK.a, ScriptMgrExtensions.a,
+ScriptMgrUtilDate.a, Toolbox/AliasMgr/alExt.c, and
+Toolbox/ResourceMgr/ResourceMgrExtensions.a. ResourceMgrExtensions.a explicitly
+lists resident-resource handling as unfinished work; those comments are not
+an implemented reference path. ROMAW edits resident bytes and persists
+through its existing resource writer instead.
+
+The bounded alias decoder checks version-2 record/tag extents, Pascal names,
+parent traversal and truncated records. Windows update tests exercise lookup
+and allocation failures, unchanged targets, handle state and preservation of
+application-owned user type/data. NewAlias and UpdateAlias build complete path
+metadata with ancestor IDs and relative levels; NewAliasMinimal stays minimal.
+Relative lookup uses the supplied fromFile first, then retries the stored
+absolute path. ResolveAlias refreshes a relocated record on success; failure to
+allocate that refresh does not lose a successfully resolved target. Finder's
+follow call leaves the record untouched and retries the absolute path for
+same-folder relative candidates, following SuperMario's Finder-specific rule.
+The native creation path is limited to 255-byte Macintosh paths and 128 ancestor
+steps; cyclic or invalid catalogs fail explicitly. This does not implement
+volume-wide file-ID searches or network mounting.
+Minimal aliases now use the catalog parent and target IDs in their respective
+version-2 fields and distinguish files from folders. ResolveAlias validates
+records, accepts stored full paths and old ROMAW minimal records, and checks
+the target against the catalog before publishing its output.
+
+Comparisons without an explicit sorting resource reuse native Roman locale
+collation. Explicit itl2 handles execute their Init, Fetch, Project, Vernier and
+Exit callbacks through the 68K runtime. IUTextOrder uses the selected Roman
+sorting resource when script/language ordering is equal. The guest IUNSortFrame
+layout, condition-code-controlled defaults, expansions, ignored characters and
+exit-result changes are preserved. Callback cursors must remain in the supplied
+input spans; malformed vectors, invalid stack extents and non-progressing hooks
+fall back to native collation with a diagnostic. Resources stay locked during
+callbacks and the caller's registers and condition codes are restored. Script
+and language ordering reads bounded itlm mapping tables when available, with
+Roman current/default selectors and script grouping. Missing or malformed maps
+use a deterministic fallback. Only Roman is installed/enabled; absent scripts
+follow it in code order. Table tests check all five selectors, extents and four-byte guest
+handle outputs on a 64-bit host.
+
+DateCacheRec is opaque. The native parser stores a versioned snapshot of Roman
+locale names/separators and the current year entirely inside its 512 guest
+bytes, with no host pointers. The tests cover numeric date orders, named dates,
+Gregorian leap boundaries, AM/PM, 24-hour times, output preservation and 80,000
+exact-size random inputs. This is not a replacement for multi-script tokenizer
+tables or guest code that accesses Apple's private cache layout directly.
+
+Partial-resource fixtures intercept allocation and persistence boundaries;
+they check reads of modified resident data, extending writes, resizing, zero
+fill, overlapping input, protected/read-only resources, invalid ranges and
+error propagation. They do not establish resource-editor application workflow
+compatibility. Run check-toolbox.sh resource-map as an additional check of the
+existing resource-map writer's EOF/header handling.
+
+Run system/tests/check-toolbox.ps1 toolbox-resource in PowerShell against the
+staged executable for real Resource Manager persistence. It starts a private
+Browser process under Windows GDB, uses an isolated preferences profile and
+writes only a disposable resource file under build/. It checks resident and
+unloaded reads, partial writes, grow/shrink across close/reopen and preservation
+of a neighboring resource. It also creates and resolves aliases for a real
+file and folder, checking their version-2 catalog fields. ROMAW and Application parameters can override
+the defaults. The probe terminates only its own debugger/application process.
+The same probe supplies an original itlm fixture through the real Resource
+Manager and verifies resource-driven language order and current/default selectors.
+Its Bundle and Copy trees verify relative-first resolution when the old target
+still exists, automatic record refresh, and no-change repeated resolution.
+alias_relative_test.c separately covers missing and wrong-kind candidates,
+cross-volume creation, Finder same-folder fallback, cycles and refresh failure.
+
+ResolveAliasFile reads the first alis resource of files carrying the Finder
+alias flag, including resources whose ID is not zero. It follows either one
+link or up to ten links, checks folders before interpreting their Finder flags,
+and leaves the original FSSpec intact on a broken or overlong chain. Resource
+files are opened read-only; the selected map and resource-loading state are
+restored. Resolution does not rewrite the alias file. alias_file_test.c covers
+chain limits, malformed/missing resources, open failures and broken targets;
+the staged resource probe verifies a real sidecar-backed alias file. Existing
+resolution limits (no volume-wide ID search or network mounting) still apply.
+
+Run check-toolbox.ps1 itl2-sort for original assembled 68000 callbacks under both
+the interpreter and x64 JIT. The probe checks actual Pack6 trap dispatch,
+selected-resource lookup through the Resource Manager, hook effects on ordering,
+frame/register/condition-code preservation and resource lock restoration. It
+requires WSL m68k-linux-gnu-as and m68k-linux-gnu-objcopy. No Apple machine code
+is bundled in these fixtures. itl2_sort_test.c covers additional mocked callback
+cases (multi-byte fetch, ignored text, stalled callbacks and invalid cursors),
+and itl2_layout_test.c runs bounded-vector checks under ASan/UBSan.

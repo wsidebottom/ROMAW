@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(DocumentAssociationProbe LANGUAGES C)
+set(CMAKE_C_STANDARD 11)
+include(add_application)
+get_filename_component(root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+add_application(DocumentTarget target.c CREATOR "fAst")
+add_application(DocumentProbe probe.c CREATOR "fAsP")

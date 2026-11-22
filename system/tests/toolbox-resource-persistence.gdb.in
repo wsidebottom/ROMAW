@@ -1,0 +1,157 @@
+# +===================================================================
+#   File:      toolbox-resource-persistence.gdb.in
+#
+#   Summary:   Provides toolbox resource persistence.gdb debugger commands for regression tests and test fixtures.
+#
+#   Classes:   None.
+#
+#   Functions: Debugger command sequence; no exported functions.
+#
+#   Origin:    Existing repository source in executor/tests; original attribution and provenance comments are preserved
+#              below.
+#
+#   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+# ===================================================================+
+
+set pagination off
+set confirm off
+set print thread-events off
+set environment USERPROFILE @FIXTURE@
+break C_WaitNextEvent
+run "@APPLICATION@"
+disable 1
+set $data=(unsigned char *)_NewPtr_flags(4096,1,1)
+python
+import gdb, struct
+mem = gdb.selected_inferior()
+base = int(gdb.parse_and_eval('ROMlib_offset'))
+data = int(gdb.parse_and_eval('$data'))
+def ptr(n): return '(void *)'+str(n)
+def call(s): return int(gdb.parse_and_eval(s))
+def action(s): gdb.execute('call '+s,to_string=True)
+def res_error(): return call('(int)C_ResError()')
+def payload(handle): return int.from_bytes(mem.read_memory(handle,4),'big')+base
+host = '@FIXTURE@/partial'
+path = (host[:2]+host[3:].replace('/',':')).encode('mac_roman')
+mem.write_memory(data, bytes([len(path)])+path)
+action('C_HCreateResFile(0,0,'+ptr(data)+')')
+assert res_error()==0, ('create',res_error())
+ref = call('(int)C_HOpenResFile(0,0,'+ptr(data)+',3)')
+assert ref>0, ('open',ref)
+handles=[]
+for ident, content in ((128,b'abcdef'),(129,b'NEIGHBOR')):
+ h=call('(void *)_NewHandle_flags('+str(len(content))+',0,0)')
+ mem.write_memory(payload(h),content)
+ mem.write_memory(data+512,b'\0')
+ action('C_AddResource('+ptr(h)+',0x54455354,'+str(ident)+','+ptr(data+512)+')')
+ assert res_error()==0
+ handles.append(h)
+action('C_UpdateResFile('+str(ref)+')')
+assert res_error()==0
+mem.write_memory(payload(handles[0]),b'abcQef')
+action('C_ReadPartialResource('+ptr(handles[0])+',0,'+ptr(data+512)+',6)')
+assert res_error()==0 and bytes(mem.read_memory(data+512,6))==b'abcQef'
+mem.write_memory(payload(handles[0]),b'abcdef')
+mem.write_memory(data+512,b'XY')
+action('C_WritePartialResource('+ptr(handles[0])+',2,'+ptr(data+512)+',2)')
+assert res_error()==0, ('write',res_error())
+action('C_SetResourceSize('+ptr(handles[0])+',12)')
+assert res_error()==0, ('grow',res_error())
+action('C_CloseResFile('+str(ref)+')')
+assert res_error()==0
+ref=call('(int)C_HOpenResFile(0,0,'+ptr(data)+',3)')
+action('C_SetResLoad(0)')
+h=call('(void *)C_Get1Resource(0x54455354,128)')
+assert h and int.from_bytes(mem.read_memory(h,4),'big')==0
+action('C_ReadPartialResource('+ptr(h)+',0,'+ptr(data+512)+',12)')
+assert res_error()==0 and bytes(mem.read_memory(data+512,12))==b'abXYef'+bytes(6)
+action('C_SetResLoad(1)')
+assert h and bytes(mem.read_memory(payload(h),12))==b'abXYef'+bytes(6)
+neighbor=call('(void *)C_Get1Resource(0x54455354,129)')
+assert neighbor and bytes(mem.read_memory(payload(neighbor),8))==b'NEIGHBOR'
+action('C_SetResourceSize('+ptr(h)+',3)')
+assert res_error()==0, ('shrink',res_error())
+action('C_CloseResFile('+str(ref)+')')
+ref=call('(int)C_HOpenResFile(0,0,'+ptr(data)+',3)')
+h=call('(void *)C_Get1Resource(0x54455354,128)')
+assert call('(int)GetHandleSize('+ptr(h)+')')==3
+assert bytes(mem.read_memory(payload(h),3))==b'abX'
+neighbor=call('(void *)C_Get1Resource(0x54455354,129)')
+assert bytes(mem.read_memory(payload(neighbor),8))==b'NEIGHBOR'
+mapping=bytes((
+ 0,1,0,0,0,2,0,0,0,30,0,0,0,14,0,0,0,44,0,0,0,22,0,0,0,0,0,0,0,0,
+ 0,64,0,0,0,2,0,0,0,4,0,1,0,11,
+ 0,11,0,0,0,4,0,4,0,0,0,0,0,0,0,11,0,1,0,2,0,0))
+intl=call('(void *)_NewHandle_flags('+str(len(mapping))+',0,0)')
+mem.write_memory(payload(intl),mapping)
+mem.write_memory(data+512,b'\0')
+action('C_AddResource('+ptr(intl)+',0x69746c6d,0,'+ptr(data+512)+')')
+assert res_error()==0
+assert call('(int)C_IULangOrder(4,0)')<0 and res_error()==0
+assert call('(int)C_IULangOrder(0,4)')>0 and res_error()==0
+assert call('(int)C_IULangOrder(-3,0)')<0 and res_error()==0
+assert call('(int)C_IULangOrder(-2,0)')==0 and res_error()==0
+action('C_CloseResFile('+str(ref)+')')
+for host, kind in (('@FIXTURE@/partial',0),('@FIXTURE@/Folder',1)):
+ path=(host[:2]+host[3:].replace('/',':')).encode('mac_roman')
+ mem.write_memory(data,bytes([len(path)])+path)
+ assert call('(int)C_FSMakeFSSpec(0,0,'+ptr(data)+','+ptr(data+256)+')')==0
+ assert call('(int)C_NewAliasMinimal('+ptr(data+256)+','+ptr(data+512)+')')==0
+ h=int.from_bytes(mem.read_memory(data+512,4),'big')+base
+ record=payload(h)
+ assert bytes(mem.read_memory(record+46,4))==bytes(mem.read_memory(data+258,4))
+ assert int.from_bytes(mem.read_memory(record+8,2),'big')==kind
+ assert call('(int)C_ResolveAlias(0,'+ptr(h)+','+ptr(data+768)+','+ptr(data+1024)+')')==0
+ original=bytes(mem.read_memory(data+256,70))
+ resolved=bytes(mem.read_memory(data+768,70))
+ assert original[:6]==resolved[:6] and original[6:7+original[6]]==resolved[6:7+resolved[6]]
+ action('DisposHandle('+ptr(h)+')')
+def make_spec(host, output):
+ path=(host[:2]+host[3:].replace('/',':')).encode('mac_roman')
+ mem.write_memory(data,bytes([len(path)])+path)
+ assert call('(int)C_FSMakeFSSpec(0,0,'+ptr(data)+','+ptr(output)+')')==0
+make_spec('@FIXTURE@/Bundle/Links/Alias',data+1536)
+make_spec('@FIXTURE@/Bundle/Docs/File',data+1664)
+make_spec('@FIXTURE@/Copy/Links/Alias',data+1792)
+make_spec('@FIXTURE@/Copy/Docs/File',data+1920)
+assert call('(int)C_NewAlias('+ptr(data+1536)+','+ptr(data+1664)+','+ptr(data+2048)+')')==0
+h=int.from_bytes(mem.read_memory(data+2048,4),'big')+base
+record=payload(h)
+assert struct.unpack('>hh',bytes(mem.read_memory(record+130,4)))==(2,2)
+before=bytes(mem.read_memory(record,call('(int)GetHandleSize('+ptr(h)+')')))
+assert call('(int)ROMlib_follow_finder_alias('+ptr(data+1792)+','+ptr(h)+',0,'+ptr(data+768)+','+ptr(data+2052)+')')==0
+assert bytes(mem.read_memory(data+768,6))==bytes(mem.read_memory(data+1920,6))
+assert bytes(mem.read_memory(payload(h),len(before)))==before
+assert call('(int)C_ResolveAlias('+ptr(data+1792)+','+ptr(h)+','+ptr(data+768)+','+ptr(data+2052)+')')==0
+assert bytes(mem.read_memory(data+768,6))==bytes(mem.read_memory(data+1920,6))
+assert int.from_bytes(mem.read_memory(data+2052,1),'big')==1
+assert call('(int)C_ResolveAlias('+ptr(data+1792)+','+ptr(h)+','+ptr(data+768)+','+ptr(data+2052)+')')==0
+assert int.from_bytes(mem.read_memory(data+2052,1),'big')==0
+action('DisposHandle('+ptr(h)+')')
+# Store a real Finder alias with a nonzero resource ID.
+assert call('(int)C_NewAlias('+ptr(data+1792)+','+ptr(data+1920)+','+ptr(data+2048)+')')==0
+h=int.from_bytes(mem.read_memory(data+2048,4),'big')+base
+action('C_FSpCreateResFile('+ptr(data+1792)+',0x54455354,0x616c6973,0)')
+assert res_error()==0
+alias_ref=call('(int)C_FSpOpenResFile('+ptr(data+1792)+',3)')
+assert alias_ref>0
+mem.write_memory(data+512,b'\0')
+action('C_AddResource('+ptr(h)+',0x616c6973,128,'+ptr(data+512)+')')
+assert res_error()==0
+action('C_CloseResFile('+str(alias_ref)+')')
+assert call('(int)C_FSpGetFInfo('+ptr(data+1792)+','+ptr(data+2304)+')')==0
+flags=int.from_bytes(mem.read_memory(data+2312,2),'big')|0x8000
+mem.write_memory(data+2312,flags.to_bytes(2,'big'))
+assert call('(int)C_FSpSetFInfo('+ptr(data+1792)+','+ptr(data+2304)+')')==0
+saved_ref=call('(int)C_CurResFile()')
+action('C_SetResLoad(0)')
+mem.write_memory(data+768,bytes(mem.read_memory(data+1792,70)))
+assert call('(int)C_ResolveAliasFile('+ptr(data+768)+',1,'+ptr(data+2052)+','+ptr(data+2053)+')')==0
+assert bytes(mem.read_memory(data+2052,2))==b'\0\1'
+assert bytes(mem.read_memory(data+768,6))==bytes(mem.read_memory(data+1920,6))
+assert call('(int)C_CurResFile()')==saved_ref
+assert bytes(mem.read_memory(base+0xa5e,1))==b'\0'
+action('C_SetResLoad(1)')
+print('TOOLBOX_RESOURCE_PERSISTENCE_OK')
+end
+quit 0

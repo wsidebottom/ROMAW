@@ -1,0 +1,49 @@
+/*+===================================================================
+  File:      exemove.c
+
+  Summary:   Implements exemove support for host-platform configuration and integration.
+
+  Classes:   None.
+
+  Functions: WinMain
+
+  Origin:    Existing repository source in executor/src/config/os/cygwin32; original attribution and provenance comments
+             are preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+#include <windows.h>
+#include "paramline.h"
+
+#if !defined(STDCALL)
+#define STDCALL __stdcall
+#endif
+
+/*
+ * Rename file specified by argv[1] to name specified by argv[2].
+ * keep hammering until we can do it.
+ *
+ * This program is a helper for the ROMAW registration process.
+ * ROMAW makes a copy of itself with some bytes changed, but can't
+ * actually rename itself because it's still open, so starts up this
+ * program and then exits.
+ */
+
+int STDCALL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR szCmdLine, int sw)
+{
+    int retval;
+    int argc;
+    char** argv;
+
+    paramline_to_argcv(GetCommandLine(), &argc, &argv);
+
+    if (argc != 3 || !SetFileAttributes(argv[2], FILE_ATTRIBUTE_NORMAL))
+        retval = 1;
+    else {
+        while (!DeleteFile(argv[2]))
+            ;
+        retval = MoveFile(argv[1], argv[2]) ? 0 : 1;
+    }
+    return retval;
+}

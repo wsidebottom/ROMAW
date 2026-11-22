@@ -1,0 +1,1447 @@
+[
+  {
+    "name": "LMGetApFontID",
+    "code_offset": 685416,
+    "kind": "lha",
+    "address": 2436,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetApplZone",
+    "code_offset": 684960,
+    "kind": "lwz",
+    "address": 682,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBootDrive",
+    "code_offset": 684800,
+    "kind": "lha",
+    "address": 528,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBufPtr",
+    "code_offset": 684640,
+    "kind": "lwz",
+    "address": 268,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBufTgDate",
+    "code_offset": 685100,
+    "kind": "lwz",
+    "address": 772,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBufTgFBkNum",
+    "code_offset": 685084,
+    "kind": "lha",
+    "address": 770,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBufTgFFlg",
+    "code_offset": 685068,
+    "kind": "lha",
+    "address": 768,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetBufTgFNum",
+    "code_offset": 685052,
+    "kind": "lwz",
+    "address": 764,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCPUFlag",
+    "code_offset": 684672,
+    "kind": "lbz",
+    "address": 303,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCurApName",
+    "code_offset": 685308,
+    "kind": "address",
+    "address": 2320,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCurApRefNum",
+    "code_offset": 685276,
+    "kind": "lha",
+    "address": 2304,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCurPageOption",
+    "code_offset": 685368,
+    "kind": "lha",
+    "address": 2358,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCurPitch",
+    "code_offset": 684928,
+    "kind": "lha",
+    "address": 640,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCurStackBase",
+    "code_offset": 685292,
+    "kind": "lwz",
+    "address": 2312,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetCursorNew",
+    "code_offset": 685920,
+    "kind": "lbz",
+    "address": 2254,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetDefltStack",
+    "code_offset": 685132,
+    "kind": "lwz",
+    "address": 802,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetDeviceList",
+    "code_offset": 685212,
+    "kind": "lwz",
+    "address": 2216,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetDiskFormatingHFSDefaults",
+    "code_offset": 685968,
+    "kind": "lwz",
+    "address": 926,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetFinderName",
+    "code_offset": 684976,
+    "kind": "address",
+    "address": 736,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetFractEnable",
+    "code_offset": 685832,
+    "kind": "lbz",
+    "address": 3060,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetGZMoveHnd",
+    "code_offset": 685164,
+    "kind": "lwz",
+    "address": 816,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetGZRootHnd",
+    "code_offset": 685148,
+    "kind": "lwz",
+    "address": 808,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetHeapEnd",
+    "code_offset": 684656,
+    "kind": "lwz",
+    "address": 276,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetHighHeapMark",
+    "code_offset": 685936,
+    "kind": "lwz",
+    "address": 2990,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetHiliteMode",
+    "code_offset": 685384,
+    "kind": "lbz",
+    "address": 2360,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetHiliteRGB",
+    "code_offset": 685864,
+    "kind": "rgb_out",
+    "address": 3488,
+    "size": 6,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetIntlSpec",
+    "code_offset": 685752,
+    "kind": "lwz",
+    "address": 2976,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetJStash",
+    "code_offset": 685260,
+    "kind": "lwz",
+    "address": 2296,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetKbdLast",
+    "code_offset": 684816,
+    "kind": "lbz",
+    "address": 536,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetKbdType",
+    "code_offset": 684832,
+    "kind": "lbz",
+    "address": 542,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetKeyRepThresh",
+    "code_offset": 684736,
+    "kind": "lha",
+    "address": 400,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetKeyThresh",
+    "code_offset": 684720,
+    "kind": "lha",
+    "address": 398,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetLastFOND",
+    "code_offset": 685816,
+    "kind": "lwz",
+    "address": 3010,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetLastSPExtra",
+    "code_offset": 685720,
+    "kind": "lwz",
+    "address": 2892,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetLvl2DT",
+    "code_offset": 684752,
+    "kind": "index_get",
+    "address": 434,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetMainDevice",
+    "code_offset": 685196,
+    "kind": "lwz",
+    "address": 2212,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetMemErr",
+    "code_offset": 684848,
+    "kind": "lha",
+    "address": 544,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetMemTop",
+    "code_offset": 684624,
+    "kind": "lwz",
+    "address": 264,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetMinStack",
+    "code_offset": 685116,
+    "kind": "lwz",
+    "address": 798,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetMinusOne",
+    "code_offset": 685508,
+    "kind": "lwz",
+    "address": 2566,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetOneOne",
+    "code_offset": 685492,
+    "kind": "lwz",
+    "address": 2562,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetPrintErr",
+    "code_offset": 685400,
+    "kind": "lha",
+    "address": 2372,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetQDColors",
+    "code_offset": 685228,
+    "kind": "lwz",
+    "address": 2224,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetResErr",
+    "code_offset": 685564,
+    "kind": "lha",
+    "address": 2656,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetResLoad",
+    "code_offset": 685548,
+    "kind": "lbz",
+    "address": 2654,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetRndSeed",
+    "code_offset": 684688,
+    "kind": "lwz",
+    "address": 342,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSEvtEnb",
+    "code_offset": 684704,
+    "kind": "lbz",
+    "address": 348,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetScrDmpEnb",
+    "code_offset": 685036,
+    "kind": "lbz",
+    "address": 760,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetScrHRes",
+    "code_offset": 684608,
+    "kind": "lha",
+    "address": 260,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetScrVRes",
+    "code_offset": 684592,
+    "kind": "lha",
+    "address": 258,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSdVolume",
+    "code_offset": 684864,
+    "kind": "lbz",
+    "address": 608,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSoundBase",
+    "code_offset": 684896,
+    "kind": "lwz",
+    "address": 614,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSoundLevel",
+    "code_offset": 684912,
+    "kind": "lbz",
+    "address": 639,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSoundPtr",
+    "code_offset": 684880,
+    "kind": "lwz",
+    "address": 610,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetStackLowPoint",
+    "code_offset": 685952,
+    "kind": "lwz",
+    "address": 272,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSysFontFam",
+    "code_offset": 685784,
+    "kind": "lha",
+    "address": 2982,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSysFontSize",
+    "code_offset": 685800,
+    "kind": "lha",
+    "address": 2984,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSysMap",
+    "code_offset": 685532,
+    "kind": "lha",
+    "address": 2648,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSysResName",
+    "code_offset": 685620,
+    "kind": "address",
+    "address": 2776,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetSysZone",
+    "code_offset": 684944,
+    "kind": "lwz",
+    "address": 678,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetTheGDevice",
+    "code_offset": 685848,
+    "kind": "lwz",
+    "address": 3272,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetTheMenu",
+    "code_offset": 685524,
+    "kind": "lha",
+    "address": 2598,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetTmpResLoad",
+    "code_offset": 685736,
+    "kind": "lbz",
+    "address": 2975,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetToExtFS",
+    "code_offset": 685180,
+    "kind": "lwz",
+    "address": 1010,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetToolScratch",
+    "code_offset": 685432,
+    "kind": "address",
+    "address": 2510,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetWidthListHand",
+    "code_offset": 685244,
+    "kind": "lwz",
+    "address": 2276,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetWidthPtr",
+    "code_offset": 685688,
+    "kind": "lwz",
+    "address": 2832,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetWidthTabHandle",
+    "code_offset": 685704,
+    "kind": "lwz",
+    "address": 2858,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMGetWordRedraw",
+    "code_offset": 685768,
+    "kind": "lbz",
+    "address": 2981,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetApFontID",
+    "code_offset": 685424,
+    "kind": "sth",
+    "address": 2436,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetApplZone",
+    "code_offset": 684968,
+    "kind": "stw",
+    "address": 682,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBootDrive",
+    "code_offset": 684808,
+    "kind": "sth",
+    "address": 528,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBufPtr",
+    "code_offset": 684648,
+    "kind": "stw",
+    "address": 268,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBufTgDate",
+    "code_offset": 685108,
+    "kind": "stw",
+    "address": 772,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBufTgFBkNum",
+    "code_offset": 685092,
+    "kind": "sth",
+    "address": 770,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBufTgFFlg",
+    "code_offset": 685076,
+    "kind": "sth",
+    "address": 768,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetBufTgFNum",
+    "code_offset": 685060,
+    "kind": "stw",
+    "address": 764,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCPUFlag",
+    "code_offset": 684680,
+    "kind": "stb",
+    "address": 303,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCurApName",
+    "code_offset": 685320,
+    "kind": "copy_in",
+    "address": 2320,
+    "size": 32,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCurApRefNum",
+    "code_offset": 685284,
+    "kind": "sth",
+    "address": 2304,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCurPageOption",
+    "code_offset": 685376,
+    "kind": "sth",
+    "address": 2358,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCurPitch",
+    "code_offset": 684936,
+    "kind": "sth",
+    "address": 640,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCurStackBase",
+    "code_offset": 685300,
+    "kind": "stw",
+    "address": 2312,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetCursorNew",
+    "code_offset": 685928,
+    "kind": "stb",
+    "address": 2254,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetDefltStack",
+    "code_offset": 685140,
+    "kind": "stw",
+    "address": 802,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetDeviceList",
+    "code_offset": 685220,
+    "kind": "stw",
+    "address": 2216,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetDiskFormatingHFSDefaults",
+    "code_offset": 685984,
+    "kind": "stw",
+    "address": 926,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetFinderName",
+    "code_offset": 684988,
+    "kind": "copy_in",
+    "address": 736,
+    "size": 16,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetFractEnable",
+    "code_offset": 685840,
+    "kind": "stb",
+    "address": 3060,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetGZMoveHnd",
+    "code_offset": 685172,
+    "kind": "stw",
+    "address": 816,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetGZRootHnd",
+    "code_offset": 685156,
+    "kind": "stw",
+    "address": 808,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetHeapEnd",
+    "code_offset": 684664,
+    "kind": "stw",
+    "address": 276,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetHighHeapMark",
+    "code_offset": 685944,
+    "kind": "stw",
+    "address": 2990,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetHiliteMode",
+    "code_offset": 685392,
+    "kind": "stb",
+    "address": 2360,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetHiliteRGB",
+    "code_offset": 685892,
+    "kind": "rgb_in",
+    "address": 3488,
+    "size": 6,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetIntlSpec",
+    "code_offset": 685760,
+    "kind": "stw",
+    "address": 2976,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetJStash",
+    "code_offset": 685268,
+    "kind": "stw",
+    "address": 2296,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetKbdLast",
+    "code_offset": 684824,
+    "kind": "stb",
+    "address": 536,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetKbdType",
+    "code_offset": 684840,
+    "kind": "stb",
+    "address": 542,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetKeyRepThresh",
+    "code_offset": 684744,
+    "kind": "sth",
+    "address": 400,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetKeyThresh",
+    "code_offset": 684728,
+    "kind": "sth",
+    "address": 398,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetLastFOND",
+    "code_offset": 685824,
+    "kind": "stw",
+    "address": 3010,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetLastSPExtra",
+    "code_offset": 685728,
+    "kind": "stw",
+    "address": 2892,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetLvl2DT",
+    "code_offset": 684776,
+    "kind": "index_set",
+    "address": 434,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetMainDevice",
+    "code_offset": 685204,
+    "kind": "stw",
+    "address": 2212,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetMemErr",
+    "code_offset": 684856,
+    "kind": "sth",
+    "address": 544,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetMemTop",
+    "code_offset": 684632,
+    "kind": "stw",
+    "address": 264,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetMinStack",
+    "code_offset": 685124,
+    "kind": "stw",
+    "address": 798,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetMinusOne",
+    "code_offset": 685516,
+    "kind": "stw",
+    "address": 2566,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetOneOne",
+    "code_offset": 685500,
+    "kind": "stw",
+    "address": 2562,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetPrintErr",
+    "code_offset": 685408,
+    "kind": "sth",
+    "address": 2372,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetQDColors",
+    "code_offset": 685236,
+    "kind": "stw",
+    "address": 2224,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetResErr",
+    "code_offset": 685572,
+    "kind": "sth",
+    "address": 2656,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetResLoad",
+    "code_offset": 685556,
+    "kind": "stb",
+    "address": 2654,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetRndSeed",
+    "code_offset": 684696,
+    "kind": "stw",
+    "address": 342,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSEvtEnb",
+    "code_offset": 684712,
+    "kind": "stb",
+    "address": 348,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetScrDmpEnb",
+    "code_offset": 685044,
+    "kind": "stb",
+    "address": 760,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetScrHRes",
+    "code_offset": 684616,
+    "kind": "sth",
+    "address": 260,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetScrVRes",
+    "code_offset": 684600,
+    "kind": "sth",
+    "address": 258,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSdVolume",
+    "code_offset": 684872,
+    "kind": "stb",
+    "address": 608,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSoundBase",
+    "code_offset": 684904,
+    "kind": "stw",
+    "address": 614,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSoundLevel",
+    "code_offset": 684920,
+    "kind": "stb",
+    "address": 639,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSoundPtr",
+    "code_offset": 684888,
+    "kind": "stw",
+    "address": 610,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetStackLowPoint",
+    "code_offset": 685960,
+    "kind": "stw",
+    "address": 272,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSysFontFam",
+    "code_offset": 685792,
+    "kind": "sth",
+    "address": 2982,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSysFontSize",
+    "code_offset": 685808,
+    "kind": "sth",
+    "address": 2984,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSysMap",
+    "code_offset": 685540,
+    "kind": "sth",
+    "address": 2648,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSysResName",
+    "code_offset": 685632,
+    "kind": "copy_in",
+    "address": 2776,
+    "size": 16,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetSysZone",
+    "code_offset": 684952,
+    "kind": "stw",
+    "address": 678,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetTheGDevice",
+    "code_offset": 685856,
+    "kind": "stw",
+    "address": 3272,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetTmpResLoad",
+    "code_offset": 685744,
+    "kind": "stb",
+    "address": 2975,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetToExtFS",
+    "code_offset": 685188,
+    "kind": "stw",
+    "address": 1010,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetToolScratch",
+    "code_offset": 685444,
+    "kind": "copy_in",
+    "address": 2510,
+    "size": 8,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetWidthListHand",
+    "code_offset": 685252,
+    "kind": "stw",
+    "address": 2276,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetWidthPtr",
+    "code_offset": 685696,
+    "kind": "stw",
+    "address": 2832,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetWidthTabHandle",
+    "code_offset": 685712,
+    "kind": "stw",
+    "address": 2858,
+    "family": "lowmem"
+  },
+  {
+    "name": "LMSetWordRedraw",
+    "code_offset": 685776,
+    "kind": "stb",
+    "address": 2981,
+    "family": "lowmem"
+  },
+  {
+    "name": "GetListPort",
+    "kind": "get",
+    "offset": 8,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481036,
+    "family": "record"
+  },
+  {
+    "name": "GetListVerticalScrollBar",
+    "kind": "get",
+    "offset": 28,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481120,
+    "family": "record"
+  },
+  {
+    "name": "GetListHorizontalScrollBar",
+    "kind": "get",
+    "offset": 32,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481132,
+    "family": "record"
+  },
+  {
+    "name": "GetListFlags",
+    "kind": "get",
+    "offset": 39,
+    "width": 1,
+    "signed": true,
+    "guard": false,
+    "code_offset": 481144,
+    "family": "record"
+  },
+  {
+    "name": "GetListSelectionFlags",
+    "kind": "get",
+    "offset": 36,
+    "width": 1,
+    "signed": true,
+    "guard": false,
+    "code_offset": 481160,
+    "family": "record"
+  },
+  {
+    "name": "GetListActive",
+    "kind": "get",
+    "offset": 37,
+    "width": 1,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481176,
+    "family": "record"
+  },
+  {
+    "name": "GetListClickTime",
+    "kind": "get",
+    "offset": 40,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481188,
+    "family": "record"
+  },
+  {
+    "name": "GetListClickLoop",
+    "kind": "get",
+    "offset": 52,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481240,
+    "family": "record"
+  },
+  {
+    "name": "GetListRefCon",
+    "kind": "get",
+    "offset": 60,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481252,
+    "family": "record"
+  },
+  {
+    "name": "GetListDefinition",
+    "kind": "get",
+    "offset": 64,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481264,
+    "family": "record"
+  },
+  {
+    "name": "GetListUserHandle",
+    "kind": "get",
+    "offset": 68,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481276,
+    "family": "record"
+  },
+  {
+    "name": "GetListDataHandle",
+    "kind": "get",
+    "offset": 80,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481320,
+    "family": "record"
+  },
+  {
+    "name": "GetListViewBounds",
+    "kind": "copy_out",
+    "offset": 0,
+    "width": 8,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481008,
+    "family": "record"
+  },
+  {
+    "name": "GetListCellIndent",
+    "kind": "copy_out",
+    "offset": 12,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481048,
+    "family": "record"
+  },
+  {
+    "name": "GetListCellSize",
+    "kind": "copy_out",
+    "offset": 16,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481068,
+    "family": "record"
+  },
+  {
+    "name": "GetListVisibleCells",
+    "kind": "copy_out",
+    "offset": 20,
+    "width": 8,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481088,
+    "family": "record"
+  },
+  {
+    "name": "GetListClickLocation",
+    "kind": "copy_out",
+    "offset": 44,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481200,
+    "family": "record"
+  },
+  {
+    "name": "GetListMouseLocation",
+    "kind": "copy_out",
+    "offset": 48,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481220,
+    "family": "record"
+  },
+  {
+    "name": "GetListDataBounds",
+    "kind": "copy_out",
+    "offset": 72,
+    "width": 8,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481288,
+    "family": "record"
+  },
+  {
+    "name": "SetListViewBounds",
+    "kind": "copy_in",
+    "offset": 0,
+    "width": 8,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481332,
+    "family": "record"
+  },
+  {
+    "name": "SetListCellIndent",
+    "kind": "copy_in",
+    "offset": 12,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481368,
+    "family": "record"
+  },
+  {
+    "name": "SetListLastClick",
+    "kind": "copy_in",
+    "offset": 56,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481432,
+    "family": "record"
+  },
+  {
+    "name": "SetListPort",
+    "kind": "set",
+    "offset": 8,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 481356,
+    "family": "record"
+  },
+  {
+    "name": "SetListClickTime",
+    "kind": "set",
+    "offset": 40,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481392,
+    "family": "record"
+  },
+  {
+    "name": "SetListClickLoop",
+    "kind": "set",
+    "offset": 52,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481412,
+    "family": "record"
+  },
+  {
+    "name": "SetListRefCon",
+    "kind": "set",
+    "offset": 60,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481456,
+    "family": "record"
+  },
+  {
+    "name": "SetListFlags",
+    "kind": "set",
+    "offset": 39,
+    "width": 1,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481476,
+    "family": "record"
+  },
+  {
+    "name": "SetListSelectionFlags",
+    "kind": "set",
+    "offset": 36,
+    "width": 1,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481496,
+    "family": "record"
+  },
+  {
+    "name": "SetListUserHandle",
+    "kind": "set",
+    "offset": 68,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 481516,
+    "family": "record"
+  },
+  {
+    "name": "GetControlHilite",
+    "kind": "get",
+    "offset": 17,
+    "width": 1,
+    "signed": false,
+    "guard": false,
+    "code_offset": 469268,
+    "family": "record"
+  },
+  {
+    "name": "IsControlHilited",
+    "kind": "nonzero",
+    "offset": 17,
+    "width": 1,
+    "signed": false,
+    "guard": false,
+    "code_offset": 469248,
+    "family": "record"
+  },
+  {
+    "name": "GetControlDataHandle",
+    "kind": "get",
+    "offset": 28,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 469280,
+    "family": "record"
+  },
+  {
+    "name": "GetControlOwner",
+    "kind": "get",
+    "offset": 4,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 469292,
+    "family": "record"
+  },
+  {
+    "name": "SetControlBounds",
+    "kind": "copy_in",
+    "offset": 8,
+    "width": 8,
+    "signed": false,
+    "guard": true,
+    "code_offset": 469392,
+    "family": "record"
+  },
+  {
+    "name": "SetControlDataHandle",
+    "kind": "set",
+    "offset": 28,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 469428,
+    "family": "record"
+  },
+  {
+    "name": "GetControlPopupMenuHandle",
+    "kind": "popup_get",
+    "offset": 0,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 469304,
+    "family": "record"
+  },
+  {
+    "name": "GetControlPopupMenuID",
+    "kind": "popup_get",
+    "offset": 4,
+    "width": 2,
+    "signed": true,
+    "guard": true,
+    "code_offset": 469348,
+    "family": "record"
+  },
+  {
+    "name": "SetControlPopupMenuHandle",
+    "kind": "popup_set",
+    "offset": 0,
+    "width": 4,
+    "signed": false,
+    "guard": true,
+    "code_offset": 469448,
+    "family": "record"
+  },
+  {
+    "name": "SetControlPopupMenuID",
+    "kind": "popup_set",
+    "offset": 4,
+    "width": 2,
+    "signed": false,
+    "guard": true,
+    "code_offset": 469484,
+    "family": "record"
+  },
+  {
+    "name": "GetMenuWidth",
+    "kind": "get",
+    "offset": 2,
+    "width": 2,
+    "signed": true,
+    "guard": true,
+    "code_offset": 479840,
+    "family": "record"
+  },
+  {
+    "name": "GetMenuHeight",
+    "kind": "get",
+    "offset": 4,
+    "width": 2,
+    "signed": true,
+    "guard": true,
+    "code_offset": 479868,
+    "family": "record"
+  },
+  {
+    "name": "SetMenuID",
+    "kind": "set",
+    "offset": 0,
+    "width": 2,
+    "signed": false,
+    "guard": true,
+    "code_offset": 480012,
+    "family": "record"
+  },
+  {
+    "name": "SetMenuWidth",
+    "kind": "set",
+    "offset": 2,
+    "width": 2,
+    "signed": false,
+    "guard": true,
+    "code_offset": 480032,
+    "family": "record"
+  },
+  {
+    "name": "SetMenuHeight",
+    "kind": "set",
+    "offset": 4,
+    "width": 2,
+    "signed": false,
+    "guard": true,
+    "code_offset": 480052,
+    "family": "record"
+  },
+  {
+    "name": "GetMenuTitle",
+    "kind": "title",
+    "offset": 14,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 479896,
+    "family": "record"
+  },
+  {
+    "name": "GetDialogCancelItem",
+    "kind": "direct_get",
+    "offset": 166,
+    "width": 2,
+    "signed": true,
+    "guard": false,
+    "code_offset": 469540,
+    "family": "record"
+  },
+  {
+    "name": "GetDialogKeyboardFocusItem",
+    "kind": "focus",
+    "offset": 164,
+    "width": 2,
+    "signed": true,
+    "guard": true,
+    "code_offset": 469548,
+    "family": "record"
+  },
+  {
+    "name": "GetDialogPort",
+    "kind": "identity",
+    "offset": 0,
+    "width": 4,
+    "signed": false,
+    "guard": false,
+    "code_offset": 469640,
+    "family": "record"
+  }
+]

@@ -1,0 +1,104 @@
+# +===================================================================
+#   File:      system-resource-save.gdb.in
+#
+#   Summary:   Provides system resource save.gdb debugger commands for regression tests and test fixtures.
+#
+#   Classes:   None.
+#
+#   Functions: Debugger command sequence; no exported functions.
+#
+#   Origin:    Existing repository source in executor/tests; original attribution and provenance comments are preserved
+#              below.
+#
+#   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+# ===================================================================+
+
+set pagination off
+set confirm off
+set print thread-events off
+break C_WaitNextEvent
+run "__APP__"
+printf "NO_EXTERNAL_SYSTEM_STARTUP_OK\n"
+set $sys = *(unsigned short *)(ROMlib_offset + 0xA58)
+set $sys = (short)(($sys >> 8) | ($sys << 8))
+printf "SYS_REF=%d\n",$sys
+call C_UseResFile($sys)
+if (void *)C_Get1Resource(0x4e464e54,12) == 0 || (void *)C_Get1Resource(0x464f4e44,20) == 0
+printf "BUNDLED_FONTS_NOT_LOADED\n"
+quit 1
+end
+if (void *)C_Get1Resource(0x464f4e54,12) != 0 || (int)C_RealFont(21,12) == 0
+printf "UNEXPECTED_SYSTEM_FONT_MAP\n"
+quit 1
+end
+printf "EXTERNAL_SYSTEM_FONTS_OK\n"
+# Exercise an application-supplied package with an original 68K dispatcher.
+# It consumes a word selector and returns selector+256 in D0.
+set $package = (void *)_NewHandle_flags(10,1,1)
+set $raw = *(unsigned int *)$package
+set $addr = (($raw & 255)<<24) | (($raw & 65280)<<8) | (($raw >> 8)&65280) | (($raw >>24)&255)
+set $code = (unsigned char *)(ROMlib_offset + $addr)
+set {unsigned char[10]} $code = {0x20,0x5f,0x30,0x1f,0x06,0x40,0x01,0x00,0x4e,0xd0}
+set $empty = (unsigned char *)_NewPtr_flags(2,1,1)
+set {unsigned char[2]} $empty = {0,0}
+call C_AddResource($package,0x5041434b,1,$empty)
+if (int)C_ResError() != 0
+quit 1
+end
+set $oldsp = cpu_state.regs[15].ul.n
+set $oldstate = (int)HGetState($package)
+set $oldload = *(unsigned char *)(ROMlib_offset + 0xa5e)
+call C_SetResLoad(0)
+set cpu_state.regs[15].ul.n = $oldsp-6
+set {unsigned char[6]} (ROMlib_offset+$oldsp-6) = {0x12,0x34,0x56,0x78,0,38}
+set cpu_state.regs[0].ul.n = 0xabcd0000
+set cpu_state.regs[1].ul.n = 0x13579bdf
+if (unsigned int)_Pack1(0,0) != 0x12345678
+quit 1
+end
+if cpu_state.regs[15].ul.n != $oldsp || cpu_state.regs[0].ul.n != 0xabcd0126 || cpu_state.regs[1].ul.n != 0x13579bdf
+quit 1
+end
+if (int)HGetState($package) != $oldstate
+quit 1
+end
+call C_SetResLoad($oldload)
+call C_RmveResource($package)
+call DisposHandle($package)
+printf "GUEST_PACKAGE_DISPATCH_OK\n"
+if (int)window_prefs_save_location(100,100) == 0
+quit 1
+end
+call ROMlib_sdl_queue_window_position()
+call ROMlib_sdl_apply_window_position()
+call ROMlib_sdl_save_window_position()
+set $position=(int *)malloc(8)
+if (int)window_prefs_location($position,$position+1) == 0
+quit 1
+end
+if $position[0] != 100 || $position[1] != 100
+printf "WINDOW_LOCATION_NOT_APPLIED\n"
+quit 1
+end
+printf "WINDOW_LOCATION_SAVED_OK\n"
+set $h = (void *)_NewHandle_flags(4, 1, 1)
+set $raw = *(unsigned int *)$h
+set $addr = (($raw & 255)<<24) | (($raw & 65280)<<8) | (($raw >> 8)&65280) | (($raw >>24)&255)
+set $data = (unsigned char *)(ROMlib_offset + $addr)
+set {unsigned char[4]} $data = {1,2,3,4}
+set $name = (unsigned char *)_NewPtr_flags(16,1,1)
+set {unsigned char[6]} $name = {5,80,114,111,98,101}
+call C_AddResource($h, 0x54737421, 30000, $name)
+if (int)C_ResError() != 0
+quit 1
+end
+set $check=(void*)C_Get1Resource(0x54737421,30000)
+printf "ADDED_HANDLE=%p CHECK=%p\n",$h,$check
+call C_UpdateResFile($sys)
+set $err = *(unsigned short *)(ROMlib_offset + 0xA60)
+printf "SAVE_ERROR=%d\n",$err
+if $err != 0
+quit 1
+end
+printf "RESOURCE_PREFERENCES_SAVED_OK\n"
+quit 0

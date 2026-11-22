@@ -1,0 +1,17 @@
+; +===================================================================
+;   File:      comdlg32.rawdef
+;
+;   Summary:   Implements comdlg32 support for host-platform configuration and integration.
+;
+;   Classes:   None.
+;
+;   Functions: Imported procedures: PrintDlgA, CommDlgExtendedError
+;
+;   Origin:    Existing repository source in executor/src/config/os/cygwin32/dllgen; original attribution and provenance
+;              comments are preserved below.
+;
+;   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+; ===================================================================+
+
+	PrintDlgA@4
+	CommDlgExtendedError@0

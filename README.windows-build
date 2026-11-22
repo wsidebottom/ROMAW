@@ -1,0 +1,131 @@
+# Windows build and debugging
+
+Windows x64 is the supported application host. Build in WSL Bash from
+`/mnt/d/Source/ROMAW`, the same checkout as `D:/Source/ROMAW`. WSL generators and
+isolated Linux test harnesses do not establish support for another application host.
+
+## Prerequisites
+
+Install GNU Make, native GCC/G++, MinGW x86_64 GCC/G++ and binutils, Python 3,
+Perl, Bison, Flex, CMake, and Autoconf/Automake/Libtool for configuration
+regeneration. Syn68k's FPSP image also requires m68k Linux GCC/binutils
+(`m68k-linux-gnu-` by default; override with `M68K_TOOL_PREFIX`). Native generators
+must match the target pointer width; the wrappers select it automatically.
+Python Pillow with FreeType is needed for artwork and the classic font suitcase;
+see `system/requirements-native-finder.txt`.
+
+The native Finder's StuffIt folder-transfer encoder also needs Rust and its
+`x86_64-pc-windows-gnu` target (`rustup target add x86_64-pc-windows-gnu`).
+The root build compiles the pinned library from `stuffit/third_party/` into the
+selected object tree. See `stuffit/README.md` for provenance and bridge checks.
+The current Rust Windows target requires Windows 10 or later.
+
+Prepare the local SDL dependency prefix:
+
+```bash
+cd /mnt/d/Source/ROMAW
+bash tools/build-windows-sdl.sh
+```
+
+This helper builds checksum-pinned SDL 1.2.15 for `x86_64-w64-mingw32` in
+`win64-prefix`. The application wrappers reject other Windows targets.
+`WINDOWS_PREFIX` selects another prefix; `CC`, `PPC_CXX` and `BUILD_CC` select
+ROMAW's target C, target C++ and native generator compilers. Syn68k uses
+`CC_FOR_BUILD` for its Linux generator. Wrappers reconfigure when compiler,
+target or prefix settings change to avoid mixing object formats.
+
+SDL's `sdl-config` and pkg-config metadata resolve discovery paths from their
+installed location. Python virtual environments and older libtool metadata can
+still contain absolute paths; recreate or rebase those when moving an existing
+environment. Check `win64-prefix/bin/sdl-config --prefix` before building.
+
+## Build profiles and output
+
+```bash
+mkdir -p build
+JOBS=10 make > build/romaw-build.log 2>&1
+make debug                  # separate -O0 build with symbols
+make -C system configure  # configure the selected ROMAW profile
+make clean                  # clean the selected profile and syn68k output
+```
+
+The root build first builds/stages syn68k, then ROMAW, its PPC bridge and
+helper libraries. The default is serial; `JOBS` enables compilation parallelism
+after the wrapper's serial generator phase. Close any running staged executable
+before linking/staging, and do not run overlapping builds against shared output.
+
+| Profile | ROMAW objects | PPC objects | Staged executable |
+| --- | --- | --- | --- |
+| Optimized (default) | `build/romaw-optimized/obj` | `build/romaw-optimized/ppc` | `windows-binaries/bin/ROMAW.exe` |
+| Debug | `system/obj` | `synppc/obj` | `windows-binaries/bin/ROMAW-debug.exe` |
+
+The optimized executable also has an identical `ROMAW-optimized.exe` alias.
+Optimized ROMAW, PPC bridge, Carbon and CMake helpers use
+`-O2 -g -fno-strict-aliasing`, with assertions and normal floating-point rules.
+Finder and CPU engines retain their own optimization settings.
+`ROMAW_BUILD_MODE=debug` selects debug for ordinary configure, library and
+clean operations. Object overrides must remain within normal object roots or
+workspace `build/`; source directories and symlink escapes are rejected.
+
+Syn68k always builds in `syn68k/obj` and installs headers/archive in
+`win64-prefix`. Its Windows `syngen.exe` and `libsyn68k.a` are also staged beside
+ROMAW. `make -C syn68k` builds only that dependency; relink ROMAW afterward.
+Standalone PPC commands are in [synppc/README.md](synppc/README.md).
+For targeted archive builds and ownership, see [static libraries](docs/static-libraries.md).
+
+Generated tables and asset includes live in the profile's `obj/generated/`.
+Edit inputs and generators. After Automake input changes run `autoreconf -fi`
+at the root before building; never configure in source directories.
+
+`ROMAW_STAGE_DIR` selects isolated staging. The wrapper copies matching SDL
+and compiler thread-runtime DLLs only after linking. Keep those DLLs, staged
+`fonts/`, `ROMAW.rsrc`, master preferences/mappings and license files
+with the executable. `ROMAW_PROFILE_DIR` supplies a WSL path for per-user
+asset staging; without Windows interop and without this override, that staging
+is skipped. Existing populated profiles are preserved.
+
+## Run and debug
+
+```powershell
+& D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe
+& D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe -debug trace "PATH/TO/CLASSIC APP"
+& D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe --help
+```
+
+No-argument startup initializes the shared Toolbox and opens the native Finder.
+The SDL presentation window stays hidden. Apps opened from Finder run in separate
+ROMAW processes. An application operand launches that app directly.
+Runtime installation files resolve beside the executable even for PATH launches
+from another directory; mutable state uses the user profile.
+
+Normal launches are GUI-only and leave diagnostic files untouched. `-debug trace`
+(or categories such as `-debug unimp,trace`) opens a console and writes
+`stdout.txt`/`stderr.txt` in the launch working directory. Logs can be large.
+`--help` and `-help` print options and exit before SDL/configuration startup.
+
+For exceptions, inspect `stderr.txt` for `win_exception` and obtain `bt` in
+Windows GDB. Debug symbols remain in both profiles. Use
+`set substitute-path /mnt/d/Source/ROMAW D:/Source/ROMAW` to resolve WSL sources.
+Run `bash system/tests/check-build.sh debug-info` to check DWARF preservation.
+
+## Validation and cleanup
+
+Use [the regression guide](system/tests/README.md) to select focused checks.
+`make check` coordinates build/runtime checks; `make check-all` includes CPU,
+PPC and UI suites. These targets build prerequisites once and retain per-step
+logs. Application startup does not establish full interactive compatibility.
+
+Compare profiles with `bash system/tests/check-graphics.sh toolbox-benchmark`
+after building both. It alternates private-profile runs and checks pixel/text
+results; samples and hashes go under `build/toolbox-comparison.*`. Timings exclude
+startup, translation warm-up and presentation and are not whole-app speedups.
+`bash system/tests/check-build.sh build-profiles` checks profile isolation.
+
+Preview old generated test artifacts in PowerShell with
+`./tools/clean-build.ps1 -IncludeTestArtifacts`; add `-Apply` to remove selected
+paths. `-MinimumAgeHours` defaults to 24. The tool checks ages, running processes,
+tracked files and reparse points, preserving production objects, staged binaries,
+toolchains, backups and references. Verify it with `./tools/test-clean-build.ps1`.
+
+Everyday settings and file handling are documented in
+[the runtime guide](docs/runtime-guide.md), rather than repeated here.

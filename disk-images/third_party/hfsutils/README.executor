@@ -1,0 +1,12 @@
+libhfs from hfsutils 3.2.6, Robert Leslie, GPL-2.0-or-later.
+Source: https://deb.debian.org/debian/pool/main/h/hfsutils/hfsutils_3.2.6.orig.tar.gz
+The selected C library sources are unchanged. COPYING retains the upstream
+license (filename COPYING). The OS adapter and full FinderInfo catalog helper
+are maintained separately in ../../src/hfs_io.cpp and hfs_metadata.c.
+
+HFVExplorer was reviewed as a reference for direct, read/write HFS access:
+https://github.com/ObsoleteMadness/HfvExplorer/tree/55a0eb7e2df20fc5d83262aabedc78712be2b9d3/src/hfs/libhfs
+Its earlier hfsutils integration motivated using the standalone upstream
+library. No HFVExplorer application or Windows device-driver code was imported.
+The adapter opens only the selected image, bounds block I/O to its partition,
+and obtains a host write lock. No physical devices or image caches are used.

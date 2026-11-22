@@ -1,0 +1,1123 @@
+/*+===================================================================
+  File:      sound.c
+
+  Summary:   Implements sound support for Macintosh sound playback and conversion.
+
+  Classes:   None.
+
+  Functions: C_SndAddModifier, C_SndChannelStatus, C_SndControl, C_SndDisposeChannel, C_SndDoCommand, C_SndDoImmediate,
+             C_SndPlay, GetSoundVol, ROMlib_get_snd_cmds, ROMlib_sound_resample, SetSoundVol, SoundDone, StartSound,
+             StopSound, callasynth, sound_callback
+
+  Origin:    Existing repository source in executor/src/sound; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+/* Copyright 1990, 1992, 1995, 1996 by Abacus Research and
+ * Development, Inc.  All rights reserved.
+ */
+
+/* Forward declarations in SoundMgr.h (DO NOT DELETE THIS LINE) */
+
+#include "rsys/common.h"
+#include "MemoryMgr.h"
+#include "ResourceMgr.h"
+#include "SoundDvr.h"
+#include "SoundMgr.h"
+#include "FileMgr.h"
+#include "rsys/sounddriver.h"
+#include "rsys/blockinterrupts.h"
+#include "rsys/mman.h"
+#include "rsys/mace.h"
+#include "rsys/pcm.h"
+#include "rsys/legacysound.h"
+#include "rsys/fileplay.h"
+#include <math.h>
+
+/* TRUE when we want to pretend this host has no sound support. */
+boolean_t sound_disabled_p;
+
+/*
+ * TODO: The flag values below are just ctm guesses.  We need to run
+ *	 tests on a Mac to see whether or not these flags are present
+ *	 and if so, what values they take.
+ */
+
+#if defined(SOUNDGLUEROUTINES)
+A3(PUBLIC, void, StartSound, Ptr, srec, LONGINT, nb, ProcPtr, comp)
+{
+}
+
+A0(PUBLIC, void, StopSound)
+{
+}
+
+A0(PUBLIC, BOOLEAN, SoundDone)
+{
+    return TRUE;
+}
+
+A1(PUBLIC, void, GetSoundVol, INTEGER*, volp)
+{
+}
+
+A1(PUBLIC, void, SetSoundVol, INTEGER, vol)
+{
+}
+#endif
+
+PUBLIC int ROMlib_PretendSound = soundpretend;
+
+static inline boolean_t qfull_p(SndChannelPtr chanp)
+{
+    return ((CW(chanp->qTail) == CW(chanp->qHead) - 1 ||
+             (chanp->qHead == CWC(0) && CW(chanp->qTail) == CW(chanp->qLength) - 1)));
+}
+
+static inline boolean_t qempty_p(SndChannelPtr chanp)
+{
+    /* TetrisMax sometimes does something with a 0-length queue under
+   * DOS when you quit, which causes a division by zero on a % in
+   * `deq'; this is probably a bug somewhere else, but checking for a
+   * spewy queue will make ROMAW more robust and may be adequate to
+   * get 2.0 out the door.
+   */
+    return (chanp->qHead == chanp->qTail || CW(chanp->qLength) <= 0);
+}
+
+static inline void enq(SndChannelPtr chanp, SndCommand cmd)
+{
+    unsigned tail;
+
+    tail = CW(chanp->qTail);
+    chanp->queue[tail] = cmd;
+    chanp->qTail = CW((tail + 1) % CW(chanp->qLength));
+}
+
+static inline SndCommand deq(SndChannelPtr chanp)
+{
+    SndCommand ret;
+    unsigned head;
+
+    head = CW(chanp->qHead);
+    ret = chanp->queue[head];
+    chanp->qHead = CW((head + 1) % CW(chanp->qLength));
+
+    return ret;
+}
+
+#if 0
+static inline double
+f2d (snd_time x)
+{
+  return x / (double) (1ULL << (4 * sizeof x));
+}
+#endif
+
+static inline void wait_on_channel(volatile SndChannelPtr vchanp)
+{
+    while (!qempty_p(vchanp) || SND_CHAN_CMDINPROG_P(vchanp))
+        check_virtual_interrupt();
+}
+
+static snd_time snd_fixed_div(snd_time x, snd_time y)
+{
+    typeof(x) temp1, temp2;
+    int bits;
+
+    bits = 4 * sizeof x;
+
+    temp1 = x / y;
+
+    temp2 = (x - y * temp1) << bits;
+    temp2 = temp2 / y;
+
+    return (temp1 << bits) + temp2;
+}
+
+static snd_time snd_fixed_mul(snd_time x, snd_time y)
+{
+    typeof(x) x1, x0, y1, y0;
+    int bits;
+
+    bits = 4 * sizeof x;
+    x0 = x % (1ULL << bits);
+    x1 = x >> bits;
+    y0 = y % (1ULL << bits);
+    y1 = y >> bits;
+
+    return (((x0 * y0) >> bits) + x0 * y1 + x1 * y0 + ((x1 * y1) << bits));
+}
+
+/* This table is used to add two sound values together and pin
+ * the value to avoid overflow.
+ */
+static const uint8 mix8[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+    0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A,
+    0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D,
+    0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
+    0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63,
+    0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+    0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+    0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C,
+    0x9D, 0x9E, 0x9F, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+    0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0, 0xC1, 0xC2,
+    0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5,
+    0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8,
+    0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB,
+    0xFC, 0xFD, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+};
+
+static unsigned scale_sample(uint8 sample, unsigned amplitude)
+{
+    return 128 + ((int)sample - 128) * (int)amplitude / 255;
+}
+
+/* Return TRUE if the buffer was used up.  I hate value-result parms,
+   but oh well.  A NULL orig_outbuf is OK; the resampled waveform
+   will simply be lost. */
+
+boolean_t ROMlib_sound_resample(uint8* inbuf, uint8* orig_outbuf, unsigned int insize, unsigned int outsize,
+                                uint32 infreq, uint32 outfreq, snd_time* current_start, uint8* prev_samp,
+                                snd_time* chan_time, snd_time until, unsigned amplitude)
+
+{
+    snd_time step;
+    snd_time in_t, out_t;
+    uint8* outbuf;
+
+    /* FIXME - this does lots of pointless work when we're going to
+   * ignore the resampled waveform anyway, but it makes the "real"
+   * sound and "dummy" sound cases more similar.  Is it worth it?
+   */
+    outbuf = orig_outbuf ?: alloca(outsize);
+
+    step = snd_fixed_div(infreq, outfreq);
+
+    while (SND_PROMOTE(*chan_time) < *current_start) {
+        outbuf[*chan_time % outsize] =
+            mix8[(scale_sample(*prev_samp, amplitude) + (unsigned int)outbuf[*chan_time % outsize])];
+        (*chan_time)++;
+    }
+
+    in_t = snd_fixed_mul(SND_PROMOTE(*chan_time) - *current_start, step);
+    out_t = *chan_time;
+
+#if 0
+  warning_sound_log ("step %g in_t %.9g until %.9g", f2d (step),
+		     f2d (in_t),
+		     (double) until);
+  warning_sound_log (" cur_start %.9g insize %d", f2d (*current_start),
+		     insize);
+  warning_sound_log (" chan_time %.9g out_t %.9g outsize %d",
+		     (double) *chan_time, (double) out_t, outsize);
+#endif
+
+    while (out_t < until && SND_DEMOTE(in_t) < insize - 1) {
+        outbuf[out_t % outsize] =
+            mix8[(scale_sample(inbuf[SND_DEMOTE(in_t)], amplitude) + (unsigned int)outbuf[out_t % outsize])];
+        in_t += step;
+        out_t += 1;
+    }
+
+    *chan_time = out_t;
+    if (SND_DEMOTE(in_t) < insize - 1)
+        return FALSE;
+    else {
+        *current_start = (SND_PROMOTE(out_t) + snd_fixed_div(SND_PROMOTE(insize), step) - snd_fixed_div(in_t, step));
+        *prev_samp = inbuf[insize - 1];
+
+        return TRUE;
+    }
+}
+
+PUBLIC int ROMlib_get_snd_cmds(Handle sndh, SndCommand** cmdsp)
+{
+    void* p;
+    int format;
+    int num_formats;
+    int retval;
+
+    p = STARH(sndh);
+    format = CW(*(INTEGER*)p);
+    switch (format) {
+    case 1:
+        p += 2;
+        num_formats = CW(*(INTEGER*)p);
+        switch (num_formats) {
+        case 0:
+            p += 2;
+            break;
+        case 1:
+            p += 8;
+            break;
+        default:
+            warning_sound_log(" WARNING: num_formats = %d", num_formats);
+            p += (2 + 6 * num_formats);
+            break;
+        }
+        break;
+
+    case 2:
+        p += 4;
+        break;
+
+    default:
+        warning_sound_log("Unrecognized sound format %d", format);
+        return 0; /* FIXME */
+        break;
+    }
+
+    /* Now p points to "Number of sound commands" field of resource */
+
+    retval = CW(*(INTEGER*)p);
+    *cmdsp = (SndCommand*)(p + 2);
+
+    return retval;
+}
+
+P3(PUBLIC, pascal trap OSErr, SndPlay, SndChannelPtr, chanp, Handle, sndh, BOOLEAN, async)
+{
+    OSErr retval;
+    void* resp;
+    SndCommand* cmds;
+    int num_commands, i, format;
+    boolean_t need_allocate;
+
+    if (sndh)
+        resp = STARH(sndh);
+    else
+        resp = NULL;
+
+    if (resp)
+        format = CW(*(INTEGER*)resp);
+    else
+        format = 0;
+
+    warning_sound_log("chanp %p fmt %d num_fmts %d async %d", chanp, format, resp ? CW(*((INTEGER*)(resp + 2))) : 0,
+                      async);
+
+    warning_sound_log(" sndh %s", (HGetState(sndh) & LOCKBIT) ? "Locked" : "Unlocked");
+
+    switch (ROMlib_PretendSound) {
+    default:
+    case soundoff:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+        retval = noErr;
+        break;
+    case soundon:
+        num_commands = ROMlib_get_snd_cmds(sndh, &cmds);
+
+        warning_sound_log(" num_commands = %d", num_commands);
+
+        need_allocate = (chanp == NULL);
+
+        if (need_allocate) {
+            HIDDEN_SndChannelPtr foo;
+
+            HIDDEN_RAW_SET(foo, CLC(0));
+            SndNewChannel(&foo, sampledSynth, 0, 0);
+            chanp = MR(HIDDEN_RAW(foo));
+        }
+
+        for (i = 0; i < num_commands; i++) {
+            SndCommand cmd;
+
+            cmd = cmds[i];
+
+            /* If high bit of cmd is set, then param2 is actually an
+           offset */
+            if (cmd.cmd & CWC(0x8000)) {
+                cmd.param2 = (LONGINT)RM((resp + CL(cmd.param2)));
+                cmd.cmd &= CWC(~0x8000);
+            }
+
+            /* Need to figure this out properly; FIXME */
+            if (format == 2 && i == 0 && cmd.cmd == CWC(soundCmd)) {
+                cmd.cmd = CWC(bufferCmd);
+            }
+
+            C_SndDoCommand(chanp, &cmd, 0);
+        }
+
+        if (need_allocate || !async)
+            wait_on_channel(chanp);
+
+        if (need_allocate)
+            SndDisposeChannel(chanp, 0);
+
+        retval = noErr;
+        break;
+    }
+    return retval;
+}
+
+HIDDEN_SndChannelPtr allchans;
+
+P4(PUBLIC pascal trap, OSErr, SndNewChannel, HIDDEN_SndChannelPtr*, chanpp, INTEGER, synth, LONGINT, init, ProcPtr,
+   userroutinep)
+{
+    if (!chanpp)
+        return paramErr;
+    if (ROMlib_PretendSound == soundoff)
+        return notEnoughHardware;
+    SndChannelPtr channel = STARH(chanpp);
+    for (SndChannelPtr item = MR(HIDDEN_RAW(allchans)); item; item = PPR(item->nextChan))
+        if (item == channel)
+            return badChannel;
+    BOOLEAN allocated = channel == NULL;
+    if (allocated)
+        channel = (SndChannelPtr)NewPtr(sizeof *channel);
+    if (!channel)
+        return memFullErr;
+    ModifierStubPtr modifier = (ModifierStubPtr)NewPtrClear(sizeof *modifier);
+    if (!modifier) {
+        if (allocated)
+            DisposPtr((Ptr)channel);
+        return memFullErr;
+    }
+    modifier->userInfo = CL(init ? init : 0x80);
+    modifier->amplitude = 255;
+    FIELD_ASSIGN_RAW(channel->firstMod, RM((Ptr)modifier));
+    channel->flags = CW(allocated ? CHAN_ALLOC_FLAG : 0);
+    FIELD_ASSIGN_RAW(channel->callBack, RM(userroutinep));
+    channel->wait = 0;
+    memset(&channel->cmdInProg, 0, sizeof channel->cmdInProg);
+    channel->qLength = CWC(stdQLength);
+    channel->qHead = channel->qTail = 0;
+    FIELD_ASSIGN_RAW(channel->nextChan, HIDDEN_RAW(allchans));
+    HIDDEN_RAW_SET(allchans, RM(channel));
+    HIDDEN_RAW_SET(*(chanpp), RM(channel));
+    return noErr;
+}
+
+#define MOD_SYNTH_FLAG 1
+
+P4(PUBLIC, pascal trap OSErr, SndAddModifier, SndChannelPtr, chanp, ProcPtr, mod, INTEGER, id, LONGINT, init)
+{
+    OSErr retval;
+
+    warning_sound_log("chanp %p", chanp);
+
+    switch (ROMlib_PretendSound) {
+    default:
+    case soundoff:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+        retval = noErr;
+        break;
+    }
+    return retval;
+}
+
+typedef pascal BOOLEAN (*snthfp)(SndChannelPtr, SndCommand*, ModifierStubPtr);
+
+BOOLEAN
+callasynth(SndChannelPtr chanp, SndCommand* cmdp, ModifierStubPtr mp)
+{
+    /*
+ * NOTE: when we support sound, we'll have to check for known P_routines
+ *	 to avoid invoking syn68k on our own stuff.
+ */
+    return CToPascalCall(MR(mp->code), CTOP_SectRect, chanp, cmdp, mp);
+}
+
+static inline boolean_t earlier_p(snd_time t1, snd_time t2)
+{
+    return ((t1 - t2) >> ((8 * sizeof t1) - 1)) != 0;
+}
+
+#if 0
+static inline snd_time
+earlier (snd_time t1, snd_time t2)
+{
+  return earlier_p (t1, t2) ? t1 : t2;
+}
+#endif
+
+static inline unsigned long snd_duration(SoundHeaderPtr hp)
+{
+    return CL(hp->length);
+}
+
+typedef struct decoded_sound decoded_sound_t;
+
+struct decoded_sound {
+    SndChannelPtr channel;
+    uint8* samples;
+    uint32 length;
+    decoded_sound_t* next;
+};
+
+static decoded_sound_t* decoded_sounds;
+
+static boolean_t sound_channel_registered(SndChannelPtr channel)
+{
+    for (SndChannelPtr current = MR(HIDDEN_RAW(allchans)); current; current = PPR(current->nextChan))
+        if (current == channel)
+            return TRUE;
+    return FALSE;
+}
+
+static void release_decoded_sound(SndChannelPtr channel)
+{
+    decoded_sound_t** link;
+    for (link = &decoded_sounds; *link; link = &(*link)->next)
+        if ((*link)->channel == channel) {
+            decoded_sound_t* sound = *link;
+            *link = sound->next;
+            free(sound->samples);
+            free(sound);
+            break;
+        }
+}
+
+static uint32 sound_header_long(const uint8* p)
+{
+    return ((uint32)p[0] << 24) | ((uint32)p[1] << 16) | ((uint32)p[2] << 8) | p[3];
+}
+
+static uint8* decoded_sound_samples(SndChannelPtr channel, SoundHeaderPtr header, uint32* length)
+{
+    const uint8* h = (const uint8*)header;
+    uint32 channels = sound_header_long(h + 4);
+    uint32 packets = sound_header_long(h + 22);
+    boolean_t pcm = header->encode == extSH;
+    unsigned compression = pcm ? 0 : (h[56] << 8) | h[57];
+    unsigned sample_size = pcm ? (h[48] << 8) | h[49] : (h[62] << 8) | h[63];
+    uint32 input_size;
+    const uint8* input;
+    decoded_sound_t* sound;
+
+    for (sound = decoded_sounds; sound; sound = sound->next)
+        if (sound->channel == channel) {
+            *length = sound->length;
+            return sound->samples;
+        }
+    if (channels < 1 || channels > 2 || !packets ||
+        (pcm ? ((sample_size != 8 && sample_size != 16) || packets > UINT32_MAX / (channels * (sample_size / 8)))
+             : ((compression != 3 && compression != 4) || sample_size != 8 || packets > UINT32_MAX / 6)))
+        return NULL;
+    input_size = packets * channels * (pcm ? sample_size / 8 : (compression == 3 ? 2 : 1));
+    input = PP_RAW(header->samplePtr) ? (uint8*)PPR(header->samplePtr) : h + 64;
+    sound = malloc(sizeof *sound);
+    if (!sound)
+        return NULL;
+    sound->length = packets * (pcm ? 1 : 6);
+    sound->samples = malloc(sound->length);
+    if (!sound->samples ||
+        !(pcm ? ROMlib_pcm_decode(input, input_size, channels, sample_size, sound->samples, sound->length)
+              : ROMlib_mace_decode(input, input_size, channels, compression == 3, sound->samples, sound->length))) {
+        free(sound->samples);
+        free(sound);
+        return NULL;
+    }
+    sound->channel = channel;
+    sound->next = decoded_sounds;
+    decoded_sounds = sound;
+    *length = sound->length;
+    return sound->samples;
+}
+
+/* The original note synthesizer uses MIDI pitches and half-milliseconds.
+   Keep generated square-wave notes in the same per-command cache as MACE. */
+static uint8* decoded_note_samples(SndChannelPtr channel, boolean_t rest, uint32* length)
+{
+    decoded_sound_t* sound;
+    unsigned duration = (uint16)CW(channel->cmdInProg.param1);
+    unsigned pitch = CL(channel->cmdInProg.param2) & 127;
+    uint32 n, count = (uint64)duration * SND_RATE / 2000;
+    double frequency = 440.0 * pow(2.0, ((int)pitch - 69) / 12.0);
+    for (sound = decoded_sounds; sound; sound = sound->next)
+        if (sound->channel == channel) {
+            *length = sound->length;
+            return sound->samples;
+        }
+    *length = 0;
+    if (!count)
+        return NULL;
+    sound = malloc(sizeof *sound);
+    if (!sound)
+        return NULL;
+    sound->samples = malloc(count);
+    if (!sound->samples) {
+        free(sound);
+        return NULL;
+    }
+    for (n = 0; n < count; ++n)
+        sound->samples[n] = rest ? 0x80 : ((uint64)(n * frequency * 2 / SND_RATE) & 1) ? 0xC0 : 0x40;
+    sound->channel = channel;
+    sound->length = *length = count;
+    sound->next = decoded_sounds;
+    decoded_sounds = sound;
+    return sound->samples;
+}
+
+#define CMD_DONE(c)                                       \
+    do {                                                  \
+        release_decoded_sound(c);                         \
+        SND_CHAN_FLAGS_X(c) &= CWC(~CHAN_CMDINPROG_FLAG); \
+    } while (0)
+
+static void do_current_command(SndChannelPtr chanp, struct hunger_info info)
+{
+    unsigned long duration;
+    unsigned char* sp;
+    SoundHeaderPtr hp;
+    SndCommand cmd;
+
+    switch (CW(chanp->cmdInProg.cmd)) {
+    case noteCmd:
+    case restCmd:
+    case waitCmd: {
+        uint32 length;
+        sp = decoded_note_samples(chanp, chanp->cmdInProg.cmd != CWC(noteCmd), &length);
+        if (!sp || ROMlib_sound_resample(sp, info.buf, length, info.bufsize, SND_RATE << 16, SND_RATE << 16,
+                                         &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp),
+                                         &SND_CHAN_TIME(chanp), info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude))
+            CMD_DONE(chanp);
+        break;
+    }
+
+    case bufferCmd:
+        hp = MR((SoundHeaderPtr)chanp->cmdInProg.param2);
+
+        if (hp->encode == cmpSH || hp->encode == extSH) {
+            uint32 length;
+            sp = decoded_sound_samples(chanp, hp, &length);
+            if (!sp) {
+                warning_unimplemented("Unsupported extended/compressed sound header");
+                CMD_DONE(chanp);
+            }
+            else if (ROMlib_sound_resample(sp, info.buf, length, info.bufsize, CL(hp->sampleRate), SND_RATE << 16,
+                                           &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp),
+                                           &SND_CHAN_TIME(chanp), info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude))
+                CMD_DONE(chanp);
+            break;
+        }
+
+        if (hp->encode != stdSH) {
+            warning_unimplemented(
+                "Ignoring unsupported SoundHeader "
+                "encoding: %s",
+                ((hp->encode == cmpSH) ? "compressed" : ((hp->encode == extSH) ? "extended" : "<unknown>")));
+            CMD_DONE(chanp);
+        }
+        else {
+            duration = snd_duration(hp);
+
+            sp = (PP_RAW(hp->samplePtr) ? (unsigned char*)PPR(hp->samplePtr) : hp->sampleArea);
+
+            warning_sound_log("bufferCmd dur %d", (int)duration);
+
+            if (ROMlib_sound_resample(sp, info.buf, CL(hp->length), info.bufsize, CL(hp->sampleRate), SND_RATE << 16,
+                                      &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp), &SND_CHAN_TIME(chanp),
+                                      info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude)) {
+                CMD_DONE(chanp);
+            }
+        }
+        break;
+
+    case pauseCmd:
+        SND_CHAN_FLAGS_X(chanp) |= CWC(CHAN_PAUSED_FLAG);
+        CMD_DONE(chanp);
+        break;
+
+    case resumeCmd:
+        SND_CHAN_FLAGS_X(chanp) &= CWC(~CHAN_PAUSED_FLAG);
+        CMD_DONE(chanp);
+        break;
+
+    case callBackCmd:
+        warning_sound_log("callBackCmd");
+        cmd = chanp->cmdInProg;
+        CToPascalCall(PPR(chanp->callBack), CTOP_SetCTitle, chanp, &cmd);
+        CMD_DONE(chanp);
+        break;
+
+    case ampCmd:
+        if ((uint16)CW(chanp->cmdInProg.param1) <= 255)
+            SND_CHAN_FIRSTMOD(chanp)->amplitude = CW(chanp->cmdInProg.param1);
+        CMD_DONE(chanp);
+        break;
+
+    case quietCmd:
+        CMD_DONE(chanp);
+        SND_CHAN_FLAGS_X(chanp) &= CWC(~CHAN_DBINPROG_FLAG);
+        break;
+
+    default:
+        warning_sound_log("UNKNOWN CMD %d\n", chanp ? CW(chanp->cmdInProg.cmd) : 0);
+        CMD_DONE(chanp);
+    }
+}
+
+#define SND_DB_DONE(c) (SND_CHAN_FLAGS_X(c) &= CWC(~CHAN_DBINPROG_FLAG))
+
+static void do_current_db(SndChannelPtr chanp, struct hunger_info info)
+{
+    SndDoubleBufferHeader* dbhp;
+    SndDoubleBuffer* dbp;
+    unsigned char* sp;
+
+    dbhp = SND_CHAN_DBHP(chanp);
+    dbp = HIDDEN_NATIVE(dbhp->dbhBufferPtr[SND_CHAN_CURRENT_DB(chanp)]);
+
+    if ((dbp->dbFlags & CLC(dbBufferReady)) == 0) {
+        /* This buffer isn't ready */
+        warning_sound_log("notready");
+        SND_CHAN_TIME(chanp) = info.t3;
+        SND_CHAN_CURRENT_START(chanp) = SND_PROMOTE(info.t3);
+        return;
+    }
+    sp = dbp->dbSoundData;
+
+#if 0
+  warning_sound_log ("curs %g t %d t3 %d dur %d rate %g",
+		     f2d (SND_CHAN_CURRENT_START (chanp)),
+		     (int) SND_CHAN_TIME (chanp),
+		     (int) info.t3,
+		     CL (dbp->dbNumFrames),
+		     CL (dbhp->dbhSampleRate) / (double) (1 << 16));
+#endif
+    if (ROMlib_sound_resample(sp, info.buf, CL(dbp->dbNumFrames), info.bufsize, CL(dbhp->dbhSampleRate), SND_RATE << 16,
+                              &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp), &SND_CHAN_TIME(chanp),
+                              info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude)) {
+        /* We are done with this buffer */
+        dbp->dbFlags &= CLC(~dbBufferReady);
+        if (dbp->dbFlags & CLC(dbLastBuffer))
+            /* We are completely done */
+            SND_DB_DONE(chanp);
+        else {
+            /* Start the next buffer */
+            SND_CHAN_CURRENT_DB(chanp) ^= 1;
+        }
+#if 0
+      warning_sound_log ("dblback %p ch %p bp %p",
+			 CL (dbhp->dbhDoubleBack),
+			 chanp, dbp);
+      warning_sound_log (" frs %d flgs %d ui1 %x ui2 %x",
+			 CL (dbp->dbNumFrames),
+			 CL (dbp->dbFlags),
+			 CL (dbp->dbUserInfo[0]),
+			 CL (dbp->dbUserInfo[1]));
+#endif
+        CToPascalCall(PPR(dbhp->dbhDoubleBack), CTOP_SetCTitle, chanp, dbp);
+    }
+}
+
+/* Shift the source's origin with output time while paused. Without this,
+   resuming a buffer skips the samples corresponding to the paused duration. */
+static boolean_t pause_channel_until(SndChannelPtr channel, snd_time until)
+{
+    if (!(SND_CHAN_FLAGS_X(channel) & CWC(CHAN_PAUSED_FLAG)))
+        return FALSE;
+    if (earlier_p(SND_CHAN_TIME(channel), until)) {
+        snd_time elapsed = until - SND_CHAN_TIME(channel);
+        SND_CHAN_TIME(channel) = until;
+        SND_CHAN_CURRENT_START(channel) += SND_PROMOTE(elapsed);
+    }
+    return TRUE;
+}
+
+syn68k_addr_t sound_callback(syn68k_addr_t interrupt_addr, void* unused)
+{
+    struct hunger_info info;
+    SndChannelPtr chanp;
+    int did_something = 0;
+    M68kReg saved_regs[16];
+    CCRElement saved_ccnz, saved_ccn, saved_ccc, saved_ccv, saved_ccx;
+
+    //  fprintf (stderr, "in sound_callback\n");
+
+    /* Save the 68k registers and cc bits away. */
+    memcpy(saved_regs, &cpu_state.regs, sizeof saved_regs);
+    saved_ccnz = cpu_state.ccnz;
+    saved_ccn = cpu_state.ccn;
+    saved_ccc = cpu_state.ccc;
+    saved_ccv = cpu_state.ccv;
+    saved_ccx = cpu_state.ccx;
+
+#if defined(SYN68K)
+
+    /* There's no reason to think we need to decrement A7 by 32;
+   * it's just a paranoid thing to do.
+   */
+    EM_A7 = (EM_A7 - 32) & ~3; /* Might as well long-align it. */
+
+#else /* !SYN68K */
+
+    /* Since we don't know which stack we were on when interrupted,
+   * switch stacks as appropriate.  If all stacks are busy,
+   * there's not much we can do other than return.  
+   */
+    if (!m68k_use_interrupt_stacks())
+        return 0;
+
+#endif /* !SYN68K */
+
+    /* A game may wait for its sound callback without calling GetNextEvent or
+     SndChannelStatus. Retire last quantum's completed file plays on the CPU
+     thread before walking channels, so their queued callbacks can run. A
+     completion may dispose a channel; no channel iterator is live here. */
+    ROMlib_fileplay_poll();
+    SOUND_HUNGER_START();
+    info = SOUND_GET_HUNGER_INFO();
+
+    /* For each channel, grab some samples and mix them in */
+    for (chanp = MR(HIDDEN_RAW(allchans)); chanp != NULL; chanp = PPR(chanp->nextChan)) {
+        if (earlier_p(SND_CHAN_TIME(chanp), info.t2)) {
+            snd_time diff = info.t2 - SND_CHAN_TIME(chanp);
+
+            SND_CHAN_TIME(chanp) += diff;
+            SND_CHAN_CURRENT_START(chanp) += SND_PROMOTE(diff);
+        }
+
+        while (earlier_p(SND_CHAN_TIME(chanp), info.t3)) {
+            if (pause_channel_until(chanp, info.t3))
+                break;
+            if (ROMlib_fileplay_busy(chanp)) {
+                ROMlib_fileplay_mix(chanp, info);
+                did_something = 1;
+                break;
+            }
+            if (SND_CHAN_CMDINPROG_P(chanp)) {
+                do_current_command(chanp, info);
+                did_something = 1;
+            }
+            else if (SND_CHAN_DBINPROG_P(chanp)) {
+                do_current_db(chanp, info);
+                did_something = 1;
+            }
+            else if (!qempty_p(chanp)) {
+                chanp->cmdInProg = deq(chanp);
+                SND_CHAN_FLAGS_X(chanp) |= CWC(CHAN_CMDINPROG_FLAG);
+                did_something = 1;
+            }
+            else {
+                break;
+            }
+        }
+    }
+
+    //  fprintf (stderr, "about to call sound_hunger_finish\n");
+
+    if (ROMlib_legacy_sound_mix(info))
+        did_something = 1;
+    SOUND_HUNGER_FINISH();
+
+    if (!did_something)
+        SOUND_STOP();
+
+#if !defined(SYN68K)
+    m68k_restore_stacks();
+#endif
+
+    memcpy(&cpu_state.regs, saved_regs, sizeof saved_regs);
+    cpu_state.ccnz = saved_ccnz;
+    cpu_state.ccn = saved_ccn;
+    cpu_state.ccc = saved_ccc;
+    cpu_state.ccv = saved_ccv;
+    cpu_state.ccx = saved_ccx;
+
+#if defined(SYN68K)
+    return MAGIC_RTE_ADDRESS;
+#else
+    return 0;
+#endif
+}
+
+P3(PUBLIC, pascal trap OSErr, SndDoCommand, SndChannelPtr, chanp, SndCommand*, cmdp, BOOLEAN, nowait)
+{
+    OSErr retval;
+
+    if (!cmdp)
+        return paramErr;
+    if (!sound_channel_registered(chanp))
+        return badChannel;
+
+#if 1
+    if (!cmdp)
+        warning_sound_log("cmdp = NULL");
+    else
+        warning_sound_log("cmd %d param1 0x%x param2 0x%x nowait %d", CW(cmdp->cmd), CW(cmdp->param1), CL(cmdp->param2),
+                          CW(nowait));
+#endif
+
+#if ERROR_SUPPORTED_P(ERROR_SOUND_LOG)
+    if (cmdp->cmd == CWC(bufferCmd)) {
+        SoundHeaderPtr hp;
+
+        hp = MR((SoundHeaderPtr)cmdp->param2);
+        if (!hp)
+            warning_sound_log("hp = NULL");
+        else
+            warning_sound_log(" len %d rate 0x%x encode %d freq %d", CL(hp->length), CL(hp->sampleRate), hp->encode,
+                              hp->baseFrequency);
+    }
+#endif
+
+    switch (ROMlib_PretendSound) {
+    default:
+    case soundoff:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+        retval = noErr;
+        break;
+
+    case soundon:
+        retval = noErr;
+        SOUND_GO();
+
+        if (qfull_p(chanp)) {
+            if (nowait)
+                retval = queueFull;
+            else {
+                volatile SndChannelPtr vchanp = chanp;
+
+                while (qfull_p(vchanp))
+                    check_virtual_interrupt();
+                retval = noErr;
+            }
+        }
+        if (retval == noErr) {
+            enq(chanp, *cmdp);
+            chanp->flags |= CWC(CHAN_BUSY_FLAG);
+        }
+        break;
+    }
+
+    return retval;
+}
+
+P2(PUBLIC, pascal trap OSErr, SndDoImmediate, SndChannelPtr, chanp, SndCommand*, cmdp)
+{
+    OSErr retval;
+    SndCommand cmd;
+
+    if (!cmdp)
+        return paramErr;
+    if (!sound_channel_registered(chanp))
+        return badChannel;
+
+    switch (ROMlib_PretendSound) {
+    case soundoff:
+    default:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+        retval = noErr;
+        break;
+    case soundon:
+        SOUND_GO();
+#if 0 /* This is not a good check for badChannel */
+      if ((unsigned short) chanp->qLength
+	  != (unsigned short) CWC (stdQLength))
+	retval = badChannel;
+      else
+#endif
+        {
+            cmd = *cmdp;
+            /* Immediate commands override a queued pause, even when a buffer
+           remains in progress. Pausing itself retains the buffer position. */
+            SND_CHAN_FLAGS_X(chanp) &= CWC(~CHAN_PAUSED_FLAG);
+            switch (CW(cmd.cmd)) {
+            case pauseCmd:
+                SND_CHAN_FLAGS_X(chanp) |= CWC(CHAN_PAUSED_FLAG);
+                retval = noErr;
+                break;
+
+            case resumeCmd:
+                retval = noErr;
+                break;
+
+            case flushCmd:
+                warning_sound_log("flushCmd");
+                while (!qempty_p(chanp))
+                    (void)deq(chanp);
+                retval = noErr;
+                break;
+
+            case ampCmd:
+                if ((uint16)CW(cmd.param1) > 255)
+                    retval = paramErr;
+                else {
+                    SND_CHAN_FIRSTMOD(chanp)->amplitude = CW(cmd.param1);
+                    retval = noErr;
+                }
+                break;
+
+            case quietCmd:
+                warning_sound_log("quietCmd");
+                ROMlib_fileplay_cancel(chanp);
+                CMD_DONE(chanp);
+                SND_DB_DONE(chanp);
+                retval = noErr;
+                break;
+
+            case bufferCmd:
+                warning_sound_log("bufferCmd");
+                ROMlib_fileplay_cancel(chanp);
+                release_decoded_sound(chanp);
+                chanp->cmdInProg = cmd;
+                SND_CHAN_FLAGS_X(chanp) |= CWC(CHAN_CMDINPROG_FLAG);
+                SND_CHAN_CURRENT_START(chanp) = SND_PROMOTE(SND_CHAN_TIME(chanp));
+                retval = noErr;
+                break;
+
+            default:
+                warning_sound_log("UNKNOWN CMD %d", CW(cmd.cmd));
+                retval = noErr;
+            }
+        }
+        break;
+    }
+    return retval;
+}
+
+P3(PUBLIC, pascal trap OSErr, SndChannelStatus, SndChannelPtr, chanp, INTEGER, length, SCStatusPtr, statusp)
+{
+    if (!statusp || length < (int)sizeof *statusp)
+        return paramErr;
+    if (ROMlib_PretendSound == soundoff)
+        return notEnoughHardware;
+    ROMlib_fileplay_poll();
+    SndChannelPtr channel;
+    for (channel = MR(HIDDEN_RAW(allchans)); channel && channel != chanp; channel = PPR(channel->nextChan))
+        ;
+    if (!channel)
+        return badChannel;
+    SCStatus status = {0};
+    status.scChannelPaused = (SND_CHAN_FLAGS_X(channel) & CWC(CHAN_PAUSED_FLAG)) != 0;
+    status.scChannelBusy = status.scChannelPaused || SND_CHAN_CMDINPROG_P(channel) || SND_CHAN_DBINPROG_P(channel) ||
+                           !qempty_p(channel) || ROMlib_fileplay_busy(channel);
+    status.scChannelAttributes = SND_CHAN_FIRSTMOD(channel)->userInfo;
+    memcpy(statusp, &status, sizeof status);
+    return noErr;
+}
+
+P2(PUBLIC, pascal trap OSErr, SndControl, INTEGER, id, SndCommand*, cmdp)
+{
+    OSErr retval;
+
+    warning_sound_log(NULL_STRING);
+
+    switch (ROMlib_PretendSound) {
+    default:
+    case soundoff:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+        retval = noErr;
+        break;
+    }
+    return retval;
+}
+
+P2(PUBLIC, pascal trap OSErr, SndDisposeChannel, SndChannelPtr, chanp, BOOLEAN, quitnow)
+{
+    OSErr retval;
+    SndCommand cmd;
+    HIDDEN_SndChannelPtr* pp;
+
+    warning_sound_log("chanp %p quitnow %d", chanp, quitnow);
+
+    SndChannelPtr registered;
+    for (registered = MR(HIDDEN_RAW(allchans)); registered && registered != chanp;
+         registered = PPR(registered->nextChan))
+        ;
+    if (!registered || (chanp->flags & CWC(CHAN_DISPOSING_FLAG)))
+        return badChannel;
+
+    switch (ROMlib_PretendSound) {
+    default:
+    case soundoff:
+        retval = notEnoughHardware;
+        break;
+    case soundpretend:
+    case soundon:
+        retval = noErr;
+        chanp->flags |= CWC(CHAN_DISPOSING_FLAG);
+        if (!quitnow && ROMlib_PretendSound == soundon) {
+            cmd = (SndCommand){CWC(quietCmd), 0, 0};
+            retval = SndDoCommand(chanp, &cmd, FALSE);
+            if (!retval) {
+                while (!qempty_p(chanp) || SND_CHAN_CMDINPROG_P(chanp)) {
+                    check_virtual_interrupt();
+                    ROMlib_fileplay_poll();
+                }
+            }
+        }
+        else {
+            ROMlib_fileplay_cancel(chanp);
+            cmd.cmd = CWC(flushCmd);
+            cmd.param1 = CWC(0);
+            cmd.param2 = CLC(0);
+            retval = SndDoImmediate(chanp, &cmd);
+        }
+        if (retval == noErr && (quitnow || ROMlib_PretendSound != soundon)) {
+            cmd.cmd = CWC(quietCmd);
+            retval = SndDoImmediate(chanp, &cmd);
+        }
+        chanp->flags &= CWC(~CHAN_DISPOSING_FLAG);
+        if (retval)
+            break;
+#if 0
+	block = block_virtual_ints ();
+	vchanp = chanp;
+	while (vchanp->flags & CWC(CHAN_BUSY_FLAG)) {
+	    restore_virtual_ints (block);
+	    block = block_virtual_ints ();
+	}
+	restore_virtual_ints (block);
+	nextmp = CL(chanp->firstMod);
+	while ((mp = nextmp)) {
+	    nextmp = CL(mp->nextStub);
+	    cmd.cmd = CWC(freeCmd);
+	    callasynth(chanp, &cmd, mp);
+	    if (mp->flags & MOD_SYNTH_FLAG) {
+		h = RecoverHandle((Ptr) CL(mp->code));
+		HSetState(h, mp->hState);
+	    }
+	    DisposPtr((Ptr) mp);
+	}
+#endif
+
+        for (pp = &allchans; HIDDEN_RAW(*(pp)) && MR(HIDDEN_RAW(*(pp))) != chanp;
+             pp = (HIDDEN_SndChannelPtr*)&PP_RAW(MR(HIDDEN_RAW(*(pp)))->nextChan))
+            ;
+        if (HIDDEN_RAW(*(pp))) {
+            HIDDEN_RAW_SET(*(pp), PP_RAW(chanp->nextChan));
+            DisposPtr((Ptr)PPR(chanp->firstMod));
+            if (chanp->flags & CWC(CHAN_ALLOC_FLAG))
+                DisposPtr((Ptr)chanp);
+        }
+        else {
+            warning_sound_log("NON-EXISTENT CHAN");
+            retval = badChannel;
+        }
+
+        break;
+    }
+    return retval;
+}

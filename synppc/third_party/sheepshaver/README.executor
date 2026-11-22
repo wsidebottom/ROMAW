@@ -1,0 +1,177 @@
+PowerPC interpreter sources from the local SheepShaver reference checkout:
+D:/Macintosh/source/macemu/SheepShaver/src/kpx_cpu (read 2026-10-18).
+Kheperix by Gwenole Beauchesne, GPL-2.0-or-later; see COPYING and file headers.
+
+Executor uses the portable interpreter, without upstream JIT or decode caching.
+Local changes: portable member-function dispatch avoids executable host thunks;
+CPU memory accesses use Executor callbacks; illegal instructions raise a caught
+execution error. Invalid update-register forms also raise a caught error. Executor-specific configuration/adapter lives outside this
+third-party directory. Generated execution instantiations belong in obj/.
+
+Executor builds the invariant opcode decoder once, then copies it into each
+CPU instance before installing that instance's host-service instruction.
+Nested CPUs retain independent mutable decoder tables. This reduces repeated
+setup work; it is not a JIT or an instruction-content cache.
+
+An optional hook before instruction dispatch calls Executor's original bounded
+IA-32/x86-64 integer-block emitter in src/ppc-jit.cpp. That backend is independent of
+the upstream generator, which is not imported. Windows Executor enables these
+blocks by default; the standalone API requires an explicit opt-in. Interpretation
+handles instructions outside the supported subset.
+
+Executor also routes multiply-add/subtract value computation through original
+exact binary arithmetic in src/ppc-fused.cpp, using explicit FPSCR rounding.
+The adapter applies negative forms after rounding and classifies raw results.
+This avoids intermediate rounding in the generic mathlib and the Windows CRT.
+The upstream host-fenv exception machinery stays disabled. Executor adapters
+provide arithmetic status; MSR-controlled exception delivery remains unfinished.
+
+Ordinary arithmetic and FRSP values route through src/ppc-arithmetic.cpp and
+the separately vendored Berkeley SoftFloat 3e dependency. FSQRT/FSQRTS decoding
+is enabled for Executor, with reserved operand fields rejected. The adapter
+preserves PowerPC NaN preference and maps FPSCR rounding directions. Ordinary
+and fused adapters update FPSCR, including scaled range results and rounding
+metadata; MSR-controlled exception delivery remains unfinished.
+
+FCTIW/FCTIWZ use the software adapter for values and conversion status rather
+than host lrint/casts. Their local path updates FR/FI, sticky causes and FX,
+derives VX/FEX, preserves invalid-enabled destinations and records CR1 after
+the status update. Reserved FRA fields are rejected before operand access.
+This does not turn on the upstream host-fenv exception implementation or add
+MSR-controlled floating-point trap delivery.
+
+FCMPU/FCMPO similarly use raw-bit comparisons through the adapter, preserving
+NaN payloads and reporting comparison exceptions without host fenv dependence.
+They update FPCC and the selected CR field and reject reserved encodings.
+
+Executor uses generic C math on hosts whose optional arch-specific headers are
+not part of this imported subset. Native round-mode changes route through its
+x87/SSE synchronization helper; x86-64 environments explicitly preserve MXCSR
+because the tested MinGW C environment functions omitted part of that state.
+
+Non-arithmetic FP moves/sign/select instructions use integer register bits in
+Executor, and LFS expands the IEEE representation without host FP arithmetic.
+This prevents unintended SNaN quieting and leaves FPSCR unchanged. Entry/return
+copies of the public register file also preserve the original representation.
+
+Ordinary arithmetic and FRSP additionally call the original adapter's raw-bit
+exception classifier for VXSNAN, VXISI, VXIDI, VXZDZ, VXIMZ, VXSQRT and ZX.
+It updates sticky summaries, clears FR/FI for these causes and inhibits writes
+under VE/ZE; record forms still update CR1. Other ordinary arithmetic status,
+scaled enabled-exception results and MSR trap delivery remain unfinished.
+
+Fused forms use the same raw-bit status adapter for VXSNAN/VXIMZ/VXISI, including
+combined signaling-NaN/addend and invalid-product cases (PEM Appendix D.2).
+The adapter runs before NaN quieting, inhibits enabled-invalid writes and allows
+valid fused results to update FPRF even when VE is set. Overflow/underflow,
+inexact, rounding status and trap delivery remain separate unfinished work.
+
+Ordinary arithmetic/FRSP now returns commit/inhibition status with FPSCR and
+raw result classification from the adapter. OX/UX/XX, FR/FI and scaled OE/UE
+results use target-precision extended-exponent operations when needed. The CPU
+keeps those results in double-width FPR storage, including single-precision
+scaled results beyond binary32 range. Raw operands are classified before any
+host FP read, preserving signaling NaNs on x87 hosts. Fused rounding flags and
+MSR exception delivery remain unfinished.
+
+Fused arithmetic now uses the raw-bit value/status adapter too. Its exact integer
+accumulator reports rounding and range metadata, including scaled OE/UE results.
+The legacy host-double CPU helper was removed; the bits-only oracle wrapper still
+provides its documented host-fenv interface. The CPU path classifies original
+NaNs, preserves full payloads and does not read host floating flags. MSR trap
+delivery remains unfinished.
+
+FPSCR control writes now call the software summary adapter even with upstream
+host-fenv exceptions disabled. MTFSFI correctly positions its immediate and can
+write FX. MTFSB1 preserves old causes when deciding whether FX transitions, and
+MCRFS recomputes summaries after copying/clearing causes. Reserved opcode fields
+are rejected and reserved FPSCR bit 20 is not writable. Original instruction
+tests cover masks, fields, all bits, record forms and source NaN preservation.
+
+FRSQRTE also routes through the software value/status adapter. Its binary64
+square root/reciprocal removes the upstream float narrowing and satisfies the
+UISA estimate tolerance across the full exponent range. It handles raw NaNs,
+invalid square roots, zero divides and enabled-result inhibition before host FP
+reads. Undefined FR/FI bits are cleared, and no XX/OX/UX is raised by the estimate.
+
+FRES uses the estimate adapter too, evaluating reciprocals with an extended
+exponent range before binary32 conversion. It supplies finite scaled OE/UE
+results, OX/UX and zero-divide/NaN status without host floating arithmetic. XX
+is not raised by estimates, and undefined FR/FI are cleared consistently.
+
+Integer comparisons reject the 750's unsupported 64-bit L forms and reserved
+instruction bits before changing CR. Valid comparisons retain the upstream
+signed/unsigned operand and CR-field implementation. Original fixtures also
+check invalid rewrites of already compiled native blocks.
+
+Rotate helpers mask both complementary shift counts, including zero rotations,
+to avoid C++ shifts by 32. A whole-core ASan/UBSan build reproduces the upstream
+fault and exercises the corrected instruction paths against original bit-model
+fixtures; it does not change the guest rotate instruction results.
+
+MULLI uses unsigned modulo arithmetic for its low-word product, avoiding the
+upstream signed 32-bit C++ overflow. MULHW/MULHWU reject their reserved OE bit
+before register or condition-code changes. Original widened-integer fixtures
+and QEMU 750 vectors cover immediate and signed/unsigned high-word products;
+the entire core also runs under ASan/UBSan.
+
+Unary CNTLZW/EXTSB/EXTSH and NEG reject their unused RB field before reading
+operands. MFCR rejects its reserved operand/Rc bits. Original fixtures check
+2,357 invalid forms and valid unary values/record flags without changing the
+existing arithmetic implementation.
+
+ADDME/ADDZE/SUBFME/SUBFZE reject the unused RB field before operand reads,
+including overflow-enabled forms. The native carry-chain fixture checks all
+31 nonzero RB fields after they replace a warm native block; the interpreter
+previously accepted these reserved encodings. Valid addition semantics remain
+upstream, with independent widened-integer carry/record checks.
+
+CR logical operations reject Rc=1, and MCRF rejects its unused operand/Rc
+fields before changing CR. CR destination masks use an unsigned bit. Original
+hardware probes preserve the classic ABI's nonvolatile CR fields; host fixtures
+also check rejection after reserved words replace warmed native blocks.
+
+MTCRF rejects unused operand/Rc bits, including the later one-field selector
+unsupported by the 750. MCRXR rejects unused operand/Rc bits before copying or
+clearing XER flags. Dedicated original hardware and host fixtures cover field
+masks, flag clearing, register aliases and cold/hot invalid instruction words.
+
+MFSPR/MTSPR reject reserved Rc before SPR access or register changes. Original
+user-SPR hardware probes constrain XER data to defined bits, since the 603's
+reserved-bit retention is not an architecture oracle. Native code preserves
+the existing interpreted filtering policy for nonzero reserved XER data.
+
+Raw FPR move/sign integration rejects reserved FRA fields in FMR/FNEG/FABS/
+FNABS before reading or changing register state (EXECUTOR_PPC only). The native
+adapter compiles these forms as integer copies/sign masks and records live
+FPSCR to CR1 for Rc; it does not use host floating operations.
+
+DCBZ rejects the unused register field and Rc before computing the effective
+address or clearing memory (EXECUTOR_PPC only). Valid flat-RAM block clearing
+retains the upstream behavior; this does not implement a physical data cache.
+
+The Executor JIT can resolve the current CPU's adapted instruction descriptor
+through executor_instruction. Native semantic tails use those ahead-compiled
+kernels after committing prefix state and counters. No decoder/CPU address is
+persisted, and no generated call frame survives callbacks or fault unwinding.
+This does not add privileged state, exception vectors or MMU translation to the
+upstream application-level interpreter.
+
+Executor announces the original CPU provenance once per process instead of on
+every short-call CPU construction. The banner text and all source legal notices
+are retained; independent and nested CPU state remains unchanged.
+
+The Executor-owned cpu/vm.hpp adapter now lives under synppc/platform. Scalar
+accesses use the legacy span adapter or the optional 750 physical bus. The
+Executor-only instruction loop hook enters architectural exceptions at an
+instruction boundary; execute_illegal throws a typed program fault in that
+mode. executor_registers exposes existing state to the maintained supervisor
+adapter without changing the register layout. Upstream legal notices remain.
+
+Executor's MFSPR selectors 268/269 read the same time-base clock as MFTB, rather
+than the generic unknown-SPR zero fallback. The architectural adapter uses its
+caller-driven TB state; the legacy adapter keeps its existing host clock.
+
+Executor-only memory-form guards use the adapter invalid-instruction hook so
+architectural mode enters a guest program exception. The flat application
+adapter retains the existing diagnostic strings for the same rejected forms.

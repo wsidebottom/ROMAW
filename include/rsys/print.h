@@ -1,0 +1,242 @@
+/*+===================================================================
+  File:      print.h
+
+  Summary:   Declares print support for public and internal interfaces.
+
+  Classes:   None.
+
+  Functions: Interface declarations and inline definitions; see the declarations below.
+
+  Origin:    Existing repository source in executor/src/include/rsys; original attribution and provenance comments are
+             preserved below.
+
+  Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
+===================================================================+*/
+
+#if !defined(__RSYS_PRINT__)
+#define __RSYS_PRINT__
+
+/*
+ * Copyright 1989 - 1997 by Abacus Research and Development, Inc.
+ * All rights reserved.
+ *
+ * $Id: print.h 63 2004-12-24 18:19:43Z ctm $
+ */
+
+#include "rsys/pstuff.h"
+#include "DialogMgr.h"
+#include "PrintMgr.h"
+#include "rsys/nextprint.h"
+
+#if defined(CYGWIN32)
+#include "win_print.h"
+
+#endif
+
+enum {
+    postscriptbegin = 190,
+    postscriptend = 191,
+    postscripthandle = 192,
+    postscriptfile = 193,
+    postscripttextis = 194,
+    psbeginnosave = 196,
+    rotatebegin = 200,
+    rotateend = 201,
+    rotatecenter = 202,
+    textbegin = 150,
+    textend = 151,
+    textcenter = 154,
+};
+
+enum {
+    LAYOUT_OK_NO = 1,
+    LAYOUT_PRINTER_NAME_NO = 3,
+    LAYOUT_PAPER_NO = 5,
+    LAYOUT_PRINTER_TYPE_NO = 6,
+    LAYOUT_PORTRAIT_ICON_NO = 8,
+    LAYOUT_LANDSCAPE_ICON_NO = 9,
+    LAYOUT_PRINTER_TYPE_LABEL_NO = 11,
+    LAYOUT_CIRCLE_OK_NO = 12,
+    LAYOUT_PORTRAIT_NO = 13,
+    LAYOUT_LANDSCAPE_NO = 14,
+    LAYOUT_PORT_LABEL_NO = 15,
+    LAYOUT_PORT_MENU_NO = 16,
+    LAYOUT_FILENAME_LABEL_NO = 17,
+    LAYOUT_FILENAME_NO = 18,
+};
+
+enum {
+    PRINT_OK_NO = 1,
+    PRINT_COPIES_LABEL_NO = 6,
+    PRINT_COPIES_BOX_NO = 7,
+    PRINT_ALL_RADIO_NO = 9,
+    PRINT_FROM_RADIO_NO = 10,
+    PRINT_FIRST_BOX_NO = 11,
+    PRINT_LAST_BOX_NO = 13,
+    PRINT_CIRCLE_OK_NO = 14,
+};
+
+extern comGrafPort printport;
+extern INTEGER ROMlib_printresfile;
+extern LONGINT pagewanted;
+extern char ROMlib_needtorestore;
+extern char ROMlib_suppressclip;
+
+extern char* ROMlib_spool_file;
+
+extern boolean_t substitute_fonts_p;
+
+enum { GetRslData = 4, SetRsl, DraftBits, NoDraftBits, GetRotn };
+
+typedef struct PACKED {
+    INTEGER iOpCode;
+    INTEGER iError;
+    LONGINT lReserved;
+} TGnlData;
+
+typedef struct PACKED {
+    INTEGER iMin;
+    INTEGER iMax;
+} TRslRg;
+
+typedef struct PACKED {
+    INTEGER iXRsl;
+    INTEGER iYRsl;
+} TRslRec;
+
+typedef struct PACKED {
+    INTEGER iOpCode;
+    INTEGER iError;
+    LONGINT lReserved;
+    INTEGER iRgType;
+    TRslRg xRslRg;
+    TRslRg yRslRg;
+    INTEGER iRslRecCnt;
+    TRslRec rgRslRec[27];
+} TGetRslBlk;
+
+typedef struct PACKED {
+    INTEGER iOpCode;
+    INTEGER iError;
+    LONGINT lReserved;
+    PACKED_MEMBER(THPrint, hPrint);
+    INTEGER iXRsl;
+    INTEGER iYRsl;
+} TSetRslBlk;
+
+typedef struct PACKED {
+    Byte tJus;
+    Byte tFlop;
+    INTEGER tAngle;
+    Byte tLine;
+    Byte tCmnt;
+    Fixed tAngleFixed;
+} TTxtPicRec, *TTxtPicPtr;
+
+#define TEXTPIC_JUST(h) (HxX(h, tJus))
+#define TEXTPIC_FLOP(h) (HxX(h, tFlop))
+#define TEXTPIC_ANGLE_X(h) (HxX(h, tAngle))
+#define TEXTPIC_ANGLE(h) (CW(TEXTPIC_ANGLE_X(h)))
+#define TEXTPIC_LINE(h) (HxX(h, tLine))
+#define TEXTPIC_COMMENT(h) (HxX(h, tCmnt))
+#define TEXTPIC_ANGLE_FIXED_X(h) (HxX(h, tAngleFixed))
+#define TEXTPIC_ANGLE_FIXED(h) (CL(TEXTPIC_ANGLE_FIXED_X(h)))
+
+MAKE_HIDDEN(TTxtPicPtr);
+typedef HIDDEN_TTxtPicPtr* TTxtPicHdl;
+
+enum { tJusNone = 0, tJusLeft = 1, tJusCenter = 2, tJusRight = 3, tJusFull = 4 };
+
+enum {
+    tFlipNone = 0,
+    tFlipHorizontal = 1,
+    tFlipVertical = 2,
+};
+
+typedef struct PACKED {
+    Fixed y;
+    Fixed x;
+} TCenterRec, *TCenterRecPtr;
+
+#define TEXTCENTER_Y_X(h) (HxX(h, y))
+#define TEXTCENTER_Y(h) (CL(TEXTCENTER_Y_X(h)))
+#define TEXTCENTER_X_X(h) (HxX(h, x))
+#define TEXTCENTER_X(h) (CL(TEXTCENTER_X_X(h)))
+
+MAKE_HIDDEN(TCenterRecPtr);
+typedef HIDDEN_TCenterRecPtr* TCenterRecHdl;
+
+extern char* ROMlib_document_paper_sizes;
+extern const char* ROMlib_paper_orientation;
+extern char* ROMlib_paper_size;
+extern const char* ROMlib_paper_size_name;
+extern const char* ROMlib_paper_size_name_terminator;
+extern int ROMlib_rotation;
+extern int ROMlib_translate_x;
+extern int ROMlib_translate_y;
+extern int ROMlib_paper_x;
+extern int ROMlib_paper_y;
+
+/* optional resolution made available via GetRslData call */
+extern INTEGER ROMlib_optional_res_x, ROMlib_optional_res_y;
+
+/* actual resolution chosen -- currently either 72dpi (default) or
+   the ROMlib_optional_res */
+
+extern int ROMlib_resolution_x;
+extern int ROMlib_resolution_y;
+
+extern boolean_t error_parse_print_size(const char* size_string);
+
+enum { NoSuchRsl = 1, OpNotImpl };
+
+extern boolean_t ROMlib_pick_likely_print_name(StringPtr name);
+
+extern void ROMlib_trytomatch(char* retval, LONGINT index);
+
+extern void C_ROMlib_myjobproc(DialogPtr dp, INTEGER itemno);
+
+extern void C_ROMlib_mystlproc(DialogPtr dp, INTEGER itemno);
+
+extern BOOLEAN C_ROMlib_numsonlyfilterproc(DialogPeek dp, EventRecord* evt, INTEGER* ith);
+
+extern BOOLEAN C_ROMlib_stlfilterproc(DialogPeek dp, EventRecord* evt, INTEGER* ith);
+
+extern void ROMlib_set_default_resolution(THPrint hPrint, INTEGER vres, INTEGER hres);
+
+extern void do_textbegin(TTxtPicHdl h);
+extern void do_textcenter(TCenterRecHdl h);
+extern void do_textend(void);
+
+extern void print_reinit(void);
+
+extern pascal void C_ROMlib_circle_ok(DialogPeek dp, INTEGER which);
+extern pascal void C_ROMlib_orientation(DialogPeek dp, INTEGER which);
+
+extern int ROMlib_print_margins[4];
+extern int ROMlib_native_paper_width, ROMlib_native_paper_height;
+extern BOOLEAN ROMlib_native_print_dialog(THPrint print, boolean_t page_setup);
+extern void update_printing_globals(void);
+
+extern void disable_stdtext(void);
+extern void enable_stdtext(void);
+
+extern char* ROMlib_win32_token;
+#define WIN32_TOKEN (ROMlib_win32_token ? ROMlib_win32_token : "Win32")
+
+extern uint32 ROMlib_PrDrvrVers;
+
+extern char* ROMlib_new_printer_name;
+extern char* ROMlib_new_label;
+
+extern void ROMlib_rotatebegin(LONGINT flippage, LONGINT angle);
+extern void ROMlib_rotatecenter(double yoffset, double xoffset);
+extern void ROMlib_rotateend(void);
+extern void ROMlib_gsave(void);
+extern void ROMlib_grestore(void);
+
+extern void ROMlib_acknowledge_job_dialog(THPrint thprint);
+
+extern FILE* ROMlib_printfile;
+
+#endif /* !defined(__RSYS_PRINT__) */

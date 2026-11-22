@@ -1,0 +1,404 @@
+--- a/include/atalk/adouble.h
++++ b/include/atalk/adouble.h
+@@ -415,6 +415,8 @@
+ extern void ad_init_old(struct adouble *ad, int flags, int options);
+ extern int ad_init_offsets(struct adouble *ad);
+ extern int ad_open(struct adouble *ad, const char *path, int adflags, ...);
++extern int ad_sidecar_stat(const char *path, int options, struct stat *st);
++extern int ad_ensure_data_anchor(const char *path, int options);
+ #ifdef __APPLE__
+ extern int ad_open_native_finderinfo(const char *path, char *ret);
+ #endif
+--- a/libatalk/adouble/ad_open.c
++++ b/libatalk/adouble/ad_open.c
+@@ -1301,6 +1301,83 @@
+ }
+ #endif
+ 
++/* Validate a resource-only catalog entry without creating its data fork.
++ * Use the volume's format; never reinterpret arbitrary dot files as files. */
++int ad_sidecar_stat(const char *path, int options, struct stat *st)
++{
++    const char *sidecar = options & ADVOL_OSX_SIDECARS
++                        ? ad_path_osx_sidecar(path, 0) : ad_path(path, 0);
++    if (!sidecar) {
++        return -1;
++    }
++    int fd = open(sidecar, O_RDONLY | O_NOFOLLOW);
++    if (fd < 0) {
++        return -1;
++    }
++    unsigned char header[26];
++    uint32_t magic, version;
++    uint16_t count;
++    int result = -1, found = 0;
++    if (fstat(fd, st) || !S_ISREG(st->st_mode)
++            || pread(fd, header, sizeof header, 0) != sizeof header) {
++        goto done;
++    }
++    memcpy(&magic, header, 4);
++    memcpy(&version, header + 4, 4);
++    memcpy(&count, header + 24, 2);
++    count = ntohs(count);
++    if (ntohl(magic) != AD_MAGIC || ntohl(version) != AD_VERSION2
++            || !count || count > 64 || 26 + count * 12 > st->st_size) {
++        goto done;
++    }
++    for (unsigned i = 0; i < count; ++i) {
++        uint32_t entry[3];
++        if (pread(fd, entry, sizeof entry, 26 + i * 12) != sizeof entry) {
++            goto done;
++        }
++        uint32_t id = ntohl(entry[0]), off = ntohl(entry[1]);
++        uint32_t len = ntohl(entry[2]);
++        if (off < 26 + count * 12
++                || (len && ((uint64_t)off + len > (uint64_t)st->st_size))) {
++            goto done;
++        }
++        if (id == 2 || (id == 9 && len >= 32)) {
++            found = 1;
++        }
++    }
++    if (found) {
++        st->st_size = 0;
++        result = 0;
++    }
++done:
++    close(fd);
++    if (result) {
++        errno = ENOENT;
++    }
++    return result;
++}
++
++/* AFP share modes and CNIDs need a stable main-file inode. This is a required
++ * anchor, created on access rather than merely while listing a directory. */
++int ad_ensure_data_anchor(const char *path, int options)
++{
++    struct stat st;
++    if (lstat(path, &st) == 0) {
++        return 0;
++    }
++    if (errno != ENOENT || ad_sidecar_stat(path, options, &st) < 0) {
++        return -1;
++    }
++    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
++                  st.st_mode & 0777);
++    if (fd < 0) {
++        return errno == EEXIST ? 0 : -1;
++    }
++    struct timespec times[2] = { st.st_atim, st.st_mtim };
++    (void)futimens(fd, times);
++    return close(fd);
++}
++
+ static int ad_open_df(const char *path, int adflags, mode_t mode,
+                       struct adouble *ad)
+ {
+@@ -1344,6 +1421,11 @@
+     }
+ 
+     ad->ad_data_fork.adf_fd = open(path, oflags, admode);
++    if (ad->ad_data_fork.adf_fd < 0 && errno == ENOENT
++            && ad->ad_vers == AD_VERSION2
++            && ad_ensure_data_anchor(path, ad->ad_options) == 0) {
++        ad->ad_data_fork.adf_fd = open(path, oflags, admode);
++    }
+ 
+     if (ad->ad_data_fork.adf_fd == -1) {
+         switch (errno) {
+--- a/etc/afpd/enumerate.c
++++ b/etc/afpd/enumerate.c
+@@ -158,6 +158,61 @@
+     }
+ 
+     closedir(dp);
++    /* A valid companion can represent a file whose data fork has never
++     * been written. Append these entries without materializing an anchor. */
++    if (vol->v_adouble == AD_VERSION2) {
++        int osx = (vol->v_ad_options & ADVOL_OSX_SIDECARS) != 0;
++        size_t parentlen = strlen(name);
++        char *folder = malloc(parentlen + 16);
++        if (!folder) {
++            return -1;
++        }
++        snprintf(folder, parentlen + 16, "%s/%s", name,
++                 osx ? "" : ".AppleDouble");
++        dp = opendir(folder);
++        free(folder);
++        if (!dp) {
++            return ret;
++        }
++        while ((de = readdir(dp))) {
++            const char *leaf = de->d_name;
++            if (osx) {
++                if (strncmp(leaf, "._", 2)) {
++                    continue;
++                }
++                leaf += 2;
++            }
++            if (!*leaf || *leaf == '.' || strlen(leaf) >= sizeof de->d_name) {
++                continue;
++            }
++            char *path = malloc(parentlen + strlen(leaf) + 2);
++            if (!path) {
++                closedir(dp);
++                return -1;
++            }
++            sprintf(path, "%s/%s", name, leaf);
++            struct stat st;
++            int orphan = lstat(path, &st) < 0 && errno == ENOENT
++                       && ad_sidecar_stat(path, vol->v_ad_options, &st) == 0;
++            free(path);
++            if (!orphan) {
++                continue;
++            }
++            struct dirent synthetic = { 0 };
++            strcpy(synthetic.d_name, leaf);
++            synthetic.d_ino = st.st_ino;
++            synthetic.d_type = DT_REG;
++            if (!(m_name = check_dirent(vol, synthetic.d_name))) {
++                continue;
++            }
++            ++ret;
++            if (fn && fn(&synthetic, m_name, data) < 0) {
++                closedir(dp);
++                return -1;
++            }
++        }
++        closedir(dp);
++    }
+     return ret;
+ }
+ 
+--- a/etc/afpd/file.c
++++ b/etc/afpd/file.c
+@@ -773,6 +773,12 @@
+     upath = s_path->u_name;
+     ad_init(&ad, vol);
+ 
++    /* A sidecar-only catalog entry is already a file, even though open(O_EXCL)
++     * on its absent data path would otherwise succeed. */
++    if (!creatf && s_path->st_errno == 0) {
++        return AFPERR_EXIST;
++    }
++
+     /* if upath is deleted we already in trouble anyway */
+     if ((of = of_findname(vol, s_path))) {
+         if (creatf) {
+@@ -791,7 +797,14 @@
+         openf = ADFLAGS_RDWR | ADFLAGS_CREATE | ADFLAGS_EXCL;
+     }
+ 
+-    if (ad_open(&ad, upath, ADFLAGS_DF | ADFLAGS_HF | ADFLAGS_NOHF | openf,
++    int create_flags = ADFLAGS_DF | ADFLAGS_HF | ADFLAGS_NOHF | openf;
++    if (vol->v_ad_options & ADVOL_OSX_SIDECARS) {
++        /* A native two-entry sidecar has no CNID/date entries. Creating an
++         * all-zero FinderInfo/resource pair stores no additional state. */
++        create_flags &= ~ADFLAGS_HF;
++    }
++
++    if (ad_open(&ad, upath, create_flags,
+                 0666) < 0) {
+         switch (errno) {
+         case EROFS:
+@@ -816,7 +829,15 @@
+         }
+     }
+ 
+-    if (ad_meta_fileno(&ad) == -1) {     /* Hard META / HF */
++    if ((vol->v_ad_options & ADVOL_OSX_SIDECARS)
++            && ad_open(&ad, upath, ADFLAGS_HF | ADFLAGS_RDWR | ADFLAGS_NOHF
++                       | (creatf ? ADFLAGS_TRUNC : 0)) < 0) {
++        ad_close(&ad, ADFLAGS_DF);
++        return AFPERR_ACCESS;
++    }
++
++    if (ad_meta_fileno(&ad) == -1
++            && !(vol->v_ad_options & ADVOL_OSX_SIDECARS)) { /* Hard META / HF */
+         /* FIXME with hard create on an existing file, we already
+          * corrupted the data file.
+          */
+@@ -1321,6 +1342,29 @@
+                char *dst, char *newname, struct adouble *adp)
+ {
+     int		rc;
++    if (vol->v_adouble == AD_VERSION2) {
++        int saved = open(".", O_RDONLY | O_DIRECTORY);
++        if (saved < 0) {
++            return AFPERR_MISC;
++        }
++        int result = 0;
++        if (sdir_fd != -1 && fchdir(sdir_fd) < 0) {
++            result = -1;
++        } else {
++            struct stat st;
++            if (lstat(src, &st) < 0 && errno == ENOENT) {
++                result = ad_ensure_data_anchor(src, vol->v_ad_options);
++            }
++        }
++        if (fchdir(saved) < 0) {
++            close(saved);
++            return AFPERR_MISC;
++        }
++        close(saved);
++        if (result < 0) {
++            return AFPERR_ACCESS;
++        }
++    }
+     LOG(log_debug, logtype_afpd,
+         "renamefile: src[%d, \"%s\"] -> dst[\"%s\"]", sdir_fd, src, dst);
+     /* Clean BOTH source and destination cache entries before rename to prevent races
+--- a/etc/afpd/fork.c
++++ b/etc/afpd/fork.c
+@@ -334,6 +334,15 @@
+         return  AFPERR_BADTYPE;
+     }
+ 
++    struct stat real_data;
++    if (s_path->st_errno == 0 && vol->v_adouble == AD_VERSION2
++            && lstat(s_path->u_name, &real_data) < 0 && errno == ENOENT) {
++        if (ad_ensure_data_anchor(s_path->u_name, vol->v_ad_options) < 0
++                || of_stat(vol, s_path) < 0) {
++            return AFPERR_ACCESS;
++        }
++    }
++
+     /* stat() data fork st is set because it's not a dir */
+     switch (s_path->st_errno) {
+     case 0:
+@@ -433,11 +442,10 @@
+         }
+     }
+ 
+-    /*
+-     * Create metadata if we open rw, otherwise only open existing metadata
+-     */
++    /* Opening a data fork does not require new metadata. Explicit metadata
++     * setters and resource writes create their backing storage when needed. */
+     if (access & OPENACC_WR) {
+-        adflags = ADFLAGS_HF | ADFLAGS_RDWR | ADFLAGS_CREATE;
++        adflags = ADFLAGS_HF | ADFLAGS_RDWR;
+     } else {
+         adflags = ADFLAGS_HF | ADFLAGS_RDONLY;
+     }
+--- a/etc/afpd/ofork.c
++++ b/etc/afpd/ofork.c
+@@ -275,7 +275,11 @@
+     path->st_errno = 0;
+     path->st_valid = 1;
+ 
+-    if ((ret = ostat(path->u_name, &path->st, vol_syml_opt(vol))) < 0) {
++    ret = ostat(path->u_name, &path->st, vol_syml_opt(vol));
++    if (ret < 0 && errno == ENOENT && vol->v_adouble == AD_VERSION2) {
++        ret = ad_sidecar_stat(path->u_name, vol->v_ad_options, &path->st);
++    }
++    if (ret < 0) {
+         LOG(log_debug, logtype_afpd, "of_stat('%s/%s': %s)",
+             cfrombstr(curdir->d_fullpath), path->u_name, strerror(errno));
+         path->st_errno = errno;
+--- a/test/afpd/test.c
++++ b/test/afpd/test.c
+@@ -40,6 +40,94 @@
+ #include "subtests.h"
+ #include "test.h"
+ #include "volume.h"
++#include "fork.h"
++#include <assert.h>
++#include <unistd.h>
++
++static void empty_sidecar_probe(AFPObj *obj, struct vol *vol, uint16_t vid)
++{
++    if (!(vol->v_ad_options & ADVOL_OSX_SIDECARS)) {
++        return;
++    }
++    assert(createfile(obj, vid, DIRDID_ROOT, "LazyPlain") == AFP_OK);
++    assert(access("LazyPlain", F_OK) == 0);
++    assert(access("._LazyPlain", F_OK) < 0);
++    char request[256] = {0}, reply[4096];
++    size_t length;
++    memcpy(request + 2, &vid, 2);
++    cnid_t root = DIRDID_ROOT;
++    memcpy(request + 4, &root, 4);
++    uint16_t bitmap = htons(1 << FILPBIT_DFLEN);
++    memcpy(request + 8, &bitmap, 2);
++    uint16_t access_bits = htons(OPENACC_RD | OPENACC_WR);
++    memcpy(request + 10, &access_bits, 2);
++    request[12] = 2;
++    request[13] = 9;
++    memcpy(request + 14, "LazyPlain", 9);
++    assert(afp_openfork(obj, request, 23, reply, &length) == AFP_OK);
++    assert(access("._LazyPlain", F_OK) < 0);
++    char close_request[4] = {0};
++    memcpy(close_request + 2, reply + 2, 2);
++    assert(afp_closefork(obj, close_request, 4, reply, &length) == AFP_OK);
++    assert(delete(obj, vid, DIRDID_ROOT, "LazyPlain") == AFP_OK);
++
++    struct adouble ad;
++    ad_init(&ad, vol);
++    FILE *file = fopen("LazyResource", "wb");
++    assert(file && !fclose(file));
++    assert(!ad_open(&ad, "LazyResource", ADFLAGS_RF | ADFLAGS_RDWR
++                   | ADFLAGS_CREATE, 0664));
++    assert(ad_write(&ad, ADEID_RFORK, 0, 0, "resource", 8) == 8);
++    assert(!ad_flush(&ad));
++    assert(!ad_close(&ad, ADFLAGS_RF));
++    assert(!unlink("LazyResource"));
++    struct stat st;
++    assert(!ad_sidecar_stat("LazyResource", vol->v_ad_options, &st));
++    assert(st.st_size == 0);
++    char create_request[64] = {0};
++    memcpy(create_request + 2, &vid, 2);
++    memcpy(create_request + 4, &root, 4);
++    create_request[8] = 2;
++    create_request[9] = 12;
++    memcpy(create_request + 10, "LazyResource", 12);
++    assert(afp_createfile(obj, create_request, 22, reply, &length) == AFPERR_EXIST);
++    assert(access("LazyResource", F_OK) < 0);
++    assert(enumerate(obj, vid, DIRDID_ROOT) == 0);
++    /* No attributes requested here: listing alone needs no share lock. */
++    assert(access("LazyResource", F_OK) < 0);
++    request[13] = 12;
++    memcpy(request + 14, "LazyResource", 12);
++    assert(afp_openfork(obj, request, 26, reply, &length) == AFP_OK);
++    assert(!lstat("LazyResource", &st) && st.st_size == 0);
++    memcpy(close_request + 2, reply + 2, 2);
++    assert(afp_closefork(obj, close_request, 4, reply, &length) == AFP_OK);
++    assert(delete(obj, vid, DIRDID_ROOT, "LazyResource") == AFP_OK);
++    assert(access("._LazyResource", F_OK) < 0);
++
++    file = fopen("LazyRename", "wb");
++    assert(file && !fclose(file));
++    ad_init(&ad, vol);
++    assert(!ad_open(&ad, "LazyRename", ADFLAGS_RF | ADFLAGS_RDWR
++                   | ADFLAGS_CREATE, 0664));
++    assert(ad_write(&ad, ADEID_RFORK, 0, 0, "rename", 6) == 6);
++    assert(!ad_flush(&ad) && !ad_close(&ad, ADFLAGS_RF));
++    assert(!unlink("LazyRename"));
++    memset(request, 0, sizeof request);
++    memcpy(request + 2, &vid, 2);
++    memcpy(request + 4, &root, 4);
++    request[8] = 2;
++    request[9] = 10;
++    memcpy(request + 10, "LazyRename", 10);
++    request[20] = 2;
++    request[21] = 11;
++    memcpy(request + 22, "LazyRenamed", 11);
++    assert(afp_rename(obj, request, 33, reply, &length) == AFP_OK);
++    assert(access("._LazyRename", F_OK) < 0);
++    assert(!unlink("LazyRenamed"));
++    assert(delete(obj, vid, DIRDID_ROOT, "LazyRenamed") == AFP_OK);
++    assert(access("._LazyRenamed", F_OK) < 0);
++    puts("EMPTY_SIDECAR_AFP_PROBE_OK");
++}
+ 
+ /* Stuff from main.c which of cource can't be added as source to testbin */
+ unsigned char nologin = 0;
+@@ -70,6 +158,7 @@
+     printf("Running tests\n=============\n");
+     TEST_expr(vid = openvol(&obj, "test"), vid != 0);
+     TEST_expr(vol = getvolbyvid(vid), vol != NULL);
++    empty_sidecar_probe(&obj, vol, vid);
+     /* test directory.c stuff */
+     TEST_expr(retdir = dirlookup(vol, DIRDID_ROOT_PARENT), retdir != NULL);
+     TEST_expr(retdir = dirlookup(vol, DIRDID_ROOT), retdir != NULL);

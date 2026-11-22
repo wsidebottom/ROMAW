@@ -1,0 +1,44 @@
+Windows host filename compatibility
+===================================
+
+check-files.sh host-name builds a Windows fixture using the actual escaped-name
+decoder, host charset converter and path resolver. It covers ANSI and UTF-8
+trademark names, accents, nested paths, legacy escaped names, normalized-name
+collisions and rejection of lossy Unicode-to-MacRoman conversion. It creates
+only a dedicated build/host-names.<pid> fixture and removes it afterwards.
+The robustness script runs this fixture too.
+
+The optional ROMAW_TEST_HOST_PATH environment variable supplies an existing
+escaped host path to resolve without changing it. Set it in PowerShell before
+running build/host-names-test.exe from .; custom WSL variables need
+WSLENV forwarding to reach Windows executables.
+
+The Windows File Manager interprets raw host names as strict UTF-8 when valid,
+otherwise as the active Windows ANSI code page, and converts representable
+characters to MacRoman. Escaped bytes retain their existing MacRoman meaning.
+Missing-path recovery compares those names against real directory entries;
+literal existing paths take precedence and ambiguous normalized matches fail.
+This does not rename host files or replace the Windows ANSI filesystem backend.
+Unrepresentable names and arbitrary Unicode filesystem access remain unsupported.
+An explicit read/open alias for the custom-folder Icon<CR> helper also accepts
+the Netatalk/SMB Icon<U+F00D> filename, including its AppleDouble companions.
+General Netatalk private-use character mapping remains unsupported.
+Recovery must fit within
+the original escaped path buffer; it cannot substitute a longer host spelling.
+
+Manual verification used the user's AppleScript trademark-named folder on Y:
+and the Installer inside it. Staged ROMAW's FSMakeFSSpec, FSpGetFInfo and
+resource-fork open succeeded. This checks lookup and metadata, not Installer
+execution or a complete AppleScript installation.
+
+Windows creation uses percent escapes independently of the selected sidecar
+layout: colon escapes cannot name Windows folders and can address alternate
+streams in files. The fixture now creates and removes names for every nonzero
+MacRoman byte except the Macintosh colon separator, verifies decoding, and checks
+the Holiday Lemmings 1994 florin name and legacy uppercase percent spelling.
+Carriage returns and question marks are escaped on Windows too.
+
+Terminal spaces and periods in every Macintosh path component are escaped as
+well. The fixture creates distinct SimCity, SimCity<space> and SimCity<period>
+folders, along with all-space/all-period components, verifies round trips, and
+checks an encoded parent/child path. The encoder scans each terminal run once.

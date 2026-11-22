@@ -1,0 +1,1228 @@
+// First-start defaults. Maintain this file directly; existing user prefs are preserved.
+// Per-application DisplayScale is a percentage: 100=1x, 150=1.5x, 200=2x,
+// 400=4x, 800=8x. Custom values 25..1600 are supported; omitted means 100.
+
+// Windows drives are DOS by default. On first graphical startup, select drives
+// that support Mac sidecars. A saved value of none suppresses the setup prompt.
+// Example: SidecarDrives=M,S,Y. The mapped Apps folder always supports OSX
+// sidecars, independently of the containing drive. Clear this value to reselect.
+[HostDrives]
+SidecarDrives=
+MacDirectoryCount=0
+// MacDirectory1=C:/Classic Games
+// MacDirectory2=Y:/Macintosh Archive
+// Increase MacDirectoryCount to match the number of directory entries.
+// Compatible folders mount as independent volumes at the next startup.
+// Guest volume names are saved separately under [HostVolumeNames], keyed by
+// host root path. Renaming a volume never changes a Windows disk/folder name.
+
+// Marathon Demo
+[APPL.26.2]
+Comments="Marathon needs refresh"
+BitsPerPixel=8
+SystemVersion=6.0.7
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+// Adobe Photoshop 3.0
+[APPL.8BIM]
+Comments="Photoshop needs Pretend{Help,Edition,Script,Alias} + System 7"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+PretendHelp=1
+PretendEdition=1
+PretendScript=1
+PretendAlias=1
+
+// Bloodsuckers 
+[APPL.0x3f3f3f3f]
+Comments="Bloodsuckers needs Sound On and No 32-bit warnings"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+// Quicken 6 Updater 68K
+[APPL.A2Mh]
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+Gestalt('fs  ')={0,1};
+
+[APPL.AD3D]
+Comments="Adobe Dimensions needs System 7.0"
+WindowName="Adobe Dimensions%AA 2.0"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.AOqc]
+Comments="AOL will not be able to dial out using ROMAW."
+WindowName="America Online v2.6"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.ART5]
+Comments="Adobe Illustrator 5.5 needs the four lower left Pretend boxes checked, and System 7.0"
+WindowName="Adobe Illustrator%AA 5.5"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+PretendHelp=1
+PretendEdition=1
+PretendScript=1
+PretendAlias=1
+
+[APPL.AR|F]
+Comments="Arashi wants Sound On."
+// WindowName = "Arashi 1.1.1";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.ATrn]
+Comments="A-train works, but sound will not play"
+WindowName="A-Train"
+BitsPerPixel=4
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.AdBk]
+Comments="Address Book"
+// WindowName = "Address Book 3.7.0p8";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Apei]
+Comments="Apeiron writes directly to the screen."
+// WindowName = "Apeiron";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.BEA2]
+Comments="Beamwars wants Sound On and Animation"
+// WindowName = "BeamWars%AA 2.3.2";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.BOBO]
+Comments="Thanks to DaveSueJ"
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+NoPrefPanel=1
+Gestalt('fs  ')={0,1};
+
+[APPL.BOLO]
+Comments="Bolo"
+// WindowName = "Bolo 0.99.7";
+BitsPerPixel=8
+SystemVersion=6.0.7
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.0x426163d5]
+Comments="Bachman writes directly to the screen and wants Sound On."
+// WindowName = "Bachman 2.0.5u";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Bdlm]
+Comments="Bedlam needs System 7, writes directly to the screen and wants Sound On."
+// WindowName = "Bedlam";
+BitsPerPixel=1
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.BnHq]
+Comments="BinHex 5.0"
+// WindowName = "BinHex 5.0";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.CGRF]
+Comments="Cricket Graph really is 32-bit clean."
+WindowName="Cricket Graph"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.CLAD]
+// WindowName = "MacClade 3.07";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitOften=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.CPCT]
+Comments="Compact Pro"
+// WindowName = "Compact Pro";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.CRSL]
+Comments="Cricket Draw III has many problems under ROMAW."
+WindowName="CA-Cricket Draw III"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.CTIM]
+Comments="Carmen Time should play properly, but it won't produce sound."
+WindowName="Carmen Time"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.CUSA]
+Comments="Carmen USA will not run under ROMAW.  Sorry."
+WindowName="Carmen USA"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.CWLD]
+Comments="Carmen World will not run under ROMAW.  Sorry."
+WindowName="Carmen World"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.CYQS]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.CvMM]
+WindowName="Civilization%AA"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.DDSK]
+WindowName="Data Desk%A8 5.0"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.DELI]
+Comments="Deliverance wants sound on"
+// WindowName = "Deliverance%AA DEMO";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.DIA2]
+Comments="Diamonds 1.6 seems to run OK."
+RefreshNumber=6
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.DOLL]
+Comments="Doll's House is Black and White"
+// WindowName = "Dollshouse";
+BitsPerPixel=1
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.DWat]
+Comments="Asymptote Demo appears to work fine"
+// WindowName = "Asymptote Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.DanG]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.EGAD]
+// WindowName = "EGADS 1.3.1";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.EJ05]
+Comments="OIC"
+// WindowName = "O I C";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.ESPA]
+Comments="Beebop 2 wants sound on"
+// WindowName = "BeeBop II";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.0x455544c6]
+Comments="Eric's Ultimate Solitaire prefers Sound On"
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.FBD ]
+Comments="Fatty Bear wants Sound On"
+// WindowName = "Fatty Bear Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Flit]
+Comments="Swoop needs System 7 and wants Sound On"
+// WindowName = "Swoop";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.FunG]
+Comments="Fungus wants Sound On"
+// WindowName = "Fungus 2.0";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.GCon]
+Comments="GIFConverter 2.3.7 needs Pretend{Help,Edition,Script,Alias}"
+// WindowName = "GIFConverter 2.3.7";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+PretendHelp=1
+PretendEdition=1
+PretendScript=1
+PretendAlias=1
+
+// Browser
+[APPL.GOGO]
+Comments="Direct Disk needed to format floppies."
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+DirectDiskAccess=1
+
+[APPL.GSCa]
+Comments="FA-18 Needs System 7"
+// WindowName = "F%2FA-18 Hornet d1.1";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.GunS]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.0x483444c6]
+Comments="Spaceward Ho 4.x requires System 7.  Sound On is good, too."
+// WindowName = "DemoHo68K";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.HLX2]
+// WindowName = "Apple DocViewer";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+PretendHelp=1
+PretendEdition=1
+PretendScript=1
+PretendAlias=1
+
+[APPL.HRV0]
+Comments="Cyclone wants Sound On.  It will write directly to the screen, too."
+// WindowName = "Cyclone 1.2.1";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.HRV1]
+Comments="Space Madness writes directly to the screen and wants Sound On."
+// WindowName = "Space Madness Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.HsLa]
+Comments="Lightning Paint"
+// WindowName = "LightningPaint 1.1";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.INTU]
+// WindowName = "Quicken 6";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+NoSuspend=1
+
+[APPL.Imag]
+Comments="NIH Image 1.59 needs System 7"
+// WindowName = "NIH Image 1.59%2Ffat";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+// Coloring Book 3.2 (creator 'JF[3').
+[APPL.0x4a465b33]
+Gestalt('conn')={0,0};
+Gestalt('hdwr')={0,0};
+Gestalt('misc')={0,0};
+Gestalt('os  ')={0,0};
+Gestalt('powr')={0,0};
+Gestalt('ppc ')={0,0};
+Gestalt('prty')={0,0};
+
+[APPL.JKTE]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+// Gravitation Ltd. 5.0
+[APPL.JRG5]
+Comments="Gravitation Limited 5.0"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.Jpak]
+Comments="Jetpack wants Sound On"
+// WindowName = "Jetpack";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.KpSS]
+Comments="Slide show needs sound"
+WindowName="SlideShow"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.LAZH]
+WindowName="lazlife2.0c"
+ScreenSize=574,530
+MacSize=574,530
+ScreenLocation=222,79
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.LPRC]
+Comments="Leprechaun wants sound on."
+WindowName="Leprechaun%AA V3.0"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NoWarn32=1
+
+[APPL.MBrd]
+// WindowName = "MacBreadboard DEMO 1.1";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+// SimCity 1.4c
+[APPL.MCRP]
+BitsPerPixel=4
+
+[APPL.MKDN]
+// SuperColumns
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.MMCC]
+Comments="MW C/C++ will *not* work under ROMAW."
+WindowName="MW C%2FC++ 68K 1.2"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.MMPB]
+Comments="Introduction to Claris Works can not play sound."
+WindowName="Introduction to ClarisWorks"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.MPNT]
+WindowName="MacPaint"
+ScreenSize=512,342
+MacSize=512,342
+ScreenLocation=128,36
+RefreshNumber=20
+BlitOften=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoClock=1
+
+// Math Rabbit 2
+[APPL.MRMR]
+SystemVersion=6.0.7
+
+[APPL.MSWD]
+Comments="Word will die if you set System to be >= 7"
+WindowName="Microsoft Word"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+
+[APPL.Mael]
+Comments="Maelstrom wants Sound On"
+// WindowName = "Maelstrom";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.Mhzu]
+Comments="5 of a Kind wants Sound On and Animation"
+// WindowName = "5 of a Kind";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.MolT]
+Comments="Chiral wants Sound On"
+// WindowName = "Chiral";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.0x4d917263]
+// WindowName = "Escape Velocity";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.P!rh]
+// WindowName = "Poing!";
+BitsPerPixel=8
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.PGAP]
+Comments="PowerGrade"
+// WindowName = "PowerGrade 2.3.5g Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.PLPs]
+WindowName="Lemmings"
+ScreenSize=512,342
+MacSize=512,342
+ScreenLocation=369,177
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+FlushOften=1
+
+[APPL.PNC1]
+BlitInOSEvent=1
+SoundOff=1
+DirectDiskAccess=1
+NoClock=1
+NoWarn32=1
+
+[APPL.PPTV]
+Comments="PowerPoint Viewer"
+// WindowName = "PowerPoint Viewer";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.PVmt]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.PgLg]
+Comments="Pegleg writes directly to the screen and wants Sound On."
+// WindowName = "PegLeg%AA Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.0x506fc450]
+Comments="Prince of Persia needs sound on.  NOTE:  The original PoP runs fine, but PoP 2 requires QuickTime, and hence won't run."
+WindowName="Prince of Persia"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.Psod]
+Comments="Oh No, More Lemmings wants Sound On and Flush Cache Often set"
+// WindowName = "Oh No! More Lemmings Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+FlushOften=1
+
+[APPL.QDLX]
+Comments="Quicken 6 requires System 7"
+WindowName="Quicken Deluxe 6"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.R*ch]
+Comments="BBEdit Lite wants System 6.0.7, but BBEdit demo wants System 7"
+// WindowName = "BBEdit Lite 3.5";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.RAZZ]
+Comments="Dr. Razz requires System 7"
+// WindowName = "Dr Razz 0.9b8";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.RISK]
+Comments="Risk II benefits from Animation"
+// WindowName = "Risk!";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.RJBS]
+// Citadel of Dead Demo
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.RLMZ]
+// WindowName = "Realmz 2.5";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.RVRS]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.Rj01]
+Comments="Jewlbox wants Sound On"
+// WindowName = "Jewelbox 1.0";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.SANT]
+Comments="SimAnt plays sounds nicely."
+WindowName="SimAnt%AA Color"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.SIT!]
+Comments="Stuffit Lite 3.x will get confused if System 7 is turned on."
+// WindowName = "StuffIt Lite%AA";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.SITx]
+Comments="Stuffit Expander"
+// WindowName = "StuffIt Expander%AA";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoSuspend=1
+
+[APPL.SMLS]
+Comments="SimLife wants sound on."
+WindowName="SimLife%AA Color"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.STwZ]
+Comments="Needs a Gestalt fix"
+// WindowName = "System's Twilight v1.0.5";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoPrefPanel=1
+Gestalt('fs  ')={0,1};
+
+[APPL.ScRF]
+Comments="Scruffy ][ wants to run in 16 color mode and to have Sound On."
+// WindowName = "Scruffy II";
+BitsPerPixel=4
+SystemVersion=6.0.7
+RefreshNumber=10
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.ShSz]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.SpJK]
+Comments="Space Junkie wants Sound On"
+// WindowName = "Space Junkie 1.2";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Spec]
+Comments="Spectre 1.0 wants sound on"
+WindowName="Spectre 1.0"
+BitsPerPixel=8
+SystemVersion=6.0.7
+RefreshNumber=6
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Spin]
+Comments="Color Globe"
+// WindowName = "Globe";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.TBB5]
+Comments="Tex-Edit 2.7.2 doesn't need System 7"
+// WindowName = "Tex-Edit";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.TBB6]
+Comments="Tex-Edit Plus needs System 7"
+// WindowName = "Tex-Edit Plus";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.TKNO]
+// TechnoManiac
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.TtRd]
+// Tetrad 0.2
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.TwR1]
+Comments="SimTower requires System 7"
+WindowName="SimTower"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.UPUP]
+Comments="UpWord"
+// WindowName = "UpWord%AA v1.2";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.Ult3]
+Comments="Ultima III wants Sound On.  May need lots of memory, though."
+// WindowName = "Ultima III";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.WCSE]
+Comments="ChemEdit"
+// WindowName = "ChemEdit";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.WILD]
+Comments="HyperCard will not work if System is set to 7.0"
+// WindowName = "HyperCard";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.WOLF]
+Comments="Wolfenstein wants Sound On"
+// WindowName = "Wolfenstein 3D%AA First Encounter";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.WPC2]
+Comments="WordPerfect 3.x"
+// WindowName = "WordPerfect-US";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.Wild]
+Comments="Droit Romain must be 6.0.7 in order to work. (Stephane Rieppi)"
+// WindowName = "Droit Romain";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.XCEL]
+Comments="Excel will die if System is set >= 7"
+WindowName="Microsoft Excel"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOff=1
+PassPostscript=1
+
+[APPL.XPR3]
+// deal with the fact that Quark 3.3 dies under ROMAW when the print
+// driver version is 4.0 or greater, but Quark 4.0 refuses to print when
+// the print driver is less than 7.
+WindowName="QuarkXPress%AA"
+SystemVersion=7.0
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoPrefPanel=1
+PrVers=7.0
+
+[APPL.cArD]
+// WindowName = "Compact Pro User's Guide";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOff=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.gOLF]
+Comments="PGA Tour Golf wants Sound On"
+// WindowName = "PGA TOUR%A8 Golf Demo";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.kajr]
+// WindowName = "Installer";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+FlushOften=1
+PretendScript=1
+
+// Tetris Max 2.6
+[APPL.log3]
+Comments="Tetris Max wants Sound On"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+// Glider PRO Demo
+[APPL.ozm5]
+Comments="Glider Wants Sound On and System 7"
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.rdp ]
+Comments="Power poker needs sound on."
+WindowName="PowerPOKER"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+// Super MANDELZOOM 1.06
+[APPL.0x72706db5]
+Comments="Super MANDELZOOM is black and white"
+BitsPerPixel=1
+SystemVersion=6.0.7
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+// Speedometer 3.23
+[APPL.sPd3]
+Comments="Speedometer"
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitInOSEvent=1
+PretendSound=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.0xa78ea8a0]
+Comments="Bert wants Sound"
+// WindowName = "Bert 1.1";
+BitsPerPixel=8
+SystemVersion=7.0.0
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+[APPL.0xa7bfc2a2]
+// and hand edited by Cliff Matthews (ctm@ardi.com)
+// WindowName = "Solarian II";
+Comments="Solarian.  Refresh is important"
+SystemVersion=6.0.7
+RefreshNumber=10
+BlitInOSEvent=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+
+[APPL.0xac7e5ea0]
+BlitOften=1
+SoundOff=1
+NoWarn32=1
+
+[APPL.0xf5536b69]
+Comments="Ingemar's Skiing Game"
+// WindowName = "Ingemar's skiing game 1.0.1.u";
+BitsPerPixel=8
+SystemVersion=6.0.7
+BlitOften=1
+SoundOn=1
+PassPostscript=1
+NewLineToCR=1
+NoWarn32=1
+
+// MyABCD with the locally installed Mac OS 9.2.1 CarbonLib libraries.
+[APPL.FP98]
+SystemVersion=9.2.0
+CloseIsQuit=1
+SysZone=8m
+ApplZone=16m

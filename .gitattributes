@@ -1,0 +1,19 @@
+* text eol=lf
+*.sh text eol=lf
+*.pl text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+Makefile text eol=lf
+*.am text eol=lf
+*.ac text eol=lf
+*.bin binary
+*.ico binary
+*.icns binary
+*.bmp binary
+*.png binary
+*.cur binary
+*.pict binary
+*.ttf binary
+*.TTF binary
+*.pdf binary
+*.docx binary
