@@ -132,6 +132,13 @@ Finder CDEF 128, WDEF 128, gest 128 and hcsl 0 use slots 11 through 15.
 Their generated veneers also pass the actual resource base for per-instance
 state. See [the guest integration notes](../../../finder/guest/README.md).
 
+INTL 1's localization entry at byte 330 is also implemented in C. Its checked
+slot-16 veneer preserves the original no-op's registers, CCR and caller stack.
+The data prefix stays unchanged; the resource grows to 344 bytes for the native
+entry. `python3 tools/audit-native-resources.py` validates the complete executable
+inventory, including this embedded hook and the early-boot DSAT procedures.
+See [the native resource inventory](../../../docs/native-code-resources.md).
+
 The added `dcmp 0` resource exposes the bounded native System 7 decoder through
 the classic four-argument Pascal interface. Its guest dispatch stub can be
 copied or relocated. Resource Manager decoding retains the declared output

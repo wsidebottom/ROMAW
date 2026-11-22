@@ -40,6 +40,7 @@ evidence; they are not distributed with ROMAW.
   [implementation audit](../synppc/docs/carbon-native.md)
 - [Native Finder](../finder/README.md) and [reference audit](../finder/REFERENCE_AUDIT.md)
 - [Finder guest resource procedures](../finder/guest/README.md)
+- [Native resource inventory, embedded hooks and validation](native-code-resources.md)
 - [Shared classic UI](../classic-ui/README.md) and [QuickDraw host adapter](../windows/README.md)
 - [Icons and host metadata](../finder-metadata/README.md)
 - [Disk-image support and limits](../disk-images/README.md)
