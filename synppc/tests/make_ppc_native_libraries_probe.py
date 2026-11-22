@@ -2,7 +2,7 @@
 # +===================================================================
 #   File:      make_ppc_native_libraries_probe.py
 #
-#   Summary:   Original SOM allocator and real CFM notification lifecycle checks.
+#   Summary:   Original SOM allocation, CFM lifecycle and Icon Services name/ownership checks.
 #
 #   Classes:   Probe, imported fixture builder.
 #
@@ -26,7 +26,21 @@ def make_probe(destination):
     imports = [("SOM", name, 1) for name in ("SOMMalloc", "SOMCalloc", "SOMRealloc", "SOMFree")]
     imports += [("InterfaceLib", name, 2) for name in ("GetSharedLibrary", "CloseConnection", "DebugStr", "FindSymbol")]
     imports += [("PrivateInterfaceLib", name, 2) for name in ("FragAddNotifyProc", "FragRemoveNotifyProc")]
+    imports += [("InterfaceLib", name, 2) for name in ("PtrToHand", "DisposeHandle")]
+    imports += [
+        ("IconServicesLib", name, 2)
+        for name in (
+            "GetIconRefByName",
+            "GetIconRef",
+            "GetIconRefOwners",
+            "ReleaseIconRef",
+            "IsValidIconRef",
+            "RegisterIconRefFromIconFamily",
+            "UnregisterIconRef",
+        )
+    ]
     p = Probe(imports)
+    p.data.extend(bytes(1536 - len(p.data)))
 
     def allocator(index):
         p.emit(0x819E0008 + 4 * index, 0x818C0000, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421)
@@ -117,6 +131,66 @@ def make_probe(destination):
     p.call("FragRemoveNotifyProc")
     p.expect(0, "closing a PIC peer preserves the older copy's notifier")
     close()
+    # Private name lookup must share actual public IconRef identity and retain
+    # counts, including custom families whose caller-owned Handle is disposed.
+    p.emit(0x3C606D61, 0x60636373, 0x3C80646F, 0x60846375, 0x38BE0480)
+    p.call("GetIconRefByName")
+    p.expect(0, "lookup the native generic document icon")
+    p.emit(0x38608000, 0x3C806D61, 0x60846373, 0x3CA0646F, 0x60A56375, 0x38DE0484)
+    p.call("GetIconRef")
+    p.expect(0, "public lookup resolves the same document icon")
+    p.emit(0x807E0480, 0x809E0484)
+    p.equal("public and private lookups share icon identity")
+    p.emit(0x3C60A5A5, 0x6063A5A5, 0x907E0494)
+    p.emit(0x807E0480, 0x389E0495)
+    p.call("GetIconRefOwners")
+    p.expect(0, "read native icon ownership count")
+    p.emit(0xA07E0495)
+    p.expect(2, "both lookup references are retained")
+    for offset in (0x494, 0x497):
+        p.emit(0x887E0000 | offset)
+        p.expect(0xA5, "owner count output preserves adjacent bytes")
+    for slot in (0x480, 0x484):
+        p.emit(0x807E0000 | slot)
+        p.call("ReleaseIconRef")
+        p.expect(0, "release one lookup reference")
+
+    family = b"icns" + struct.pack(">I", 80) + b"ics#" + struct.pack(">I", 72) + bytes([0xAA, 0x55] * 16 + [255] * 32)
+    p.data[0x400:0x450] = family
+    p.emit(0x387E0400, 0x389E0490, 0x38A00050)
+    p.call("PtrToHand")
+    p.expect(0, "create original caller-owned icon family")
+    p.emit(0x3C606E70, 0x60636963, 0x3C804465, 0x60846D6F, 0x80BE0490, 0x38DE0488)
+    p.call("RegisterIconRefFromIconFamily")
+    p.expect(0, "register original custom icon family")
+    p.emit(0x807E0490)
+    p.call("DisposeHandle")
+    p.emit(0x3C606E70, 0x60636963, 0x3C804465, 0x60846D6F, 0x38BE048C)
+    p.call("GetIconRefByName")
+    p.expect(0, "name lookup retains its owned family copy")
+    p.emit(0x807E0488, 0x809E048C)
+    p.equal("custom registration and name lookup share identity")
+    p.emit(0x3C606E70, 0x60636963, 0x3C804465, 0x60846D6F)
+    p.call("UnregisterIconRef")
+    p.expect(0, "unregister custom name without disposing callers' references")
+    p.emit(0x3C606E70, 0x60636963, 0x3C804465, 0x60846D6F, 0x38BE0480)
+    p.call("GetIconRefByName")
+    p.expect(-2581, "unregistered name reports noSuchIconErr")
+    p.emit(0x807E0480)
+    p.expect(0, "failed name lookup clears its output")
+    p.emit(0x807E0488)
+    p.call("IsValidIconRef")
+    p.expect(1, "unregistration preserves retained references")
+    for slot in (0x488, 0x48C):
+        p.emit(0x807E0000 | slot)
+        p.call("ReleaseIconRef")
+        p.expect(0, "release custom reference")
+    p.emit(0x807E0488)
+    p.call("IsValidIconRef")
+    p.expect(0, "last release disposes an unregistered icon")
+    p.emit(0x3C606D61, 0x60636373, 0x3C80646F, 0x60846375, 0x38A00000)
+    p.call("GetIconRefByName")
+    p.expect(-50, "name lookup requires an output pointer")
     p.emit(0x387E0360)
     p.call("DebugStr")
     # Callback arguments are connection ID, closure ID and event code. Filter

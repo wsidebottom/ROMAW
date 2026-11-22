@@ -146,3 +146,17 @@ InterfaceLib. `PPC Menus Library Probe` checks visibility, enable-state sharing,
 Boolean output guards, submenu state across insertion/deletion, invalid arguments
 and the Help Manager error return in interpreter and JIT modes. These are
 reporting/ownership checks, not a full mouse-driven menu workflow.
+
+## Classic Icon Services names
+
+`IconServicesLib:GetIconRefByName` adapts its creator/type/output arguments to
+the existing Icon Services lookup with `kOnSystemDisk`. It retains the actual
+registry identity, reference ownership, system-resource lookup and original
+Icon Services fallback. Registered custom families remain owned copies after
+the caller disposes its original Handle.
+
+The native-library reporting fixture checks default and custom name lookup,
+shared public/private identity, big-endian reference counts with byte guards,
+unregister/release lifetime, missing names and null outputs in both modes. The
+bundled System still has only a subset of the original named icons and badges.
+These checks do not establish icon composition or full Icon Services support.

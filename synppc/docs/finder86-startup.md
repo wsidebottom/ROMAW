@@ -34,8 +34,9 @@ font setup and offscreen GWorld creation. Native Appearance drawing-state
 services now preserve actual QuickDraw color/pen state. With the additional
 Toolbox queue bindings and native Help Manager error return, Finder enters menu
 construction. Native MenusLib submenu state and menu visibility/enable bindings
-allow it to proceed through special-folder discovery. The next missing call is
-`IconServicesLib:GetIconRefByName`. It has not entered a validated desktop event
+allow it to proceed through special-folder discovery. The native icon-name adapter allows registry and system-icon lookups. The next
+missing call is `IconServicesLib:CompositeIconRef`, after some unavailable badge
+lookups return no icon. It has not entered a validated desktop event
 loop. Some failure-unwind runs also expose a host heap error during PEF cleanup;
 that failure-path issue remains unresolved.
 

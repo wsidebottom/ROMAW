@@ -1551,6 +1551,24 @@ PRIVATE int ppc_get_views_font(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+PRIVATE int ppc_get_icon_ref_by_name(ROMlib_carbon_ppc_frame* call)
+{
+    /* Name lookup uses the same registered creator/type identity and ownership
+       as the existing public Icon Services implementation. */
+    const ROMlib_carbon_export* service = ROMlib_carbon_find_export("GetIconRef", 2);
+    if (!service || !(service->signature & ROMLIB_CARBON_PPC_FRAME))
+        return 0;
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[0] = (uint32)(int32)(int16)kOnSystemDisk;
+    arguments.words[1] = call->words[0];
+    arguments.words[2] = call->words[1];
+    arguments.words[3] = call->words[2];
+    if (!((ROMlib_carbon_frame_entry)service->function)(&arguments))
+        return 0;
+    call->words[0] = arguments.words[0];
+    return 1;
+}
+
 PRIVATE MenuHandle ppc_classic_menu_handle(ppc_context* ctx, uint32 address)
 {
     uint32* master = address ? ppc_memory(ctx, address, 4, FALSE) : NULL;
@@ -3498,6 +3516,11 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
             binding.function = ppc_get_submenu_parent_choosable;
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
         }
+    }
+    if (!strcmp(library, "IconServicesLib") && cfm_architecture(ctx) == kPowerPCArch &&
+        !strcmp(name, "GetIconRefByName")) {
+        binding.function = ppc_get_icon_ref_by_name;
+        binding.magic = ROMLIB_CARBON_PPC_FRAME;
     }
     if (!strcmp(library, "WindowsLib"))
         for (i = 0; i < NELEM(windows_imports); ++i)
