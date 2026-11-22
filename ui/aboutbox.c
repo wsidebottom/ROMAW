@@ -50,8 +50,6 @@ void ROMlib_draw_about_contents(int left, int top)
     DrawText((Ptr)ROMlib_romaw_version, 0, strlen(ROMlib_romaw_version));
     TextSize(12);
     MoveTo(left + ROMAW_ABOUT_MARGIN, top + 48);
-    static const char copyright[] = "Copyright \251 ARDI 1986-2006. All rights reserved.";
-    DrawText((Ptr)copyright, 0, sizeof copyright - 1);
 
     char value[64];
     LONGINT guest_ram;
