@@ -318,6 +318,8 @@ void ROMlib_menu_hide_bar(void);
 void ROMlib_menu_show_bar(void);
 void ROMlib_menu_restore_bar(boolean_t redraw);
 int ROMlib_menu_item_count(MenuHandle menu);
+LONGINT ROMlib_get_submenu_parent_choosable(MenuHandle menu, INTEGER item, BOOLEAN* choosable);
+LONGINT ROMlib_set_submenu_parent_choosable(MenuHandle menu, INTEGER item, BOOLEAN choosable);
 boolean_t ROMlib_menu_item_enabled(MenuHandle menu, INTEGER item);
 boolean_t ROMlib_set_menu_item_enabled(MenuHandle menu, INTEGER item, boolean_t enabled);
 void ROMlib_set_menu_items_enabled(MenuHandle menu, int count, boolean_t enabled);

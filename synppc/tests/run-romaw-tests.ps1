@@ -368,6 +368,7 @@ $cases = @(
     @{Generator = 'make_ppc_appearance_font_probe.py'; App = 'PPC Appearance Font Probe'; Isolated = $true },
     @{Generator = 'make_ppc_appearance_state_probe.py'; App = 'PPC Appearance State Probe'; Isolated = $true },
     @{Generator = 'make_ppc_queue_probe.py'; App = 'PPC Queue Probe'; Isolated = $true },
+    @{Generator = 'make_ppc_menus_library_probe.py'; App = 'PPC Menus Library Probe'; Isolated = $true },
     @{Generator = 'make_ppc_handle_copy_probe.py'; App = 'PPC Handle Copy Probe' },
     @{Generator = 'make_ppc_process_probe.py'; App = 'PPC Process Probe' },
     @{Generator = 'make_ppc_thread_probe.py'; App = 'PPC Thread Probe' },

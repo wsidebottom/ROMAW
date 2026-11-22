@@ -33,8 +33,11 @@ settings through the existing native theme-font service. Finder proceeds through
 font setup and offscreen GWorld creation. Native Appearance drawing-state
 services now preserve actual QuickDraw color/pen state. With the additional
 Toolbox queue bindings and native Help Manager error return, Finder enters menu
-construction and stops at `MenusLib:SetSubmenuParentChoosable`. It has not entered
-a validated desktop event loop.
+construction. Native MenusLib submenu state and menu visibility/enable bindings
+allow it to proceed through special-folder discovery. The next missing call is
+`IconServicesLib:GetIconRefByName`. It has not entered a validated desktop event
+loop. Some failure-unwind runs also expose a host heap error during PEF cleanup;
+that failure-path issue remains unresolved.
 
 The launcher also reads Finder's own version resource and automatically applies
 its known minimum system version before guest execution. It does not infer an
@@ -94,8 +97,8 @@ in both interpreter and JIT modes. Handle-copy checks, including locked
 font fixture verifies default and explicit scripts, live font-size changes,
 big-endian unaligned output and missing-output guards in both modes.
 
-The final adapter build used a private copy of the committed System resource
-input: a concurrent pending resource-label edit removed the numeric compatibility
-revision consumed by `InitResources`, causing the startup warning before PPC
-execution. That unrelated edit was preserved. These service checks do not
-establish a working Finder desktop.
+The adapter validation build freezes System resource inputs and their matching
+generators at committed revision `22fbf3d9`. Concurrent resource conversions in the
+shared tree otherwise prevented generation or triggered the existing numeric
+compatibility-revision check before PPC execution. Those unrelated edits are
+preserved. These service checks do not establish a working Finder desktop.

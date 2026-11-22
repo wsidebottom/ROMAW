@@ -1551,6 +1551,29 @@ PRIVATE int ppc_get_views_font(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+PRIVATE MenuHandle ppc_classic_menu_handle(ppc_context* ctx, uint32 address)
+{
+    uint32* master = address ? ppc_memory(ctx, address, 4, FALSE) : NULL;
+    if (!master || !*master || !ppc_memory(ctx, CL(*master), offsetof(MenuInfo, menuData) + 2, FALSE))
+        return NULL;
+    return (MenuHandle)master;
+}
+
+PRIVATE int ppc_set_submenu_parent_choosable(ROMlib_carbon_ppc_frame* call)
+{
+    MenuHandle menu = ppc_classic_menu_handle(ppc_active_context, call->words[0]);
+    call->words[0] = ROMlib_set_submenu_parent_choosable(menu, (INTEGER)call->words[1], (BOOLEAN)call->words[2]);
+    return 1;
+}
+
+PRIVATE int ppc_get_submenu_parent_choosable(ROMlib_carbon_ppc_frame* call)
+{
+    BOOLEAN* output = call->words[2] ? ppc_memory(ppc_active_context, call->words[2], 1, TRUE) : NULL;
+    MenuHandle menu = ppc_classic_menu_handle(ppc_active_context, call->words[0]);
+    call->words[0] = ROMlib_get_submenu_parent_choosable(menu, (INTEGER)call->words[1], output);
+    return 1;
+}
+
 PRIVATE int32 ppc_get_theme_drawing_state(uint32 output_address)
 {
     ppc_context* ctx = ppc_active_context;
@@ -3466,6 +3489,16 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                 binding.magic = private_imports[i].magic;
                 break;
             }
+    if (!strcmp(library, "MenusLib") && cfm_architecture(ctx) == kPowerPCArch) {
+        if (!strcmp(name, "SetSubmenuParentChoosable")) {
+            binding.function = ppc_set_submenu_parent_choosable;
+            binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
+        else if (!strcmp(name, "GetSubmenuParentChoosable")) {
+            binding.function = ppc_get_submenu_parent_choosable;
+            binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
+    }
     if (!strcmp(library, "WindowsLib"))
         for (i = 0; i < NELEM(windows_imports); ++i)
             if (!strcmp(name, windows_imports[i].name)) {
@@ -3601,6 +3634,19 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     }
     {
         const ROMlib_carbon_export* native = ROMlib_carbon_find_library_export(library, name, symbol_class);
+        if (!native && !strcmp(library, "MenusLib")) {
+            static const char* const menu_reexports[] = {
+                "ShowMenuBar",
+                "HideMenuBar",
+                "DisableMenuItem",
+                "IsMenuItemEnabled",
+            };
+            for (i = 0; i < NELEM(menu_reexports); ++i)
+                if (!strcmp(name, menu_reexports[i])) {
+                    native = ROMlib_carbon_find_export(name, symbol_class);
+                    break;
+                }
+        }
         if (!native && !strcmp(library, "InterfaceLib")) {
             static const char* const carbon_reexports[] = {
                 "BlockZero",

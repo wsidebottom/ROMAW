@@ -9,6 +9,7 @@
              ROMlib_get_menu_item_command, ROMlib_get_menu_item_encoding, ROMlib_get_menu_item_refcon,
              ROMlib_get_menu_item_refcon2,
              ROMlib_get_menu_item_font, ROMlib_get_menu_item_icon, ROMlib_menu_bar_item, ROMlib_menu_hide_bar,
+             ROMlib_get_submenu_parent_choosable, ROMlib_set_submenu_parent_choosable,
              ROMlib_set_menu_item_encoding, ROMlib_set_menu_item_font, ROMlib_set_menu_item_icon,
              ROMlib_menu_item_count,
              ROMlib_menu_item_enabled, ROMlib_set_menu_item_command,
@@ -655,6 +656,45 @@ PUBLIC int ROMlib_change_menu_item_property(MenuHandle menu, INTEGER item, uint3
     else
         previous->attributes = (previous->attributes | first) & ~second;
     return noErr;
+}
+
+/* The same native override record is used by the Carbon menu adapters. */
+PUBLIC LONGINT ROMlib_get_submenu_parent_choosable(MenuHandle menu, INTEGER item, BOOLEAN* choosable)
+{
+    if (!choosable)
+        return paramErr;
+    *choosable = FALSE;
+    if (!menu || item < 1 || item > ROMlib_menu_item_count(menu))
+        return paramErr;
+    uint32 size, attributes;
+    const void* data;
+    const int status = ROMlib_menu_item_property(menu, item, TICK("macs"), TICK("iatm"), &size, &attributes, &data);
+    if (status == -5604) /* menuPropertyNotFoundErr: the default is not choosable. */
+        return noErr;
+    if (status || size != 8)
+        return status ? status : paramErr;
+    uint32 values[2];
+    memcpy(values, data, sizeof values);
+    *choosable = (CL(values[0]) & CL(values[1]) & 4) != 0;
+    return noErr;
+}
+
+PUBLIC LONGINT ROMlib_set_submenu_parent_choosable(MenuHandle menu, INTEGER item, BOOLEAN choosable)
+{
+    if (!menu || item < 1 || item > ROMlib_menu_item_count(menu))
+        return paramErr;
+    uint32 values[2] = {0, 0}, size, attributes;
+    const void* data;
+    const int status = ROMlib_menu_item_property(menu, item, TICK("macs"), TICK("iatm"), &size, &attributes, &data);
+    if (status != -5604) {
+        if (status || size != sizeof values)
+            return status ? status : paramErr;
+        memcpy(values, data, sizeof values);
+    }
+    values[0] = CL(CL(values[0]) | 4);
+    values[1] = CL(choosable ? CL(values[1]) | 4 : CL(values[1]) & ~4U);
+    return ROMlib_change_menu_item_property(menu, item, TICK("macs"), TICK("iatm"), ROMLIB_MENU_PROPERTY_SET,
+                                            sizeof values, 0, values);
 }
 
 PUBLIC LONGINT ROMlib_set_menu_item_modifiers(MenuHandle menu, INTEGER item, Byte modifiers)
@@ -1781,7 +1821,10 @@ out:
    * be ignored.
    */
     newmh = itemishierarchical(mh, item, &tempi);
-    if (newmh) {
+    BOOLEAN parent_choosable = FALSE;
+    if (newmh)
+        ROMlib_get_submenu_parent_choosable(mh, item, &parent_choosable);
+    if (newmh && !parent_choosable) {
         mid = 0;
         item = 0;
     }

@@ -130,3 +130,19 @@ missing-entry errors, header flags and adjacent/payload guards in both modes.
 That entry currently reports `hmHelpManagerNotInited`; exposing its real error
 allows an application to handle unavailable help without an unknown-import
 fault. This does not implement balloon help or claim Help Manager initialization.
+
+## Classic MenusLib state
+
+The Classic MenusLib adapter provides native submenu-parent get/set operations.
+The per-item property uses the existing menu attribute override storage and
+follows item insertion, deletion and menu disposal. Native hierarchical menu
+tracking honors an explicitly choosable parent while retaining the compatibility
+behavior for other menus. This path does not initialize CarbonLib or imitate its
+private records. The Classic null-menu and invalid-item errors remain `paramErr`.
+
+The imported Show/HideMenuBar, DisableMenuItem and IsMenuItemEnabled names bind
+to their existing native C entries and share the same menu bar/item state as
+InterfaceLib. `PPC Menus Library Probe` checks visibility, enable-state sharing,
+Boolean output guards, submenu state across insertion/deletion, invalid arguments
+and the Help Manager error return in interpreter and JIT modes. These are
+reporting/ownership checks, not a full mouse-driven menu workflow.
