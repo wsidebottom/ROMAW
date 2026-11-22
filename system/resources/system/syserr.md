@@ -2,7 +2,8 @@
 
 `syserr.r` contains the user-edited DSAT 0 and 2 resources, normalized for the
 native runtime. The original temporary extraction is left unchanged. Referenced
-icons are maintained in `bitmaps/syserr/`; temporary raw forks, procedure binaries,
+icons are maintained in `bitmaps/syserr/`, with the stop symbol shared from
+`bitmaps/stop.icns`; temporary raw forks, procedure binaries,
 disassembly listings and unrelated icon-family dumps are not build inputs.
 
 The native dispatcher is selected only for the two built-in writable tables.

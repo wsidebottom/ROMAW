@@ -87,7 +87,7 @@ resource 'DSAT' (2, sysheap, locked) {
         -16397, 136, Icon { { 81, 60, 113, 92 }, $$icon("syserr/bomb.icns") };
         -16398, 136, Icon { { 12, 20, 44, 52 }, $$icon("syserr/insert.icns") };
         -16401, 136, Icon { { 12, 20, 44, 52 }, $$icon("syserr/remove.icns") };
-        -16400, 136, Icon { { 81, 60, 113, 92 }, $$icon("syserr/hand.icns") };
+        -16400, 136, Icon { { 81, 60, 113, 92 }, $$icon("stop.icns") };
         -22001, 14, Buttons {
             {
                 -23000, { 154, 404, 174, 463 }, -21000;

@@ -52,6 +52,9 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual(tables[2][-23000], b"Restart \0\0")
         self.assertNotIn(40, tables[0])
         self.assertEqual(struct.unpack(">6h", tables[2][20003]), (0, 0, -16401, -21109, 0, -24301))
+        from mac_icons import resource
+
+        self.assertEqual(tables[2][-16400][8:], resource((ROOT / "bitmaps/stop.icns").read_bytes(), b"ICON"))
         for records in tables.values():
             for identity, payload in records.items():
                 if -22000 < identity <= -21000:
@@ -67,6 +70,7 @@ class ResourceCatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             shutil.copytree(ROOT / "bitmaps/syserr", directory / "syserr")
+            shutil.copyfile(ROOT / "bitmaps/stop.icns", directory / "stop.icns")
             icon = bytearray((directory / "syserr/bomb.icns").read_bytes())
             icon[16] ^= 0x80
             (directory / "syserr/bomb.icns").write_bytes(icon)
