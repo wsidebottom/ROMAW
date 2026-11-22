@@ -213,6 +213,8 @@ static int operand_write(void* opaque, uint32_t physical, const unsigned char* b
     (void)fc;
     ++writes;
     trace_bus(physical, 1);
+    if (address_callback(physical, 4))
+        return 0;
     if (physical == watched_physical) {
         ++watched_attempts;
         watched_write_fc = fc;
@@ -946,6 +948,212 @@ static unsigned scalar_store_value(unsigned address, unsigned size)
     for (unsigned i = 0; i < size; ++i)
         value = value << 8 | ram[scalar_store_physical(address + i)];
     return value;
+}
+
+/* Keep the explicit stack source and deferred LINK assignments independent of
+   the runtime implementation. No exception frame is constructed in this group;
+   guest cleanup and stack/frame aliasing have separate coverage. */
+static unsigned stack_store_setup(unsigned page8k, unsigned privileged, unsigned form, unsigned operand,
+                                  unsigned displacement, unsigned sr)
+{
+    fixture(page8k, privileged);
+    put32(pte(0x28000), 0x10001);
+    put32(pte(0x28000 + page_size), 0x14001);
+    for (unsigned i = 0; i < 16; ++i)
+        cpu_state.regs[i].ul.n = 0x12340000 + i * 0x111;
+    EM_A0 = 0x24321;
+    EM_A7 = operand + 4;
+    cpu_state.isp = 0x20100;
+    set_status((privileged ? 0x2000 : 0) | sr);
+    for (unsigned i = 0; i < 4; ++i)
+        ram[scalar_store_physical(operand + i)] = 0x71 + i;
+    unsigned opcode = form < 8     ? 0x4e50 + form
+                      : form < 16  ? 0x4808 + form - 8
+                      : form == 16 ? 0x4850
+                      : form == 17 ? 0x4857
+                      : form == 18 ? 0x486f
+                                   : 0x4879;
+    code_word(0x10000, opcode);
+    code_word(0x10002, form < 8 || form == 18 ? displacement : displacement >> 16);
+    code_word(0x10004, displacement);
+    return form < 8 || form == 18 ? 0x10004 : form < 16 || form == 19 ? 0x10006 : 0x10002;
+}
+
+/* Exercise a real guest cleanup/RTE with a separate resident supervisor stack.
+   Preserve scratch registers in guest code, including a LINK-owned A2. */
+static void stack_store_guest_cleanup(const Syn68kIntegerStep* step, const M68kReg expected[16], unsigned expected_sr,
+                                      unsigned operand, unsigned next, unsigned fault, unsigned completed)
+{
+    fail_write_physical = UINT32_MAX;
+    unsigned fault_pte = pte(operand + completed);
+    unsigned table_page = 0x3000 & ~(page_size - 1);
+    supervisor = 1;
+    put32(pte(0x10000), 0xc001);
+    put32(pte(0x10000 + page_size), 0xe001);
+    put32(pte(0x20000), 0x18001);
+    put32(pte(0x30000), table_page | 1);
+    unsigned target = 0x30000 + fault_pte - table_page;
+    unsigned descriptor = operand + completed >= 0x28000 + page_size ? 0x4001 : 1;
+    unsigned wb_address = fault == 1 ? 40 : 32;
+    unsigned wb_data = fault == 1 ? 44 : 36;
+    const unsigned
+        program[] = {0x2f0a,          0x2f04, 0x2f03,       0x2f02, /* A2/D4/D3/D2, then restore ascending. */
+                     0x23fc,          1,      descriptor,   target >> 16, target & 65535, 0xf518, 0x246f,
+                     wb_address + 16, 0x242f, wb_data + 16, 0x7601,       0x4e7b,         0x3001, 0x0e92,
+                     0x2800, /* MOVES.L D2,(A2), using the original user data space. */
+                     0x4cdf,          0x041c, 0x4e73};
+    unsigned handler = 0x10000 + page_size + 0x40, end = handler;
+    for (unsigned i = 0; i < sizeof program / sizeof *program; ++i) {
+        if (fault == 1 && i == 17) {
+            const unsigned rotation[] = {0x260a, 0x0283, 0, 3, 0xe78b, 0xe7ba};
+            for (unsigned j = 0; j < sizeof rotation / sizeof *rotation; ++j) {
+                code_word(end, rotation[j]);
+                end += 2;
+            }
+        }
+        code_word(end, program[i]);
+        end += 2;
+    }
+    cpu_state.vbr = 0x20000;
+    put32(physical(cpu_state.vbr + 8), handler);
+    Syn68kMappedCPU cpu = {.pc = next, .memory = &memory, .native = native_execution};
+    Syn68kMappedDelivery delivery;
+    assert(syn68k_mapped_exception_enter(&cpu, step, 0, &delivery));
+    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+    unsigned frame = 0x20100 - 60;
+    assert(mapped_value(frame, 2) == expected_sr && mapped_value(frame + 2, 4) == next &&
+           mapped_value(frame + 20, 4) == operand && mapped_value(frame + wb_address, 4) == operand);
+    unsigned instructions = 13 + (fault == 1 ? 4 : 0);
+    unsigned traced = !!(step->store_state == 3);
+    Syn68kMappedRun run;
+    assert(syn68k_mapped_cpu_run(&cpu, instructions, &run));
+    assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+           run.completed == instructions - traced && cpu.pc == next && status() == expected_sr &&
+           !memcmp(expected, cpu_state.regs, sizeof cpu_state.regs));
+    if (traced) {
+        unsigned trace_handler = 0x10000 + page_size + 0xc0;
+        put32(physical(cpu_state.vbr + 36), trace_handler);
+        code_word(trace_handler, 0x4e73);
+        assert(run.step.vector == 9 && run.step.format == 2 && run.step.fault_address == 0x10000);
+        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+        assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == next && status() == expected_sr &&
+               !memcmp(expected, cpu_state.regs, sizeof cpu_state.regs));
+    }
+    assert(scalar_store_value(operand, 4) == step->access.value);
+}
+
+static void stack_store_completions(void)
+{
+    static const unsigned displacements[] = {0, 0xfffffff0, 64, 0x80000000};
+    unsigned first = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned form = 0; form < 20; ++form)
+                for (unsigned sample = 0; sample < 4; ++sample)
+                    for (unsigned trace = 0; trace < 4; ++trace)
+                        for (unsigned fault = 0; fault < 4; ++fault)
+                            for (unsigned completed = 0; completed < 4; ++completed)
+                                for (unsigned callback = 0; callback < 3; ++callback) {
+                                    if ((!fault && completed) || (callback && fault != 1))
+                                        continue;
+                                    unsigned lane = completed ? (4 - completed) & 3 : sample;
+                                    unsigned operand = fault >= 2 ? 0x28000 + (page8k ? 8192 : 4096) - completed +
+                                                                        (completed ? 0 : lane)
+                                                                  : 0x28100 + lane;
+                                    unsigned displacement = form == 18   ? 0x23
+                                                            : form == 19 ? 0x12345679
+                                                                         : displacements[sample];
+                                    unsigned delta = form < 8 ? (unsigned)(int)(short)displacement : displacement;
+                                    unsigned next = stack_store_setup(page8k, privileged, form, operand, displacement,
+                                                                      trace << 14 | sample);
+                                    M68kReg initial[16], expected[16];
+                                    memcpy(initial, cpu_state.regs, sizeof initial);
+                                    memcpy(expected, initial, sizeof expected);
+                                    unsigned saved = form < 16    ? initial[8 + (form & 7)].ul.n
+                                                     : form == 16 ? EM_A0
+                                                     : form == 17 ? EM_A7
+                                                     : form == 18 ? EM_A7 + 0x23
+                                                                  : displacement;
+                                    unsigned live_sp = operand ^ (callback == 1 ? 0x40 : 0);
+                                    if (form < 16)
+                                        expected[8 + (form & 7)].ul.n = live_sp;
+                                    expected[15].ul.n = live_sp + (form < 16 ? delta : 0);
+                                    unsigned expected_sr = (privileged ? 0x2000 : 0) | trace << 14 | sample;
+                                    if (callback == 2)
+                                        expected_sr = (expected_sr ^ 0xc000) ^ 31;
+                                    for (unsigned component = 0; component < 2; ++component) {
+                                        stack_store_setup(page8k, privileged, form, operand, displacement,
+                                                          trace << 14 | sample);
+                                        memory.aligned_transfers = 1;
+                                        if (fault == 1)
+                                            fail_write_physical = scalar_store_physical(operand + completed);
+                                        else if (fault >= 2)
+                                            put32(pte(operand + completed), fault == 3 ? 0 : 0x14005);
+                                        if (callback == 1) {
+                                            read_callback_address = fail_write_physical;
+                                            read_callback_kind = 4;
+                                            read_callback_register = 7;
+                                            read_callback_mask = 0x40;
+                                        }
+                                        if (callback == 2) {
+                                            trace_read_physical = fail_write_physical;
+                                            trace_bus_kind = 1;
+                                            trace_read_sr = (trace ^ 3) << 14;
+                                            trace_read_ccr = sample ^ 31;
+                                        }
+                                        Syn68kIntegerStep step;
+                                        if (component) {
+                                            assert(syn68k_integer_step(0x10000, &memory, &step));
+                                            if (fault) {
+                                                assert(step.vector == 2 && step.store_state == 1 &&
+                                                       step.store_next == next && step.exception_pc == 0x10000 &&
+                                                       step.store_link_displacement == (form < 16 ? delta : 0));
+                                                initial[15].ul.n = live_sp;
+                                                assert(!memcmp(initial, cpu_state.regs, sizeof initial));
+                                            }
+                                            else
+                                                assert(!step.vector && step.next == next &&
+                                                       !memcmp(expected, cpu_state.regs, sizeof expected));
+                                        }
+                                        else {
+                                            Syn68kMappedCPU cpu = {
+                                                .pc = 0x10000, .memory = &memory, .native = native_execution};
+                                            Syn68kMappedRun run;
+                                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                            step = run.step;
+                                            assert(cpu.pc == next &&
+                                                   !memcmp(expected, cpu_state.regs, sizeof expected));
+                                            unsigned traced = !!(trace & 2);
+                                            if (fault)
+                                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && step.vector == 2 &&
+                                                       step.store_state == (traced ? 3U : 2U) &&
+                                                       !step.store_link_displacement && step.store_trace_pc == 0x10000);
+                                            else if (traced)
+                                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && step.vector == 9 &&
+                                                       step.exception_pc == next && step.fault_address == 0x10000);
+                                            else
+                                                assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1);
+                                        }
+                                        assert(status() == expected_sr && read_callback_hits == (callback == 1));
+                                        if (fault) {
+                                            assert(step.access.request == operand && step.access.size == 4 &&
+                                                   step.access.logical == operand + completed &&
+                                                   step.access.completed == completed && step.access.value == saved);
+                                        }
+                                        for (unsigned i = 0; i < 4; ++i)
+                                            assert(
+                                                ram[scalar_store_physical(operand + i)] ==
+                                                ((!fault || i < completed) ? (saved >> (24 - i * 8)) & 255 : 0x71 + i));
+                                        if (!component && fault && !privileged && callback != 1)
+                                            stack_store_guest_cleanup(&step, expected, expected_sr, operand, next,
+                                                                      fault, completed);
+                                        ++cases;
+                                    }
+                                }
+    memory.aligned_transfers = 0;
+    printf("%u stack-store component/retirement cases passed\n", cases - first);
 }
 
 static void scalar_store_setup(unsigned page8k, unsigned privileged, unsigned opcode, unsigned operand,
@@ -4844,6 +5052,7 @@ int main(int argc, char** argv)
             read_callback_guards();
             rte_address_callback_restarts();
             moves_streams();
+            stack_store_completions();
             guest_fpu_physical_writebacks();
             guest_fpu_physical_replays();
             partial_writeback_record_guards();
@@ -4892,6 +5101,7 @@ int main(int argc, char** argv)
             read_callback_guards();
             rte_address_callback_restarts();
             moves_streams();
+            stack_store_completions();
             guest_partial_read_restarts();
             guest_movem_read_continuations();
             movem_fetch_record_guards();

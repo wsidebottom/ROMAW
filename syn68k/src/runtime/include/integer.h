@@ -51,6 +51,11 @@ typedef struct {
     unsigned store_tail_fc; /* The following word can use a different data bank. */
     unsigned store_locked;  /* A captured TAS/CAS/CAS2 write retains LK. */
     uint32_t store_tail_address;
+    /* Candidate-only LINK completion, captured from the decoded extension.
+       The mapped runner applies its An/SP updates using the live SP after the
+       callback, then clears this field before publishing a retired record.
+       This host-step tail is not part of a native invocation packet. */
+    uint32_t store_link_displacement;
 } Syn68kIntegerStep;
 
 /* Internal MULU/MULS/DIVU/DIVS, MOVEM/MOVES/MOVEP, JSR/JMP/LEA/PEA and

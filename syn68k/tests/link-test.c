@@ -120,7 +120,7 @@ int main(int argc, char** argv)
                             reset(ccr, bank);
                             uint32 stack = EM_A7 + alignment, frame = stack - 4;
                             EM_A7 = stack;
-                            uint32 saved = reg == 7 ? frame : cpu_state.regs[8 + reg].ul.n;
+                            uint32 saved = cpu_state.regs[8 + reg].ul.n;
                             run();
                             assert(!trapped && status() == expected_sr);
                             assert(READUL(frame) == saved);

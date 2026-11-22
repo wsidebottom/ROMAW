@@ -2269,8 +2269,13 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         byte(out, 0x89);
         byte(out, 0xC2); /* R10D retains the live displacement. */
         memory_pointer(out, 39, 4, pc);
-        /* LINK A7 saves the already decremented SP, matching the checked path. */
         load(out, (op & 7) + 8, 0);
+        if ((op & 7) == 7) {
+            /* The implicit predecrement changed SP; store its original source. */
+            byte(out, 0x83);
+            byte(out, 0xC0);
+            byte(out, 4);
+        }
         memory_store(out, 2);
         load(out, 15, 0);
         store(out, (op & 7) + 8);

@@ -80,7 +80,7 @@ int main(void)
                             stack = expected[15];
                             WRITEUL(stack, 0xDEADBEEF);
                         }
-                        uint32 saved = expected[reg + 8];
+                        uint32 saved = expected[reg + 8] + (operation != 2 && reg == 7 ? 4 : 0);
                         if (operation != 2) {
                             expected[reg + 8] = stack;
                             expected[15] += operation == 0 ? (uint32)(int32)(int16)offsets[sample] : offsets[sample];

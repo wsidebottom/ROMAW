@@ -153,6 +153,9 @@ EOF
         -o syn68k/obj/tests/link-test.exe
       syn68k/obj/tests/link-test.exe 0
       syn68k/obj/tests/link-test.exe 1
+      if [[ ${1:-} == --oracle ]]; then
+        python3 syn68k/tests/link-a7-reference.py
+      fi
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         syn68k/tests/unlk-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o syn68k/obj/tests/unlk-test.exe

@@ -443,10 +443,41 @@ The original fixture checks 71,380 cases per dispatch mode: word/long signed
 displacements, all registers/CCR patterns and stack banks, unaligned frames,
 native arithmetic flags, cached SP offsets, protected-page truncation, unsigned
 wrap, memory-window changes, cached extension edits and every truncated
-extension prefix. A7 aliases retain the legacy interpreter policy rather than
-claiming physical-68040 validation. Successful ordering follows M68000PRM LINK
-(4-111). Faults use synchronous flat RAM, without physical writeback/restart
-ordering or exception-stack double-fault handling.
+extension prefix. LINK A7 now captures the original SP before its implicit
+predecrement, in both the checked decoder and direct x64 emitter. The earlier
+fixture retained a decremented-SP legacy expectation; that expectation has been
+corrected. `tests/link-a7-reference.py` assembles an independent Linux m68k
+program and checks LINK.W/L with QEMU's m68040: both save the original SP and
+finish at original SP minus 20 for displacement -16. This is emulator evidence,
+not a physical-68040 capture. Successful ordering follows M68000PRM LINK
+(4-111); the Classic Mac captures below still exclude A7.
+
+Mapped PEA and LINK final-store offers preserve the component decoder's fault
+state. LINK captures its already-fetched displacement in host-step metadata;
+the mapped runner commits An/SP assignments once, using live callback SP, and
+clears that metadata before publishing the retired writeback record. Normal T1
+and deferred CT use instruction-entry trace bits; these straight-line operations
+do not trace for T0 alone. Call instructions and their odd-target exception
+priority remain separate unfinished work.
+
+The focused mapped group contains 215,040 component/retirement checks across
+both instruction and bus bindings. It covers every LINK register, word/long
+extensions, four PEA forms including A7 sources, both page sizes and privilege
+states, aligned physical partial writes, ATC protection/missing pages, and live
+SP/trace/CCR callback changes. Within that group, 40,960 user-mode cases execute
+a guest handler that repairs the PTE, drains WB1/WB2, restores its scratch
+registers and returns through RTE, including CT trace delivery. Supervisor-stack
+frame overlap, additional PEA EA forms and stack-bank delivery faults still need
+coverage; this group does not establish their completion.
+
+The combined control-register (with QEMU reference), JIT, MMU, native040, RTE,
+FPU-native and AOT checks pass for this increment. MMU and RTE each report
+6,655,716 stream cases and 101,224 flow cases; these are overlapping suites,
+not twice as many unique cases. Cold/warm AOT recovery each report 2,893,194
+cases: 47 cold emissions and zero warm emissions, with a stable cache identity.
+Windows help, Browser startup and Speedometer 4.02's 68K startup also pass.
+Speedometer reaches its event loop with the ordinary no-FPU capability report;
+this is not a completed FPU benchmark or physical-68040 validation.
 
 ## Classic Mac LINK comparisons
 

@@ -246,9 +246,9 @@ static uint32 integer_exception(Syn68kIntegerStep* step, const Syn68kEAContext* 
     return pc;
 }
 
-/* These stores leave CCR unchanged and finish all address updates before the
-   write. Preserve component-step fault state; the mapped runner alone retires
-   their final scalar. Capturing live CCR also retains callback side effects. */
+/* These stores leave CCR unchanged. Preserve component-step fault state; the
+   mapped runner alone retires their final scalar and any captured LINK updates.
+   Capturing live CCR also retains callback side effects. */
 static uint32 final_store_exception(Syn68kIntegerStep* step, const Syn68kEAContext* context, unsigned vector, uint32 pc)
 {
     uint32 next = integer_exception(step, context, vector, pc, context->fault_address, vector == 2 ? 7 : 0);
@@ -605,8 +605,11 @@ static uint32 control_address(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         /* Resolve the complete EA before changing SP, including an A7 base. */
         EM_A7 -= 4;
         write_stack_long(context, pea ? ea.address : next);
-        if (context->error)
+        if (context->error) {
+            if (pea)
+                return final_store_exception(step, context, 2, pc);
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
+        }
         if (!pea && !context->memory)
             cache_return(next);
     }
@@ -746,13 +749,21 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
         if (size == 2)
             displacement = (int16)displacement;
+        context->pc += size;
+        /* Resolve the register source before the implicit stack EA update,
+           including LINK A7. The displacement was already fetched once. */
+        uint32 saved = cpu_state.regs[reg].ul.n;
         EM_A7 -= 4;
-        write_checked_memory(context, EM_A7, 4, cpu_state.regs[reg].ul.n);
-        if (context->error)
-            return integer_exception(step, context, 2, pc, context->fault_address, 7);
+        write_checked_memory(context, EM_A7, 4, saved);
+        if (context->error) {
+            uint32 next = final_store_exception(step, context, 2, pc);
+            if (step && step->store_state == 1)
+                step->store_link_displacement = displacement;
+            return next;
+        }
         cpu_state.regs[reg].ul.n = EM_A7;
         EM_A7 += displacement;
-        return pc + 2 + size;
+        return context->pc;
     }
     if ((opcode & 0xfff8) == 0x4e58) {
         unsigned reg = 8 + (opcode & 7);

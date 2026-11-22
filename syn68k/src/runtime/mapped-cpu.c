@@ -188,6 +188,9 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
        Only locked transfers retain the stricter alignment/progress contract. */
     return record->vector == 2 && record->format == 7 && record->store_state && record->store_state <= 3 &&
            !record->restartable_read && record->store_locked <= 1 && access->rmw == record->store_locked &&
+           (!record->store_link_displacement ||
+            (record->store_state == 1 && !record->store_locked && !record->fpu_vector && !record->store_tail_valid &&
+             !record->movem_state)) &&
            (!record->store_locked || (!record->fpu_vector && !record->movem_state)) &&
            (!record->fpu_vector || (record->fpu_vector >= 48 && record->fpu_vector <= 55 && record->store_state == 2 &&
                                     !record->movem_state)) &&
@@ -221,6 +224,12 @@ static int mmu_moves_trace_opcode(unsigned opcode)
 {
     return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
            (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0);
+}
+
+static int linear_stack_store_opcode(unsigned opcode)
+{
+    return (opcode & 0xfff8) == 0x4e50 || (opcode & 0xfff8) == 0x4808 ||
+           ((opcode & 0xffc0) == 0x4840 && (opcode & 0x30));
 }
 
 static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
@@ -331,7 +340,8 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (!handled)
                 handled = syn68k_integer_step_decoded(cpu->pc, opcode, &memory, &result->step);
         }
-        unsigned trace_scope = handled && mmu_moves_trace_opcode(opcode);
+        unsigned trace_flow = handled && mmu_moves_trace_opcode(opcode);
+        unsigned trace_scope = trace_flow || (handled && linear_stack_store_opcode(opcode));
         if (!handled) {
             Syn68kFPUStep fp;
             int fpu_handled = 0;
@@ -419,7 +429,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                                                    .fault_address = format ? cpu->pc : 0};
             }
         }
-        if (!result->step.vector && trace_scope && instruction_traced(before.sr, 1)) {
+        if (!result->step.vector && trace_scope && instruction_traced(before.sr, trace_flow)) {
             result->step.vector = 9;
             result->step.format = 2;
             result->step.exception_pc = result->step.next;
@@ -433,8 +443,15 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 cpu_state.ccnz = !(ccr & 4);
                 cpu_state.ccn = ccr & 8;
                 cpu_state.ccx = ccr & 16;
+                if ((opcode & 0xfff8) == 0x4e50 || (opcode & 0xfff8) == 0x4808) {
+                    /* Match normal LINK's work after its queued final store.
+                       Callback changes to the live SP feed both assignments. */
+                    EM_AREG(opcode & 7) = EM_A7;
+                    EM_A7 += result->step.store_link_displacement;
+                }
+                result->step.store_link_displacement = 0;
                 result->step.store_trace_pc = result->step.exception_pc;
-                result->step.store_state = instruction_traced(before.sr, trace_scope) ? 3 : 2;
+                result->step.store_state = instruction_traced(before.sr, trace_flow) ? 3 : 2;
                 result->step.next = result->step.exception_pc = result->step.store_next;
             }
             /* Abort pre-execute reads: restore speculative EA register updates,

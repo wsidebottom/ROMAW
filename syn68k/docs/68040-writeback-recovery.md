@@ -37,12 +37,21 @@ Guest cleanup writes the retained scalar without rereading source or destination
 operands. Locked transfer restrictions remain unchanged.
 
 The producers are `finish_scalar` in `src/runtime/jit-memory.c` and
-`final_store_exception` for memory destinations of MOVE SR/CCR and MOVES in
-`trap.c`. These stores leave flags unchanged, so their offer preserves live CCR,
-including callback changes, while the retained write data remains the value
-captured before the callback. Other decoders in `trap.c` still need completion
-protocols, including call/PEA/LINK stack writes. The common validator does not
-infer completion for those instructions.
+`final_store_exception` for memory destinations of MOVE SR/CCR, MOVES, PEA and
+LINK in `trap.c`. These stores leave flags unchanged, so their offer preserves
+live CCR, including callback changes, while the retained write data remains the
+value captured before the callback. LINK also captures its decoded displacement:
+the component fault leaves An/SP unfinished, then the mapped runner uses live SP
+to finish the register assignments and clears the displacement before publishing
+a retired record. No extension is fetched again. This host-step field does not
+change the native invocation packet. Call stack writes still need completion
+protocols; the common validator does not infer completion for those instructions.
+
+LINK saves its register source before decrementing SP, including the A7 alias.
+PEA resolves the complete source EA before its stack update. Both are linear for
+trace purposes: T1 applies, T0 alone does not. A separate resident supervisor
+stack permits user-mode guest WB1/WB2 cleanup and RTE even when LINK leaves an
+odd or wrapped user SP. Supervisor frame overlap remains an explicit audit item.
 
 ## MOVES spaces and trace
 
