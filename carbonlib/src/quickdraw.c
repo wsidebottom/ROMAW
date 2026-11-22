@@ -1182,7 +1182,8 @@ int ROMlib_carbon_nqd_unflatten_pixpat(ROMlib_carbon_ppc_frame* call)
     memcpy(&pattern, bytes, sizeof pattern);
     const uint32_t map_offset = CL((uint32_t)PP_RAW(pattern.patMap));
     const uint32_t data_offset = CL((uint32_t)PP_RAW(pattern.patData));
-    if ((uint16_t)CW(pattern.patType) > 3 || map_offset < sizeof pattern || map_offset > (uint32_t)size - sizeof(PixMap))
+    if ((uint16_t)CW(pattern.patType) > 3 || map_offset < sizeof pattern ||
+        map_offset > (uint32_t)size - sizeof(PixMap))
         return 1;
 
     PixMap map;

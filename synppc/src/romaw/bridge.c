@@ -4058,7 +4058,8 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                     if (entry) {
                         binding.function = entry->function;
                         binding.magic = entry->signature;
-                        return ppc_native_dependency(ctx, "CarbonLib") && ppc_install_import(ctx, binding, library, name, symbol_class, address);
+                        return ppc_native_dependency(ctx, "CarbonLib") &&
+                               ppc_install_import(ctx, binding, library, name, symbol_class, address);
                     }
                     break;
                 }
