@@ -35,10 +35,10 @@ IMAGE_FILE_TYPES = (
 # Used only after custom, bundle and Desktop database artwork has failed.
 GENERIC_FILE_TYPES = (
     ("dfil", "-3991_genericDeskAccessoryIconResource.icns"),
-    ("FNDR", "type_FNDR.icns"),
-    ("ZSYS", "type_ZSYS.icns"),
+    ("FNDR", "mac.icns"),
+    ("ZSYS", "mac.icns"),
     ("APPL", "type_APPL.icns"),
-    ("TEXT", "type_TEXT.icns"),
+    ("TEXT", "-4000_genericDocumentIconResource.icns"),
     ("PICT", "type_PICT.icns"),
     ("kfil", "type_kfil.icns"),
     ("FFIL", "type_ffil_1.icns"),
@@ -46,7 +46,7 @@ GENERIC_FILE_TYPES = (
     ("sfil", "type_sfil.icns"),
     ("tfil", "type_tfil.icns"),
     ("INIT", "type_INIT.icns"),
-    ("shlb", "type_shlb.icns"),
+    ("shlb", "type_INIT.icns"),
 )
 
 

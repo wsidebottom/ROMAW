@@ -4613,7 +4613,7 @@ resource 'movp' (0) {
 resource 'ppat' (16, sysheap, purgeable) {
     1, /* pattern type */
     0, 0, 0, /* expansion pointers and validity */
-    $$pattern("system-patterns/ppat-16-fallback.png"), /* monochrome fallback */
+    $$pattern("system-patterns/PAT-16.png"), /* monochrome fallback */
     {
         0, 32772, { 0, 0, 8, 8 }, /* base, rowBytes/flags, bounds */
         0, 0, 0, 4718592, 4718592, 0, 4, 1, 4, 0, 0 /* version, pack type/size, resolutions, pixel type/depth, components, plane offset, reserved */
@@ -4628,7 +4628,7 @@ resource 'ppat' (16, sysheap, purgeable) {
 resource 'ppat' (17, "Blue Tiles", sysheap, purgeable) {
     1, /* pattern type */
     0, -1, 0, /* expansion pointers and validity */
-    $$pattern("system-patterns/ppat-17-fallback.png"), /* monochrome fallback */
+    $$pattern("system-patterns/PAT-list-0-20.png"), /* monochrome fallback */
     {
         0, 32800, { 0, 0, 64, 64 }, /* base, rowBytes/flags, bounds */
         0, 0, 0, 4718592, 4718592, 0, 4, 1, 4, 0, 0 /* version, pack type/size, resolutions, pixel type/depth, components, plane offset, reserved */

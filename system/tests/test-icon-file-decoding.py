@@ -60,7 +60,7 @@ def main():
     cases["exact.icns"] = (mac_icons.encode(frames), frames)
     cases["png.icns"] = (mac_icons.icns_family([mac_icons.icns_chunk(b"icp5", payload)]), [frames[1]])
     # Real classic planes exercise the portable path with no PNG dependency.
-    source = (ROOT / "bitmaps/type_TEXT.icns").read_bytes()
+    source = (ROOT / "bitmaps/-4000_genericDocumentIconResource.icns").read_bytes()
     classic = [
         mac_icons.classic_frame(mac_icons.best_frame(mac_icons.decode(source), size), size, depth)
         for size in (16, 32)

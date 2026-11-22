@@ -542,7 +542,7 @@ resource 'PAT#' (0, purgeable) {
         $$pattern("system-patterns/PAT-list-0-01.png");
         $$pattern("system-patterns/PAT-list-0-02.png");
         $$pattern("system-patterns/PAT-list-0-03.png");
-        $$pattern("system-patterns/PAT-list-0-04.png");
+        $$pattern("system-patterns/PAT-16.png");
         $$pattern("system-patterns/PAT-list-0-05.png");
         $$pattern("system-patterns/PAT-list-0-06.png");
         $$pattern("system-patterns/PAT-list-0-07.png");
@@ -561,7 +561,7 @@ resource 'PAT#' (0, purgeable) {
         $$pattern("system-patterns/PAT-list-0-20.png");
         $$pattern("system-patterns/PAT-list-0-21.png");
         $$pattern("system-patterns/PAT-list-0-22.png");
-        $$pattern("system-patterns/PAT-list-0-23.png");
+        $$pattern("system-patterns/PAT-17.png");
         $$pattern("system-patterns/PAT-list-0-24.png");
         $$pattern("system-patterns/PAT-list-0-25.png");
         $$pattern("system-patterns/PAT-list-0-26.png");

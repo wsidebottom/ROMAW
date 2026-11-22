@@ -29,9 +29,10 @@ DITL padding and pixel-pattern layout synthesis are native builder extensions.
 Existing external artwork declarations and native code expressions remain
 `data` declarations; they contain no embedded hexadecimal payloads.
 
-Forty-seven exported PNG inputs live in `bitmaps/system-patterns/`:
-three individual monochrome patterns, 38 pattern-list entries, three pixel
-patterns and their three monochrome fallbacks. `$$pattern` reads opaque 8x8
+Forty-three shared PNG inputs in `bitmaps/system-patterns/` supply the original
+47 bitmap uses: three individual monochrome patterns, 38 pattern-list entries,
+three pixel patterns and their three monochrome fallbacks. Identical patterns
+share files as documented in `bitmaps/README.md`. `$$pattern` reads opaque 8x8
 black/white pixels; `$$pixels` reads the indexed PNG without quantizing or
 reordering its palette. Keep color patterns indexed and at their declared size.
 RGB colors are regenerated from the PNG palette; color-table indexes, seed,

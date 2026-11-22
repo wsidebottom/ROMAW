@@ -78,10 +78,10 @@ def main():
     }
     wanted_types = {
         "dfil": "-3991_genericDeskAccessoryIconResource.icns",
-        "FNDR": "type_FNDR.icns",
-        "ZSYS": "type_ZSYS.icns",
+        "FNDR": "mac.icns",
+        "ZSYS": "mac.icns",
         "APPL": "type_APPL.icns",
-        "TEXT": "type_TEXT.icns",
+        "TEXT": "-4000_genericDocumentIconResource.icns",
         "PICT": "type_PICT.icns",
         "kfil": "type_kfil.icns",
         "FFIL": "type_ffil_1.icns",
@@ -89,7 +89,7 @@ def main():
         "sfil": "type_sfil.icns",
         "tfil": "type_tfil.icns",
         "INIT": "type_INIT.icns",
-        "shlb": "type_shlb.icns",
+        "shlb": "type_INIT.icns",
     }
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
@@ -155,7 +155,7 @@ def main():
         from romaw.system_resources import build_fork
 
         bundle = b"TEST\0\0\0\1FREF\0\0\0\0\0\x80ICN#\0\0\0\7\1\x2c"
-        art = (ROOT / "bitmaps/type_TEXT.icns").read_bytes()
+        art = (ROOT / "bitmaps/-4000_genericDocumentIconResource.icns").read_bytes()
         planes = [
             (kind, builder.family_resource(art, kind))
             for kind in (b"ICN#", b"ics#", b"icl4", b"icl8", b"ics4", b"ics8")

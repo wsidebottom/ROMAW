@@ -81,3 +81,26 @@ families except the UI assets listed in `no-huge-icons.txt`. Those assets keep
 their small representations, and completion removes any 48×48 members from them.
 Other existing members are preserved; missing sizes use the nearest
 source frame. This changes shared files only, without adding resource catalog entries.
+
+Identical exported artwork shares one source file. Resource IDs, resource flags,
+file-type associations and generated icon-table positions remain separate:
+
+| Shared source | Consumers formerly using separate identical files |
+| --- | --- |
+| `-4000_genericDocumentIconResource.icns` | Generic documents and `TEXT` files |
+| `mac.icns` | `FNDR` and `ZSYS` files |
+| `type_INIT.icns` | `INIT` and `shlb` files |
+| `system-patterns/PAT-16.png` | `PAT ` 16, `PAT#` 0 entry 4, `ppat` 16 fallback |
+| `system-patterns/PAT-17.png` | `PAT ` 17 and `PAT#` 0 entry 23 |
+| `system-patterns/PAT-list-0-20.png` | `PAT#` 0 entry 20 and `ppat` 17 fallback |
+
+These eight removed duplicate files were byte-identical, including indexed
+palettes, masks and all ICNS members. Similar-looking images with different
+palette indices, transparency or resolutions remain separate.
+
+Repeated resource payloads are not necessarily removable resources. `KCHR`
+pairs 0/150, 133/146 and 136/137 retain their distinct lookup IDs. System and
+Finder retain their own CDEF 128, WDEF 128, gest 128 and hcsl 0 veneers. Shared
+folder icons and watch cursors already read common artwork while retaining
+independent Resource Manager handles. Do not merge stored resource records or
+remove these identities merely because their current bytes match.
