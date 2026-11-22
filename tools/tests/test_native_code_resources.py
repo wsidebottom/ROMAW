@@ -17,11 +17,17 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import struct
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from finder_guest_resources import FINDER_HANDLERS, finder_guest_payload
-from native_code_resources import EXECUTABLE_TYPES, audit_native_resources, intl1_localization_payload
+from native_code_resources import (
+    EXECUTABLE_TYPES,
+    audit_native_resources,
+    intl1_localization_payload,
+    validate_alert_procedures,
+)
 from resource_catalog import read_rez
 
 
@@ -72,6 +78,14 @@ class NativeCodeResourceTests(unittest.TestCase):
             path.write_text("data 'INTL' (0) { $\"" + "00" * 330 + '" $$intl1Code() };', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Native localization requires INTL 1"):
                 read_rez(path)
+
+    def test_early_boot_procedures_require_known_native_identities(self):
+        table = struct.pack(">HhHi", 1, -21103, 4, -21103)
+        self.assertEqual(validate_alert_procedures(table), [-21103])
+        with self.assertRaisesRegex(ValueError, "executable DSAT"):
+            validate_alert_procedures(struct.pack(">HhHI", 1, -21103, 4, 0x4E754E75))
+        with self.assertRaisesRegex(ValueError, "Truncated DSAT"):
+            validate_alert_procedures(table[:-1])
 
 
 if __name__ == "__main__":

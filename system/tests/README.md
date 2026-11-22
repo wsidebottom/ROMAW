@@ -60,6 +60,12 @@ resource reloads, Pascal stack/result conventions, QuickDraw and trap patches,
 Gestalt registration, allocation failure/retry and malformed selector tables.
 Reports and trace logs stay under `build/finder-guest/`.
 
+`bash system/tests/check-toolbox.sh native-resource /absolute/path/to/ROMAW.exe`
+audits the shipped native entries and runs the INTL localization ABI, relocation,
+reload and date-formatting probe on Windows. See the
+[native resource inventory](../../docs/native-code-resources.md) for the complete
+scope and distinctions between executable procedures and opcode-shaped data.
+
 Validate suite dispatch independently with:
 
 ```bash

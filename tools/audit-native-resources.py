@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT / "tools/romaw"))
 
 from system_resources import CODE_HANDLERS
 from finder_guest_resources import FINDER_HANDLERS
-from native_code_resources import EXECUTABLE_TYPES, audit_native_resources
-from resource_catalog import load_scope
+from native_code_resources import EXECUTABLE_TYPES, audit_native_resources, validate_alert_procedures
+from resource_catalog import load_scope, read_rez
 
 
 def main():
@@ -39,7 +39,10 @@ def main():
         print(f"{scope}: {len(records)} resources; {len(entries)} validated native entry points")
         for kind, identity, offset, slot, target in entries:
             print(f"  {kind.decode('ascii')} {identity:+d} +{offset}: slot {slot} -> {target}")
-    print("PASS: no unreviewed executable resource bodies; INTL 1's embedded hook is C-backed")
+    alerts = read_rez(ROOT / "system/resources/system/syserr.r")
+    procedures = sum(len(validate_alert_procedures(entry["payload"])) for entry in alerts)
+    print(f"DSAT: {len(alerts)} early-boot tables; {procedures} validated native procedure references")
+    print("PASS: no unreviewed executable resource bodies; embedded INTL and DSAT procedures are C-backed")
     print(
         "Compression dictionaries, opaque movp preferences, fixtures and external applications are not native code resources."
     )

@@ -6,7 +6,8 @@
 #
 #   Classes:   None.
 #
-#   Functions: intl1_localization_payload, validate_intl1_localization, audit_native_resources.
+#   Functions: intl1_localization_payload, validate_intl1_localization, audit_native_resources,
+#              validate_alert_procedures.
 #
 #   Origin:    ROMAW Intl1Rec layout and the original bundled no-op localRtn.
 #
@@ -90,3 +91,28 @@ def audit_native_resources(records, handlers, require_system=False):
     if require_system and (found != handlers.keys() or not found_localization):
         raise ValueError("Missing System dispatch resource")
     return entries
+
+
+def validate_alert_procedures(payload):
+    """Require native handler identities in the early-boot DSAT procedure records."""
+    if len(payload) < 2:
+        raise ValueError("Truncated DSAT record count")
+    count = struct.unpack_from(">H", payload)[0]
+    position = 2
+    handlers = []
+    known = {-21000} | set(range(-21112, -21100))
+    for _ in range(count):
+        if position + 4 > len(payload):
+            raise ValueError("Truncated DSAT record header")
+        identity, length = struct.unpack_from(">hH", payload, position)
+        position += 4
+        if length > len(payload) - position:
+            raise ValueError("Truncated DSAT record payload")
+        if -22000 < identity <= -21000:
+            if length != 4 or struct.unpack_from(">i", payload, position)[0] not in known:
+                raise ValueError("Unreviewed executable DSAT procedure")
+            handlers.append(struct.unpack_from(">i", payload, position)[0])
+        position += length
+    if position != len(payload):
+        raise ValueError("Trailing DSAT bytes")
+    return handlers

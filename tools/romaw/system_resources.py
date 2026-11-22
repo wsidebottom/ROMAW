@@ -28,7 +28,7 @@ import mac_icons
 import pictures
 from resource_catalog import load_scope, read_rez, resource_path
 from finder_guest_resources import FINDER_HANDLERS, finder_guest_payload
-from native_code_resources import audit_native_resources
+from native_code_resources import audit_native_resources, validate_alert_procedures
 
 # Decompiled 68000 tail calls. The handlers already have maintained C bodies.
 CODE_HANDLERS = {
@@ -155,6 +155,7 @@ def generate_alert_table(source, output):
     for entry in sorted(records, key=lambda r: r["id"]):
         name = "myalerttab" if entry["id"] == 0 else "myalerttab2"
         payload = entry["payload"]
+        validate_alert_procedures(payload)
         lines.append(f"PRIVATE unsigned char {name}[] = {{")
         for offset in range(0, len(payload), 16):
             lines.append("    " + ", ".join(f"0x{x:02x}" for x in payload[offset : offset + 16]) + ",")
