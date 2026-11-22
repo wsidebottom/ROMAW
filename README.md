@@ -38,6 +38,46 @@ The generated font resource beside the executable is `ROMAW.rsrc`.
 The user profile is always `.romaw`. A new profile is created directly there;
 startup does not discover or import other profile directories.
 
+## Macintosh sidecar files
+
+ROMAW supports Macintosh resource forks and Finder metadata stored in OS X,
+Netatalk, Basilisk II/SheepShaver and legacy Executor sidecar formats. For a
+data file named `App`, the supported layouts are:
+
+| Format | Companion files |
+| --- | --- |
+| OS X (AppleDouble) | `._App` beside the data file. |
+| Netatalk (AppleDouble) | `.AppleDouble/App` in the containing directory. |
+| Basilisk II / SheepShaver | `.finf/App` for Finder metadata and `.rsrc/App` for the raw resource fork. |
+| Executor (legacy AppleDouble) | `%App` beside the data file. |
+
+Keep the data file and its companions together when transferring applications
+or documents. ROMAW detects existing companions automatically, so reading these
+formats requires no command-line switch. New sidecars follow the containing
+directory's detected convention; an unmarked directory uses the command-line
+default below. Sidecars are created when metadata or resource writes require
+them, rather than for every ordinary host file.
+
+| Command-line setting | Effect |
+| --- | --- |
+| No sidecar switch (default) | Use OS X `._name` AppleDouble files for new sidecars in unmarked directories. |
+| `-netatalk` | Use Netatalk `.AppleDouble/name` files for new sidecars in unmarked directories. |
+| `-afpd` | Select the afpd conventions, including the same sidecar default as `-netatalk`. On Windows its sidecar behavior is the same as `-netatalk`; the additional legacy Linux behavior selects alternate default System Folder and application directories. |
+
+For example, launch an application with Netatalk as the fallback layout:
+
+```powershell
+.\windows-binaries\bin\ROMAW.exe -netatalk "D:\Mac Apps\App"
+```
+
+These switches do not convert existing sidecars or override a detected directory
+layout. Basilisk II/SheepShaver folders are detected from `.finf` or `.rsrc`;
+legacy Executor `%name` companions remain readable without a separate setting.
+See the [sidecar guide](system/tests/README.sidecars) for interoperability,
+conversion tools and regression checks, and the
+[host-drive settings](docs/runtime-guide.md#profile-and-host-volumes) for enabling sidecar
+support on host volumes.
+
 ## Documentation
 
 - [Windows build and debugging](README.windows-build)
