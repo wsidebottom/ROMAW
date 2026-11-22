@@ -30,9 +30,11 @@ resource handling. The existing native `PtrToXHand` implementation is now
 reachable through InterfaceLib, allowing preference resources to be resized and
 written. `AppearanceLib:GetViewsFont` now resolves the configured script/font
 settings through the existing native theme-font service. Finder proceeds through
-font setup and offscreen GWorld creation, then stops at
-`AppearanceLib:GetThemeDrawingState`. It has not entered a validated desktop event
-loop.
+font setup and offscreen GWorld creation. Native Appearance drawing-state
+services now preserve actual QuickDraw color/pen state. With the additional
+Toolbox queue bindings and native Help Manager error return, Finder enters menu
+construction and stops at `MenusLib:SetSubmenuParentChoosable`. It has not entered
+a validated desktop event loop.
 
 The launcher also reads Finder's own version resource and automatically applies
 its known minimum system version before guest execution. It does not infer an

@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      bridge.c
 
-  Summary:   Interpreted PowerPC application support for the Windows SDL frontend.
+  Summary:   PowerPC application execution and native Classic services for the Windows SDL frontend.
 
   Classes:   None.
 
@@ -169,6 +169,21 @@ typedef struct ppc_notifier {
     int active;
 } ppc_notifier;
 
+/* Appearance drawing states are opaque guest tokens with per-launch ownership.
+   They save color/pen state, not a port, clip region or font selection. */
+typedef struct ppc_theme_state {
+    struct ppc_theme_state* next;
+    uint32 token;
+    PenState pen;
+    RGBColor foreground, background;
+    LONGINT foreground_index, background_index;
+    Pattern background_pattern;
+    PixPatHandle background_pixpat;
+    Point origin;
+    INTEGER text_mode;
+    boolean_t color, background_valid;
+} ppc_theme_state;
+
 typedef struct {
     uint32 architecture;
     ROMlib_pef_image* application;
@@ -209,6 +224,7 @@ typedef struct {
     int exited, retry_system, application_started, application_running;
     uint32 required_system;
     ppc_notifier* notifiers;
+    ppc_theme_state* theme_states;
     ppc_fragment* notifying_owner;
     uint32 notifier_serial;
     int floating_windows_inactive;
@@ -1533,6 +1549,121 @@ PRIVATE int ppc_get_views_font(ROMlib_carbon_ppc_frame* call)
         return 0;
     call->words[0] = arguments.words[0];
     return 1;
+}
+
+PRIVATE int32 ppc_get_theme_drawing_state(uint32 output_address)
+{
+    ppc_context* ctx = ppc_active_context;
+    void* output = output_address ? ppc_memory(ctx, output_address, 4, TRUE) : NULL;
+    if (!output)
+        return paramErr;
+    memset(output, 0, 4);
+    if (!thePort || !ROMlib_valid_qd_port(thePort))
+        return paramErr;
+    unsigned count = 0;
+    for (ppc_theme_state* saved = ctx->theme_states; saved; saved = saved->next)
+        ++count;
+    if (count >= 512)
+        return memFullErr;
+    ppc_theme_state* state = calloc(1, sizeof *state);
+    if (!state)
+        return memFullErr;
+    if (!ppc_allocate(ctx, 4, 4, &state->token)) {
+        free(state);
+        return memFullErr;
+    }
+    GetPenState(&state->pen);
+    state->color = CGrafPort_p(thePort);
+    state->foreground_index = PORT_FG_COLOR(thePort);
+    state->background_index = PORT_BK_COLOR(thePort);
+    state->text_mode = PORT_TX_MODE(thePort);
+    state->origin = ROMlib_pattern_origin();
+    if (state->color) {
+        GetForeColor(&state->foreground);
+        GetBackColor(&state->background);
+        PixPatHandle background = CPORT_BK_PIXPAT(theCPort);
+        if (background) {
+            state->background_valid = TRUE;
+            PATASSIGN(state->background_pattern, PIXPAT_1DATA(background));
+            if (PIXPAT_TYPE_X(background) != CWC(pixpat_type_orig))
+                state->background_pixpat = background;
+        }
+    }
+    else {
+        state->background_valid = TRUE;
+        PATASSIGN(state->background_pattern, PORT_BK_PAT(thePort));
+    }
+    state->next = ctx->theme_states;
+    ctx->theme_states = state;
+    const uint32 token = CL(state->token);
+    memcpy(output, &token, sizeof token);
+    return noErr;
+}
+
+PRIVATE int32 ppc_dispose_theme_drawing_state(uint32 token)
+{
+    ppc_context* ctx = ppc_active_context;
+    ppc_theme_state** link = &ctx->theme_states;
+    while (*link && (*link)->token != token)
+        link = &(*link)->next;
+    if (!*link)
+        return paramErr;
+    ppc_theme_state* state = *link;
+    *link = state->next;
+    ppc_release(ctx, SYN68K_TO_US(state->token));
+    free(state);
+    return noErr;
+}
+
+PRIVATE int32 ppc_set_theme_drawing_state(uint32 token, BOOLEAN dispose)
+{
+    ppc_context* ctx = ppc_active_context;
+    ppc_theme_state* state = ctx->theme_states;
+    while (state && state->token != token)
+        state = state->next;
+    if (!state || !thePort || !ROMlib_valid_qd_port(thePort))
+        return paramErr;
+    THz zone = GetZone();
+    if (thePort == MR(wmgr_port))
+        SetZone(MR(SysZone));
+    SetPenState(&state->pen);
+    if (state->color && CGrafPort_p(thePort)) {
+        RGBForeColor(&state->foreground);
+        RGBBackColor(&state->background);
+        if (state->background_valid) {
+            if (state->background_pixpat)
+                BackPixPat(state->background_pixpat);
+            else
+                BackPat(state->background_pattern);
+        }
+    }
+    else {
+        ForeColor(state->foreground_index);
+        BackColor(state->background_index);
+        if (state->background_valid)
+            BackPat(state->background_pattern);
+    }
+    TextMode(state->text_mode);
+    ROMlib_QDSetPatternOrigin(state->origin);
+    SetZone(zone);
+    return dispose ? ppc_dispose_theme_drawing_state(token) : noErr;
+}
+
+PRIVATE int32 ppc_normalize_theme_drawing_state(void)
+{
+    if (!thePort || !ROMlib_valid_qd_port(thePort))
+        return paramErr;
+    THz zone = GetZone();
+    if (thePort == MR(wmgr_port))
+        SetZone(MR(SysZone));
+    ForeColor(blackColor);
+    BackColor(whiteColor);
+    PenNormal();
+    BackPat(white);
+    TextMode(srcOr);
+    ROMlib_QDSetPatternOrigin((Point){0, 0});
+    SetZone(zone);
+    return noErr;
 }
 
 PRIVATE BOOLEAN ppc_wait_next_event(INTEGER mask, EventRecord* event, LONGINT sleep, RgnHandle mouse_region)
@@ -3371,6 +3502,22 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         if (!strcmp(name, "GetViewsFont") && cfm_architecture(ctx) == kPowerPCArch) {
             binding.function = ppc_get_views_font;
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
+        else if (!strcmp(name, "GetThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
+            binding.function = ppc_get_theme_drawing_state;
+            binding.magic = M1(4, 4);
+        }
+        else if (!strcmp(name, "SetThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
+            binding.function = ppc_set_theme_drawing_state;
+            binding.magic = M2(4, 4, 1);
+        }
+        else if (!strcmp(name, "DisposeThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
+            binding.function = ppc_dispose_theme_drawing_state;
+            binding.magic = M1(4, 4);
+        }
+        else if (!strcmp(name, "NormalizeThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
+            binding.function = ppc_normalize_theme_drawing_state;
+            binding.magic = M0(4);
         }
         else if (!strcmp(name, "SetMenuItemRefCon2")) {
             binding.function = ROMlib_set_menu_item_refcon2;
@@ -6874,6 +7021,11 @@ PRIVATE void ppc_cancel_closure(ppc_context* ctx, ppc_closure* closure)
 
 PRIVATE void ppc_free_closures(ppc_context* ctx)
 {
+    while (ctx->theme_states) {
+        ppc_theme_state* state = ctx->theme_states;
+        ctx->theme_states = state->next;
+        free(state); /* Guest tokens are released by the allocation teardown. */
+    }
     while (ctx->notifiers) {
         ppc_notifier* notifier = ctx->notifiers;
         ctx->notifiers = notifier->next;

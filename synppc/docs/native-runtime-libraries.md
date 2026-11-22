@@ -95,3 +95,25 @@ without modifying either buffer. This frame adapter is restricted to PPC callers
 `PPC Appearance Font Probe` verifies default/explicit system scripts, configured
 font-size changes, unaligned output guards and required-output failures in both
 interpreter and JIT modes. It does not establish full Appearance compatibility.
+
+## Classic Appearance drawing states
+
+The PPC Appearance adapter implements `GetThemeDrawingState`,
+`SetThemeDrawingState`, `DisposeThemeDrawingState` and
+`NormalizeThemeDrawingState` through actual native QuickDraw operations. Saved
+state includes pen position, dimensions, mode/pattern, foreground/background
+colors, background patterns, text mode and pattern origin. It leaves the current
+port, clipping and font selection under the application's control. Color pixel
+patterns retain the original contract's borrowed references. No Apple private
+boot state or executable bytes are synthesized.
+
+Opaque tokens and their host metadata belong to the launch context. Allocation
+is bounded to 512 outstanding states; failed capture clears a valid output slot.
+Invalid/null tokens fail rather than freeing arbitrary memory. Restore can retain
+or dispose the token, and teardown releases outstanding state metadata and guest
+allocations. The Classic adapter does not add new Carbon export bodies.
+
+`PPC Appearance State Probe` checks monochrome and offscreen color ports, actual
+restored pixels for simple and color background patterns, pen/text/origin state,
+unchanged font selection, pointer-sized output guards, invalid arguments,
+capacity/release/reuse and disposal/teardown in interpreter and JIT modes.
