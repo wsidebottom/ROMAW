@@ -139,8 +139,11 @@ typedef struct {
    RTE resumes past address calculation for these architectural modes.
    Restart mask/extension fetch faults retain CM/EA, including split long fetches.
    Other MOVEM addressing modes and stores remain unsupported by this delivery path.
-   Separate decoders without completed-store offers (including alternate stores
-   and call/PEA/LINK stack writes) still require continuation work.
+   MOVES supports ordinary and alternate-space scalar writebacks, preserving
+   converted TM and alternate TT=2. Alternate spaces permit physical faults,
+   without translation or additional tail writes. MOVES normal/deferred trace
+   also uses instruction-entry T1/T0. Separate call/PEA/LINK stack decoders
+   still require continuation work.
    Invalid requests and unsupported formats do not change CPU state or access
    the bus. */
 int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* exception, unsigned interrupt_level,

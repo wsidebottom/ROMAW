@@ -200,8 +200,12 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
            !(record->store_next & 1) && access->writing && access->completed < access->size &&
            access->logical == (uint32)(access->request + access->completed) &&
            (access->size == 1 || access->size == 2 || access->size == 4) &&
-           (!(access->request & (access->size - 1)) || !record->store_locked) && (access->fc == 1 || access->fc == 5) &&
-           syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+           (!(access->request & (access->size - 1)) || !record->store_locked) &&
+           syn68k_mmu040_access_ssw(access, &ssw) &&
+           ((access->fc == 1 || access->fc == 5) ||
+            (!record->store_locked && !record->fpu_vector && !record->store_tail_valid && access->bus_error &&
+             (ssw & 0x18) == 0x10)) &&
+           !(access->bus_error && (ssw & 0x400)) &&
            (!access->completed ||
             (!record->store_locked && (access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
 }
@@ -213,10 +217,10 @@ static int instruction_traced(uint16 entry_sr, unsigned flow)
     return (entry_sr & 0x8000) || ((entry_sr & 0x4000) && flow);
 }
 
-static int mmu_trace_opcode(unsigned opcode)
+static int mmu_moves_trace_opcode(unsigned opcode)
 {
     return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
-           (opcode & 0xfffe) == 0x4e7a;
+           (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0);
 }
 
 static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
@@ -327,7 +331,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (!handled)
                 handled = syn68k_integer_step_decoded(cpu->pc, opcode, &memory, &result->step);
         }
-        unsigned trace_scope = handled && mmu_trace_opcode(opcode);
+        unsigned trace_scope = handled && mmu_moves_trace_opcode(opcode);
         if (!handled) {
             Syn68kFPUStep fp;
             int fpu_handled = 0;
@@ -550,9 +554,7 @@ static int restartable_read_fault(const Syn68kIntegerStep* record)
                  (access->fc == 2 || access->fc == 6);
     return record->vector == 2 && record->format == 7 && (opcode || record->restartable_read) &&
            !(record->exception_pc & 1) && !access->writing && (!access->rmw || access->fc == 1 || access->fc == 5) &&
-           (access->size == 1 || access->size == 2 || access->size == 4) &&
-           (access->fc == 1 || access->fc == 2 || access->fc == 5 || access->fc == 6) &&
-           syn68k_mmu040_access_ssw(access, &ssw);
+           (access->size == 1 || access->size == 2 || access->size == 4) && syn68k_mmu040_access_ssw(access, &ssw);
 }
 
 int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, unsigned interrupt_level,

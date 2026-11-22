@@ -94,8 +94,9 @@ Syn68kMMU040Access syn68k_mmu040_write(Syn68kMMU040Memory* memory, uint32_t logi
 Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, unsigned size,
                                            uint32_t value);
 /* Basic format-7 SSW transfer fields from MC68040UM 8.4.6.2. Supplies MA, ATC,
-   LK, RW, SIZE and normal-transfer TM; leaves continuation/trace/cache-push
-   state to the CPU. Returns zero (preserving *ssw) for success/bad requests.
+   LK, RW, SIZE and TT/TM, including alternate spaces; leaves continuation/trace/cache-push
+   state to the CPU. Alternate-space ATC records are inconsistent and rejected.
+   Returns zero (preserving *ssw) for success/bad requests.
    This is not a complete exception frame or restart/writeback protocol. */
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw);
 

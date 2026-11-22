@@ -37,12 +37,37 @@ Guest cleanup writes the retained scalar without rereading source or destination
 operands. Locked transfer restrictions remain unchanged.
 
 The producers are `finish_scalar` in `src/runtime/jit-memory.c` and
-`final_store_exception` for memory destinations of MOVE SR/CCR in `trap.c`.
-Status stores leave flags unchanged, so their offer preserves the live CCR,
+`final_store_exception` for memory destinations of MOVE SR/CCR and MOVES in
+`trap.c`. These stores leave flags unchanged, so their offer preserves live CCR,
 including callback changes, while the retained write data remains the value
 captured before the callback. Other decoders in `trap.c` still need completion
-protocols, including alternate stores and call/PEA/LINK stack writes. The common
-validator does not infer completion for those instructions.
+protocols, including call/PEA/LINK stack writes. The common validator does not
+infer completion for those instructions.
+
+## MOVES spaces and trace
+
+MC68040UM table 3-2 converts SFC/DFC2/6 to operand FC1/5. Spaces 0/3/4/7
+bypass translation and use TT=2 with their original TM. The SSW helper encodes
+both fields and rejects contradictory alternate-space ATC faults. Retired
+nonlocked alternate stores use one physical WB1, with no tail or pending FPU
+exception. Locked transfers retain their ordinary-data-space restrictions.
+
+MOVES is serializing for T0, including straight-line execution. Normal trace and
+CT after retired stores use instruction-entry T1/T0, preserving callback changes
+in the stacked live SR/CCR. Failed reads have no CT; guest repair and RTE restart
+the original instruction, which traces only after successful execution.
+
+The MOVES group contains 1,026,328 cases across both dispatch modes and both
+bus bindings: 281,088 normal cases, 744,960 handler/writeback/read-restart cases
+and 280 encoding/privilege/record guards. It covers all eight function codes,
+nine alterable EA forms, Dn/An sources including EA-register aliases, all
+sizes/lanes and aligned partial prefixes, both page sizes, translated
+protection/missing pages and alternate physical faults. Guest cleanup extracts
+TM from the actual SSW, sets/restores DFC, drains WB1/WB2 and executes RTE.
+Captured data, CCR, next PC, address updates and indirect-pointer read counts
+are checked, including live trace/CCR changes after operand capture. Normal
+cases also verify load sign extension and preserved Dn upper bytes. Additional
+active-stack EA cases remain part of the wider exception/addressing audit.
 
 ## Transfer and frame contract
 
@@ -87,7 +112,7 @@ coverage adds 1,479,936 cases, including zero-byte faults at every lane and
 one/two/three-byte prefixes. Numeric sources include finite, quiet-NaN and
 masked signaling-NaN values; enabled signaling NaNs suppress stores before a
 fault can occur. A focused 1,052-case guard group checks callback effects and
-malformed offers. The combined stream matrix contains 5,414,348 cases;
+malformed offers. The combined stream matrix contains 6,440,676 cases;
 control-flow/RTE coverage adds 101,224 cases. Malformed partial
 writeback records cover both physical and ATC faults without changing CPU state
 or accessing the bus on rejection. Within the total, a focused 2,508,032-case
@@ -103,7 +128,7 @@ certification and live-SP RTE recovery, as detailed in the MMU integration notes
 `bash syn68k/tests/check-core.sh aot-x64` also runs the physical matrix and
 record guards through cold and warm persistent native code. The warm run must
 restore cached code without new compilations. The combined replay/physical
-writeback fixture has 2,272,510 cases per run; its warm run restores 1,241,253
+writeback fixture has 2,785,674 cases per run; its warm run restores 1,261,837
 entries with zero compilations. Native FPU helper-exclusion checks remain in
 `bash syn68k/tests/check-core.sh fpu-native`.
 

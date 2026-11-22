@@ -167,7 +167,12 @@ int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
     default:
         return 0;
     }
-    *ssw = access->fc |
+    /* MC68040UM table 3-2: alternate spaces bypass translation and use
+       TT=2. The integer MOVES decoder already converts FC2/6 to FC1/5. */
+    unsigned alternate = (access->fc & 3) == 0 || (access->fc & 3) == 3;
+    if (alternate && atc)
+        return 0;
+    *ssw = access->fc | (alternate ? 0x10 : 0) |
            (access->size == 1   ? 0x20
             : access->size == 2 ? 0x40
                                 : 0) |

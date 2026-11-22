@@ -319,6 +319,9 @@ static void wrap_and_bad_requests(void)
 
 static void fault_status_fields(void)
 {
+    /* MC68040UM table 3-2 and figures 8-7/8-8, literal TT/TM encodings. */
+    static const unsigned transfers[] = {0x10, 1, 2, 0x13, 0x14, 5, 6, 0x17};
+
     static const struct {
         unsigned size;
         uint16_t read, write;
@@ -339,7 +342,7 @@ static void fault_status_fields(void)
                     uint16_t ssw = 0xffff;
                     assert(access.bus_error && !access.completed && access.writing == writing && access.rmw == locked);
                     assert(syn68k_mmu040_access_ssw(&access, &ssw));
-                    assert(ssw == ((writing ? sizes[i].write : sizes[i].read) | fc | (locked ? 0x0200 : 0)));
+                    assert(ssw == ((writing ? sizes[i].write : sizes[i].read) | transfers[fc] | (locked ? 0x0200 : 0)));
                     ++ssw_cases;
                 }
     unsigned pte = fixture(0);
@@ -362,6 +365,13 @@ static void fault_status_fields(void)
     access = syn68k_mmu040_read(&memory, 0x1f000, 1, 1, 0, &value);
     assert(!syn68k_mmu040_access_ssw(&access, &ssw) && ssw == 0xa55a);
     ++ssw_cases;
+    for (unsigned fc = 0; fc < 8; ++fc) {
+        if (fc == 1 || fc == 2 || fc == 5 || fc == 6)
+            continue;
+        access = (Syn68kMMU040Access){.translation = {.fault = MMU040_INVALID}, .size = 4, .fc = fc};
+        assert(!syn68k_mmu040_access_ssw(&access, &ssw) && ssw == 0xa55a);
+        ++ssw_cases;
+    }
 }
 
 /* MC68040UM 7.3: odd longwords use byte/word/byte bus transfers. */

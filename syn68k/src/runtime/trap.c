@@ -581,8 +581,7 @@ static uint32 move_alternate(uint32 pc, unsigned opcode, Syn68kEAContext* contex
         }
     }
     if (context->error)
-        return integer_exception(step, context, context->error, pc, context->fault_address,
-                                 context->error == 2 ? 7 : 0);
+        return final_store_exception(step, context, context->error, pc);
     return context->pc;
 }
 

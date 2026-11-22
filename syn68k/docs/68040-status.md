@@ -143,11 +143,14 @@ unsupported hardware operands/instructions and pending exceptional state.
 
 The mapped stream runner constructs supported CPU exception frames and handles
 the read-restart and writeback cases described in [the MMU integration notes](mmu040.md).
-Mapped FPU/MMU trace uses instruction-entry T1/T0, including deferred CT after
+Mapped FPU/MMU/MOVES trace uses instruction-entry T1/T0, including deferred CT after
 retired FPU stores and trace after complete reexecution of unchanged aborts.
 Read restart distinguishes owned EA/null-entry changes from external operand
 and descriptor callback effects; callback changes to An or FPU null state deny
 rollback. RTE retains its separate live privileged-SP restart protocol.
+MOVES converts instruction-space FC2/6 to data FC1/5 and supports physical
+alternate-space faults with TT=2. Its scalar stores retire with checked WB1/WB2
+cleanup, while unchanged failed reads restart through the guest handler and RTE.
 Physical bus prefixes and certified early stores are described in the
 [writeback recovery contract](68040-writeback-recovery.md).
 This is distinct from enabling paging in ROMAW: its Toolbox and host-pointer
@@ -160,14 +163,15 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error continuations: other integer store decoders,
-  including alternate stores and call/PEA/LINK stacks; nonindexed MOVEM
+  including call/PEA/LINK stacks; nonindexed MOVEM
   restart; MOVEM/MOVE16 stores; and the constructed user-mode throwaway-RTE
-  case. Supported scalar/FPU/locked writebacks already populate format-7 slots; this is no longer an address-only fault model. Saved-EA MOVEM
+  case. Supported scalar/FPU/locked writebacks already populate format-7 slots;
+  this is no longer an address-only fault model. Saved-EA MOVEM
   restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.
 - Integer trace coverage beyond the explicit FPU/MMU paths, including the
   serializing integer instructions and taken control transfers listed in
-  MC68040UM 8.2.6. Scalar-store trace tests currently cover ordinary linear
-  candidates; they do not establish T0 coverage for CAS/CAS2 or MOVES.
+  MC68040UM 8.2.6. Scalar-store trace tests cover ordinary linear candidates
+  and serializing MOVES; they do not establish T0 coverage for CAS/CAS2.
 - Reserved-encoding and effective-address legality audit, additional boundary
   and special-value arithmetic vectors, and real application FPU workflows.
 - Broader privileged/control-register, MMU/cache and exception audit. Integer
