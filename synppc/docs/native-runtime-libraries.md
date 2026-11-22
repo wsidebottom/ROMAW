@@ -117,3 +117,16 @@ allocations. The Classic adapter does not add new Carbon export bodies.
 restored pixels for simple and color background patterns, pen/text/origin state,
 unchanged font selection, pointer-sized output guards, invalid arguments,
 capacity/release/reuse and disposal/teardown in interpreter and JIT modes.
+
+## Toolbox queues and Help Manager status
+
+InterfaceLib now exposes the existing native register-vector implementations of
+`Enqueue` and `Dequeue`. Queue links remain guest pointers in the packed Classic
+header, with native virtual-interrupt protection and guest trap dispatch.
+`PPC Queue Probe` checks FIFO links, duplicate insertion, middle/head/tail removal,
+missing-entry errors, header flags and adjacent/payload guards in both modes.
+
+`InterfaceLib:HMSetMenuResID` reaches its existing native Help Manager entry.
+That entry currently reports `hmHelpManagerNotInited`; exposing its real error
+allows an application to handle unavailable help without an unknown-import
+fault. This does not implement balloon help or claim Help Manager initialization.

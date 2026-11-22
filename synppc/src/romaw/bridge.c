@@ -3003,6 +3003,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetMenuItemTextEncoding", ROMlib_get_menu_item_encoding, M3(2, 5, 2, 5)},
     {"SetMenuItemTextEncoding", ROMlib_set_menu_item_encoding, M3(2, 5, 2, 4)},
     {"FMGetFontFamilyFromName", ppc_font_family_from_name, M1(2, 5)},
+    {"HMSetMenuResID", C_HMSetMenuResID, M2(2, 2, 2)},
     {"GetAppFont", GetAppFont, M0(2)},
     {"GetSysFont", GetSysFont, M0(2)},
     {"SetThemeCursor", ppc_set_theme_cursor, M1(4, 4)},
@@ -3602,8 +3603,18 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         const ROMlib_carbon_export* native = ROMlib_carbon_find_library_export(library, name, symbol_class);
         if (!native && !strcmp(library, "InterfaceLib")) {
             static const char* const carbon_reexports[] = {
-                "BlockZero",       "DeleteGestaltValue",  "GetMaxResourceSize",  "LMGetSysResName", "MaxBlock",
-                "NewGestaltValue", "ReadPartialResource", "ReplaceGestaltValue", "SetGestaltValue", "PtrToXHand",
+                "BlockZero",
+                "DeleteGestaltValue",
+                "GetMaxResourceSize",
+                "LMGetSysResName",
+                "MaxBlock",
+                "NewGestaltValue",
+                "ReadPartialResource",
+                "ReplaceGestaltValue",
+                "SetGestaltValue",
+                "PtrToXHand",
+                "Enqueue",
+                "Dequeue",
             };
             for (i = 0; i < NELEM(carbon_reexports); ++i)
                 if (!strcmp(name, carbon_reexports[i])) {
