@@ -39,6 +39,7 @@
 #include "rsys/pstuff.h"
 #include "rsys/aboutbox.h"
 #include "finder/guest/runtime.h"
+#include "rsys/intl_resource.h"
 
 #include <ctype.h>
 
@@ -206,7 +207,7 @@ A4(PUBLIC, OSErr, ROMlib_typidtop, ResType, typ, INTEGER, id, /* INTERNAL */
 
 #define MAELSTROM_HACK
 
-#define NUM_ROMLIB_DEFS 16
+#define NUM_ROMLIB_DEFS 17
 
 #if !defined(MAELSTROM_HACK)
 PRIVATE LONGINT ROMlib_defs[NUM_ROMLIB_DEFS];

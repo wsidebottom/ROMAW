@@ -17,7 +17,38 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' 'dcomp0' 'help-manager' 'hle' 'resource-map' 'system-resource' 'toolbox-additions'
+    printf '%s\n' 'dcomp0' 'help-manager' 'hle' 'native-resource' 'resource-map' 'system-resource' 'toolbox-additions'
+    ;;
+  native-resource)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      out="$root/build/native-resources"
+      romaw=$(realpath "${1:-${ROMAW_TEST_EXE:-$root/windows-binaries/bin/ROMAW.exe}}")
+      retro68=${RETRO68_PREFIX:-/home/william/retro68-toolchain}
+      mkdir -p "$out"
+      cd "$root"
+      python3 tools/audit-native-resources.py
+      python3 -m unittest discover -s tools/tests -p test_native_code_resources.py
+      "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 system/tests/native_resource_probe.c \
+        -o "$out/NativeResourceProbe.code.bin"
+      "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
+        -I"$retro68/m68k-apple-macos/RIncludes" --copy "$out/NativeResourceProbe.code.bin" \
+        -o "$out/NativeResourceProbe.bin" -t APPL -c NRPr --cc "$out/%NativeResourceProbe"
+      rm -f "$out/._NativeResourceProbe" "$out/guest-results.txt"
+      python3 tools/normalize-appledouble.py "$out/%NativeResourceProbe" "$out/._NativeResourceProbe"
+      touch "$out/NativeResourceProbe"
+      (
+        cd "$out"
+        "$romaw" -debug trace -syszone 2m -applzone 7m "$(wslpath -w "$out/NativeResourceProbe")" \
+          >guest-launch.log 2>&1
+      )
+      cat "$out/guest-results.txt"
+      grep -q '^failures=0 checks=' "$out/guest-results.txt"
+      if grep -s 'win_exception' "$out/stdout.txt" "$out/stderr.txt" "$out/guest-launch.log"; then
+        exit 1
+      fi
+    )
     ;;
   dcomp0)
     (
@@ -104,6 +135,7 @@ case "$check" in
       set -euo pipefail
       root=$(cd "$(dirname "$0")/../.." && pwd)
       python3 "$root/system/tests/test-resource-catalog.py"
+      python3 "$root/system/tests/test-system-typed-resources.py"
       python3 "$root/system/tests/test-system-resources.py"
       python3 "$root/system/tests/test-edited-icons.py"
       bash "$root/system/tests/check-toolbox.sh" toolbox-additions parameter_preferences

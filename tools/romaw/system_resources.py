@@ -28,6 +28,7 @@ import mac_icons
 import pictures
 from resource_catalog import load_scope, read_rez, resource_path
 from finder_guest_resources import FINDER_HANDLERS, finder_guest_payload
+from native_code_resources import audit_native_resources
 
 # Decompiled 68000 tail calls. The handlers already have maintained C bodies.
 CODE_HANDLERS = {
@@ -164,40 +165,12 @@ def generate_alert_table(source, output):
 def generate(directory, output):
     records = read_resources(directory)
     dispatch = ["/* Decompiled System code resource dispatch; generated. */"]
-    found = set()
-    handlers = CODE_HANDLERS | FINDER_HANDLERS
-    for kind, rid, attrs, name, payload in records:
+    for kind, _, _, _, _ in records:
         if kind in FONT_TYPES:
-            raise ValueError(f"Font resource {kind!r}/{rid} belongs in the external suitcase")
-        key = kind, rid
-        if key in handlers:
-            slot, handler = handlers[key]
-            expected = (
-                finder_guest_payload(*key)
-                if key in FINDER_HANDLERS
-                else bytes.fromhex("207800582068") + struct.pack(">H", slot * 4) + bytes.fromhex("4ed0")
-            )
-            if payload != expected:
-                raise ValueError(f"Unexpected executable resource {key!r}")
-            found.add(key)
-            dispatch.append(f"ROMLIB_SYSTEM_DEFINITION ({slot}, {handler})")
-        elif kind in {
-            b"CODE",
-            b"INIT",
-            b"DRVR",
-            b"PACK",
-            b"CDEF",
-            b"WDEF",
-            b"MDEF",
-            b"MBDF",
-            b"LDEF",
-            b"snth",
-            b"dcmp",
-        }:
-            raise ValueError(f"Unreviewed executable resource {key!r}")
-    if found != handlers.keys():
-        raise ValueError("Missing System dispatch resource")
-    dispatch.append("ROMLIB_SYSTEM_DEFINITION (15, ROMlib_finder_definition(4))")
+            raise ValueError(f"Font resource {kind!r} belongs in the external suitcase")
+    entries = audit_native_resources(records, CODE_HANDLERS | FINDER_HANDLERS, require_system=True)
+    for _, _, _, slot, handler in entries:
+        dispatch.append(f"ROMLIB_SYSTEM_DEFINITION ({slot}, {handler})")
     fork = build_fork(records)
     output.parent.mkdir(parents=True, exist_ok=True)
     lines = [

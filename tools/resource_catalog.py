@@ -24,6 +24,7 @@ import struct
 
 from rez_types import LABEL_MENU_FIELDS, compile_resource
 from finder_guest_resources import finder_guest_payload
+from native_code_resources import INTL1_LOCALIZATION_OFFSET, intl1_localization_payload
 from pathlib import Path
 from build_version import version_string
 
@@ -167,6 +168,11 @@ def read_rez(path, root=None, _active=None):
                 entry["picture_origin"] = origin
             elif re.fullmatch(r"(?:\s*" + literal + r")*\s*", body):
                 entry["payload"] = b"".join(bytes.fromhex(value) for value in re.findall(r'\$"([^"]*)"', body))
+            elif re.fullmatch(r"(?:\s*" + literal + r")+\s*\$\$intl1Code\s*\(\s*\)\s*", body):
+                prefix = b"".join(bytes.fromhex(value) for value in re.findall(r'\$"([^"]*)"', body))
+                if entry["type"] != "INTL" or entry["id"] != 1 or len(prefix) != INTL1_LOCALIZATION_OFFSET:
+                    raise ValueError("Native localization requires INTL 1's complete 330-byte data record")
+                entry["payload"] = prefix + intl1_localization_payload()
             elif re.fullmatch(r"(?:\s*" + external + r")+\s*", body):
                 files = [rez_string(value).decode("mac_roman") for value in re.findall(external, body)]
                 files = [(path.parent.relative_to(root) / name).as_posix() for name in files]
@@ -183,6 +189,13 @@ def read_rez(path, root=None, _active=None):
             else:
                 raise ValueError(f"Unsupported Rez data expression in {path}")
         else:
+            native_localization = (
+                entry["type"] == "INTL" and entry["id"] == 1 and bool(re.search(r"\bNativeLocalization\b", body))
+            )
+            if native_localization:
+                # Encode the data record with the existing typed serializer;
+                # the native entry itself belongs to the code-veneer encoder.
+                body = re.sub(r"\bNativeLocalization\b", "20085", body)
 
             def read_icon(filename):
                 # Import lazily: mac_icons also uses this catalog for palettes.
@@ -194,6 +207,10 @@ def read_rez(path, root=None, _active=None):
 
             payload = compile_resource(entry["type"], body, rez_string, read_icon)
             if payload is not None:
+                if native_localization:
+                    if len(payload) != INTL1_LOCALIZATION_OFFSET + 2 or payload[-2:] != b"\x4e\x75":
+                        raise ValueError("Unexpected typed INTL 1 localization record")
+                    payload = payload[:-2] + intl1_localization_payload()
                 entry["payload"] = payload
         records.append(entry)
     active.remove(path)

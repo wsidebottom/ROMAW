@@ -162,7 +162,7 @@ class SystemResourcesTest(unittest.TestCase):
             dispatch = output.with_name("system_code.inc").read_text()
             for slot, target in builder.CODE_HANDLERS.values():
                 self.assertIn(f"({slot}, {target})", dispatch)
-            self.assertEqual(dispatch.count("ROMLIB_SYSTEM_DEFINITION"), 15)
+            self.assertEqual(dispatch.count("ROMLIB_SYSTEM_DEFINITION"), 16)
 
     def test_executable_change_requires_review(self):
         with tempfile.TemporaryDirectory() as temporary:

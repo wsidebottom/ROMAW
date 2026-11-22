@@ -88,7 +88,7 @@ quickdraw/qColorPicker.$(OBJEXT): generated/color_picker_normal.inc generated/co
 ui/color_wheel_bits.$(OBJEXT): generated/color_wheel_4.inc generated/color_wheel_8.inc
 events/toolevent.$(OBJEXT): generated/alarm.inc
 
-system_resource_inputs = $(wildcard $(system_resources_dir)/*.r) $(shared_icon_inputs) $(shared_icon_tool_inputs) $(shared_tools_dir)/pictures.py $(shared_tools_dir)/finder_guest_resources.py
+system_resource_inputs = $(wildcard $(system_resources_dir)/*.r) $(shared_icon_inputs) $(shared_icon_tool_inputs) $(shared_tools_dir)/pictures.py $(shared_tools_dir)/finder_guest_resources.py $(shared_tools_dir)/native_code_resources.py
 resources/system_resources.$(OBJEXT): generated/system_resources.inc
 resources/resGet.$(OBJEXT): generated/system_code.inc
 
@@ -212,7 +212,8 @@ service_sources = services/components.c services/systemnotify.c services/osutil.
   services/toolutil.c services/time.c services/edition.c services/crc.c
 movie_sources = movies/qt.c
 device_sources = devices/device.c devices/serial.c devices/commtool.c
-text_sources = text/font.c text/iu.c text/script.c text/string.c text/fontIMVI.c text/local_charset.c
+text_sources = text/font.c text/iu.c text/script.c text/string.c text/fontIMVI.c text/local_charset.c \
+  text/intl_resource.c include/rsys/intl_resource.h
 host_sources = host/slash.c host/trash.c host/diskimages.c host/macinfo.c host/fauxdbm.c host/application_instance.c
 display_sources = display/refresh.c display/autorefresh.c display/redrawscreen.c
 ui_sources = ui/desk.c ui/deskfiles.c ui/aboutbox.c ui/licensetext.c ui/preferences.c ui/balloon.c \
