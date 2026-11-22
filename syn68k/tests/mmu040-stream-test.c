@@ -43,6 +43,7 @@ static unsigned replay_read_mutation;
 static uint32_t replay_read_physical = UINT32_MAX;
 static uint32_t trace_read_physical = UINT32_MAX;
 static unsigned trace_read_sr;
+static int trace_read_ccr = -1;
 static unsigned trace_bus_kind; // Operand read, operand write, descriptor read.
 static uint32_t late_read_physical = UINT32_MAX;
 static uint32_t late_read_pte, late_read_descriptor;
@@ -53,6 +54,14 @@ static void trace_bus(uint32_t address, unsigned kind)
 {
     if (address == trace_read_physical && kind == trace_bus_kind) {
         cpu_state.sr = (cpu_state.sr & ~0xc000) | trace_read_sr;
+        if (trace_read_ccr >= 0) {
+            cpu_state.ccc = trace_read_ccr & 1;
+            cpu_state.ccv = trace_read_ccr & 2;
+            cpu_state.ccnz = !(trace_read_ccr & 4);
+            cpu_state.ccn = trace_read_ccr & 8;
+            cpu_state.ccx = trace_read_ccr & 16;
+            trace_read_ccr = -1;
+        }
         trace_read_physical = UINT32_MAX;
     }
 }
@@ -928,14 +937,15 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
 {
     static const struct {
         unsigned op, size, pre, ext, read;
-    } forms[] = {{0x1080, 1, 0, 0, 0}, {0x3080, 2, 0, 0, 0}, {0x2080, 4, 0, 0, 0}, {0x10c0, 1, 0, 0, 0},
-                 {0x20c0, 4, 0, 0, 0}, {0x3100, 2, 2, 0, 0}, {0x4250, 2, 0, 0, 0}, {0x4490, 4, 0, 0, 1},
-                 {0x4610, 1, 0, 0, 1}, {0x5250, 2, 0, 0, 1}, {0x5390, 4, 0, 0, 1}, {0x0010, 1, 0, 1, 1},
-                 {0x50d0, 1, 0, 0, 0}, {0x51d0, 1, 0, 0, 0}, {0xe2d0, 2, 0, 0, 1}, {0x08d0, 1, 0, 3, 1},
-                 {0x30c0, 2, 0, 0, 0}, {0x2100, 4, 4, 0, 0}, {0x4210, 1, 0, 0, 0}, {0x4290, 4, 0, 0, 0},
-                 {0x0050, 2, 0, 1, 1}, {0xd190, 4, 0, 0, 1}, {0x9190, 4, 0, 0, 1}, {0xc190, 4, 0, 0, 1},
-                 {0x8190, 4, 0, 0, 1}, {0xb190, 4, 0, 0, 1}, {0x4090, 4, 0, 0, 1}, {0xd189, 4, 4, 0, 1},
-                 {0x9189, 4, 4, 0, 1}, {0x20d9, 4, 0, 0, 0}, {0x30d9, 2, 0, 0, 0}};
+    } forms[] = {
+        {0x1080, 1, 0, 0, 0}, {0x3080, 2, 0, 0, 0}, {0x2080, 4, 0, 0, 0}, {0x10c0, 1, 0, 0, 0}, {0x20c0, 4, 0, 0, 0},
+        {0x3100, 2, 2, 0, 0}, {0x4250, 2, 0, 0, 0}, {0x4490, 4, 0, 0, 1}, {0x4610, 1, 0, 0, 1}, {0x5250, 2, 0, 0, 1},
+        {0x5390, 4, 0, 0, 1}, {0x0010, 1, 0, 1, 1}, {0x50d0, 1, 0, 0, 0}, {0x51d0, 1, 0, 0, 0}, {0xe2d0, 2, 0, 0, 1},
+        {0x08d0, 1, 0, 3, 1}, {0x30c0, 2, 0, 0, 0}, {0x2100, 4, 4, 0, 0}, {0x4210, 1, 0, 0, 0}, {0x4290, 4, 0, 0, 0},
+        {0x0050, 2, 0, 1, 1}, {0xd190, 4, 0, 0, 1}, {0x9190, 4, 0, 0, 1}, {0xc190, 4, 0, 0, 1}, {0x8190, 4, 0, 0, 1},
+        {0xb190, 4, 0, 0, 1}, {0x4090, 4, 0, 0, 1}, {0xd189, 4, 4, 0, 1}, {0x9189, 4, 4, 0, 1}, {0x20d9, 4, 0, 0, 0},
+        {0x30d9, 2, 0, 0, 0}, {0x42d0, 2, 0, 0, 0}, {0x42d8, 2, 0, 0, 0}, {0x42e0, 2, 2, 0, 0}, {0x40d0, 2, 0, 0, 0},
+        {0x40d8, 2, 0, 0, 0}, {0x40e0, 2, 2, 0, 0}};
 
     for (unsigned page8k = 0; page8k < 2; ++page8k)
         for (unsigned privileged = 0; privileged < 2; ++privileged)
@@ -945,12 +955,17 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
                         for (unsigned fault = 0; fault < 3; ++fault)
                             for (unsigned ccr = 0; ccr < 32; ++ccr) {
                                 unsigned size = forms[form].size;
+                                if (!privileged && (forms[form].op & 0xffc0) == 0x40c0)
+                                    continue;
                                 if (completed >= size || (completed && lane != ((4 - completed) & 3)) ||
                                     (boundary == 2 && fault != 1))
                                     continue;
+                                unsigned status_store =
+                                    (forms[form].op & 0xffc0) == 0x40c0 || (forms[form].op & 0xffc0) == 0x42c0;
                                 if (live_trace >= 0 &&
                                     (page8k || !privileged || ccr || (lane != (completed ? 2U : 0U)) ||
-                                     (forms[form].op != 0x2080 && forms[form].op != 0xd189)))
+                                     (forms[form].op != 0x2080 && forms[form].op != 0xd189 && !status_store) ||
+                                     (status_store && fault != 1)))
                                     continue;
                                 unsigned operand = boundary == 2   ? 0x28104 - completed + (completed ? 0 : lane)
                                                    : boundary == 1 ? 0x28000 + (page8k ? 8192 : 4096) - completed +
@@ -994,6 +1009,10 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
                                     trace_bus_kind = fault == 1;
                                     trace_read_sr = (unsigned)live_trace << 14;
                                     expected_sr = (expected_sr & ~0xc000) | trace_read_sr;
+                                    if (status_store) {
+                                        trace_read_ccr = ccr ^ 31;
+                                        expected_sr = (expected_sr & ~31) | trace_read_ccr;
+                                    }
                                 }
                                 cpu.pc = 0x10000;
                                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));

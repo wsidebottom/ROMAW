@@ -157,7 +157,7 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error continuations: other integer store decoders,
-  including alternate/status stores and call/PEA/LINK stacks; nonindexed MOVEM
+  including alternate stores and call/PEA/LINK stacks; nonindexed MOVEM
   restart; MOVEM/MOVE16 stores; and the constructed user-mode throwaway-RTE
   case. Supported scalar/FPU/locked writebacks already populate format-7 slots; this is no longer an address-only fault model. Saved-EA MOVEM
   restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.

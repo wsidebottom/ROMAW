@@ -246,6 +246,20 @@ static uint32 integer_exception(Syn68kIntegerStep* step, const Syn68kEAContext* 
     return pc;
 }
 
+/* These stores leave CCR unchanged and finish all address updates before the
+   write. Preserve component-step fault state; the mapped runner alone retires
+   their final scalar. Capturing live CCR also retains callback side effects. */
+static uint32 final_store_exception(Syn68kIntegerStep* step, const Syn68kEAContext* context, unsigned vector, uint32 pc)
+{
+    uint32 next = integer_exception(step, context, vector, pc, context->fault_address, vector == 2 ? 7 : 0);
+    if (step && context->memory && vector == 2 && context->access.writing) {
+        step->store_state = 1;
+        step->store_next = context->pc;
+        step->store_ccr = COMPUTE_SR_FROM_CPU_STATE() & 31;
+    }
+    return next;
+}
+
 /* A failed frame read has not popped the current frame. Resume at the live
    privileged SP; earlier throwaway frames and callback effects stay committed. */
 static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step)
@@ -894,8 +908,7 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
             }
         }
         if (context->error)
-            return integer_exception(step, context, context->error == 11 ? 4 : context->error, pc,
-                                     context->fault_address, context->error == 2 ? 7 : 0);
+            return final_store_exception(step, context, context->error == 11 ? 4 : context->error, pc);
         return context->pc;
     }
     if ((opcode & 0xffc0) == 0x40c0 || (opcode & 0xffc0) == 0x46c0) {
@@ -924,7 +937,7 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         }
         if (context->error) {
             unsigned vector = context->error == 11 ? 4 : context->error;
-            return integer_exception(step, context, vector, pc, context->fault_address, vector == 2 ? 7 : 0);
+            return final_store_exception(step, context, vector, pc);
         }
         return context->pc;
     }

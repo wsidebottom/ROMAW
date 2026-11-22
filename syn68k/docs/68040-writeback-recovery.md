@@ -26,10 +26,13 @@ remain in the saved SR without creating or cancelling that trace condition.
 Guest cleanup writes the retained scalar without rereading source or destination
 operands. Locked transfer restrictions remain unchanged.
 
-The producer is `finish_scalar` in `src/runtime/jit-memory.c`. Separate decoders
-in `trap.c` still need their own completion protocols, including alternate/status
-stores and call/PEA/LINK stack writes. The common validator does not infer
-completion for those instructions.
+The producers are `finish_scalar` in `src/runtime/jit-memory.c` and
+`final_store_exception` for memory destinations of MOVE SR/CCR in `trap.c`.
+Status stores leave flags unchanged, so their offer preserves the live CCR,
+including callback changes, while the retained write data remains the value
+captured before the callback. Other decoders in `trap.c` still need completion
+protocols, including alternate stores and call/PEA/LINK stack writes. The common
+validator does not infer completion for those instructions.
 
 ## Transfer and frame contract
 
@@ -74,20 +77,22 @@ coverage adds 1,479,936 cases, including zero-byte faults at every lane and
 one/two/three-byte prefixes. Numeric sources include finite, quiet-NaN and
 masked signaling-NaN values; enabled signaling NaNs suppress stores before a
 fault can occur. A focused 1,052-case guard group checks callback effects and
-malformed offers. The combined stream matrix contains 5,087,404 cases;
+malformed offers. The combined stream matrix contains 5,382,700 cases;
 control-flow/RTE coverage adds 101,224 cases. Malformed partial
 writeback records cover both physical and ATC faults without changing CPU state
-or accessing the bus on rejection. Within the total, a focused 2,212,736-case
-scalar matrix covers all lanes, 31 operation forms, all CCRs, both page sizes and
+or accessing the bus on rejection. Within the total, a focused 2,508,032-case
+scalar matrix covers all lanes, 37 operation forms, all CCRs, both page sizes and
 privileges, physical faults and protected/missing pages. RMW missing-page faults
 are injected after complete operand reads. The fixtures verify retained prefixes,
 full WB1/WB2 cleanup, address updates, no repeated operand reads, and entry/live
-SR trace combinations.
+SR trace combinations. Status-store physical callbacks additionally change
+all five live CCR bits; cleanup preserves those changes without changing the
+captured SR/CCR operand.
 
 `bash syn68k/tests/check-core.sh aot-x64` also runs the physical matrix and
 record guards through cold and warm persistent native code. The warm run must
 restore cached code without new compilations. The combined replay/physical
-writeback fixture has 2,109,038 cases per run; its warm run restores 1,241,229
+writeback fixture has 2,256,686 cases per run; its warm run restores 1,241,229
 entries with zero compilations. Native FPU helper-exclusion checks remain in
 `bash syn68k/tests/check-core.sh fpu-native`.
 
