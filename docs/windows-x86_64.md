@@ -28,8 +28,10 @@ See [syn68k](../syn68k/README.md) for dispatch selection and
 [JIT/AOT](../syn68k/docs/aot-x64.md) for native execution.
 
 Synppc preserves full-width native addresses while passing classic 32-bit guest
-arguments. [Translation status](../synppc/docs/translation-status.md) distinguishes
-its standalone IA-32/x64 backends from the supported ROMAW host.
+arguments. Its supported hosts are Windows x64 and Linux x64 regression builds;
+the IA-32 backend has been retired. See
+[translation status](../synppc/docs/translation-status.md) for current build
+requirements and historical validation checkpoints.
 
 Focused fixtures cover pointer round trips above 4 GB, packed guest ABI layouts,
 callback widths, heap relocation and SDL sound playback/stop/restart. Use

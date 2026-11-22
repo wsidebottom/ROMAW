@@ -31,7 +31,7 @@ The default optimized profile uses `build/romaw-optimized/obj` and
 The 28 internal Toolbox archives live in `system/obj/libraries`. Their source
 directories are at the repository root (`memory/`, `quickdraw/`, `files/`, and
 the other manager directories below). Shared Toolbox interfaces live in
-`include/`. Root `Makefile.am` and `configure.ac` configure only in `system/obj`;
+`include/`. Root `Makefile.am` and `configure.ac` configure in the selected profile's object tree;
 the handwritten root `Makefile` remains the developer entry point.
 
 The SDL frontend is in `frontend-sdl/`, avoiding a case-insensitive collision
@@ -71,7 +71,7 @@ are under `tools/romaw/`. Native Finder source lives in root `finder/`.
 | platform | Windows host services and x64 architecture support |
 | sdl | SDL display, input, clipboard and window integration |
 
-The other nine runtime archives have independent build owners:
+The following runtime archives have independent build owners:
 
 | Archive | Source/build owner |
 | --- | --- |
@@ -83,6 +83,11 @@ The other nine runtime archives have independent build owners:
 | `libsyn68k.a` | `syn68k`: 68K interpreter, x64 JIT/AOT support and FPU/MMU execution |
 | `libsynppc.a` | `synppc`: portable PPC execution and PEF loading |
 | `libsynppc-romaw.a` | `synppc/src/romaw`: guest ABI and ROMAW Toolbox bridge |
+
+Finder also links `libromaw-archives.a` and `libstuffit_ffi.a` from its own
+object tree. These nested dependencies are built by the native Finder builder
+and are not separately copied into the staged library inventory. See
+[archive formats](../archives/README.md) and [the StuffIt bridge](../stuffit/README.md).
 
 Use `library-finder`, `library-images`, `library-finder-metadata`, `library-carbon`,
 `library-toolbox`, `library-syn68k` and `library-synppc-romaw` for these additional
@@ -120,8 +125,9 @@ executable link through explicit prerequisites.
 
 ## Artifacts and checks
 
-Both application and library-only builds stage the complete 37-archive inventory
-under `windows-binaries/bin/libraries/x64`. `manifest.tsv` records each filename
+Both application and library-only builds stage the internal Toolbox archives and
+the independent archives listed above under `windows-binaries/bin/libraries/x64`
+(with an `optimized` subdirectory for that profile). `manifest.tsv` records each filename
 and its current build source. `ROMAW_LIBRARY_STAGE_DIR` overrides this directory;
 otherwise it follows `ROMAW_STAGE_DIR`. Intermediate objects stay with their
 build owners, never in maintained source directories. The required

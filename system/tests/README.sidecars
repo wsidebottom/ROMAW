@@ -65,12 +65,16 @@ metadata/resource forks are represented as .finf/name plus .rsrc/name, then
 repeat with ._name AppleDouble. Confirm Finder type/creator, resource loading,
 hidden sidecar entries, and no win_exception entries in stderr.txt.
 
-Existing companions are preferred in this order: .AppleDouble/name,
-.finf/name (or .rsrc/name), then ._name. New companions use the containing
-directory's convention, detected from .AppleDouble, .finf/.rsrc, valid ._*
-AppleDouble files, or .DS_Store. Unmarked directories retain ROMAW's
-configured convention (OS X ._name by default; -netatalk or -afpd selects
-.AppleDouble/name). Renames/moves preserve the individual file's format.
+The guest File Manager prefers existing companions in this order: valid ._name,
+.AppleDouble/name, .finf/name (or .rsrc/name), then valid legacy %name.
+New companions use the containing directory's convention: valid ._* AppleDouble
+files or .DS_Store declare OS X, followed by .AppleDouble and then .finf/.rsrc.
+Unmarked directories retain ROMAW's configured convention (OS X ._name by
+default; -netatalk or -afpd selects .AppleDouble/name). These switches do not
+convert existing files. Renames/moves preserve the individual file's format.
+The root README.md describes the user-facing formats and command-line settings.
+Native Finder destination selection and conversion are documented separately in
+finder/README.md under Shared Macintosh storage layouts.
 
 Use tools/convert-appledouble.py APPS --backup BACKUP to migrate Netatalk
 and legacy percent sidecars to OS X naming. The tool validates descriptors,

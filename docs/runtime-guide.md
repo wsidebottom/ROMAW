@@ -10,7 +10,9 @@ are unsupported.
 The default reported Macintosh system version is 7.1.1. `-system` or an
 application's `SystemVersion` setting can select another version; changing the
 reported version does not implement its missing services. PPC-only flat `pwpc`
-CFM apps use the PowerPC runtime and 32-bit addressing; fat apps prefer 68K.
+CFM apps use the PowerPC runtime and 32-bit addressing. Fat applications select
+their supported PowerPC application fragment; applications without one retain
+their 68K entry path.
 See [synppc](../synppc/README.md) and [application notes](README.md#application-investigations)
 for limits and required local libraries. Proprietary runtime files are not distributed.
 
@@ -275,8 +277,11 @@ DOS volumes advertise no desktop items and cannot create, delete or rebuild
 Finder Desktop, Desktop DB or Desktop DF files. Selected host volumes use the
 Desktop Manager database; mounted HFS images retain their own desktop support.
 The mapped profile Apps folder remains sidecar-capable even when its containing
-Windows drive is DOS. New sidecars use the existing OSX default, while existing
-sidecar formats continue to be recognized. The selection concerns host volumes;
+Windows drive is DOS. Existing sidecars and directory conventions are detected
+automatically; unmarked directories use OS X `._name` by default. `-netatalk`
+or `-afpd` selects `.AppleDouble/name` as that fallback. See
+[Macintosh sidecar files](../README.md#macintosh-sidecar-files) for the supported
+layouts and command-line settings. Drive selection concerns host volumes;
 it does not make ISO or compressed images writable.
 
 Host drive and mapped-folder volume names can be changed in Finder. Names are

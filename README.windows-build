@@ -17,7 +17,8 @@ see `system/requirements-native-finder.txt`.
 The native Finder's StuffIt folder-transfer encoder also needs Rust and its
 `x86_64-pc-windows-gnu` target (`rustup target add x86_64-pc-windows-gnu`).
 The root build compiles the pinned library from `stuffit/third_party/` into the
-selected object tree. See `stuffit/README.md` for provenance and bridge checks.
+selected object tree. See [the StuffIt bridge](stuffit/README.md) for provenance
+and bridge checks, and [archive support](archives/README.md) for format limits.
 The current Rust Windows target requires Windows 10 or later.
 
 Prepare the local SDL dependency prefix:
@@ -45,7 +46,7 @@ environment. Check `win64-prefix/bin/sdl-config --prefix` before building.
 mkdir -p build
 JOBS=10 make > build/romaw-build.log 2>&1
 make debug                  # separate -O0 build with symbols
-make -C system configure  # configure the selected ROMAW profile
+make -C system configure    # configure the selected ROMAW profile
 make clean                  # clean the selected profile and syn68k output
 ```
 
