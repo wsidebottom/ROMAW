@@ -26,7 +26,7 @@ import re
 import subprocess
 import sys
 
-from file_headers import LAYOUT, ROOTS, maintain_headers
+from file_headers import LAYOUT, ROOTS, is_generated_artifact, maintain_headers
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -83,8 +83,8 @@ def main():
         else:
             continue
         original = path.read_bytes()
-        if b"\0" in original:
-            continue  # Macintosh resource forks and other binary assets.
+        if b"\0" in original or is_generated_artifact(original):
+            continue  # Binary assets and generator-owned source retain their original format.
         result = subprocess.run(
             command,
             input=original.replace(b"\r\n", b"\n").replace(b"\r", b"\n"),

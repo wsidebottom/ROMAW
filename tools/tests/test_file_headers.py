@@ -35,6 +35,19 @@ class FileHeadersTest(unittest.TestCase):
         self.assertEqual(headers.add_header(name, result, style), result)
         return result
 
+    def test_visual_studio_resource_outputs_are_generator_owned(self):
+        for name, marker in (
+            ("platform/os/cygwin32/resource.h", b"// Microsoft Visual C++ generated include file."),
+            ("platform/os/cygwin32/preferences.rc", b"// Microsoft Visual C++ generated resource script."),
+        ):
+            source = marker + b"\r\n#define IDOK            1\r\n"
+            self.assertTrue(headers.is_generated_artifact(source))
+            self.assertIsNone(headers.style_for(name, source))
+        maintained = self.add("system/example.c", b"int example(void) { return 0; }\n")
+        maintained += b"// Microsoft Visual C++ generated include file.\n"
+        self.assertFalse(headers.is_generated_artifact(maintained))
+        self.assertIsNotNone(headers.style_for("system/example.c", maintained))
+
     def test_c_notice_and_body_are_byte_identical(self):
         source = b"/* Copyright 1994 Example. All rights reserved. */\nint exported(void) { return 7; }\n"
         result = self.add("system/tests/example.c", source)

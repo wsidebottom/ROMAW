@@ -364,6 +364,7 @@ static int carbon_HandleControlContextualMenuClick(ROMlib_carbon_ppc_frame* call
         uint32_t where;
         Byte displayed;
     } request = {CL(call->words[1]), 0};
+
     const LONGINT status = ROMlib_send_control_message(control, 0x2f, US_TO_SYN68K(&request));
     if (!status)
         *displayed = request.displayed;

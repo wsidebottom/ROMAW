@@ -3,6 +3,8 @@
 
   Summary:   Draws the classic About ROMAW dialog and handles its dismissal.
 
+  Classes:   None.
+
   Functions: do_about_box
 
   Origin:    Existing repository source in executor/src/ui; original attribution and provenance comments are preserved

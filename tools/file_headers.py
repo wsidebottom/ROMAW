@@ -6,7 +6,7 @@
 #
 #   Classes:   Style
 #
-#   Functions: style_for, prologue_end, header_span, without_header, validate_header, retained_origin,
+#   Functions: is_generated_artifact, style_for, prologue_end, header_span, without_header, validate_header, retained_origin,
 #              introductory_text, role_for, summary_for, parsers, walk, declaration_name, expand_trap_definitions,
 #              c_symbols, metadata, render_header, add_header, candidates, maintain_headers, main
 #
@@ -50,7 +50,8 @@ UPSTREAM = {
 C_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".hpp", ".m"}
 GENERATED = re.compile(
     rb"(?im)^\s*(?:/\*|//|\*|#|;|dnl)?\s*(?:automatically generated|generated (?:by|from)|"
-    rb"this file (?:is|was) (?:automatically )?generated|do not edit)\b"
+    rb"this file (?:is|was) (?:automatically )?generated|do not edit|"
+    rb"Microsoft Visual C\+\+ generated (?:include file|resource script))\b"
 )
 ROLES = {
     "runtime": "Macintosh startup, traps and runtime services",
@@ -103,6 +104,11 @@ class Style:
     prefix: str = ""
 
 
+def is_generated_artifact(data):
+    """Identify generator-owned output while retaining maintained files with explicit metadata."""
+    return bool(GENERATED.search(data[:2048])) and not re.search(rb"(?m)^(?:# |; |dnl )?  File:", data[:1024])
+
+
 def style_for(name, data):
     """Select syntax only for maintained code, never reference or generated artifacts."""
     path = Path(name)
@@ -112,7 +118,7 @@ def style_for(name, data):
         return None
     if path.name in UPSTREAM or path.suffix in {".orig", ".historical", ".header-tmp", ".format-tmp"} or b"\0" in data:
         return None
-    if GENERATED.search(data[:2048]) and not re.search(rb"(?m)^(?:# |; |dnl )?  File:", data[:1024]):
+    if is_generated_artifact(data):
         return None
     suffix = path.suffix
     if suffix in C_SUFFIXES or name.endswith(".h.in"):
