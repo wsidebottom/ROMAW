@@ -86,7 +86,7 @@ typedef struct {
    and reads certified by the stream runner to have unchanged data/CCR/SR/FPU
    results apart from FPU non-null entry, restored speculative EA updates and
    no attempted stores, or a
-   retired aligned scalar final store with one WB1/WB2 slot. The guest handler
+   retired scalar final store with one WB1/WB2 slot. The guest handler
    must complete that slot before RTE; it is never silently replayed by the CPU.
    RTE frame reads restart at the current privileged SP without repeating
    completed throwaway frames. RTE reads after a throwaway return to user mode
@@ -97,6 +97,10 @@ typedef struct {
    write fault retains the full operand in WB2; guest cleanup can repeat the
    completed prefix after repairing the second page. Physical FPU faults retain
    the full scalar in WB1 with ATC/MA clear, even after successful subcycles.
+   Completed nonlocked integer candidates likewise permit unaligned and partial
+   stores; their deferred CCR is committed once and CT uses instruction-entry
+   SR, retaining callback changes in the stacked live SR. Operand reads and
+   completed address updates are not repeated by cleanup.
    MOVE16 continuation/writeback formats remain unsupported.
    A pending post-instruction FPU exception carries CP and the original EA;
    RTE reports it after writeback cleanup, ahead of trace. The FPU handler
@@ -133,6 +137,8 @@ typedef struct {
    RTE resumes past address calculation for these architectural modes.
    Restart mask/extension fetch faults retain CM/EA, including split long fetches.
    Other MOVEM addressing modes and stores remain unsupported by this delivery path.
+   Separate decoders without completed-store offers (including alternate/status
+   stores and call/PEA/LINK stack writes) still require continuation work.
    Invalid requests and unsupported formats do not change CPU state or access
    the bus. */
 int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* exception, unsigned interrupt_level,

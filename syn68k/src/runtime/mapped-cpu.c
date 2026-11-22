@@ -152,8 +152,8 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
 {
     const Syn68kMMU040Access* access = &record->access;
     uint16 ssw;
-    /* FPU offers reach this boundary in retired state. Integer candidates
-       still require alignment before the runner can retire their flags. */
+    /* Producers finish all nonmemory work before offering a final scalar.
+       Only locked transfers retain the stricter alignment/progress contract. */
     return record->vector == 2 && record->format == 7 && record->store_state && record->store_state <= 3 &&
            !record->restartable_read && record->store_locked <= 1 && access->rmw == record->store_locked &&
            (!record->store_locked || (!record->fpu_vector && !record->movem_state)) &&
@@ -168,11 +168,10 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
            !(record->store_next & 1) && access->writing && access->completed < access->size &&
            access->logical == (uint32)(access->request + access->completed) &&
            (access->size == 1 || access->size == 2 || access->size == 4) &&
-           (!(access->request & (access->size - 1)) || (!record->store_locked && record->store_state >= 2)) &&
-           (access->fc == 1 || access->fc == 5) && syn68k_mmu040_access_ssw(access, &ssw) &&
-           !(access->bus_error && (ssw & 0x400)) &&
-           (!access->completed || (!record->store_locked && record->store_state >= 2 &&
-                                   (access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
+           (!(access->request & (access->size - 1)) || !record->store_locked) && (access->fc == 1 || access->fc == 5) &&
+           syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+           (!access->completed ||
+            (!record->store_locked && (access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
 }
 
 /* T0 also traces pipeline-serializing instructions; comparing PCs cannot
@@ -396,7 +395,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 cpu_state.ccn = ccr & 8;
                 cpu_state.ccx = ccr & 16;
                 result->step.store_trace_pc = result->step.exception_pc;
-                result->step.store_state = cpu_state.sr & 0x8000 ? 3 : 2;
+                result->step.store_state = instruction_traced(before.sr, trace_scope) ? 3 : 2;
                 result->step.next = result->step.exception_pc = result->step.store_next;
             }
             /* Abort pre-execute reads: restore speculative EA register updates,

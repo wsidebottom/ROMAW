@@ -156,11 +156,15 @@ the embedding memory implementation; the operand boundary is not a cycle model.
 - General busy-frame continuation, including FPSP-generated internal states
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
-- Remaining mapped access-error continuations: unaligned integer writes,
-  nonindexed MOVEM restart, MOVEM/MOVE16 stores and the constructed user-mode
-  throwaway-RTE case. Supported scalar/FPU/locked writebacks already populate
-  format-7 slots; this is no longer an address-only fault model. Saved-EA MOVEM
+- Remaining mapped access-error continuations: other integer store decoders,
+  including alternate/status stores and call/PEA/LINK stacks; nonindexed MOVEM
+  restart; MOVEM/MOVE16 stores; and the constructed user-mode throwaway-RTE
+  case. Supported scalar/FPU/locked writebacks already populate format-7 slots; this is no longer an address-only fault model. Saved-EA MOVEM
   restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.
+- Integer trace coverage beyond the explicit FPU/MMU paths, including the
+  serializing integer instructions and taken control transfers listed in
+  MC68040UM 8.2.6. Scalar-store trace tests currently cover ordinary linear
+  candidates; they do not establish T0 coverage for CAS/CAS2 or MOVES.
 - Reserved-encoding and effective-address legality audit, additional boundary
   and special-value arithmetic vectors, and real application FPU workflows.
 - Broader privileged/control-register, MMU/cache and exception audit. Integer

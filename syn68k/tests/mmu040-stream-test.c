@@ -864,21 +864,20 @@ static void guest_operand_page_fault_handlers(void)
                         assert(EM_D0 == (kind == 0 ? 0xAABBCC11 : kind == 1 ? 0xAABB1122 : 0x11223344));
                         ++cases;
                     }
-    for (unsigned opcode = 1; opcode < 3; ++opcode) {
-        fixture(0, 1);
-        code_word(0x10000, opcode == 1 ? 0x2080 : 0x4CD0);
-        code_word(0x10002, 1); /* MOVEM.L (A0),D0 */
-        EM_A0 = opcode == 1 ? 0x28001 : 0x28000;
-        put32(pte(EM_A0), 0);
-        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
-        Syn68kMappedRun run;
-        Syn68kMappedDelivery delivery;
-        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-        assert(run.reason == SYN68K_MAPPED_EXCEPTION && !run.step.restartable_read);
-        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-        assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED);
-        ++cases;
-    }
+    /* Nonindexed MOVEM read continuation remains a separate case. */
+    fixture(0, 1);
+    code_word(0x10000, 0x4CD0);
+    code_word(0x10002, 1);
+    EM_A0 = 0x28000;
+    put32(pte(EM_A0), 0);
+    Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+    Syn68kMappedRun run;
+    Syn68kMappedDelivery delivery;
+    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    assert(run.reason == SYN68K_MAPPED_EXCEPTION && !run.step.restartable_read);
+    assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+    assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED);
+    ++cases;
 }
 
 static unsigned physical_value(unsigned address, unsigned size)
@@ -889,145 +888,260 @@ static unsigned physical_value(unsigned address, unsigned size)
     return value;
 }
 
+static unsigned scalar_store_physical(unsigned address)
+{
+    return (address < 0x28000 + page_size ? 0x10000 : 0x14000) + (address & (page_size - 1));
+}
+
+static unsigned scalar_store_value(unsigned address, unsigned size)
+{
+    unsigned value = 0;
+    for (unsigned i = 0; i < size; ++i)
+        value = value << 8 | ram[scalar_store_physical(address + i)];
+    return value;
+}
+
 static void scalar_store_setup(unsigned page8k, unsigned privileged, unsigned opcode, unsigned operand,
-                               unsigned predecrement, unsigned ccr, unsigned extension)
+                               unsigned predecrement, unsigned ccr, unsigned extension, unsigned size)
 {
     fixture(page8k, privileged);
-    put32(pte(operand), 0x10001);
-    put32(0x10000, 0x718293A4);
+    put32(pte(0x28000), 0x10001);
+    put32(pte(0x28000 + page_size), 0x14001);
+    put32(pte(0x24000), 0x1c001);
+    put32(0x1c080, 0x10203040);
+    for (unsigned i = 0; i < size; ++i)
+        ram[scalar_store_physical(operand + i)] = 0x718293a4u >> (24 - i * 8);
     code_word(0x10000, opcode);
     code_word(0x10002, extension);
     EM_D0 = 0x80FEDCBA;
     EM_D4 = 0;
     EM_A0 = operand + predecrement;
+    EM_A1 = 0x24080 + (((opcode & 0xf138) == 0xd108 || (opcode & 0xf138) == 0x9108) ? size : 0);
     cpu_state.isp = 0x20100;
     EM_A7 = privileged ? cpu_state.isp : 0x76543210;
     set_status((privileged ? 0x2000 : 0) | ccr);
 }
 
-static void guest_scalar_writebacks(void)
+/* boundary: zero selects ordinary lanes, one crosses a page, two stays in-page.
+   completed is the successful prefix of the faulted scalar, never a suffix. */
+static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, int live_trace)
 {
-    const struct {
-        unsigned op, size, pre, ext;
-    } forms[] = {{0x1080, 1, 0, 0}, {0x3080, 2, 0, 0}, {0x2080, 4, 0, 0}, {0x10C0, 1, 0, 0},
-                 {0x20C0, 4, 0, 0}, {0x3100, 2, 2, 0}, {0x4250, 2, 0, 0}, {0x4490, 4, 0, 0},
-                 {0x4610, 1, 0, 0}, {0x5250, 2, 0, 0}, {0x5390, 4, 0, 0}, {0x0010, 1, 0, 1},
-                 {0x50D0, 1, 0, 0}, {0x51D0, 1, 0, 0}, {0xE2D0, 2, 0, 0}, {0x08D0, 1, 0, 3}};
+    static const struct {
+        unsigned op, size, pre, ext, read;
+    } forms[] = {{0x1080, 1, 0, 0, 0}, {0x3080, 2, 0, 0, 0}, {0x2080, 4, 0, 0, 0}, {0x10c0, 1, 0, 0, 0},
+                 {0x20c0, 4, 0, 0, 0}, {0x3100, 2, 2, 0, 0}, {0x4250, 2, 0, 0, 0}, {0x4490, 4, 0, 0, 1},
+                 {0x4610, 1, 0, 0, 1}, {0x5250, 2, 0, 0, 1}, {0x5390, 4, 0, 0, 1}, {0x0010, 1, 0, 1, 1},
+                 {0x50d0, 1, 0, 0, 0}, {0x51d0, 1, 0, 0, 0}, {0xe2d0, 2, 0, 0, 1}, {0x08d0, 1, 0, 3, 1},
+                 {0x30c0, 2, 0, 0, 0}, {0x2100, 4, 4, 0, 0}, {0x4210, 1, 0, 0, 0}, {0x4290, 4, 0, 0, 0},
+                 {0x0050, 2, 0, 1, 1}, {0xd190, 4, 0, 0, 1}, {0x9190, 4, 0, 0, 1}, {0xc190, 4, 0, 0, 1},
+                 {0x8190, 4, 0, 0, 1}, {0xb190, 4, 0, 0, 1}, {0x4090, 4, 0, 0, 1}, {0xd189, 4, 4, 0, 1},
+                 {0x9189, 4, 4, 0, 1}, {0x20d9, 4, 0, 0, 0}, {0x30d9, 2, 0, 0, 0}};
 
     for (unsigned page8k = 0; page8k < 2; ++page8k)
         for (unsigned privileged = 0; privileged < 2; ++privileged)
             for (unsigned form = 0; form < sizeof forms / sizeof *forms; ++form)
                 for (unsigned trace = 0; trace < 4; ++trace)
-                    for (unsigned offset = 0; offset < 4; ++offset)
-                        for (unsigned physical_fault = 0; physical_fault < 2; ++physical_fault)
+                    for (unsigned lane = 0; lane < 4; ++lane)
+                        for (unsigned fault = 0; fault < 3; ++fault)
                             for (unsigned ccr = 0; ccr < 32; ++ccr) {
                                 unsigned size = forms[form].size;
-                                if (offset & (size - 1))
+                                if (completed >= size || (completed && lane != ((4 - completed) & 3)) ||
+                                    (boundary == 2 && fault != 1))
                                     continue;
-                                unsigned operand = 0x28000 + offset, data = 0x10000 + offset;
+                                if (live_trace >= 0 &&
+                                    (page8k || !privileged || ccr || (lane != (completed ? 2U : 0U)) ||
+                                     (forms[form].op != 0x2080 && forms[form].op != 0xd189)))
+                                    continue;
+                                unsigned operand = boundary == 2   ? 0x28104 - completed + (completed ? 0 : lane)
+                                                   : boundary == 1 ? 0x28000 + (page8k ? 8192 : 4096) - completed +
+                                                                         (completed ? 0 : lane)
+                                                                   : 0x28000 + lane;
                                 scalar_store_setup(page8k, privileged, forms[form].op, operand, forms[form].pre,
-                                                   ccr | trace << 14, forms[form].ext);
+                                                   ccr | trace << 14, forms[form].ext, size);
                                 Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
                                 Syn68kMappedRun run;
                                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
                                 assert(run.reason == SYN68K_MAPPED_BUDGET);
                                 unsigned expected_pc = cpu.pc, expected_sr = status();
-                                unsigned expected_a0 = EM_A0;
-                                unsigned expected_data = physical_value(data, size);
+                                unsigned expected_data = scalar_store_value(operand, size);
+                                M68kReg expected_regs[16];
+                                memcpy(expected_regs, cpu_state.regs, sizeof expected_regs);
                                 scalar_store_setup(page8k, privileged, forms[form].op, operand, forms[form].pre,
-                                                   ccr | trace << 14, forms[form].ext);
-                                unsigned unchanged_data = physical_value(data, size);
-                                unsigned fault_pte = pte(operand);
-                                unsigned root = privileged ? 0x6000 : 0x3000;
-                                if (physical_fault)
-                                    fail_write_physical = data;
+                                                   ccr | trace << 14, forms[form].ext, size);
+                                unsigned initial[4];
+                                for (unsigned i = 0; i < size; ++i)
+                                    initial[i] = ram[scalar_store_physical(operand + i)];
+                                unsigned fault_pte = pte(operand + completed), root = privileged ? 0x6000 : 0x3000;
+                                if (fault == 1) {
+                                    memory.aligned_transfers = 1;
+                                    fail_write_physical = scalar_store_physical(operand + completed);
+                                }
+                                else if (fault == 2 && forms[form].read) {
+                                    late_read_physical = scalar_store_physical(operand + completed);
+                                    late_read_pte = fault_pte;
+                                    late_read_descriptor = 0;
+                                }
                                 else
-                                    put32(fault_pte, 0x10005); /* Readable, write protected. */
-                                watched_physical = data;
+                                    put32(fault_pte,
+                                          fault == 2
+                                              ? 0
+                                              : ((operand + completed >= 0x28000 + page_size ? 0x14000 : 0x10000) | 5));
+                                watched_physical = scalar_store_physical(operand);
+                                watched_tail_physical = 0x1c080;
+                                watched_tail_reads = watched_tail_successes = 0;
+                                if (live_trace >= 0) {
+                                    trace_read_physical = fault == 1 ? fail_write_physical : physical(0x10000);
+                                    trace_bus_kind = fault == 1;
+                                    trace_read_sr = (unsigned)live_trace << 14;
+                                    expected_sr = (expected_sr & ~0xc000) | trace_read_sr;
+                                }
                                 cpu.pc = 0x10000;
                                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                unsigned traced = !!(trace & 2);
                                 assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
-                                       run.step.store_state == (trace & 2 ? 3U : 2U));
-                                assert(cpu.pc == expected_pc && status() == expected_sr && EM_A0 == expected_a0 &&
-                                       !run.completed);
-                                assert(!watched_successes && physical_value(data, size) == unchanged_data);
-                                fail_write_physical = 0xFFFFFFFF;
+                                       run.step.store_state == (traced ? 3U : 2U));
+                                assert(cpu.pc == expected_pc && status() == expected_sr && !run.completed &&
+                                       !memcmp(expected_regs, cpu_state.regs, sizeof expected_regs));
+                                assert(run.step.access.request == operand &&
+                                       run.step.access.logical == operand + completed && run.step.access.size == size &&
+                                       run.step.access.completed == completed &&
+                                       run.step.access.value == expected_data &&
+                                       run.step.access.bus_error == (fault == 1));
+                                unsigned source_read = forms[form].op == 0xd189 || forms[form].op == 0x9189 ||
+                                                       forms[form].op == 0x20d9 || forms[form].op == 0x30d9;
+                                assert(watched_successes == !!completed && watched_read_attempts == forms[form].read &&
+                                       watched_tail_reads == source_read && !watched_tail_successes);
+                                for (unsigned i = 0; i < size; ++i)
+                                    assert(
+                                        ram[scalar_store_physical(operand + i)] ==
+                                        (i < completed ? (expected_data >> ((size - i - 1) * 8)) & 255 : initial[i]));
+                                fail_write_physical = UINT32_MAX;
                                 supervisor = 1;
-                                put32(pte(0x10000 + page_size), 0xE001);
+                                put32(pte(0x10000 + page_size), 0xe001);
                                 put32(pte(0x20000), 0x18001);
                                 unsigned table_page = root & ~(page_size - 1);
                                 put32(pte(0x30000), table_page | 1);
                                 unsigned target = 0x30000 + fault_pte - table_page;
-                                unsigned wb_address = physical_fault ? 40 : 32;
-                                unsigned wb_data = physical_fault ? 44 + (operand & 3) : 36 + 4 - size;
-                                const unsigned handler_program[] = {0x23FC,
-                                                                    1,
-                                                                    1,
-                                                                    target >> 16,
-                                                                    target & 65535,
-                                                                    0xF518,
-                                                                    0x226F,
-                                                                    wb_address,
-                                                                    size == 1   ? 0x142F
-                                                                    : size == 2 ? 0x342F
-                                                                                : 0x242F,
-                                                                    wb_data,
-                                                                    0x7600 | (privileged ? 5 : 1),
-                                                                    0x4E7B,
-                                                                    0x3001,
-                                                                    size == 1   ? 0x0E11
-                                                                    : size == 2 ? 0x0E51
-                                                                                : 0x0E91,
-                                                                    0x2800,
-                                                                    0x5284,
-                                                                    0x4E73};
-                                unsigned handler = 0x10000 + page_size + 0x40;
-                                for (unsigned i = 0; i < sizeof handler_program / sizeof *handler_program; ++i)
-                                    code_word(handler + i * 2, handler_program[i]);
+                                unsigned wb_address = fault == 1 ? 40 : 32;
+                                unsigned rotate = fault == 1 && size > 1;
+                                unsigned wb_data = fault == 1 ? size == 1 ? 44 + (operand & 3) : 44 : 36 + 4 - size;
+                                unsigned descriptor = operand + completed >= 0x28000 + page_size ? 0x4001 : 1;
+                                const unsigned program[] = {0x23fc,
+                                                            1,
+                                                            descriptor,
+                                                            target >> 16,
+                                                            target & 65535,
+                                                            0xf518,
+                                                            0x246f,
+                                                            wb_address,
+                                                            rotate      ? 0x242f
+                                                            : size == 1 ? 0x142f
+                                                            : size == 2 ? 0x342f
+                                                                        : 0x242f,
+                                                            wb_data,
+                                                            0x7600 | (privileged ? 5 : 1),
+                                                            0x4e7b,
+                                                            0x3001,
+                                                            size == 1   ? 0x0e12
+                                                            : size == 2 ? 0x0e52
+                                                                        : 0x0e92,
+                                                            0x2800,
+                                                            0x5284,
+                                                            0x4e73};
+                                unsigned handler = 0x10000 + page_size + 0x40, end = handler;
+                                for (unsigned i = 0; i < sizeof program / sizeof *program; ++i) {
+                                    if (rotate && i == sizeof program / sizeof *program - 4) {
+                                        const unsigned rotation[] = {0x260a, 0x0283, 0, 3, 0xe78b, 0xe7ba};
+                                        for (unsigned j = 0; j < sizeof rotation / sizeof *rotation; ++j) {
+                                            code_word(end, rotation[j]);
+                                            end += 2;
+                                        }
+                                        if (size == 2) {
+                                            code_word(end, 0x4842);
+                                            end += 2;
+                                        }
+                                    }
+                                    code_word(end, program[i]);
+                                    end += 2;
+                                }
                                 cpu_state.vbr = 0x20000;
                                 put32(physical(cpu_state.vbr + 8), handler);
                                 Syn68kMappedDelivery delivery;
                                 assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
                                 assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
                                 unsigned frame = 0x20100 - 60;
-                                assert(mapped_value(frame, 2) == expected_sr);
-                                assert(mapped_value(frame + 2, 4) == expected_pc);
-                                unsigned size_bits = size == 1 ? 0x20 : size == 2 ? 0x40 : 0;
-                                unsigned fc = privileged ? 5 : 1;
+                                unsigned size_bits = size == 1 ? 0x20 : size == 2 ? 0x40 : 0, fc = privileged ? 5 : 1;
+                                assert(mapped_value(frame, 2) == expected_sr &&
+                                       mapped_value(frame + 2, 4) == expected_pc);
                                 assert(mapped_value(frame + 12, 2) ==
-                                       ((physical_fault ? 0 : 0x400) | size_bits | fc | (trace & 2 ? 0x2000 : 0)));
-                                assert(mapped_value(frame + 8, 4) == (trace & 2 ? 0x10000 : 0));
-                                assert(mapped_value(frame + (physical_fault ? 18 : 16), 2) == (0x80 | size_bits | fc));
-                                assert(!mapped_value(frame + (physical_fault ? 16 : 18), 2) &&
+                                       ((fault == 1 ? 0 : 0x400) | size_bits | fc | (traced ? 0x2000 : 0) |
+                                        (fault != 1 && completed ? 0x800 : 0)));
+                                assert(mapped_value(frame + 8, 4) == (traced ? 0x10000 : 0));
+                                assert(mapped_value(frame + (fault == 1 ? 18 : 16), 2) == (0x80 | size_bits | fc) &&
+                                       !mapped_value(frame + (fault == 1 ? 16 : 18), 2) &&
                                        !mapped_value(frame + 14, 2));
-                                assert(mapped_value(frame + wb_address, 4) == operand);
-                                assert(mapped_value(frame + wb_data, size) == expected_data);
-                                assert(syn68k_mapped_cpu_run(&cpu, 9, &run));
-                                assert(run.reason == (trace & 2 ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
-                                       run.completed == (trace & 2 ? 8U : 9U) && cpu.pc == expected_pc &&
-                                       status() == expected_sr && EM_A0 == expected_a0);
-                                if (trace & 2) {
-                                    unsigned trace_handler = 0x10000 + page_size + 0xC0;
+                                assert(mapped_value(frame + 20, 4) == operand &&
+                                       mapped_value(frame + wb_address, 4) == operand);
+                                unsigned data = mapped_value(frame + (fault == 1 ? 44 : 36), 4);
+                                if (fault == 1) {
+                                    unsigned rotation = (operand & 3) * 8;
+                                    if (rotation)
+                                        data = data << rotation | data >> (32 - rotation);
+                                    data >>= (4 - size) * 8;
+                                }
+                                assert(data == expected_data);
+                                unsigned instructions = 9 + (rotate ? 4 + (size == 2) : 0);
+                                assert(syn68k_mapped_cpu_run(&cpu, instructions, &run));
+                                assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                       run.completed == instructions - traced && cpu.pc == expected_pc &&
+                                       status() == expected_sr && EM_A0 == expected_regs[8].ul.n &&
+                                       EM_A1 == expected_regs[9].ul.n);
+                                if (traced) {
+                                    unsigned trace_handler = 0x10000 + page_size + 0xc0;
                                     put32(physical(cpu_state.vbr + 36), trace_handler);
-                                    code_word(trace_handler, 0x4E73);
+                                    code_word(trace_handler, 0x4e73);
                                     assert(run.step.vector == 9 && run.step.format == 2 &&
                                            run.step.fault_address == 0x10000);
                                     assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == trace_handler &&
-                                           EM_A7 == 0x20100 - 12);
-                                    unsigned trace_frame = 0x20100 - 12;
-                                    assert(mapped_value(trace_frame, 2) == expected_sr &&
-                                           mapped_value(trace_frame + 2, 4) == expected_pc &&
-                                           mapped_value(trace_frame + 6, 2) == 0x2024 &&
-                                           mapped_value(trace_frame + 8, 4) == 0x10000);
+                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == trace_handler);
+                                    assert(mapped_value(EM_A7, 2) == expected_sr &&
+                                           mapped_value(EM_A7 + 2, 4) == expected_pc &&
+                                           mapped_value(EM_A7 + 8, 4) == 0x10000);
                                     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
                                     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == expected_pc &&
                                            status() == expected_sr);
                                 }
-                                assert(physical_value(data, size) == expected_data && watched_successes == 1 &&
-                                       watched_attempts == 1 + physical_fault && EM_D4 == 1);
+                                assert(scalar_store_value(operand, size) == expected_data &&
+                                       watched_successes == 1 + !!completed &&
+                                       watched_attempts == 1 + !!(fault == 1 || completed) && EM_D4 == 1 &&
+                                       watched_read_attempts == forms[form].read && watched_tail_reads == source_read &&
+                                       !watched_tail_successes);
                                 ++cases;
                             }
+    memory.aligned_transfers = 0;
+    fail_write_physical = watched_physical = watched_tail_physical = trace_read_physical = UINT32_MAX;
+    set_status(0x2000);
+}
+
+static void guest_scalar_writebacks(void)
+{
+    guest_scalar_bus_writebacks(0, 0, -1);
+}
+
+static void guest_partial_scalar_writebacks(void)
+{
+    for (unsigned boundary = 1; boundary <= 2; ++boundary)
+        for (unsigned completed = 0; completed < 4; ++completed)
+            guest_scalar_bus_writebacks(boundary, completed, -1);
+}
+
+static void guest_scalar_trace_writebacks(void)
+{
+    for (int live = 0; live < 4; ++live) {
+        guest_scalar_bus_writebacks(0, 0, live);
+        guest_scalar_bus_writebacks(1, 2, live);
+        guest_scalar_bus_writebacks(2, 2, live);
+    }
 }
 
 static void guest_partial_read_restarts(void)
@@ -3979,6 +4093,9 @@ int main(int argc, char** argv)
             memory.native = NULL;
             if (emitted)
                 assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
+            guest_scalar_writebacks();
+            guest_partial_scalar_writebacks();
+            guest_scalar_trace_writebacks();
             guest_fpu_physical_writebacks();
             guest_fpu_physical_replays();
             partial_writeback_record_guards();
@@ -4022,6 +4139,8 @@ int main(int argc, char** argv)
             fetch_frame_guards();
             guest_operand_page_fault_handlers();
             guest_scalar_writebacks();
+            guest_partial_scalar_writebacks();
+            guest_scalar_trace_writebacks();
             guest_partial_read_restarts();
             guest_movem_read_continuations();
             movem_fetch_record_guards();
