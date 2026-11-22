@@ -65,8 +65,11 @@ to verify startup scaling, preference precedence and invalid options.
 
 ## Application architecture and system version
 
-Fat applications automatically select their supported PowerPC application
-fragment. Applications without one retain their 68K entry path.
+FAT applications prefer PowerPC by default. In Preferences → Advanced, select
+**Prefer m68k for FAT apps** and click **Save** to use the 68K entry on the next
+launch. The equivalent app preference is `PreferM68K=1`. A single-architecture
+application still uses its available entry. The command-line `-ppc` option
+takes precedence over the saved preference.
 
 Finder releases 8.6 through 9.2.2 supply a known minimum OS contract through their
 own version resource. ROMAW applies that requirement before Finder executes.

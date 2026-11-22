@@ -213,10 +213,11 @@ static void show_page(HWND dialog, int page)
         ShowWindow(GetDlgItem(dialog, 200 + i), field_page(i) == page ? SW_SHOW : SW_HIDE);
     }
     for (i = 0; ROMlib_preferences_check_label(i); ++i)
-        ShowWindow(GetDlgItem(dialog, 300 + i), page == 3 ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(dialog, 300 + i), ROMlib_preferences_check_page(i) == page ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(dialog, 400), page == 2 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(dialog, 500), page == 0 ? SW_SHOW : SW_HIDE);
-    for (i = 0; i < 4; ++i)
+    ShowWindow(GetDlgItem(dialog, 501), page == ROMAW_PREF_ADVANCED ? SW_SHOW : SW_HIDE);
+    for (i = 0; i < ROMAW_PREF_PAGE_COUNT; ++i)
         SendDlgItemMessage(dialog, 10 + i, BM_SETCHECK, (int)i == page, 0);
 }
 
@@ -226,14 +227,14 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
     unsigned i;
     switch (message) {
     case WM_INITDIALOG: {
-        static const char* pages[] = {"General", "Display", "Memory", "Compatibility"};
-        unsigned rows[4] = {0};
+        static const char* pages[] = {"General", "Display", "Memory", "Compatibility", "Advanced"};
+        unsigned rows[ROMAW_PREF_PAGE_COUNT] = {0};
         RECT owner, bounds, work;
         state = (native_preferences*)lparam;
         SetWindowLongPtr(dialog, DWLP_USER, (LONG_PTR)state);
-        for (i = 0; i < 4; ++i)
+        for (i = 0; i < ROMAW_PREF_PAGE_COUNT; ++i)
             if (!add_control(dialog, "BUTTON", pages[i],
-                             BS_AUTORADIOBUTTON | BS_PUSHLIKE | WS_VISIBLE | (i ? 0 : WS_GROUP), 8 + i * 96, 8, 92, 18,
+                             BS_AUTORADIOBUTTON | BS_PUSHLIKE | WS_VISIBLE | (i ? 0 : WS_GROUP), 8 + i * 76, 8, 73, 18,
                              10 + i))
                 goto failed;
         for (i = 0; i < 19; ++i) {
@@ -257,8 +258,9 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
                 SendDlgItemMessage(dialog, 200 + i, EM_SETLIMITTEXT, 255, 0);
         }
         for (i = 0; ROMlib_preferences_check_label(i); ++i) {
-            if (!add_control(dialog, "BUTTON", ROMlib_preferences_check_label(i), BS_AUTOCHECKBOX, 10 + (i / 12) * 192,
-                             34 + (i % 12) * 14, 188, 13, 300 + i))
+            unsigned row = rows[ROMlib_preferences_check_page(i)]++;
+            if (!add_control(dialog, "BUTTON", ROMlib_preferences_check_label(i), BS_AUTOCHECKBOX,
+                             10 + (row / 12) * 192, 34 + (row % 12) * 14, 188, 13, 300 + i))
                 goto failed;
             SendDlgItemMessage(dialog, 300 + i, BM_SETCHECK, ROMlib_preferences_check(&state->edited, i), 0);
         }
@@ -273,7 +275,9 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
             goto failed;
         add_control(dialog, "STATIC", "Save retains settings for this application in ROMAW.prefs.", WS_VISIBLE, 10, 205,
                     372, 13, 401);
-        if (!add_control(dialog, "BUTTON", "Drive sidecars...", BS_PUSHBUTTON, 10, 182, 100, 18, 500))
+        if (!add_control(dialog, "BUTTON", "Drive sidecars...", BS_PUSHBUTTON, 10, 182, 100, 18, 500) ||
+            !add_control(dialog, "STATIC", "FAT apps use PowerPC by default. Save the CPU choice for the next launch.",
+                         0, 10, 86, 372, 23, 501))
             goto failed;
         GetWindowRect(dialog, &bounds);
         SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0);
@@ -305,7 +309,7 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
             SetFocus(GetDlgItem(dialog, 218));
             return TRUE;
         }
-        if (LOWORD(wparam) >= 10 && LOWORD(wparam) <= 13) {
+        if (LOWORD(wparam) >= 10 && LOWORD(wparam) < 10 + ROMAW_PREF_PAGE_COUNT) {
             show_page(dialog, LOWORD(wparam) - 10);
             return TRUE;
         }

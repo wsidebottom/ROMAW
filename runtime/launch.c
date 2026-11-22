@@ -109,12 +109,12 @@
 #include "rsys/version.h"
 #include "rsys/appearance.h"
 
-/* Prefer PowerPC application fragments over classic launch stubs. */
-PRIVATE boolean_t ppc_launch_p = TRUE;
+/* The explicit -ppc option overrides the application preference. */
+PRIVATE boolean_t ppc_override;
 
 PUBLIC void ROMlib_set_ppc(boolean_t val)
 {
-    ppc_launch_p = val;
+    ppc_override = val;
 }
 
 FILE* configfile;
@@ -718,6 +718,7 @@ PRIVATE void launchchain(StringPtr fName, INTEGER vRefNum, BOOLEAN resetmemory, 
     ROMlib_directdiskaccess = FALSE;
     ROMlib_clear_gestalt_list();
     ROMlib_config_syszone_size = ROMlib_config_applzone_size = -1;
+    ROMlib_prefer_m68k = 0;
     fprintf(stderr, "trace: launchchain ParseConfig ROMAWDefault begin\n");
     fflush(stderr);
     ParseConfigFile((StringPtr) "\014ROMAWDefault", 0, 0);
@@ -750,12 +751,13 @@ PRIVATE void launchchain(StringPtr fName, INTEGER vRefNum, BOOLEAN resetmemory, 
         HLock(code0);
     cfrg0 = Get1Resource(T('c', 'f', 'r', 'g'), 0);
 
-    if (cfrg0 && (ppc_launch_p || !code0) &&
+    boolean_t has_cfm68k = cfrg0 && ROMlib_find_cfrg(cfrg0, kMotorola68KArch, kApplicationCFrag, (StringPtr) "");
+    if (cfrg0 && (ppc_override || !ROMlib_prefer_m68k || (!code0 && !has_cfm68k)) &&
         ROMlib_find_cfrg(cfrg0, T('p', 'w', 'p', 'c'), kApplicationCFrag, (StringPtr) "")) {
         code0 = NULL;
         fragment_arch = kPowerPCArch;
     }
-    else if (cfrg0 && ROMlib_find_cfrg(cfrg0, kMotorola68KArch, kApplicationCFrag, (StringPtr) "")) {
+    else if (has_cfm68k) {
         code0 = NULL;
         fragment_arch = kMotorola68KArch;
     }

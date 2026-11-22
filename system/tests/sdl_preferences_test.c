@@ -42,9 +42,9 @@ const char* ROMlib_preferences_field_label(unsigned field)
                                    "Delay",
                                    "Apple character",
                                    "Modifiers",
-                                   "Screen size",
-                                   "Mac size",
-                                   "Location",
+                                   NULL,
+                                   NULL,
+                                   NULL,
                                    NULL,
                                    NULL,
                                    NULL,
@@ -62,7 +62,12 @@ const char* ROMlib_preferences_field_label(unsigned field)
 
 const char* ROMlib_preferences_check_label(unsigned check)
 {
-    return check < 18 ? "Compatibility option" : NULL;
+    return check < 17 ? "Compatibility option" : NULL;
+}
+
+int ROMlib_preferences_check_page(unsigned check)
+{
+    return check < 14 ? ROMAW_PREF_COMPATIBILITY : ROMAW_PREF_ADVANCED;
 }
 
 int ROMlib_preferences_check(ROMlib_extra_preferences* prefs, unsigned check)
@@ -175,7 +180,7 @@ int main(int argc, char** argv)
     assert(!memcmp(colors, screen->format->palette->colors, sizeof colors));
 
     event_count = 0;
-    click(320, 36);
+    click(250, 36);
     click(300, 60);
     key_event(SDLK_8, KMOD_NONE, '8');
     key_event(SDLK_m, KMOD_NONE, 'm');

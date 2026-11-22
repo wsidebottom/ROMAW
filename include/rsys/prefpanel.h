@@ -30,6 +30,10 @@ extern int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs);
 extern void ROMlib_extra_preferences_save(FILE* file);
 extern const char* ROMlib_preferences_field_label(unsigned field);
 extern const char* ROMlib_preferences_check_label(unsigned check);
+
+enum { ROMAW_PREF_COMPATIBILITY = 3, ROMAW_PREF_ADVANCED = 4, ROMAW_PREF_PAGE_COUNT = 5 };
+
+extern int ROMlib_preferences_check_page(unsigned check);
 extern int ROMlib_preferences_check(ROMlib_extra_preferences* prefs, unsigned check);
 extern void ROMlib_preferences_toggle(ROMlib_extra_preferences* prefs, unsigned check);
 extern int ROMlib_sdl_preferences(ROMlib_extra_preferences* prefs, const char* filename);

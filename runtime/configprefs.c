@@ -826,11 +826,11 @@ int config_prefs_remove_startup(const char* path)
     return config_prefs_set_many(path, "ROMAW", keys, values, 2);
 }
 
-static const char* const scalar_keys[] = {"Comments",         "WindowName",  "DongleFamily", "PrinterName",
-                                          "PrinterTypeLabel", "Win32Token",  "MacCDROM",     "SystemVersion",
-                                          "PrVers",           "SysZone",     "ApplZone",     "BitsPerPixel",
-                                          "RefreshNumber",    "Delay",       "AppleChar",    "RightButtonModifier",
-                                          "CacheProblems",    "DisplayScale"};
+static const char* const scalar_keys[] = {"Comments",         "WindowName",   "DongleFamily", "PrinterName",
+                                          "PrinterTypeLabel", "Win32Token",   "MacCDROM",     "SystemVersion",
+                                          "PrVers",           "SysZone",      "ApplZone",     "BitsPerPixel",
+                                          "RefreshNumber",    "Delay",        "AppleChar",    "RightButtonModifier",
+                                          "CacheProblems",    "DisplayScale", "PreferM68K"};
 static const char* const pair_keys[] = {"ScreenLocation", "ScreenSize", "MacSize"};
 static const char* const flag_keys[] = {
     "Accelerated",      "BlitAtTrapEnd", "BlitInOSEvent",    "BlitOften",    "CloseIsQuit",    "Debug",
@@ -952,7 +952,7 @@ int config_prefs_validate_line(const char* line)
         long long percent;
         return settings_number(value, n, 0, &percent) && percent >= 25 && percent <= 1600;
     }
-    if (kind == 3)
+    if (kind == 3 || (key == 10 && !strncasecmp(line, "PreferM68K", key)))
         return n == 1 && (*value == '0' || *value == '1');
     int quoted = 0, braces = 0, parentheses = 0;
     for (size_t i = 0; i < n; ++i) {

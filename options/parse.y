@@ -47,6 +47,7 @@ pair_t ROMlib_ScreenLocation = { INITIALPAIRVALUE, INITIALPAIRVALUE };
 unsigned short crcval;
 int ROMlib_AppleChar = 0;
 int ROMlib_display_scale = 100;
+int ROMlib_prefer_m68k;
 /* Classic applications receive the conventional secondary-button gesture. */
 int ROMlib_right_button_modifier = ControlKey;
 
@@ -87,6 +88,7 @@ void yyerror(const char *str);
 %token	PRVERSION
 %token SYSZONE APPLZONE
 %token DISPLAY_SCALE
+%token PREFER_M68K
 %token <number> SIZE_MULTIPLIER
 
 %type <cptr> STRINGCONSTANT
@@ -127,6 +129,13 @@ assignment:	stringassignment
               yyerror("DisplayScale must be 25..1600 percent");
             else
               ROMlib_display_scale = $3;
+          } }
+	| PREFER_M68K '=' number ';'
+	{ if (validblock) {
+            if ($3 != 0 && $3 != 1)
+              yyerror("PreferM68K must be 0 or 1");
+            else
+              ROMlib_prefer_m68k = $3;
           } }
 	;
 
@@ -410,6 +419,7 @@ struct namevaluestr {
   { "NoWarn32",		OPTIONSCONSTANT,	ROMLIB_NOWARN32_BIT },
   { "Options",		OPTIONS,		0 },
   { "PassPostscript",	OPTIONSCONSTANT,	ROMLIB_PASSPOSTSCRIPT_BIT },
+  { "PreferM68K",	PREFER_M68K,		0 },
   { "PretendAlias",	OPTIONSCONSTANT,	ROMLIB_PRETEND_ALIAS_BIT },
   { "PretendEdition",	OPTIONSCONSTANT,	ROMLIB_PRETEND_EDITION_BIT },
   { "PretendHelp",	OPTIONSCONSTANT,	ROMLIB_PRETEND_HELP_BIT },

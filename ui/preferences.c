@@ -45,16 +45,11 @@ static const struct {
     const char* label;
     int* value;
 } live_checks[] = {
-    {"Hide Macintosh clock", &ROMlib_noclock},
-    {"Map newlines to carriage returns", &ROMlib_newlinetocr},
-    {"Direct disk access", &ROMlib_directdiskaccess},
-    {"Suppress 32-bit warnings", &ROMlib_nowarn32},
-    {"Flush translation cache often", &ROMlib_flushoften},
-    {"Cache heuristics", &ROMlib_cacheheuristic},
-    {"Pretend Help Manager", &ROMlib_pretend_help},
-    {"Pretend Edition Manager", &ROMlib_pretend_edition},
-    {"Pretend Script Manager", &ROMlib_pretend_script},
-    {"Pretend Alias Manager", &ROMlib_pretend_alias},
+    {"Hide Macintosh clock", &ROMlib_noclock},          {"Map newlines to carriage returns", &ROMlib_newlinetocr},
+    {"Direct disk access", &ROMlib_directdiskaccess},   {"Flush translation cache often", &ROMlib_flushoften},
+    {"Pretend Help Manager", &ROMlib_pretend_help},     {"Pretend Edition Manager", &ROMlib_pretend_edition},
+    {"Pretend Script Manager", &ROMlib_pretend_script}, {"Pretend Alias Manager", &ROMlib_pretend_alias},
+    {"Suppress 32-bit warnings", &ROMlib_nowarn32},     {"Prefer m68k for FAT apps", &ROMlib_prefer_m68k},
 };
 
 static const struct {
@@ -64,12 +59,12 @@ static const struct {
     {"CloseIsQuit", "Close requests application Quit", ROMLIB_CLOSE_IS_QUIT_BIT},
     {"NoSuspend", "Keep running when inactive", ROMLIB_NOSUSPEND_BIT},
     {"RectScreen", "Rectangular screen corners", ROMLIB_RECT_SCREEN_BIT},
-    {"DirtyVariant", "Alternate control redraw", ROMLIB_DIRTY_VARIANT_BIT},
     {"StripAddress", "Strip 24-bit address flags", ROMLIB_STRIPADDRESSHACK_BIT},
     {"DisposHandleHack", "Handle disposal compatibility", ROMLIB_DISPOSHANDLE_HACK_BIT},
     {"NoPrefPanel", "Disable Preferences after closing", ROMLIB_NOPREFS_BIT},
     {"Debug", "Application debug option", ROMLIB_DEBUG_BIT},
     /* Accepted legacy options without additional live controls. Preserve them. */
+    {"DirtyVariant", NULL, ROMLIB_DIRTY_VARIANT_BIT},
     {"TextDisableHack", NULL, ROMLIB_TEXT_DISABLE_BIT},
     {"NoLower", NULL, ROMLIB_NOLOWER_BIT},
     {"PrintingHack", NULL, ROMLIB_PRINTING_HACK_BIT},
@@ -77,17 +72,17 @@ static const struct {
     {"Accelerated", NULL, ROMLIB_ACCELERATED_BIT},
 };
 
-enum { editable_option_count = 8 };
+enum { editable_option_count = 7 };
 
 static const char* field_labels[] = {
     "Window title",
     "Delay",
     "Apple-menu character (0..255)",
     "Right-click modifiers (0..65535)",
-    "Screen size (width,height)",
-    "Mac size (width,height)",
-    "Screen location (x,y)",
     /* Keep these slots for legacy preference handling without displaying controls. */
+    NULL,
+    NULL,
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -398,6 +393,7 @@ void ROMlib_preferences_write_string(FILE* file, const char* name, const char* t
 void ROMlib_extra_preferences_save(FILE* file)
 {
     unsigned i;
+    fprintf(file, "PreferM68K=%d\n", ROMlib_prefer_m68k);
     if (ROMlib_display_scale != 100)
         fprintf(file, "DisplayScale=%d\n", ROMlib_display_scale);
     for (i = 0; i < NELEM(extra_options); ++i)
@@ -428,6 +424,17 @@ const char* ROMlib_preferences_check_label(unsigned check)
     return check < editable_option_count                        ? extra_options[check].label
            : check - editable_option_count < NELEM(live_checks) ? live_checks[check - editable_option_count].label
                                                                 : NULL;
+}
+
+int ROMlib_preferences_check_page(unsigned check)
+{
+    if (check < editable_option_count)
+        return extra_options[check].bit == ROMLIB_DEBUG_BIT ? ROMAW_PREF_ADVANCED : ROMAW_PREF_COMPATIBILITY;
+    check -= editable_option_count;
+    if (check < NELEM(live_checks) &&
+        (live_checks[check].value == &ROMlib_nowarn32 || live_checks[check].value == &ROMlib_prefer_m68k))
+        return ROMAW_PREF_ADVANCED;
+    return ROMAW_PREF_COMPATIBILITY;
 }
 
 int ROMlib_preferences_check(ROMlib_extra_preferences* prefs, unsigned check)

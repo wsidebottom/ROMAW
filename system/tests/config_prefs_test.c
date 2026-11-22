@@ -46,6 +46,9 @@ int main(int argc, char** argv)
     assert(!config_prefs_validate_line("DisplayScale=0"));
     assert(!config_prefs_validate_line("DisplayScale=1601"));
     assert(!config_prefs_validate_line("DisplayScale=NaN"));
+    assert(config_prefs_validate_line("PreferM68K=0"));
+    assert(config_prefs_validate_line("PreferM68K=1"));
+    assert(!config_prefs_validate_line("PreferM68K=2"));
     assert(config_prefs_set("scale.ini", "APPL.TEST", "DisplayScale", "150"));
     assert(config_prefs_set("scale.ini", "APPL.OTHR", "DisplayScale", "200"));
     expect_script("scale.ini", "APPL.TEST", "DisplayScale=150;\n");

@@ -30,6 +30,7 @@ int ROMlib_directdiskaccess, ROMlib_nowarn32, ROMlib_flushoften;
 int ROMlib_fontsubstitution, ROMlib_cacheheuristic;
 int ROMlib_pretend_help, ROMlib_pretend_edition, ROMlib_pretend_script, ROMlib_pretend_alias;
 int ROMlib_PretendSound, ROMlib_refresh, ROMlib_desired_bpp = 8;
+int ROMlib_prefer_m68k;
 int vdriver_bpp = 8;
 int ROMlib_display_scale = 100;
 
@@ -105,7 +106,8 @@ pair_t ROMlib_ScreenLocation = {INITIALPAIRVALUE, INITIALPAIRVALUE};
 int main(void)
 {
     ROMlib_extra_preferences prefs;
-    const int32 printing_options = ROMLIB_TEXT_DISABLE_BIT | ROMLIB_NOLOWER_BIT | ROMLIB_PRINTING_HACK_BIT;
+    const int32 legacy_options =
+        ROMLIB_DIRTY_VARIANT_BIT | ROMLIB_TEXT_DISABLE_BIT | ROMLIB_NOLOWER_BIT | ROMLIB_PRINTING_HACK_BIT;
     ROMlib_offset = (uintptr_t)lowmem;
     pair_t pair;
     long number;
@@ -132,22 +134,31 @@ int main(void)
     memset(original, 'A', 4095);
     original[4095] = 0;
     ROMlib_WindowName = original;
-    ROMlib_options = printing_options;
+    ROMlib_options = legacy_options;
     ROMlib_extra_preferences_init(&prefs);
     assert(ROMlib_extra_preferences_apply(&prefs));
     assert(ROMlib_WindowName == original && strlen(original) == 4095);
     for (i = 0; i < editable_option_count; ++i)
         prefs.flags |= extra_options[i].bit;
-    assert(!ROMlib_preferences_field_label(7) && !ROMlib_preferences_field_label(8) &&
-           !ROMlib_preferences_field_label(9));
-    for (i = 0; ROMlib_preferences_check_label(i); ++i)
-        assert(!strstr(ROMlib_preferences_check_label(i), "print"));
+    for (i = 4; i <= 9; ++i)
+        assert(!ROMlib_preferences_field_label(i));
+    unsigned advanced = 0;
+    for (i = 0; ROMlib_preferences_check_label(i); ++i) {
+        const char* label = ROMlib_preferences_check_label(i);
+        assert(!strstr(label, "print") && strcmp(label, "Cache heuristics") &&
+               strcmp(label, "Alternate control redraw"));
+        if (ROMlib_preferences_check_page(i) == ROMAW_PREF_ADVANCED)
+            ++advanced;
+        if (!strcmp(label, "Prefer m68k for FAT apps"))
+            ROMlib_preferences_toggle(&prefs, i);
+    }
+    assert(advanced == 3);
     strcpy(prefs.fields[0], "Changed title");
     strcpy(prefs.fields[1], "12");
     strcpy(prefs.fields[2], "256");
     assert(!ROMlib_extra_preferences_valid(&prefs, &bad) && bad == 2);
     assert(!ROMlib_extra_preferences_apply(&prefs));
-    assert(ROMlib_options == printing_options && !ROMlib_delay && ROMlib_WindowName == original);
+    assert(ROMlib_options == legacy_options && !ROMlib_delay && ROMlib_WindowName == original && !ROMlib_prefer_m68k);
     strcpy(prefs.fields[2], "20");
     strcpy(prefs.fields[3], "0x100");
     strcpy(prefs.fields[4], "800,600");
@@ -160,6 +171,7 @@ int main(void)
     strcpy(prefs.fields[18], "1.5x");
     assert(ROMlib_extra_preferences_valid(&prefs, &bad));
     assert(ROMlib_extra_preferences_apply(&prefs));
+    assert(ROMlib_prefer_m68k == 1);
     assert(ROMlib_display_scale == 150);
     assert(ROMlib_config_syszone_size == 8 * 1024 * 1024 && ROMlib_config_applzone_size == 16 * 1024 * 1024);
     assert(ROMlib_options == prefs.flags && ROMlib_dirtyvariant);
@@ -181,6 +193,7 @@ int main(void)
            strstr(text, "PrinterTypeLabel=\"Printer 'label'\"") && strstr(text, "PrVers=7.1"));
     assert(strstr(text, "SysZone=8388608") && strstr(text, "ApplZone=16777216"));
     assert(strstr(text, "DisplayScale=150"));
+    assert(strstr(text, "PreferM68K=1"));
     assert(!strcmp(ROMlib_new_label, "Printer \"label\""));
     free(ROMlib_WindowName);
     free(ROMlib_new_printer_name);

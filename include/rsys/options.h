@@ -37,6 +37,7 @@ extern int32 ROMlib_options;
 extern char* ROMlib_WindowName;
 extern char* ROMlib_Comments;
 extern int ROMlib_desired_bpp;
+extern int ROMlib_prefer_m68k;
 
 #define ROMLIB_NOCLOCK_BIT (1 << 0)
 #define ROMLIB_DEBUG_BIT (1 << 1)

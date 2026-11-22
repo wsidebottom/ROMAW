@@ -78,6 +78,8 @@ typedef struct {
     char error[128];
 } preferences_ui;
 
+static const int page_edges[] = {8, 100, 192, 284, 400, 508};
+
 static int field_page(unsigned field)
 {
     if (!ROMlib_preferences_field_label(field))
@@ -131,15 +133,17 @@ static void focus_field(preferences_ui* ui, int field, int select)
 
 static void render(SDL_Surface* canvas, preferences_ui* ui)
 {
-    static const char* pages[] = {"General", "Display", "Memory", "Compatibility"};
+    static const char* pages[] = {"General", "Display", "Memory", "Compatibility", "Advanced"};
     unsigned i;
     box(canvas, 0, 0, WIDTH, HEIGHT, 0);
     text(canvas, 12, 9, "ROMAW Preferences", 1, 61);
-    for (i = 0; i < 4; ++i)
-        button(canvas, 8 + i * 126, 25, 122, pages[i], ui->page == (int)i);
-    if (ui->page == 3)
+    for (i = 0; i < ROMAW_PREF_PAGE_COUNT; ++i)
+        button(canvas, page_edges[i], 25, page_edges[i + 1] - page_edges[i] - 2, pages[i], ui->page == (int)i);
+    if (ui->page >= ROMAW_PREF_COMPATIBILITY) {
+        int y = 54;
         for (i = 0; ROMlib_preferences_check_label(i); ++i) {
-            int y = 54 + i * 10;
+            if (ROMlib_preferences_check_page(i) != ui->page)
+                continue;
             box(canvas, 12, y, 8, 8, 1);
             box(canvas, 13, y + 1, 6, 6, 0);
             if (ROMlib_preferences_check(&ui->edited, i))
@@ -147,7 +151,13 @@ static void render(SDL_Surface* canvas, preferences_ui* ui)
             text(canvas, 28, y, ROMlib_preferences_check_label(i), 1, 59);
             if (ui->focus == 19 + (int)i)
                 text(canvas, 2, y, ">", 3, 1);
+            y += 10;
         }
+        if (ui->page == ROMAW_PREF_ADVANCED) {
+            text(canvas, 12, 96, "FAT apps use PowerPC by default.", 1, 61);
+            text(canvas, 12, 114, "Save the CPU choice for the next launch.", 1, 61);
+        }
+    }
     for (i = 0; i < 19; ++i)
         if (field_page(i) == ui->page) {
             int y = 56 + field_row(i) * 22;
@@ -189,13 +199,16 @@ static void render(SDL_Surface* canvas, preferences_ui* ui)
 static void next_focus(preferences_ui* ui, int backwards)
 {
     int items[48], count = 0, index = -1, i;
-    if (ui->page == 3)
+    if (ui->page >= ROMAW_PREF_COMPATIBILITY) {
         for (i = 0; ROMlib_preferences_check_label(i); ++i)
-            items[count++] = 19 + i;
-    else
+            if (ROMlib_preferences_check_page(i) == ui->page)
+                items[count++] = 19 + i;
+    }
+    else {
         for (i = 0; i < 19; ++i)
             if (field_page(i) == ui->page)
                 items[count++] = i;
+    }
     items[count++] = 100;
     items[count++] = 101;
     items[count++] = 102;
@@ -308,8 +321,9 @@ int ROMlib_sdl_preferences(ROMlib_extra_preferences* prefs, const char* filename
         else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
             int x = event.button.x * WIDTH / screen->w;
             int y = event.button.y * HEIGHT / screen->h;
-            if (y >= 25 && y < 47 && x >= 8 && x < 508) {
-                ui.page = MIN(3, (x - 8) / 126);
+            if (y >= 25 && y < 47 && x >= page_edges[0] && x < page_edges[ROMAW_PREF_PAGE_COUNT]) {
+                for (ui.page = 0; x >= page_edges[ui.page + 1]; ++ui.page)
+                    ;
                 ui.focus = -1;
             }
             else if (y >= 310 && y < 332) {
@@ -327,12 +341,14 @@ int ROMlib_sdl_preferences(ROMlib_extra_preferences* prefs, const char* filename
                     snprintf(ui.edited.fields[18], 256, "%s", scales[selected]);
                 focus_field(&ui, 18, 1);
             }
-            else if (ui.page == 3 && x >= 8 && y >= 54 && y < 284) {
-                i = (y - 54) / 10;
-                if (ROMlib_preferences_check_label(i)) {
-                    ROMlib_preferences_toggle(&ui.edited, i);
-                    ui.focus = 19 + i;
-                }
+            else if (ui.page >= ROMAW_PREF_COMPATIBILITY && x >= 8 && y >= 54 && y < 284) {
+                int row = (y - 54) / 10;
+                for (i = 0; ROMlib_preferences_check_label(i); ++i)
+                    if (ROMlib_preferences_check_page(i) == ui.page && row-- == 0) {
+                        ROMlib_preferences_toggle(&ui.edited, i);
+                        ui.focus = 19 + i;
+                        break;
+                    }
             }
             else
                 for (i = 0; i < 19; ++i)
@@ -349,11 +365,11 @@ int ROMlib_sdl_preferences(ROMlib_extra_preferences* prefs, const char* filename
             else if (key->sym == SDLK_TAB)
                 next_focus(&ui, key->mod & KMOD_SHIFT);
             else if ((key->mod & (KMOD_CTRL | KMOD_META)) && key->sym == SDLK_PAGEUP) {
-                ui.page = (ui.page + 3) % 4;
+                ui.page = (ui.page + ROMAW_PREF_PAGE_COUNT - 1) % ROMAW_PREF_PAGE_COUNT;
                 ui.focus = -1;
             }
             else if ((key->mod & (KMOD_CTRL | KMOD_META)) && key->sym == SDLK_PAGEDOWN) {
-                ui.page = (ui.page + 1) % 4;
+                ui.page = (ui.page + 1) % ROMAW_PREF_PAGE_COUNT;
                 ui.focus = -1;
             }
             else if (key->sym == SDLK_RETURN || key->sym == SDLK_KP_ENTER ||
