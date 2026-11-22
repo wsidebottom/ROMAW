@@ -385,7 +385,7 @@ struct CItem
   UInt16 Point[2];
   */
 
-  Byte ExecutorFinderInfo[32];
+  Byte ROMAWFinderInfo[32];
   CFork DataFork;
   CFork ResourceFork;
 
@@ -1158,7 +1158,7 @@ HRESULT CDatabase::LoadCatalog(const CFork &fork, const CObjectVector<CIdExtents
       item.OwnerFlags = r[0x29];
       */
       item.FileMode = Get16(r + 0x2A);
-      memcpy(item.ExecutorFinderInfo, r + 0x30, 32);
+      memcpy(item.ROMAWFinderInfo, r + 0x30, 32);
       /*
       item.special.iNodeNum = Get16(r + 0x2C); // or .linkCount
       item.FileType = Get32(r + 0x30);
@@ -1728,13 +1728,13 @@ Z7_COM7F_IMF(CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
   const CItem &item = Items[ref.ItemIndex];
   switch (propID)
   {
-    case 0x10000: // Executor: original FinderInfo, encoded as 64 hex digits.
+    case 0x10000: // ROMAW: original FinderInfo, encoded as 64 hex digits.
     {
       char text[65];
       const char *digits = "0123456789ABCDEF";
       for (unsigned i = 0; i < 32; ++i) {
-        text[i * 2] = digits[item.ExecutorFinderInfo[i] >> 4];
-        text[i * 2 + 1] = digits[item.ExecutorFinderInfo[i] & 15];
+        text[i * 2] = digits[item.ROMAWFinderInfo[i] >> 4];
+        text[i * 2 + 1] = digits[item.ROMAWFinderInfo[i] & 15];
       }
       text[64] = 0; prop = text; break;
     }
