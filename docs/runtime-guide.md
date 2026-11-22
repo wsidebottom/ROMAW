@@ -93,6 +93,8 @@ requests, Finder's known minimum and the event-loop guard.
 Choose **ROMAW Prefs** from the Apple menu of a running Mac app or press
 Alt-Shift-5. Save writes the current application's section in
 the profile `ROMAW.prefs`; MyABCD uses `[APPL.FP98]`.
+In Finder, **ROMAW Prefs** opens the same preferences window. Save writes
+changes to `[Defaults]` for subsequent Mac app launches.
 
 The Memory page accepts bytes or k/m suffixes. Equivalent application preference keys are:
 

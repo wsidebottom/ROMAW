@@ -63,6 +63,7 @@ size_t config_drive_label(const char* root, char* label, size_t capacity);
 int config_drive_rename(const char* root, const char* label);
 #ifdef _WIN32
 int ROMlib_win_drive_preferences(const char* path);
+int ROMlib_win_default_preferences(void* owner, const char* path);
 #endif
 int config_prefs_store(const char* path, const char* section, FILE* script);
 /* Atomically replace an owned INI section without application-key filtering. */

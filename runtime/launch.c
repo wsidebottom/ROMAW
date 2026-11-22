@@ -179,10 +179,6 @@ PRIVATE void ParseConfigFile(StringPtr exefname, OSType creator, OSType file_typ
     char* dot;
     INTEGER fname0;
 
-    reset_string(&ROMlib_WindowName);
-    reset_string(&ROMlib_Comments);
-    ROMlib_desired_bpp = 0;
-    ROMlib_display_scale = 100;
     fname0 = name0stripappl(exefname);
     free(ROMlib_configfilename);
     ROMlib_configfilename = malloc(strlen(ROMlib_userdir) + sizeof "/ROMAW.prefs");
@@ -197,6 +193,7 @@ PRIVATE void ParseConfigFile(StringPtr exefname, OSType creator, OSType file_typ
     }
     if (configfile) {
         yyparse();
+        ROMlib_noclock = !!(ROMlib_options & ROMLIB_NOCLOCK_BIT);
 
         if (ROMlib_get_appearance() == appearance_win3)
             ROMlib_options |= ROMLIB_RECT_SCREEN_BIT;
@@ -713,6 +710,12 @@ PRIVATE void launchchain(StringPtr fName, INTEGER vRefNum, BOOLEAN resetmemory, 
     ROMlib_clear_gestalt_list();
     ROMlib_config_syszone_size = ROMlib_config_applzone_size = -1;
     ROMlib_prefer_m68k = 0;
+    /* Reset once so application settings can override the profile defaults. */
+    reset_string(&ROMlib_WindowName);
+    reset_string(&ROMlib_Comments);
+    ROMlib_desired_bpp = 0;
+    ROMlib_display_scale = 100;
+    ROMlib_noclock = 0;
     fprintf(stderr, "trace: launchchain ParseConfig ROMAWDefault begin\n");
     fflush(stderr);
     ParseConfigFile((StringPtr) "\014ROMAWDefault", 0, 0);

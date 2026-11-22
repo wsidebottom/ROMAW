@@ -24,6 +24,7 @@
 #include "ToolboxUtil.h"
 #include "OSUtil.h"
 #include "rsys/prefpanel.h"
+#include "rsys/configprefs.h"
 #include "rsys/options.h"
 #include "rsys/prefs.h"
 #include "rsys/parse.h"
@@ -41,14 +42,19 @@
 #include "rsys/vdriver.h"
 
 static const struct {
-    const char* label;
+    const char *key, *label;
     int* value;
 } live_checks[] = {
-    {"Hide Macintosh clock", &ROMlib_noclock},          {"Map newlines to carriage returns", &ROMlib_newlinetocr},
-    {"Direct disk access", &ROMlib_directdiskaccess},   {"Flush translation cache often", &ROMlib_flushoften},
-    {"Pretend Help Manager", &ROMlib_pretend_help},     {"Pretend Edition Manager", &ROMlib_pretend_edition},
-    {"Pretend Script Manager", &ROMlib_pretend_script}, {"Pretend Alias Manager", &ROMlib_pretend_alias},
-    {"Suppress 32-bit warnings", &ROMlib_nowarn32},     {"Prefer m68k for FAT apps", &ROMlib_prefer_m68k},
+    {"NoClock", "Hide Macintosh clock", &ROMlib_noclock},
+    {"NewLineToCR", "Map newlines to carriage returns", &ROMlib_newlinetocr},
+    {"DirectDiskAccess", "Direct disk access", &ROMlib_directdiskaccess},
+    {"FlushOften", "Flush translation cache often", &ROMlib_flushoften},
+    {"PretendHelp", "Pretend Help Manager", &ROMlib_pretend_help},
+    {"PretendEdition", "Pretend Edition Manager", &ROMlib_pretend_edition},
+    {"PretendScript", "Pretend Script Manager", &ROMlib_pretend_script},
+    {"PretendAlias", "Pretend Alias Manager", &ROMlib_pretend_alias},
+    {"NoWarn32", "Suppress 32-bit warnings", &ROMlib_nowarn32},
+    {"PreferM68K", "Prefer m68k for FAT apps", &ROMlib_prefer_m68k},
 };
 
 static const struct {
@@ -260,6 +266,115 @@ void ROMlib_extra_preferences_init(ROMlib_extra_preferences* prefs)
     memcpy(prefs->original, prefs->fields, sizeof prefs->fields);
 }
 
+static const char* const default_field_keys[] = {
+    [0] = "WindowName", [1] = "Delay",         [2] = "AppleChar",      [3] = "RightButtonModifier",
+    [10] = "SysZone",   [11] = "ApplZone",     [12] = "SystemVersion", [13] = "RefreshNumber",
+    [14] = "Comments",  [17] = "BitsPerPixel", [18] = "DisplayScale",
+};
+static const char* const update_keys[] = {"BlitInOSEvent", "BlitAtTrapEnd", "BlitOften"};
+
+static int default_flag(const char* filename, const char* key, int fallback)
+{
+    char value[8];
+    if (config_prefs_get(filename, "Defaults", key, value, sizeof value) != 1)
+        return fallback;
+    return value[0] == '1' ? 1 : value[0] == '0' ? 0 : fallback;
+}
+
+void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char* filename)
+{
+    ROMlib_extra_preferences_init(prefs);
+    for (unsigned i = 0; i < NELEM(default_field_keys); ++i) {
+        char value[258];
+        if (!default_field_keys[i])
+            continue;
+        size_t length = config_prefs_get(filename, "Defaults", default_field_keys[i], value, sizeof value);
+        if (!length)
+            continue;
+        if (string_field(i) && length >= 2 && value[0] == '"' && value[length - 1] == '"') {
+            value[length - 1] = 0;
+            memmove(value, value + 1, length - 1);
+        }
+        snprintf(prefs->fields[i], sizeof prefs->fields[i], "%.255s", value);
+    }
+    for (unsigned i = 0; i < NELEM(update_keys); ++i)
+        if (default_flag(filename, update_keys[i], 0))
+            snprintf(prefs->fields[16], sizeof prefs->fields[16], "%u", i);
+    for (unsigned i = 0; i < editable_option_count; ++i) {
+        int32 bit = extra_options[i].bit;
+        if (default_flag(filename, extra_options[i].name, (prefs->flags & bit) != 0))
+            prefs->flags |= bit;
+        else
+            prefs->flags &= ~bit;
+    }
+    for (unsigned i = 0; i < NELEM(live_checks); ++i) {
+        uint32_t bit = 1u << i;
+        if (default_flag(filename, live_checks[i].key, (prefs->checks & bit) != 0))
+            prefs->checks |= bit;
+        else
+            prefs->checks &= ~bit;
+    }
+    memcpy(prefs->original, prefs->fields, sizeof prefs->fields);
+}
+
+/* Publish only changed controls so advanced rules and other Defaults survive. */
+int ROMlib_default_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
+                                    const char* filename)
+{
+    const char* keys[NELEM(default_field_keys) + NELEM(update_keys) + editable_option_count + NELEM(live_checks)];
+    const char* values[NELEM(keys)];
+    char serialized[NELEM(default_field_keys)][258];
+    size_t count = 0;
+    for (unsigned i = 0; i < NELEM(default_field_keys); ++i) {
+        const char* text = prefs->fields[i];
+        if (!default_field_keys[i] || !strcmp(text, prefs->original[i]))
+            continue;
+        keys[count] = default_field_keys[i];
+        if (string_field(i)) {
+            char* out = serialized[i];
+            *out++ = '"';
+            for (; *text; ++text)
+                *out++ = *text == '"' ? '\'' : *text;
+            *out++ = '"';
+            *out = 0;
+            values[count++] = serialized[i];
+        }
+        else if (i == 18) {
+            int percent;
+            if (!ROMlib_scale_parse(text, &percent))
+                return 0;
+            snprintf(serialized[i], sizeof serialized[i], "%d", percent);
+            values[count++] = serialized[i];
+        }
+        else
+            values[count++] = *text ? text : NULL;
+    }
+    if (strcmp(prefs->fields[16], prefs->original[16])) {
+        long update;
+        if (!parse_integer(prefs->fields[16], 0, NELEM(update_keys) - 1, &update))
+            return 0;
+        for (unsigned i = 0; i < NELEM(update_keys); ++i) {
+            keys[count] = update_keys[i];
+            values[count++] = i == (unsigned)update ? "1" : "0";
+        }
+    }
+    for (unsigned i = 0; i < editable_option_count; ++i) {
+        int32 bit = extra_options[i].bit;
+        if ((prefs->flags ^ original->flags) & bit) {
+            keys[count] = extra_options[i].name;
+            values[count++] = prefs->flags & bit ? "1" : "0";
+        }
+    }
+    for (unsigned i = 0; i < NELEM(live_checks); ++i) {
+        uint32_t bit = 1u << i;
+        if ((prefs->checks ^ original->checks) & bit) {
+            keys[count] = live_checks[i].key;
+            values[count++] = prefs->checks & bit ? "1" : "0";
+        }
+    }
+    return !count || config_prefs_set_many(filename, "Defaults", keys, values, count);
+}
+
 int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs)
 {
     long numbers[19] = {0};
@@ -392,7 +507,7 @@ void ROMlib_extra_preferences_save(FILE* file)
     if (ROMlib_display_scale != 100)
         fprintf(file, "DisplayScale=%d\n", ROMlib_display_scale);
     for (i = 0; i < NELEM(extra_options); ++i)
-        if (ROMlib_options & extra_options[i].bit)
+        if (extra_options[i].bit == ROMLIB_NOCLOCK_BIT ? ROMlib_noclock : ROMlib_options & extra_options[i].bit)
             fprintf(file, "%s=1\n", extra_options[i].name);
     fprintf(file, "AppleChar=%d\nRightButtonModifier=%d\nPrVers=%lu.%lu\n", ROMlib_AppleChar,
             ROMlib_right_button_modifier, (unsigned long)ROMlib_PrDrvrVers / 10, (unsigned long)ROMlib_PrDrvrVers % 10);

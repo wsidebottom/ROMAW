@@ -18,7 +18,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define ROMAW_PREFS_MENU_NAME "\013ROMAW Prefs"
+#define ROMAW_PREFS_MENU_LABEL "ROMAW Prefs"
+#define ROMAW_PREFS_MENU_NAME "\013" ROMAW_PREFS_MENU_LABEL
 extern void ROMlib_show_preferences(void);
 
 typedef struct {
@@ -31,6 +32,9 @@ extern void ROMlib_extra_preferences_init(ROMlib_extra_preferences* prefs);
 extern int ROMlib_extra_preferences_valid(ROMlib_extra_preferences* prefs, unsigned* bad);
 extern int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs);
 extern void ROMlib_extra_preferences_save(FILE* file);
+extern void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char* filename);
+extern int ROMlib_default_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
+                                           const char* filename);
 extern const char* ROMlib_preferences_field_label(unsigned field);
 extern const char* ROMlib_preferences_check_label(unsigned check);
 

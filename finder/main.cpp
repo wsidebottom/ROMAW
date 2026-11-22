@@ -37,6 +37,9 @@
 #include "finder/views.h"
 #include "finder/desktop_icons.h"
 #include "rsys/configprefs.h"
+extern "C" {
+#include "rsys/prefpanel.h"
+}
 #include "finder_metadata/icons.h"
 #include <algorithm>
 #include <array>
@@ -118,6 +121,7 @@ enum Command {
     special_cleanup_command,
     extract_here_command,
     extract_to_command,
+    romaw_prefs_command,
     label_command = 200,
     sort_command = 300
 };
@@ -2673,8 +2677,8 @@ menu()
     };
     HMENU apple = CreatePopupMenu();
     AppendMenuW(apple, MF_STRING, about_system_command, L"About This PC...");
-    AppendMenuW(apple, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(apple, MF_STRING, about_romaw_command, L"About ROMAW...");
+    AppendMenuW(apple, MF_STRING, romaw_prefs_command, L"" ROMAW_PREFS_MENU_LABEL);
     std::function<void(HMENU, const fs::path&, unsigned)> populate;
     populate = [&](HMENU target, const fs::path& directory, unsigned depth) {
         if (depth > 3 || apple_items.size() >= 128)
@@ -3692,6 +3696,14 @@ void command(FolderWindow& f, unsigned id)
             ROMAW_VERSION_W L"\nROMAW — Run Old Mac Apps on Windows\nNative x64 Finder with classic Macintosh application support.\n\n68K applications, desk accessories and control panels; PowerPC support depends on the runtime.\n\nApplication: " +
                 runtime_path().wstring());
         break;
+    case romaw_prefs_command: {
+        const auto path = file_manager_path((romaw_folder.parent_path() / L"ROMAW.prefs").native());
+        if (!path.empty())
+            ROMlib_win_default_preferences(desktop, path.c_str());
+        else
+            message(desktop, L"Unable to open the ROMAW preferences path.");
+        break;
+    }
     case about_command:
         message(
             f.window,

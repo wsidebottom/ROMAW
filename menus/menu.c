@@ -1094,8 +1094,6 @@ P2(PUBLIC pascal trap, void, AddResMenu, MenuHandle, mh, ResType, restype)
      * ask for desk accessories.
      */
 
-        if ((strncasecmp(ROMlib_appname, ROMAW_NAME, sizeof ROMAW_NAME - 1) != 0))
-            about_box_menu_name_pstr = (StringPtr) "\015About CCRS...";
         if (restype == TICK("DRVR") && about_box_menu_name_pstr[0])
             app(about_box_menu_name_pstr, 0, 0, 0, 0, FALSE, &endinf);
         if (restype == TICK("DRVR") && !(ROMlib_options & ROMLIB_NOPREFS_BIT))

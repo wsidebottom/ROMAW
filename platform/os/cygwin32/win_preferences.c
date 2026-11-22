@@ -165,7 +165,7 @@ static INT_PTR CALLBACK drive_preferences_proc(HWND dialog, UINT message, WPARAM
     return FALSE;
 }
 
-int ROMlib_win_drive_preferences(const char* path)
+static int drive_preferences(HWND owner, const char* path)
 {
     struct {
         DLGTEMPLATE dialog;
@@ -173,14 +173,21 @@ int ROMlib_win_drive_preferences(const char* path)
         WCHAR title[22];
     } layout = {{WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME, 0, 0, 20, 20, 270, 260}, 0, 0, L"Drive Formats"};
 
-    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandle(NULL), &layout.dialog, cygwin_sdlwindow(),
-                                             drive_preferences_proc, (LPARAM)path);
-    sdl_preferences_input_reset();
+    INT_PTR result =
+        DialogBoxIndirectParamW(GetModuleHandle(NULL), &layout.dialog, owner, drive_preferences_proc, (LPARAM)path);
     return result == IDOK;
+}
+
+int ROMlib_win_drive_preferences(const char* path)
+{
+    int result = drive_preferences(cygwin_sdlwindow(), path);
+    sdl_preferences_input_reset();
+    return result;
 }
 
 typedef struct {
     ROMlib_extra_preferences edited;
+    const ROMlib_extra_preferences* defaults;
     const char* filename;
 } native_preferences;
 
@@ -269,12 +276,15 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
                          "Blank or 0 uses startup defaults. Changes apply on the next launch.\r\n\r\n"
                          "Command-line -syszone, -applzone and -memory take precedence.",
                          0, 10, 80, 372, 100, 400) ||
-            !add_control(dialog, "BUTTON", "OK", BS_DEFPUSHBUTTON | WS_VISIBLE, 216, 222, 50, 18, IDOK) ||
-            !add_control(dialog, "BUTTON", "Save", BS_PUSHBUTTON | WS_VISIBLE, 274, 222, 50, 18, 3) ||
+            (!state->defaults &&
+             !add_control(dialog, "BUTTON", "OK", BS_DEFPUSHBUTTON | WS_VISIBLE, 216, 222, 50, 18, IDOK)) ||
+            !add_control(dialog, "BUTTON", "Save", (state->defaults ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON) | WS_VISIBLE,
+                         274, 222, 50, 18, state->defaults ? IDOK : 3) ||
             !add_control(dialog, "BUTTON", "Cancel", BS_PUSHBUTTON | WS_VISIBLE, 332, 222, 50, 18, IDCANCEL))
             goto failed;
-        add_control(dialog, "STATIC", "Save retains settings for this application in ROMAW.prefs.", WS_VISIBLE, 10, 205,
-                    372, 13, 401);
+        const char* description = state->defaults ? "Save sets defaults for Mac apps on their next launch."
+                                                  : "Save retains settings for this application in ROMAW.prefs.";
+        add_control(dialog, "STATIC", description, WS_VISIBLE, 10, 205, 372, 13, 401);
         if (!add_control(dialog, "BUTTON", "Drive sidecars...", BS_PUSHBUTTON, 10, 182, 100, 18, 500) ||
             !add_control(dialog, "STATIC", "FAT apps use PowerPC by default. Save the CPU choice for the next launch.",
                          0, 10, 86, 372, 23, 501))
@@ -299,8 +309,11 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
     }
     case WM_COMMAND:
         if (LOWORD(wparam) == 500) {
-            if (state->filename)
-                ROMlib_win_drive_preferences(state->filename);
+            if (state->filename) {
+                drive_preferences(dialog, state->filename);
+                if (!state->defaults)
+                    sdl_preferences_input_reset();
+            }
             return TRUE;
         }
         if (LOWORD(wparam) == 218 && HIWORD(wparam) == CBN_SELCHANGE &&
@@ -334,6 +347,14 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
                 if (!!SendDlgItemMessage(dialog, 300 + i, BM_GETCHECK, 0, 0) !=
                     ROMlib_preferences_check(&state->edited, i))
                     ROMlib_preferences_toggle(&state->edited, i);
+            if (state->defaults) {
+                if (ROMlib_default_preferences_save(&state->edited, state->defaults, state->filename))
+                    EndDialog(dialog, IDOK);
+                else
+                    MessageBoxA(dialog, "Unable to write ROMAW.prefs. Check the folder and file permissions.",
+                                "ROMAW Preferences", MB_OK | MB_ICONERROR);
+                return TRUE;
+            }
             if (!ROMlib_extra_preferences_apply(&state->edited)) {
                 MessageBoxA(dialog, "Unable to apply settings (out of memory).", "ROMAW Preferences",
                             MB_OK | MB_ICONERROR);
@@ -355,8 +376,7 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
     return FALSE;
 }
 
-/* A negative result selects the portable SDL fallback. */
-int ROMlib_win_preferences(ROMlib_extra_preferences* prefs, const char* filename)
+static INT_PTR show_preferences(HWND owner, native_preferences* state)
 {
     struct {
         DLGTEMPLATE dialog;
@@ -371,9 +391,22 @@ int ROMlib_win_preferences(ROMlib_extra_preferences* prefs, const char* filename
                 9,
                 L"Segoe UI"};
 
-    native_preferences state = {*prefs, filename};
-    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandle(NULL), &layout.dialog, cygwin_sdlwindow(),
-                                             preferences_proc, (LPARAM)&state);
+    return DialogBoxIndirectParamW(GetModuleHandle(NULL), &layout.dialog, owner, preferences_proc, (LPARAM)state);
+}
+
+int ROMlib_win_default_preferences(void* owner, const char* filename)
+{
+    ROMlib_extra_preferences defaults;
+    ROMlib_default_preferences_init(&defaults, filename);
+    native_preferences state = {defaults, &defaults, filename};
+    return show_preferences(owner, &state) == IDOK;
+}
+
+/* A negative result selects the portable SDL fallback. */
+int ROMlib_win_preferences(ROMlib_extra_preferences* prefs, const char* filename)
+{
+    native_preferences state = {*prefs, NULL, filename};
+    INT_PTR result = show_preferences(cygwin_sdlwindow(), &state);
     if (result == IDOK)
         *prefs = state.edited;
     sdl_preferences_input_reset();
