@@ -250,7 +250,8 @@ EOF
         grep -q -- '-c.*resources/system_resources.c' "$fixture/pattern-rebuild.log"
       done
       # Every maintained System Rez file must invalidate both the fork and its consumer.
-      for source in catalog.r interface.r payloads.r artwork.r resource_types.r; do
+      for source in catalog.r interface.r payloads.r artwork.r resource_types.r \
+        keyboards/us-canada-english.rinc keyboards/finnish-swedish.rinc keyboards/french-flemish.rinc; do
         if make -C "$obj" -q -W "$workspace/system/resources/system/$source" generated/system_resources.inc; then
           echo "Changing $source did not invalidate the embedded System." >&2
           exit 1

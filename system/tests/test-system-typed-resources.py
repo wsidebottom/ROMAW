@@ -63,6 +63,31 @@ class TypedSystemResourcesTests(unittest.TestCase):
         for path in SOURCE.glob("*.r"):
             self.assertNotRegex(path.read_text(encoding="utf-8"), r'\$"', path.name)
 
+    def test_shared_keyboard_edit_updates_only_its_two_independent_resources(self):
+        original = {e["id"]: e for e in catalog.read_rez(SOURCE / "payloads.r") if e["type"] == "KCHR"}
+        for name, pair in (
+            ("us-canada-english", {0, 150}),
+            ("finnish-swedish", {133, 146}),
+            ("french-flemish", {136, 137}),
+        ):
+            with self.subTest(layout=name), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                shutil.copytree(SOURCE, directory, dirs_exist_ok=True)
+                fragment = directory / "keyboards" / (name + ".rinc")
+                source = fragment.read_text(encoding="utf-8")
+                self.assertEqual(source.count("0, /* format version */"), 1)
+                fragment.write_text(
+                    source.replace("0, /* format version */", "1, /* format version */"), encoding="utf-8"
+                )
+                changed = {e["id"]: e for e in catalog.read_rez(directory / "payloads.r") if e["type"] == "KCHR"}
+                self.assertEqual(changed.keys(), original.keys())
+                self.assertEqual({i for i in original if original[i]["payload"] != changed[i]["payload"]}, pair)
+                for identifier, entry in changed.items():
+                    self.assertEqual(entry["attributes"], original[identifier]["attributes"])
+                    self.assertEqual(entry["name_hex"], original[identifier]["name_hex"])
+                    if identifier in pair:
+                        self.assertEqual(entry["payload"], b"\0\1" + original[identifier]["payload"][2:])
+
     def test_monochrome_png_is_the_editable_pattern_input(self):
         original = next(p for k, i, a, n, p in builder.read_resources(SOURCE) if (k, i) == (b"PAT ", 16))
         with tempfile.TemporaryDirectory() as temporary:

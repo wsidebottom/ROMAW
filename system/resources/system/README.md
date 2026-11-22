@@ -154,6 +154,15 @@ compatibility. There are no CODE, INIT, DRVR or PACK resources in this System;
 `movp` is preserved as opaque data; ROMAW has no executable entry point for
 that resource type.
 
+Keyboard pairs 0/150 (US/Canada English), 133/146 (Suomi/Svensk) and 136/137
+(Vlaams comma/France) include shared typed field fragments in `keyboards/*.rinc`.
+Edit each shared layout once; its two resource declarations keep their original
+IDs, names and attributes. The native reader expands quoted field includes
+relative to the including file, within the resource scope, and rejects cycles.
+These are ordinary Rez preprocessor includes, not runtime resource aliases.
+Each ID still has its own stored resource record and Resource Manager handle.
+The build and source distribution include the fragments as dependencies.
+
 Resource content retains its original provenance/copyright; extraction and
 format conversion do not relicense historical fonts or artwork. The existing
 ARDI System under `lib/ROMAWVolume/` remains a historical input. The installed

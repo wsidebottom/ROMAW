@@ -72,9 +72,12 @@ class ResourceCatalogTests(unittest.TestCase):
             shutil.copytree(ROOT / "bitmaps/syserr", directory / "syserr")
             shutil.copyfile(ROOT / "bitmaps/stop.icns", directory / "stop.icns")
             shutil.copyfile(ROOT / "bitmaps/bomb.icns", directory / "bomb.icns")
-            icon = bytearray((directory / "bomb.icns").read_bytes())
-            icon[16] ^= 0x80
-            (directory / "bomb.icns").write_bytes(icon)
+            from mac_icons import best_frame, decode, encode
+
+            frames = decode((directory / "bomb.icns").read_bytes())
+            icon = best_frame(frames, 32, 1)
+            icon["image"] = bytes((icon["image"][0] ^ 128,)) + icon["image"][1:]
+            (directory / "bomb.icns").write_bytes(encode(frames))
             with mock.patch.object(catalog, "ICONS", directory):
                 changed = catalog.read_rez(source)[0]["payload"]
             differences = [index for index, pair in enumerate(zip(original, changed)) if pair[0] != pair[1]]
@@ -208,6 +211,36 @@ class ResourceCatalogTests(unittest.TestCase):
         (directory / "other.r").write_text("data 'TEST' (1) { $\"AB\" };")
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             catalog.read_rez(directory / "catalog.r")
+
+    def test_typed_field_includes_preserve_headers_and_expand_relative_to_fragment(self):
+        directory = self.fixture(
+            'resource \'STR \' (1, "First", purgeable) {\n#include "fields/outer.rinc"\n};\n'
+            'resource \'STR \' (2, "Second", locked) {\n#include "fields/outer.rinc"\n};\n'
+        )
+        (directory / "fields").mkdir()
+        (directory / "fields/outer.rinc").write_text('/* Shared fields. */\n#include "inner.rinc"\n')
+        (directory / "fields/inner.rinc").write_text('"#include \\"not-a-file\\""\n')
+        entries = catalog.read_rez(directory / "catalog.r")
+        self.assertEqual([e["id"] for e in entries], [1, 2])
+        self.assertEqual([e["attributes"] for e in entries], [32, 16])
+        self.assertEqual([e["name_hex"] for e in entries], [b"First".hex(), b"Second".hex()])
+        self.assertEqual(entries[0]["payload"], b'\x15#include "not-a-file"')
+        self.assertEqual(entries[0]["payload"], entries[1]["payload"])
+
+    def test_typed_field_includes_reject_cycles_escape_missing_and_invalid_fields(self):
+        directory = self.fixture("resource 'STR ' (1) {\n#include \"fields.rinc\"\n};\n")
+        fragment = directory / "fields.rinc"
+        with self.assertRaises(FileNotFoundError):
+            catalog.read_rez(directory / "catalog.r")
+        for fields, message in (
+            ('#include "fields.rinc"\n', "Cyclic"),
+            ('#include "catalog.r"\n', "Cyclic"),
+            ('#include "../outside.rinc"\n', "escapes"),
+            ('"valid" garbage\n', "trailing"),
+        ):
+            fragment.write_text(fields)
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, message):
+                catalog.read_rez(directory / "catalog.r")
 
     def test_macroman_asset_paths(self):
         directory = self.fixture("data 'ICON' (1) { $$read(\"ÃƒÆ’Ã¢â‚¬Â°toile.icns\") };")

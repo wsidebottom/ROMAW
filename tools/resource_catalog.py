@@ -1,7 +1,7 @@
 # +===================================================================
 #   File:      resource_catalog.py
 #
-#   Summary:   Read authoritative Rez declarations and resolve shared artwork.
+#   Summary:   Read authoritative Rez declarations, shared typed fields and artwork.
 #
 #   Classes:   None declared.
 #
@@ -14,7 +14,8 @@
 
 """Read Rez metadata and literal data without a host Rez compiler.
 
-Classic dialog and text layouts are encoded directly; private Finder layouts
+Quoted includes inside typed bodies share fields while keeping resource records
+independent. Classic dialog and text layouts are encoded directly; private Finder layouts
 remain available to the native frontend and a full Rez compiler. External artwork in
 $$read expressions is converted by the System builder to the requested type.
 """
@@ -95,8 +96,29 @@ def _metadata(kind, header):
     )
 
 
+def _include_fields(source, path, root, active):
+    """Expand quoted field-fragment includes without sharing resource storage."""
+    tokens = re.compile(QUOTED + r"|'(?:\\.|[^'\\])*'|^[ \t]*#include[ \t]+(" + QUOTED + r")[ \t]*(?:\n|$)", re.M)
+
+    def expand(match):
+        if match[1] is None:
+            return match[0]
+        fragment = (path.parent / rez_string(match[1]).decode("mac_roman")).resolve()
+        if not fragment.is_relative_to(root):
+            raise ValueError("Rez include escapes its resource scope")
+        if fragment in active:
+            raise ValueError("Cyclic Rez include")
+        fields = COMMENTS.sub(
+            lambda token: " " if token[0].startswith(("/*", "//")) else token[0],
+            fragment.read_text(encoding="utf-8"),
+        )
+        return "\n" + _include_fields(fields, fragment, root, active | {fragment}) + "\n"
+
+    return tokens.sub(expand, source)
+
+
 def read_rez(path, root=None, _active=None):
-    """Read local includes, declaration headers, literal data and $$read inputs."""
+    """Read local declaration/field includes, typed and literal data, and artwork."""
     path = Path(path).resolve()
     root = path.parent if root is None else Path(root).resolve()
     if not path.is_relative_to(root):
@@ -189,6 +211,7 @@ def read_rez(path, root=None, _active=None):
             else:
                 raise ValueError(f"Unsupported Rez data expression in {path}")
         else:
+            body = _include_fields(body, path, root, active)
             native_localization = (
                 entry["type"] == "INTL" and entry["id"] == 1 and bool(re.search(r"\bNativeLocalization\b", body))
             )

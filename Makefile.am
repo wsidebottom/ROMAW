@@ -88,7 +88,7 @@ quickdraw/qColorPicker.$(OBJEXT): generated/color_picker_normal.inc generated/co
 ui/color_wheel_bits.$(OBJEXT): generated/color_wheel_4.inc generated/color_wheel_8.inc
 events/toolevent.$(OBJEXT): generated/alarm.inc
 
-system_resource_inputs = $(wildcard $(system_resources_dir)/*.r) $(shared_icon_inputs) $(shared_icon_tool_inputs) $(shared_tools_dir)/pictures.py $(shared_tools_dir)/finder_guest_resources.py $(shared_tools_dir)/native_code_resources.py
+system_resource_inputs = $(wildcard $(system_resources_dir)/*.r $(system_resources_dir)/keyboards/*.rinc) $(shared_icon_inputs) $(shared_icon_tool_inputs) $(shared_tools_dir)/pictures.py $(shared_tools_dir)/finder_guest_resources.py $(shared_tools_dir)/native_code_resources.py
 resources/system_resources.$(OBJEXT): generated/system_resources.inc
 resources/resGet.$(OBJEXT): generated/system_code.inc
 
