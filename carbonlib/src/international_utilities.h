@@ -161,6 +161,49 @@ static int carbon_text_converter(const ROMlib_carbon_reference* ref, uint32_t sl
     return created && restored && (*status || cfp_get(slot, converter));
 }
 
+static int carbon_text_in_system_encoding(ROMlib_carbon_ppc_frame* call, uint32_t mapping_error)
+{
+    enum { roman = 0, tec_no_output = -8750, tec_output_full = -8785 };
+
+    const uint32_t output = call->words[1], capacity = call->words[2];
+    const uint32_t bytes_written = call->words[3], result_encoding = call->words[4];
+    const uint32_t encoding = ROMlib_cfstring_system_encoding();
+    if (mapping_error && encoding != roman) {
+        call->words[0] = mapping_error;
+        return 1;
+    }
+    void* object = ROMlib_carbon_guest_memory(call->words[0], 1, 0);
+    if (!object)
+        return 0;
+    const LONGINT length = ROMlib_carbon_cf_string_length(object);
+    if (capacity > INT32_MAX || length < 0 || (mapping_error && !output)) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+
+    /* The installed Unicode TOC can lack a default-variant Roman map.
+       Check the entire string without substitution before writing any bytes. */
+    _Alignas(4) uint32_t used = 0;
+    const uint32_t loss_byte = mapping_error ? 0 : '?';
+    if (mapping_error &&
+        ROMlib_carbon_cf_string_bytes(object, 0, length, encoding, loss_byte, 0, NULL, 0, &used) != length) {
+        call->words[0] = mapping_error;
+        return 1;
+    }
+    void* buffer = output && capacity ? ROMlib_carbon_guest_memory(output, capacity, 1) : NULL;
+    if (output && capacity && !buffer)
+        return 0;
+    used = 0;
+    const LONGINT count = output && !capacity ? 0
+                                              : ROMlib_carbon_cf_string_bytes(object, 0, length, encoding, loss_byte, 0,
+                                                                              buffer, capacity, &used);
+    call->words[0] = noErr;
+    if (count != length)
+        call->words[0] = mapping_error && !count ? tec_no_output : tec_output_full;
+    return (!bytes_written || cfp_write(bytes_written, CL(used))) &&
+           (count != length || !result_encoding || cfp_write(result_encoding, encoding));
+}
+
 static int carbon_GetTextAndEncodingFromCFString(ROMlib_carbon_ppc_frame* call)
 {
     ROMlib_carbon_reference ref;
@@ -187,29 +230,14 @@ static int carbon_GetTextAndEncodingFromCFString(ROMlib_carbon_ppc_frame* call)
     uint32_t converter, status, length, characters;
     if (!slot || !carbon_text_converter(&ref, slot, &converter, &status))
         return 0;
+    if (status == (uint32_t)-8738) /* kTextUnsupportedEncodingErr */
+        return carbon_text_in_system_encoding(call, status);
     if (status) {
         call->words[0] = status;
         return 1;
     }
-    if (!converter) {
-        void* object = ROMlib_carbon_guest_memory(string, 1, 0);
-        void* buffer = output && capacity ? ROMlib_carbon_guest_memory(output, capacity, 1) : NULL;
-        if (!object || (output && capacity && !buffer))
-            return 0;
-        const LONGINT length = ROMlib_carbon_cf_string_length(object);
-        const uint32_t encoding = ROMlib_cfstring_system_encoding();
-        _Alignas(4) uint32_t used = 0;
-        if (capacity > INT32_MAX || length < 0) {
-            call->words[0] = (uint32_t)paramErr;
-            return 1;
-        }
-        const LONGINT count = output && !capacity ? 0
-                                                  : ROMlib_carbon_cf_string_bytes(object, 0, length, encoding, '?', 0,
-                                                                                  buffer, capacity, &used);
-        call->words[0] = count == length ? noErr : (uint32_t)-8785; /* kTECOutputBufferFullStatus */
-        return (!bytes_written || cfp_write(bytes_written, CL(used))) &&
-               (count != length || !result_encoding || cfp_write(result_encoding, encoding));
-    }
+    if (!converter)
+        return carbon_text_in_system_encoding(call, 0);
     if (!cfp_private(&ref, 0xb6288, &string, 1, &length) || !cfp_private(&ref, 0xb6ac8, &string, 1, &characters))
         return 0;
     if (length > INT32_MAX / 2) {

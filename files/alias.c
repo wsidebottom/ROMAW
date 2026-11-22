@@ -46,11 +46,12 @@
    resource that will have in it: type, four bytes of 0, pascal string,
    potential padding to even things up, type, four bytes of 0, ... */
 
-PRIVATE const char* find_sub_dir(OSType folderType)
+PRIVATE const char* find_sub_dir(OSType folderType, const char** parent)
 {
     typedef struct {
         OSType type;
         const char* name;
+        const char* parent;
     } sys_sub_dir_match_t;
 
     static sys_sub_dir_match_t matches[] = {
@@ -90,14 +91,20 @@ PRIVATE const char* find_sub_dir(OSType folderType)
             TICK("prof"),
             "ColorSync Profiles",
         },
+        {kAppearanceFolderType, "Appearance", NULL},
+        {kThemesFolderType, "Theme Files", "Appearance"},
+        {kSoundSetsFolderType, "Sound Sets", "Appearance"},
+        {kDesktopPicturesFolderType, "Desktop Pictures", "Appearance"},
     };
     int i;
     const char* retval;
 
     for (i = 0; i < (int)NELEM(matches) && matches[i].type != folderType; ++i)
         ;
-    if (i < (int)NELEM(matches))
+    if (i < (int)NELEM(matches)) {
         retval = matches[i].name;
+        *parent = matches[i].parent;
+    }
     else
         retval = 0;
     return retval;
@@ -384,14 +391,21 @@ P5(PUBLIC pascal trap, OSErr, FindFolder, int16, vRefNum, OSType, folderType, Bo
    foundVRefNum, int32*, foundDirID)
 {
     OSErr retval;
-    const char* sub_dir;
+    const char* parent = NULL;
 
-    sub_dir = find_sub_dir(folderType);
+    const char* sub_dir = find_sub_dir(folderType, &parent);
     if (sub_dir) {
         INTEGER sys_vref;
         LONGINT sys_dirid, new_id;
 
         retval = get_sys_vref_and_dirid(&sys_vref, &sys_dirid);
+        if (!retval && parent) {
+            retval = test_directory(sys_vref, sys_dirid, parent, &new_id);
+            if (retval == fnfErr && createFolder)
+                retval = create_directory(sys_vref, sys_dirid, parent, &new_id);
+            if (!retval)
+                sys_dirid = new_id;
+        }
         if (retval == noErr) {
             retval = test_directory(sys_vref, sys_dirid, sub_dir, &new_id);
             if (retval == fnfErr && createFolder)

@@ -187,6 +187,66 @@ MENU_STRUCTURE_APIS = (
     "CallMenuDef",
     "GetMenuType",
 )
+APPEARANCE_STATE_APIS = (
+    "RegisterAppearanceClient",
+    "UnregisterAppearanceClient",
+    "IsAppearanceClient",
+    "GetThemeCheckBoxStyle",
+    "SetThemeCheckBoxStyle",
+    "GetThemeScrollBarThumbStyle",
+    "SetThemeScrollBarThumbStyle",
+    "GetThemeScrollBarArrowStyle",
+    "SetThemeScrollBarArrowStyle",
+    "GetThemeSoundMask",
+    "AreThemeSoundsEnabled",
+    "GetThemeSoundPanningSpread",
+    "SetThemeSoundPanningSpread",
+    "SetThemeSoundMask",
+    "SetThemeSoundsEnabled",
+    "GetThemePlaylist",
+    "SetThemePlaylist",
+    "IsValidAppearanceFileType",
+    "CountThemeVariants",
+    "GetIndThemeVariant",
+    "GetThemeVariantByName",
+    "GetThemeVariantList",
+    "IterateThemeVariants",
+    "SetBevelButtonMenuValue",
+    "GetBevelButtonMenuHandle",
+    "GetTabContentRect",
+    "SetDisclosureTriangleLastValue",
+    "SetTabEnabled",
+)
+
+BUILTIN_CONTROL_CASES = (
+    ("CreateChasingArrowsControl", ()),
+    ("CreateSeparatorControl", ()),
+    ("CreateGroupBoxControl", (0, 1)),
+    ("CreatePopupArrowControl", (1, 1)),
+    ("CreatePlacardControl", ()),
+    ("CreateClockControl", (0, 0)),
+    ("CreateUserPaneControl", (0,)),
+    ("CreateWindowHeaderControl", (1,)),
+    ("CreatePushButtonControl", (0,)),
+    ("CreateRadioButtonControl", (0, 1, 1)),
+    ("CreateCheckBoxControl", (0, 1, 1)),
+    ("CreateRadioGroupControl", ()),
+    ("CreateProgressBarControl", (65000, -100000, 100000, 0)),
+    ("CreateLittleArrowsControl", (65000, -100000, 100000, 1)),
+    ("CreateSliderControl", (65000, -100000, 100000, 1, 0, 0, 0)),
+    ("CreateScrollBarControl", (65000, -100000, 100000, 9000, 1, -1)),
+    ("CreateImageWellControl", (0,)),
+    ("CreateDisclosureTriangleControl", (1, 0, 1, 0, 1)),
+    ("CreateCheckGroupBoxControl", (0, 1, 1, 0)),
+    ("CreateBevelButtonControl", (0, 0, 0, 0, 0, 0, 0)),
+    ("CreatePopupGroupBoxControl", (0, 1, 0, 1, 0, 0, 0)),
+    ("CreatePopupButtonControl", (0, 0, 1, 0, 0, 0)),
+    ("CreatePictureControl", (0, 0)),
+    ("CreateIconControl", (0, 0)),
+    ("CreateEditTextControl", (0, 0, 0, 0)),
+    ("CreateStaticTextControl", (0, 0)),
+    ("CreateScrollingTextBoxControl", (0, 0, 0, 0, 0)),
+)
 TEXTENSION_SUPPORT = (
     "GetWindowPort",
     "GetWindowPortBounds",
@@ -537,6 +597,32 @@ def selector_descriptors(probe, rows):
             p.expect(2, name + " exact routine record precedes the default selection")
             p.emit(0x807E1910)
             p.expect(0x12345678, name + " strips the dispatch selector from callback arguments")
+
+    # MacDialogsLib dispatches by byte even when a caller supplies a word.
+    # WindowsLib's LayerDispatch uses a word for the signed GetParent selector.
+    for width, selector_info, record_selector, passed in (("byte", 0x48, -2, 0x02FE), ("word", 0x88, -7, 0xFFF9)):
+        _, base = probe.raw(bytes(52))
+        struct.pack_into(">HBBIBBH", p.data, base, 0xAAFE, 7, 0, 0, 0, selector_info, 1)
+        for index, (selector, flags, target) in enumerate(((0x42, 0x1D, 0x1800), (record_selector, 0x0D, 0x1808))):
+            struct.pack_into(
+                ">IBBHIII",
+                p.data,
+                base + 12 + index * 20,
+                0xF0,
+                0,
+                1,
+                flags,
+                (target - base) & 0xFFFFFFFF,
+                0,
+                selector & 0xFFFFFFFF,
+            )
+        for selector, expected in ((passed, 2), (0x1234, 1)):
+            p.emit(0x38000000, 0x901E1900, 0x901E1910)
+            probe.call("CallUniversalProc", [probe.ptr(base), 0x3B8, selector, 0x12345678])
+            p.emit(0x807E1900)
+            p.expect(expected, f"D0 {width} dispatcher selects a sign-extended record or its default")
+            p.emit(0x807E1910)
+            p.expect(0x12345678, f"D0 {width} dispatcher omits the supplied word selector")
 
 
 def upp_cases():
@@ -1432,7 +1518,7 @@ def file_cases():
         for name, trap, selector in re.findall(r"^CARBON_FILE_PB\((\w+), (0x\w+), (-1|0x\w+), \w+\)$", source, re.M)
     ]
     native_names = set(re.findall(r"^CARBON_FILE_\w+\((\w+),", source, re.M)) | {"FSMakeFSSpec"}
-    if len(parameter_blocks) != 95 or len(native_names) != 126:
+    if len(parameter_blocks) != 97 or len(native_names) != 128:
         raise ValueError("Incomplete Carbon File Manager table")
     return parameter_blocks, native_names
 
@@ -3247,12 +3333,17 @@ def theme_font_operations(probe):
     p = probe.p
     base = 0x2000
     ptr = lambda offset: probe.ptr(base + offset)
-    saved = probe.far_raw(bytes(32))
+    saved = probe.far_raw(bytes(52))
     name = probe.far_raw(bytes(256))
-    probe.call("BlockMoveData", [ptr(0), saved, 32])
-    for selector, font in ((78, 0x40009), (80, 0x3000C), (82, 0x30009), (84, 0x0000C), (86, 0x3000C), (88, 0x30009)):
+    probe.call("BlockMoveData", [ptr(0), saved, 52])
+    for selector, font in ((78, 0x40009), (80, 0x3000C), (82, 0x30009), (86, 0x3000C), (88, 0x30009)):
         probe.call("GetScriptVariable", [0, selector])
         p.expect(font, "Roman Script Manager packed font/size selector " + str(selector))
+    probe.call("GetScriptVariable", [0, 12])
+    p.emit(0x5463801E, 0x6063000C, 0x907E0000 | (base + 28))
+    probe.call("GetScriptVariable", [0, 84])
+    p.emit(0x809E0000 | (base + 28))
+    p.equal("the Roman system-font pair uses the live script family")
 
     system_name = probe.far_raw(bytes(256))
     probe.call("GetSystemFont", [0, system_name])
@@ -3267,13 +3358,41 @@ def theme_font_operations(probe):
     probe.call("GetSystemFont", [0, 0])
     p.expect(-50, "GetSystemFont requires a name output")
 
-    for role, size, face in ((0, 12, 0), (1, 9, 0), (2, 9, 1), (3, 12, 0), (5, 12, 0), (103, 12, 0), (106, 9, 0)):
+    for role in (0, 1, 2, 3, 103, 106):
+        legacy_role = {103: 0, 106: 1}.get(role, role)
+        probe.call("GetThemeFont", [legacy_role, -1, name, ptr(32), ptr(34)], side=1)
+        p.expect(0, "resolve the saved Appearance font role " + str(legacy_role))
         probe.call("GetThemeFont", [role, -1, name, ptr(8), ptr(10)])
         p.expect(0, "resolve Appearance theme font role " + str(role))
-        p.emit(0xA07E0000 | (base + 8))
-        p.expect(size, "resolved theme font size")
-        p.emit(0x887E0000 | (base + 10))
-        p.expect(face, "resolved theme font face")
+        p.emit(0xA07E0000 | (base + 8), 0xA09E0000 | (base + 32))
+        p.equal("resolved theme font size matches the saved role")
+        p.emit(0x887E0000 | (base + 10), 0x889E0000 | (base + 34))
+        p.equal("resolved theme font face matches the saved role")
+    probe.call("GetThemeFont", [5, 0, name, ptr(8), ptr(10)])
+    p.expect(0, "resolve the Roman application font")
+    p.emit(0xA07E0000 | (base + 8))
+    p.expect(12, "the Roman application font uses the Script Manager size")
+    p.emit(0x887E0000 | (base + 10))
+    p.expect(0, "the Roman application font uses plain face")
+    for getter, role in (("GetSmallSystemFont", 1), ("GetViewsFont", 3)):
+        expected = probe.far_raw(bytes(256))
+        actual = probe.far_raw(bytes(256))
+        probe.call("GetThemeFont", [role, 0, expected, ptr(8), 0])
+        p.expect(0, "resolve the Roman font role for " + getter)
+        arguments = [0, actual]
+        if role == 3:
+            arguments.append(ptr(14))
+        probe.call(getter, arguments)
+        p.expect(0, "read the Roman font through " + getter)
+        probe.arguments([expected, actual], 0)
+        p.emit(0x80630000, 0x80840000)
+        p.equal(getter + " uses the matching theme font")
+        if role == 3:
+            p.emit(0xA07E0000 | (base + 8), 0xA09E0000 | (base + 14))
+            p.equal("GetViewsFont returns the matching size")
+        arguments[1] = 0
+        probe.call(getter, arguments)
+        p.expect(-50, getter + " requires a name output")
     probe.call("GetThemeFont", [103, 0, name, 0, 0])
     p.expect(0, "resolve the command-key font with optional scalar outputs omitted")
     probe.arguments([name], 0)
@@ -3281,24 +3400,47 @@ def theme_font_operations(probe):
     p.expect(0x092E4B65, "command-key font is .Keyboard")
     probe.call("GetThemeFont", [99, 0, 0, 0, 0])
     p.expect(-50, "reject undefined theme font roles")
+    probe.call("GetThemeFontSmoothing", [0, 0])
+    p.expect(-50, "the smoothing query requires an output")
+    probe.call("GetThemeFontSmoothing", [ptr(32), ptr(34)])
+    p.expect(0, "read the live font smoothing preference")
+    p.emit(0xA07E0000 | (base + 34), 0xB07E0000 | (base + 36))
+    probe.call("SetThemeFontSmoothing", [1, 11, 0])
+    p.expect(-50, "reject font smoothing below twelve points")
+    probe.call("SetThemeFontSmoothing", [1, 25, 0])
+    p.expect(-50, "reject font smoothing above twenty-four points")
+    probe.call("GetThemeFontSmoothing", [ptr(32), ptr(34)])
+    p.expect(0, "read font smoothing after rejecting the changes")
+    p.emit(0xA07E0000 | (base + 34), 0xA09E0000 | (base + 36))
+    p.equal("invalid smoothing setters leave the threshold intact")
     probe.call("GetPort", [ptr(12)])
     port = probe.slot(base + 12)
     for field, offset in (("Font", 16), ("Size", 20), ("Face", 24)):
         probe.call("GetPortText" + field, [port])
         p.emit(0x907E0000 | (base + offset))
+    probe.call("GetThemeFont", [2, 0, name, ptr(32), ptr(34)])
+    p.expect(0, "resolve the emphasized font before applying it")
     probe.call("UseThemeFont", [2, 0])
     p.expect(0, "apply a theme font to the current QuickDraw port")
     probe.call("GetPortTextSize", [port])
-    p.expect(9, "UseThemeFont applies the resolved size")
+    p.emit(0xA09E0000 | (base + 32))
+    p.equal("UseThemeFont applies the resolved size")
     probe.call("GetPortTextFace", [port])
-    p.expect(1, "UseThemeFont applies the emphasized face")
+    p.emit(0x889E0000 | (base + 34))
+    p.equal("UseThemeFont applies the emphasized face")
     probe.call("GetThemeFont", [200, 0, 0, ptr(8), ptr(10)])
     p.expect(0, "resolve the current port's font")
-    p.emit(0xA07E0000 | (base + 8))
-    p.expect(9, "the current-port role reads the live size")
+    p.emit(0xA07E0000 | (base + 8), 0xA09E0000 | (base + 32))
+    p.equal("the current-port role reads the live size")
+    # Fill the Classic font cache and force it to evict entries while measuring.
+    for size in range(8, 26):
+        probe.call("TextSize", [size])
+        probe.call("FontMetrics", [ptr(32)])
+        probe.call("GetHandleSize", [probe.slot(base + 48)])
+        p._check(0x2C030400, 0x40800000, "font metrics retain a live width table at size " + str(size))
     for field, offset in (("Font", 16), ("Size", 20), ("Face", 24)):
         probe.call("Text" + field, [probe.slot(base + offset)])
-    probe.call("BlockMoveData", [saved, ptr(0), 32])
+    probe.call("BlockMoveData", [saved, ptr(0), 52])
 
 
 def theme_cursor_operations(probe):
@@ -5366,6 +5508,7 @@ def classic_clock_and_location(probe):
 
     utc_call("GetLocalDateTime", [saved_clock, 0])
     utc_call("SetUTCDateTime", [date, 0])
+    probe.call("TickCount")
     utc_call("GetLocalDateTime", [converted, 0])
     clock_word(8, 0x00011232)
     p.emit(0x8060020C)
@@ -5949,6 +6092,37 @@ def geometry_operations(probe):
         probe.call(name, arguments)
         p.expect(expected, name + " returns the expected geometry result")
 
+    call_result("DMGetGDeviceByDisplayID", [0, first, 0], -6229)
+    expect_word(0, 0, "unknown display ID clears the output handle")
+    call_result("DMGetGDeviceByDisplayID", [0, first, 1], 0)
+    p.emit(0x807E0000 | base)
+    p.nonzero("display lookup can substitute the main device")
+    call_result("DMGetDisplayIDByGDevice", [slot(base), second, 0], 0)
+    expect_word(8, 0x100, "the main QuickDraw device has the first display ID")
+    call_result("DMGetGDeviceByDisplayID", [slot(base + 8), output, 0], 0)
+    p.emit(0x807E0000 | (base + 16), 0x809E0000 | base)
+    p.equal("display ID round trip preserves the same live device handle")
+
+    _, notification = probe.raw(bytes(12))
+    p.routines.append((notification, [0x90830000, 0x90A30004, 0x4E800020]))
+    _, state = probe.raw(bytes(20))
+    result, upp = ptr(state), slot(state + 8)
+    current_process = probe.raw(struct.pack(">II", 0, 2))
+    probe.call("NewDMExtendedNotificationUPP", [ptr(notification)])
+    p.nonzero("create a Display Manager notification UPP")
+    p.emit(0x907E0000 | (state + 8))
+    call_result("DMRegisterExtendedNotifyProc", [upp, result, 0, current_process], 0)
+    p.emit(0x807E0000 | state)
+    p.expect(1, "extended display callback receives its installation message")
+    p.emit(0x807E0000 | (state + 4))
+    p.expect(0, "the installation message carries no event payload")
+    call_result("GetCurrentProcess", [ptr(state + 12)], 0)
+    call_result("DMRemoveExtendedNotifyProc", [upp, result, ptr(state + 12), 0], 0)
+    p.emit(0x807E0000 | state)
+    p.expect(3, "extended display callback receives its removal message with a normalized process ID")
+    call_result("DMRemoveExtendedNotifyProc", [upp, result, current_process, 0], -50)
+    probe.call("DisposeDMExtendedNotificationUPP", [upp])
+
     probe.call("SetPt", [first, 0xFFFE, 7])
     expect_word(0, 0x0007FFFE, "SetPt writes v followed by h")
     probe.call("AddPt", [0x0004FFFC, first])
@@ -6083,6 +6257,25 @@ def application_operations(probe):
         probe.call(name, arguments)
         p.expect(expected, name + " returns the expected manager result")
 
+    _, notification = probe.raw(bytes(16))
+    p.routines.append((notification, [0x90650000, 0x90850004, 0x38600000, 0x4E800020]))
+    _, notification_state = probe.raw(bytes(12))
+    state, upp_slot = ptr(notification_state), slot(notification_state + 8)
+    probe.call("NewFolderManagerNotificationUPP", [ptr(notification)])
+    p.nonzero("create a Folder Manager notification UPP")
+    p.emit(0x907E0000 | (notification_state + 8))
+    call("FolderManagerRegisterNotificationProc", [upp_slot, state, 0], 0)
+    call("FolderManagerRegisterCallNotificationProcs", [0x54455354, 0x1234, 0], 0)
+    p.emit(0x807E0000 | notification_state)
+    p.expect(0x54455354, "Folder Manager passes the notification message to the callback")
+    p.emit(0x807E0000 | (notification_state + 4))
+    p.expect(0x1234, "Folder Manager passes the payload and the registered refCon")
+    call("FolderManagerUnregisterNotificationProc", [upp_slot, state], 0)
+    call("FolderManagerRegisterCallNotificationProcs", [0x54455354, 0x5678, 0], 0)
+    p.emit(0x807E0000 | (notification_state + 4))
+    p.expect(0x1234, "unregistered callbacks receive no later notifications")
+    probe.call("DisposeFolderManagerNotificationUPP", [upp_slot])
+
     call("GetSharedLibrary", [probe.raw(b"\x09CarbonLib"), 0x70777063, 3, word, 0, 0], 0)
     call("CloseConnection", [word], 0)
     call("GetSharedLibrary", [probe.raw(b"\x0cInterfaceLib"), 0x70777063, 1, word, 0, 0], 0)
@@ -6106,21 +6299,76 @@ def application_operations(probe):
     expect_word(128, 31, "SetGestaltValue inserts a missing selector")
     call("DeleteGestaltValue", [selector], 0)
     call("Gestalt", [selector, output], -5551)
+
+    _, handlers = probe.raw(bytes(32))
+    p.routines.append((handlers, [0x38001020, 0x90040000, 0x38600000, 0x4E800020]))
+    p.routines.append((handlers + 16, [0x38003040, 0x90040000, 0x38600000, 0x4E800020]))
+    _, gestures = probe.raw(bytes(20))
+    # The original CarbonLib refuses a Carbon app with a direct InterfaceLib import.
+    call("GetSharedLibrary", [probe.raw(b"\x0cInterfaceLib"), 0x70777063, 1, word, 0, 0], 0)
+
+    def call_zone_api(name, arguments=()):
+        encoded = name.encode("ascii")
+        call("FindSymbol", [slot(base + 20), probe.raw(bytes([len(encoded)]) + encoded), ptr(base + 24), 0], 0)
+        probe.arguments(arguments, 0)
+        p.emit(0x819E0000 | (base + 24), 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421)
+
+    call_zone_api("GetZone")
+    p.emit(0x907E0000 | gestures)
+    call_zone_api("SystemZone")
+    p.emit(0x907E0000 | (gestures + 4))
+    call_zone_api("SetZone", [slot(gestures + 4)])
+    for offset, routine in ((8, handlers), (12, handlers + 16)):
+        probe.call("NewRoutineDescriptor", [ptr(routine), 0x3E0, 1])
+        p.nonzero("allocate a System-zone Gestalt callback descriptor")
+        p.emit(0x907E0000 | (gestures + offset))
+    call_zone_api("SetZone", [slot(gestures)])
+    call("CloseConnection", [word], 0)
+    selector = 0x54534750  # 'TSGP'
+    call("NewGestalt", [selector, slot(gestures + 8)], 0)
+    call("Gestalt", [selector, output], 0)
+    expect_word(128, 0x1020, "Gestalt dispatches to the registered PPC procedure")
+    call("ReplaceGestalt", [selector, slot(gestures + 12), ptr(gestures + 16)], 0)
+    p.emit(0x807E0000 | (gestures + 8), 0x809E0000 | (gestures + 16))
+    p.equal("ReplaceGestalt returns the previous guest procedure pointer")
+    probe.call("DisposeRoutineDescriptor", [slot(gestures + 8)])
+    call("Gestalt", [selector, output], 0)
+    expect_word(128, 0x3040, "Gestalt dispatches to the replacement after the old procedure is released")
+    probe.call("DisposeRoutineDescriptor", [slot(gestures + 12)])
+    call("Gestalt", [selector, output], -5551)
+
     selectors = (
         (b"sysa", 0, 2),
         (b"cput", 0, 0x108),
         (b"fold", 0, 0x11),
-        (b"menu", 0, 0x4000000C),
     )
-    menu_selector = int.from_bytes(b"menu", "big")
-    call("NewGestaltValue", [menu_selector, 0x40000000], 0)
     for name, status, value in selectors:
         for side in (0, 1):
             p.emit(0x3C60A55A, 0x60631234, 0x907E0000 | (base + 128))
             probe.call("Gestalt", [int.from_bytes(name, "big"), output], side=side)
             p.expect(status, "Gestalt " + name.decode() + " status")
             expect_word(128, value, "Gestalt " + name.decode() + " response")
+
+    menu_selector = int.from_bytes(b"menu", "big")
+    probe.call("NewGestaltValue", [menu_selector, 0x40000000])
+    p.emit(0x907E0000 | (base + 140), 0x2C030000)
+    created = len(p.code)
+    p.emit(0)
+    p.expect(-5552, "the real Menu Manager may already own its Gestalt selector")
+    p.code[created] = 0x41820000 | (len(p.code) - created) * 4
+    probe.call("Gestalt", [menu_selector, output], side=1)
+    p.expect(0, "query the saved menu attributes")
+    p.emit(0x807E0000 | (base + 128), 0x907E0000 | (base + 136))
+    probe.call("Gestalt", [menu_selector, output])
+    p.expect(0, "query the live menu attributes")
+    p.emit(0x807E0000 | (base + 128), 0x809E0000 | (base + 136))
+    p.equal("menu attributes match the saved Carbon wrapper")
+    p.emit(0x809E0000 | (base + 140), 0x2C040000)
+    keep_existing = len(p.code)
+    p.emit(0)
+    expect_word(128, 0x4000000C, "Carbon augments the registered menu capabilities")
     call("DeleteGestaltValue", [menu_selector], 0)
+    p.code[keep_existing] = 0x40820000 | (len(p.code) - keep_existing) * 4
     for name in (b"uisf", b"uisv"):
         for side in (1, 0):
             p.emit(0x3C60A55A, 0x60631234, 0x907E0000 | (base + 128))
@@ -7051,7 +7299,7 @@ def atsui_render_operations(probe, layout):
 def control_manager_operations(probe):
     p = probe.p
     ptr, slot = probe.ptr, probe.slot
-    _, base = probe.raw(bytes(144))
+    _, base = probe.raw(bytes(396))
     window, pane, result, value = (slot(base + offset) for offset in (0, 4, 8, 12))
     out, count, data = (ptr(base + offset) for offset in (8, 16, 20))
     bounds = probe.raw(struct.pack(">4h", 65, 40, 135, 170))
@@ -7072,6 +7320,15 @@ def control_manager_operations(probe):
     def match(offset, label):
         p.emit(0x807E0000 | (base + offset), 0x809E0000 | (base + 4))
         p.equal(label)
+
+    probe.call("IsScreenBitSavingEnabled")
+    save(92)
+    for enabled in (0, 1):
+        call("SetScreenBitSavingEnabled", [enabled])
+        call("IsScreenBitSavingEnabled", expected=enabled)
+    call("SetScreenBitSavingEnabled", [slot(base + 92)])
+    call("GetSavedScreenBitsRepresentativePixMap", [0])
+    probe.call("MoveSavedScreenBits", [0, 17, 29])
 
     probe.call("NewWindow", [0, bounds, title, 0, 0, -1, 1, 0])
     p.nonzero("create a window for pane and bounds checks")
@@ -7099,7 +7356,14 @@ def control_manager_operations(probe):
     call("CopyControlTitleAsCFString", [pane, 0], -50)
     call("CopyControlTitleAsCFString", [0, out], -30599)
     call("SetControlTitleWithCFString", [0, 0], -30599)
-    for setter, text in ((0, b"\x04Able"), (1, b"\x04Beta")):
+    for encoding, character in ((0x10000, 0x00A4), (0x20000, 0x20AC)):
+        probe.call("CFStringCreateWithPascalString", [0, probe.raw(b"\x01\xdb"), encoding])
+        p.nonzero("create a string with an explicit Roman variant")
+        save(104)
+        probe.call("CFStringGetCharacterAtIndex", [slot(base + 104), 0])
+        p.expect(character, "the Roman variant selects the currency or euro character")
+        probe.call("CFRelease", [slot(base + 104)])
+    for setter, text in ((0, b"\x04Able"), (1, b"\x04Caf\x8e")):
         probe.call("CFStringCreateWithPascalString", [0, probe.raw(text), 0])
         p.nonzero("allocate a Core Foundation control title")
         save(104)
@@ -7114,6 +7378,8 @@ def control_manager_operations(probe):
         p.expect(0, "copy the classic control title as a CFString")
         probe.call("CFStringGetLength", [slot(base + 108)])
         p.expect(text[0], "the returned CFString has the Pascal title's length")
+        probe.call("CFStringGetCharacterAtIndex", [slot(base + 108), 3])
+        p.expect(ord(text[-1:].decode("mac_roman")), "the returned CFString decodes the final Macintosh byte")
         if not probe.original_only:
             p.emit(0x38605A5A, 0x907E0000 | (base + 116))
             probe.call(
@@ -7125,6 +7391,14 @@ def control_manager_operations(probe):
             word(116, 0x5A5A, "text conversion leaves the output guard intact")
             word(120, text[0], "text conversion reports the byte count")
             word(124, 0, "text conversion uses the local Roman system encoding")
+            p.emit(0x3C605A5A, 0x60635A5A, 0x907E0000 | (base + 112))
+            call(
+                "GetTextAndEncodingFromCFString",
+                [slot(base + 108), ptr(base + 112), 2, ptr(base + 120), ptr(base + 124)],
+                -8785,
+            )
+            word(112, int.from_bytes(text[1:3] + b"\x5a\x5a", "big"), "a short destination holds only the prefix")
+            word(120, 2, "a short destination reports the bytes actually written")
         call("GetTextAndEncodingFromCFString", [0, 0, 0, ptr(base + 120), ptr(base + 124)])
         word(120, 0, "a missing CFString reports no text bytes")
         probe.call("CFRelease", [slot(base + 108)])
@@ -7132,6 +7406,20 @@ def control_manager_operations(probe):
     call("IsValidControlHandle", [pane], 1)
     call("IsControlVisible", [pane], 1)
     call("IsControlActive", [pane], 1)
+    call("GetControlClickActivation", [0, 0, 0, count], -50)
+    call("GetControlClickActivation", [pane, 0, 0, 0], -50)
+    call("GetControlClickActivation", [pane, 0x0008000C, 0x200, count])
+    word(16, 2, "the pane uses the default click activation policy")
+    call("HandleControlSetCursor", [0, 0, 0, count], -50)
+    call("HandleControlSetCursor", [pane, 0, 0, 0], -50)
+    call("HandleControlSetCursor", [pane, 0x0008000C, 0x200, count])
+    p.emit(0x887E0000 | (base + 16))
+    p.expect(0, "the pane leaves the caller responsible for the cursor")
+    call("HandleControlContextualMenuClick", [0, 0, count], -50)
+    call("HandleControlContextualMenuClick", [pane, 0, 0], -50)
+    p.emit(0x3C60A55A, 0x6063A55A, 0x907E0000 | (base + 16))
+    call("HandleControlContextualMenuClick", [pane, 0x0008000C, count])
+    word(16, 0x005AA55A, "a pane without contextual menus clears only the result byte")
     call("GetControlFeatures", [pane, count])
     word(16, 0x5C, "pane advertises the installed Appearance capabilities")
     call("CountSubControls", [pane, count], -30586)
@@ -7143,9 +7431,12 @@ def control_manager_operations(probe):
     p.emit(0xA07E0000 | (base + 16))
     p.expect(0, "the best-rect fallback gives a zero baseline offset")
     call("GetControl32BitValue", [0], 0)
-    call("GetControl32BitValue", [pane], 28)
-    call("GetControl32BitMinimum", [pane], 0)
-    call("GetControl32BitMaximum", [pane], 28)
+    for field in ("Value", "Minimum", "Maximum"):
+        probe.call("GetControl" + field, [pane])
+        save(32)
+        probe.call("GetControl32Bit" + field, [pane])
+        p.emit(0x809E0000 | (base + 32))
+        p.equal("the initial 32-bit control range agrees with the live classic field " + field)
     call("GetControlViewSize", [pane], 0)
     probe.call("SetControl32BitMinimum", [pane, -100000])
     probe.call("SetControl32BitMaximum", [pane, 120000])
@@ -7194,7 +7485,13 @@ def control_manager_operations(probe):
         call("GetControlData", [pane, 0, tag, 4, data, count])
         p.emit(0x807E0000 | (base + 20))
         p.pointer(base + offset, "pane data preserves the installed procedure descriptor")
+        p.emit(0x3C60A531, 0x60637EC4)  # lis/ori r3, 0xA5317EC4
+        save(20)
+        p.emit(0x3860FFFF)  # li r3, -1
+        save(16)
         call("GetControlData", [pane, 0, tag, 2, data, count], -30591)
+        word(20, 0xA5317EC4, "short pane procedure reads leave the destination intact")
+        word(16, 4, "short pane procedure reads report the complete size")
     call("IdleControls", [window])
     word(32, 1, "IdleControls invokes the registered pane callback")
     call("SetKeyboardFocus", [window, pane, 9])
@@ -7246,6 +7543,9 @@ def control_manager_operations(probe):
     probe.call("GetRegionBounds", [value, data])
     word(20, 0x00010002, "the extended region message receives the caller's region handle")
     word(24, 0x00030004, "the definition writes the requested control part's region")
+    p.emit(0x3C60A55A, 0x6063A55A, 0x907E0000 | (base + 16))
+    call("HandleControlContextualMenuClick", [pane, 0x0008000C, count])
+    word(16, 0x015AA55A, "a contextual-menu CDEF sets the displayed flag")
     probe.call("DisposeRgn", [value])
     probe.call("DisposeControl", [pane])
     probe.call("DisposeWindow", [window])
@@ -8401,6 +8701,54 @@ def romaw_service_operations(probe):
     save(4)
     probe.call("SetPort", [window])
     call("CreateRootControl", [window, ptr(base + 16)])
+    _, constructor_output = probe.raw(bytes(16))
+    for constructor, args in BUILTIN_CONTROL_CASES:
+        text_control = constructor == "CreateStaticTextControl"
+        if text_control:
+            probe.call("CFStringCreateWithCString", [0, probe.raw(b"Text\0"), 0])
+            p.nonzero("create a Core Foundation string for the static text control")
+            p.emit(0x907E0000 | (constructor_output + 4))
+            args = (slot(constructor_output + 4), 0)
+        call(constructor, [window, 0, *args, ptr(constructor_output)], -50)
+        call(constructor, [window, control_rect, *args, ptr(constructor_output)])
+        control = slot(constructor_output)
+        call("IsValidControlHandle", [control], 1)
+        call("IsControlVisible", [control], 1)
+        if args[:1] == (65000,):
+            call("GetControl32BitMinimum", [control], -100000)
+            call("GetControl32BitMaximum", [control], 100000)
+            call("GetControl32BitValue", [control], 65000)
+        if text_control:
+            probe.call("CFRelease", [slot(constructor_output + 4)])
+            call(
+                "GetControlData", [control, 0, 0x74657874, 4, ptr(constructor_output + 8), ptr(constructor_output + 12)]
+            )
+            p.emit(0x807E0000 | (constructor_output + 8))
+            p.expect(0x54657874, "the static control copied its initial text from the CFString")
+        if constructor == "CreateDisclosureTriangleControl":
+            call("SetDisclosureTriangleLastValue", [control, 1])
+        probe.call("DisposeControl", [control])
+    call("CreatePushButtonWithIconControl", [window, control_rect, 0, 0, 6, ptr(constructor_output)], -50)
+    for constructor, args in (
+        ("CreatePushButtonWithIconControl", (0, probe.raw(struct.pack(">HhH", 2, 0, 0)), 6)),
+        ("CreateTabsControl", (0, 0, 1, probe.raw(bytes(10)))),
+        ("CreateListBoxControl", (0, 2, 1, 0, 1, 14, 0, 0, probe.raw(struct.pack(">II", 1, 0)))),
+    ):
+        if constructor == "CreateListBoxControl":
+            probe.call(constructor, [window, control_rect, *args, ptr(constructor_output)], side=1)
+            p.expect(0, "the reference list box accepts the same standard definition")
+            probe.call("DisposeControl", [slot(constructor_output)])
+        call(constructor, [window, control_rect, *args, ptr(constructor_output)])
+        control = slot(constructor_output)
+        call("IsValidControlHandle", [control], 1)
+        call("IsControlVisible", [control], 1)
+        if constructor == "CreateTabsControl":
+            call("SetTabEnabled", [control, 1, 0])
+            call("SetTabEnabled", [control, 1, 1])
+            call("GetTabContentRect", [control, ptr(constructor_output + 8)])
+        probe.call("DisposeControl", [control])
+    call("HandleControlClick", [0, 0, 0, 0], 0)
+    call("HandleControlKey", [0, 0, ord("a"), 0], 0)
     call("GetRootControl", [window, output])
     load(24)
     p.emit(0x809E0000 | (base + 16))
@@ -8442,6 +8790,8 @@ def romaw_service_operations(probe):
     p.nonzero("create a nested control container")
     save(32)
     group = slot(base + 32)
+    call("SetControlSupervisor", [0, group], -50)
+    call("SetControlSupervisor", [bevel, group])
     call("EmbedControl", [group, root])
     call("EmbedControl", [image, group])
     call("CountSubControls", [root, output])
@@ -8452,6 +8802,8 @@ def romaw_service_operations(probe):
     p.emit(0x809E0000 | (base + 12))
     p.equal("reparenting adds the child to the new container")
     probe.call("DisposeControl", [group])
+    call("SetControlSupervisor", [bevel, group], -50)
+    call("SetControlSupervisor", [bevel, 0])
     call("CountSubControls", [root, output])
     load(24, 2)
     p.expect(1, "disposing the container removes it from the root")
@@ -8479,10 +8831,27 @@ def romaw_service_operations(probe):
         call("Get" + stem + "ContentInfo", [control, output])
         load(24)
         p.expect(0x00010141, "the native control retains the resource-based content record")
+        transform = 0x4201
+        call("Set" + stem + "Transform", [control, transform])
+        call("GetControlData", [control, 0, int.from_bytes(b"tran", "big"), 2, output, ptr(base + 28)])
+        load(24, 2)
+        p.expect(transform, stem + " retains the complete icon transform word")
+        load(28)
+        p.expect(2, stem + " reports a two-byte icon transform")
+        call("Set" + stem + "Transform", [control, 0])
     call("GetBevelButtonMenuValue", [bevel, output])
     load(24, 2)
     p.expect(0, "an unattached bevel menu begins with no choice")
-    call("SetBevelButtonMenuValue", [bevel, 0])
+    probe.call("SetBevelButtonMenuValue", [bevel, 0], side=1)
+    save(28)
+    probe.call("SetBevelButtonMenuValue", [bevel, 0])
+    p.emit(0x809E0000 | (base + 28))
+    p.equal("an unattached bevel returns its definition's menu update status")
+    probe.call("GetBevelButtonMenuHandle", [bevel, output], side=1)
+    save(28)
+    probe.call("GetBevelButtonMenuHandle", [bevel, output])
+    p.emit(0x809E0000 | (base + 28))
+    p.equal("an unattached bevel returns its definition's menu query status")
     call("SetThemeTextColor", [2, 32, 1])
     call("DrawThemeMenuSeparator", [control_rect])
     call("DrawThemeFocusRect", [control_rect, 1])
@@ -10652,6 +11021,200 @@ def color_profile_operations(probe):
     p.expect(0, "close the saved ColorSync connection")
 
 
+def appearance_state_operations(probe):
+    p = probe.p
+    _, base = probe.raw(bytes(24))
+    psn, saved, output = (probe.ptr(base + offset) for offset in (0, 8, 12))
+    probe.call("GetCurrentProcess", [psn])
+    p.expect(0, "read the active Appearance client's process serial number")
+    probe.call("IsAppearanceClient", [psn], side=1)
+    p.emit(0x907E0000 | (base + 20))
+    probe.call("IsAppearanceClient", [psn])
+    p.emit(0x809E0000 | (base + 20))
+    p.equal("native and saved Appearance agree on the initial registration")
+    probe.call("UnregisterAppearanceClient", side=1)
+    p.emit(0x809E0000 | (base + 20), 0x3884FFFF, 0x1C840000 | 30562)
+    p.equal("removing the initial registration follows the saved state")
+    probe.call("RegisterAppearanceClient")
+    p.expect(0, "register the current process as an Appearance client")
+    for side in (0, 1):
+        probe.call("IsAppearanceClient", [psn], side=side)
+        p.expect(1, "native and saved Appearance see the registration")
+    probe.call("RegisterAppearanceClient")
+    p.expect(-30561, "registering an existing Appearance client returns its duplicate error")
+    probe.call("UnregisterAppearanceClient", side=1)
+    p.expect(0, "the saved Appearance manager removes the native registration")
+    probe.call("UnregisterAppearanceClient")
+    p.expect(-30562, "the native Appearance manager observes saved removal")
+
+    p.emit(0x807E0000 | (base + 20), 0x2C030000)
+    skip_restore = len(p.code)
+    p.emit(0)
+    probe.call("RegisterAppearanceClient", side=1)
+    p.expect(0, "restore the fixture's initial Appearance registration")
+    p.code[skip_restore] = 0x41820000 | (len(p.code) - skip_restore) * 4
+
+    for style, value in (("CheckBoxStyle", 1), ("ScrollBarThumbStyle", 1), ("ScrollBarArrowStyle", 2)):
+        getter, setter = "GetTheme" + style, "SetTheme" + style
+        probe.call(getter, [saved], side=1)
+        p.expect(0, "save the original Appearance " + style)
+        probe.call(setter, [value, 0])
+        p.expect(0, "set a supported Appearance " + style)
+        probe.call(getter, [output], side=1)
+        p.expect(0, "the saved manager reads native " + style)
+        p.emit(0xA07E0000 | (base + 12))
+        p.expect(value, "the shared Appearance preference contains the new " + style)
+        probe.call(setter, [value + 1, 0])
+        p.expect(-50, "reject an unsupported Appearance " + style)
+        p.emit(0xA07E0000 | (base + 8), 0x907E0000 | (base + 16))
+        probe.call(setter, [probe.slot(base + 16), 0], side=1)
+        p.expect(0, "restore the previous Appearance " + style)
+        probe.call(getter, [output])
+        p.expect(0, "native Appearance reads the restored " + style)
+        p.emit(0xA07E0000 | (base + 12), 0xA09E0000 | (base + 8))
+        p.equal("the native manager observes the restored " + style)
+
+    for getter in ("GetThemeSoundMask", "GetThemeSoundPanningSpread"):
+        probe.call(getter, [saved], side=1)
+        p.expect(0, "read the saved Appearance sound preference")
+        probe.call(getter, [output])
+        p.expect(0, "read the native Appearance sound preference")
+        p.emit(0x807E0000 | (base + 12), 0x809E0000 | (base + 8))
+        p.equal(getter + " has the same value on both paths")
+    probe.call("SetThemeSoundPanningSpread", [0x00008000])
+    p.expect(0, "set the native sound panning spread")
+    probe.call("GetThemeSoundPanningSpread", [output], side=1)
+    p.expect(0, "read the changed panning spread from saved Appearance")
+    p.emit(0x807E0000 | (base + 12))
+    p.expect(0x00008000, "preserve the complete fixed-point panning spread")
+    probe.call("SetThemeSoundPanningSpread", [probe.slot(base + 8)], side=1)
+    p.expect(0, "restore the saved sound panning spread")
+    probe.call("AreThemeSoundsEnabled", side=1)
+    p.emit(0x907E0000 | (base + 8))
+    probe.call("AreThemeSoundsEnabled")
+    p.emit(0x809E0000 | (base + 8))
+    p.equal("native and saved Appearance agree on sound availability")
+
+    probe.call("SetThemeSoundsEnabled", [0])
+    p.expect(0, "disable Appearance sounds")
+    probe.call("AreThemeSoundsEnabled", side=1)
+    p.expect(0, "saved Appearance observes native sound disable")
+    probe.call("GetThemeSoundMask", [output], side=1)
+    p.expect(0, "save the mask while playback is disabled")
+    probe.call("SetThemeSoundMask", [1])
+    p.expect(0, "set the native Appearance sound mask")
+    probe.call("GetThemeSoundMask", [probe.ptr(base + 16)], side=1)
+    p.expect(0, "read the native mask from saved Appearance")
+    p.emit(0x807E0000 | (base + 16))
+    p.expect(1, "saved Appearance sees the new event mask")
+    probe.call("SetThemeSoundMask", [probe.slot(base + 12)])
+    p.expect(0, "restore the previous Appearance sound mask")
+    probe.call("SetThemeSoundsEnabled", [probe.slot(base + 8)])
+    p.expect(0, "restore the previous Appearance sound availability")
+
+    playlist = probe.raw(bytes(256))
+    original = probe.raw(bytes(256))
+    probe.call("GetThemePlaylist", [original], side=1)
+    p.emit(0x907E0000 | (base + 20))
+    probe.call("GetThemePlaylist", [playlist])
+    p.emit(0x809E0000 | (base + 20))
+    p.equal("native and saved Appearance report the same playlist status")
+    p.emit(0x807E0000 | playlist[1], 0x809E0000 | original[1])
+    p.equal("native and saved Appearance return the same playlist name prefix")
+    probe.call("GetThemePlaylist", [0])
+    p.expect(-50, "reject a null playlist destination")
+    missing = b"ROMAW nonexistent sound set"
+    missing_name = probe.raw(bytes([len(missing)]) + missing)
+    probe.call("SetThemePlaylist", [missing_name], side=1)
+    p.nonzero("saved Appearance rejects a missing playlist file")
+    p.emit(0x907E0000 | (base + 20))
+    probe.call("SetThemePlaylist", [missing_name])
+    p.emit(0x809E0000 | (base + 20))
+    p.equal("native Appearance reports the same missing playlist error")
+
+    for file_type in (0x74686D65, 0x61707072, 0x7A7A7A7A):
+        probe.call("IsValidAppearanceFileType", [file_type], side=1)
+        p.emit(0x907E0000 | (base + 20))
+        probe.call("IsValidAppearanceFileType", [file_type])
+        p.emit(0x809E0000 | (base + 20))
+        p.equal("native Appearance uses the engine's real file-type registrations")
+
+    packed = bytes.fromhex("000000000002") + b"\x03One" + bytes.fromhex("0001112233440002")
+    packed += b"\x03Two" + bytes.fromhex("0003556677880004")
+    table = probe.raw(packed)
+    variant = probe.raw(bytes(264))
+    handle = probe.slot(base + 16)
+    probe.call("PtrToHand", [table, probe.ptr(base + 16), len(packed)])
+    p.expect(0, "allocate a movable Appearance variant table")
+    probe.call("CountThemeVariants", [handle, output])
+    p.expect(0, "count packed Appearance variants")
+    p.emit(0xA07E0000 | (base + 12))
+    p.expect(2, "publish the variant count as a big-endian short")
+    probe.call("GetIndThemeVariant", [handle, 2, variant])
+    p.expect(0, "read the second packed Appearance variant")
+    p.emit(0x807E0000 | variant[1])
+    p.expect(0x0354776F, "variant indexes start at one")
+    p.emit(0x807E0000 | (variant[1] + 256))
+    p.expect(0x00035566, "copy the packed variant fields to the public record")
+    p.emit(0x807E0000 | (variant[1] + 260))
+    p.expect(0x77880004, "preserve all eight bytes of variant metadata")
+    probe.call("GetThemeVariantByName", [handle, probe.raw(b"\x03one"), variant])
+    p.expect(0, "find a variant name using the saved case-insensitive comparison")
+    p.emit(0x807E0000 | variant[1])
+    p.expect(0x034F6E65, "name lookup returns the display spelling")
+    probe.call("GetIndThemeVariant", [handle, 0, variant])
+    p.expect(-30572, "reject a zero Appearance variant index")
+    probe.call("DisposeHandle", [handle])
+
+    _, fixture = probe.raw(bytes(128))
+    ptr, slot = probe.ptr, probe.slot
+    theme_name = probe.raw(b"\x13ROMAW Variant Theme")
+    spec = ptr(fixture + 32)
+    probe.call("FindFolder", [-32768, 0x74686D65, 1, ptr(fixture), ptr(fixture + 4)])
+    p.expect(0, "find the Appearance Themes directory")
+    p.emit(0xA07E0000 | fixture, 0x907E0000 | (fixture + 8))
+    probe.call("FSMakeFSSpec", [slot(fixture + 8), slot(fixture + 4), theme_name, spec])
+    p.expect(-43, "build the specification for a new test theme")
+    probe.call("CurResFile")
+    p.emit(0x907E0000 | (fixture + 12))
+    probe.call("FSpCreateResFile", [spec, 0x61707072, 0x74686D65, 0])
+    probe.call("ResError")
+    p.expect(0, "create the theme resource fork")
+    probe.call("FSpOpenResFile", [spec, 3])
+    p.nonzero("open the test theme resource fork")
+    p.emit(0x907E0000 | (fixture + 16))
+    probe.call("PtrToHand", [table, ptr(fixture + 20), len(packed)])
+    p.expect(0, "create a theme variant resource handle")
+    probe.call("AddResource", [slot(fixture + 20), 0x74766172, 128, probe.raw(b"\0")])
+    probe.call("ResError")
+    p.expect(0, "store the packed theme variants in the resource fork")
+    probe.call("CloseResFile", [slot(fixture + 16)])
+    probe.call("UseResFile", [slot(fixture + 12)])
+    probe.call("GetThemeVariantList", [theme_name, ptr(fixture + 20)])
+    p.expect(0, "detach the theme variant table before closing its resource fork")
+    probe.call("CountThemeVariants", [slot(fixture + 20), output])
+    p.expect(0, "read the detached theme variant table")
+    p.emit(0xA07E0000 | (base + 12))
+    p.expect(2, "the theme variant resource preserved both records")
+    probe.call("DisposeHandle", [slot(fixture + 20)])
+
+    _, routine = probe.raw(bytes(24))
+    p.routines.append((routine, [0x90650000, 0x80040000, 0x90050004, 0x38600000, 0x4E800020]))
+    probe.call("NewRoutineDescriptor", [ptr(routine), 0xF90, 1])
+    p.nonzero("allocate a PPC theme iterator callback descriptor")
+    p.emit(0x907E0000 | (fixture + 24))
+    probe.call("IterateThemeVariants", [theme_name, slot(fixture + 24), ptr(fixture + 104)])
+    p.expect(0, "iterate the resource fork variants with an early stop")
+    p.emit(0x807E0000 | (fixture + 104))
+    p.expect(1, "the callback stops iteration on the first index")
+    p.emit(0x807E0000 | (fixture + 108))
+    p.expect(0x034F6E65, "the callback receives the packed variant name and its refcon")
+    probe.call("DisposeRoutineDescriptor", [slot(fixture + 24)])
+    probe.call("FSpDelete", [spec])
+    p.expect(0, "delete the isolated test theme")
+    probe.call("UseResFile", [slot(fixture + 12)])
+
+
 def nqd_native_operations(probe):
     p = probe.p
     _, base = probe.raw(bytes(16))
@@ -10680,6 +11243,26 @@ def nqd_native_operations(probe):
     p.expect(1, "NQD region XOR permits an aliased destination")
     call("NQDDisposeRgn", copy)
     call("NQDDisposeRgn", region)
+
+    # Flattened PixPat, PixMap, four pixel bytes and two indexed colors.
+    pattern = bytearray(106)
+    struct.pack_into(">HII", pattern, 0, 1, 28, 78)
+    struct.pack_into(">H4h", pattern, 32, 0x8002, 0, 0, 2, 8)
+    struct.pack_into(">4h", pattern, 58, 0, 1, 1, 1)
+    struct.pack_into(">I", pattern, 70, 82)
+    pattern[78:82] = bytes.fromhex("11223344")
+    struct.pack_into(">IHH8H", pattern, 82, 0, 0, 1, 0, 0, 0, 0, 1, 0xFFFF, 0xFFFF, 0xFFFF)
+    encoded = probe.raw(pattern)
+    guest_pattern = probe.ptr(base + 8)
+    call("QDUnflattenPixPat", encoded, 40, guest_pattern)
+    p.expect(-50, "reject a truncated flattened PixMap")
+    p.emit(0x807E0000 | (base + 8))
+    p.expect(0, "unflattening failures leave the output handle unchanged")
+    call("QDUnflattenPixPat", encoded, len(pattern), guest_pattern)
+    p.expect(0, "unflatten an indexed pixel pattern")
+    p.emit(0x813E0000 | (base + 8), 0x81290000, 0x81290006, 0x81290000, 0x80690000)
+    p.expect(0x11223344, "the unflattened pattern preserves its pixel bytes")
+    probe.call("DisposePixPat", [probe.slot(base + 8)])
 
     rectangle = probe.raw(bytes(8))
     _, outputs = probe.raw(bytes(24))
@@ -10761,7 +11344,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         nqd_imports = tuple(
             ("NQD", name, 2) for name in re.findall(r"^NQD_(?:TOOLBOX|OFFSCREEN|NATIVE)\((\w+),", nqd_source, re.M)
         )
-        if len(nqd_imports) != 219:
+        if len(nqd_imports) != 220:
             raise ValueError("Incomplete NQD Toolbox export table")
     source = (ROOT / "carbonlib/src/math_entries.h").read_text()
     entries = [
@@ -10783,7 +11366,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     file_entries, file_names = file_cases() if not (original_only or math_only) else ([], set())
     color_profiles = file_entries and write_color_profile_reference(destination)
     interface_rows = vector_cases("interface_vectors.h", 178) if file_entries else []
-    manager_rows = vector_cases("manager_vectors.h", 132) if file_entries else []
+    manager_rows = vector_cases("manager_vectors.h", 135) if file_entries else []
     browser_control_rows = data_browser_control_cases() if file_entries else []
     native_names = file_names | {row["name"] for row in interface_rows + manager_rows}
     if file_entries and not original_only:
@@ -10816,7 +11399,24 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         native_names.update(re.findall(r"^CARBON_BROWSER_FIELD\((\w+),", data_browser, re.M))
         native_names.update(re.findall(r"^BROWSER_MESSAGE\((\w+),", data_browser, re.M))
         native_names.update(re.findall(r"^static int carbon_([A-Z]\w+)\(", data_browser, re.M))
-        native_names.add("CreateCustomControl")
+        native_names.update(
+            (
+                "CreateCustomControl",
+                "GetControlClickActivation",
+                "HandleControlSetCursor",
+                "HandleControlContextualMenuClick",
+            )
+        )
+        native_names.update(name for name, _ in BUILTIN_CONTROL_CASES)
+        native_names.update(("CreateListBoxControl", "CreatePushButtonWithIconControl", "CreateTabsControl"))
+        native_names.update(
+            (
+                "IsScreenBitSavingEnabled",
+                "SetScreenBitSavingEnabled",
+                "GetSavedScreenBitsRepresentativePixMap",
+                "MoveSavedScreenBits",
+            )
+        )
         native_names.update(("SetControlColorProc", "SetUpControlBackground", "SetUpControlTextColor"))
         icon_services = (ROOT / "carbonlib/src/icon_services.h").read_text()
         native_names.update(re.findall(r"^static int carbon_([A-Z]\w+)\(", icon_services, re.M))
@@ -10826,7 +11426,8 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         native_names.update(("GetGWorldDevice", "GetPixBaseAddr", "GetPixRowBytes"))
         romaw_services = (ROOT / "carbonlib/src/romaw_services.h").read_text()
         native_names.update(re.findall(r"^CARBON_ROMAW_SERVICE\((\w+)\)$", romaw_services, re.M))
-        native_names.update(("Count1Types", "Get1Resource", "HomeResFile"))
+        native_names.update(("SetBevelButtonTransform", "SetImageWellTransform"))
+        native_names.update(("Count1Types", "FindFolder", "Get1Resource", "HomeResFile"))
         native_names.update(("LLastClick", "TEGetPoint", "GetDialogTextEditHandle"))
         native_names.update(
             ("CurResFile", "FSpCreateResFile", "FSpOpenResFile", "FSpGetFInfo", "FSpSetFInfo", "ResError")
@@ -10899,7 +11500,20 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         native_names.update(FONT_INSTANCE_APIS)
         native_names.update(FONT_CATALOG_APIS)
         native_names.update(("SetThemeCursor", "SetAnimatedThemeCursor", "SetThemeCursorWithOptions"))
-        native_names.update(("UseThemeFont", "GetThemeFont", "GetPortTextFont", "GetPortTextSize", "GetPortTextFace"))
+        native_names.update(
+            (
+                "UseThemeFont",
+                "GetThemeFont",
+                "GetSmallSystemFont",
+                "GetViewsFont",
+                "GetThemeFontSmoothing",
+                "SetThemeFontSmoothing",
+                "GetPortTextFont",
+                "GetPortTextSize",
+                "GetPortTextFace",
+                "FontMetrics",
+            )
+        )
         native_names.update(
             (
                 "GetPixelsState",
@@ -10958,6 +11572,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "NavDialogSetSaveFileName",
                 "NavCustomControl",
                 "CFStringGetLength",
+                "CFStringGetCharacterAtIndex",
                 "AECountItems",
                 "AEGetNthPtr",
                 "NavDisposeReply",
@@ -11020,6 +11635,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
         application_rows = vector_cases("application_vectors.h", 55)
         native_names.update(row["name"] for row in application_rows)
+        native_names.update(("NewGestalt", "ReplaceGestalt"))
         collection_entries = (ROOT / "carbonlib/src/collection_entries.h").read_text()
         collection_names = set(re.findall(r"^CARBON_COLLECTION_ENTRY\((\w+),", collection_entries, re.M))
         if len(collection_names) != 42:
@@ -11235,6 +11851,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         *AE_DESCRIPTOR_ORACLES,
                         *AE_STREAM_NAMES,
                         *AE_BUILD_NAMES,
+                        "CreateListBoxControl",
                     ]
                 ]
                 + [
@@ -11244,6 +11861,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         *MENU_STRUCTURE_APIS,
                         *re.findall(r"^HELP_ENTRY\((\w+),", (ROOT / "carbonlib/src/help_access.h").read_text(), re.M),
                     )
+                ]
+                + [
+                    {"name": name, "original_library": "AppearanceLib"}
+                    for name in (*APPEARANCE_STATE_APIS, "GetThemeFont")
                 ]
                 + text_scrap_rows(ROOT)
                 if file_entries
@@ -11276,6 +11897,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         toolbox_sections(probe, rows, registers, constructors, disposers, invocations, borrowed, mixed)
         probe.section("TextEdit register callbacks", lambda: textedit_upp_invocations(probe, textedit))
     if nqd_imports:
+        probe.section("Appearance clients and preferences", lambda: appearance_state_operations(probe))
         probe.section("NQD original QuickDraw traps", lambda: nqd_native_operations(probe))
     if file_entries:
         probe.section("File Manager parameter-block trap dispatch", lambda: file_parameter_blocks(probe, file_entries))
@@ -11369,9 +11991,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         cdef = []
         for message, routine in (
             (27, (0x2F7C, 0x206F, 0x6B20, 16, *epilogue)),  # ' ok '
-            (19, (0x2F7C, 2, 0x0200, 16, *epilogue)),  # best rect and part regions
+            (19, (0x2F7C, 0x22, 0x0200, 16, *epilogue)),  # best rect, part regions, contextual menus
             (14, (0x206F, 4, 0x20BC, 43, 49, 0x317C, 7, 4, *return_zero)),
             (31, (0x206F, 4, 0x2250, 0x2251, 0x237C, 1, 2, 2, 0x237C, 3, 4, 6, *return_zero)),
+            (0x2F, (0x206F, 4, 0x117C, 1, 4, *return_zero)),  # menuDisplayed = true
         ):
             cdef.extend((0x0C6F, message, 8, 0x6600 | len(routine) * 2, *routine))
         cdef.extend(return_zero)

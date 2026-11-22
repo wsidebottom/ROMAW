@@ -663,7 +663,6 @@ P1(PUBLIC pascal trap, void, GetKeys, unsigned char*, keys)
 P0(PUBLIC pascal trap, LONGINT, TickCount)
 {
     unsigned long ticks;
-    unsigned long new_time;
 
     ticks = msecs_elapsed() * 3.0 / 50; /* == 60 / 1000 */
 
@@ -674,10 +673,7 @@ P0(PUBLIC pascal trap, LONGINT, TickCount)
     if (ROMlib_clock)
         Ticks_UL.u = CL(ticks);
 
-    new_time = (UNIXTIMETOMACTIME(ROMlib_start_time.tv_sec) +
-                (long)((ROMlib_start_time.tv_usec / (1000000.0 / 60) + ticks) / 60));
-
-    Time = CL(new_time);
+    Time = CL((uint32)(ROMlib_get_local_clock() >> 16));
     return ticks;
 }
 

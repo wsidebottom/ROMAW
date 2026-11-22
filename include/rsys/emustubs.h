@@ -190,6 +190,7 @@ extern syn68k_addr_t _HighLevelFSDispatch(syn68k_addr_t ignoreme, void** ignorem
 extern syn68k_addr_t _ResourceDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _MenuDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _DialogDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
+extern syn68k_addr_t _ControlDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _modeswitch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _WackyQD32Trap(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _PaletteDispatch(syn68k_addr_t ignoreme, void** ignoreme2);

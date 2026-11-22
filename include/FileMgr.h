@@ -126,6 +126,21 @@ typedef enum { ioParamType, fileParamType, volumeParamType, cntrlParamType } Par
     PACKED_MEMBER(StringPtr, ioNamePtr);  \
     INTEGER ioVRefNum
 
+/* Classic CSParam. The caller owns the opaque 16-byte continuation. */
+typedef struct PACKED {
+    COMMONFSQUEUEDEFS;
+    ULONGINT matches;
+    LONGINT requested;
+    LONGINT actual;
+    ULONGINT search_bits;
+    ULONGINT lower;
+    ULONGINT upper;
+    ULONGINT milliseconds;
+    ULONGINT position[4];
+    ULONGINT optional_buffer;
+    LONGINT optional_size;
+} catalog_search_pb_t;
+
 typedef struct PACKED {
     COMMONFSQUEUEDEFS;
     INTEGER ioRefNum;

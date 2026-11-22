@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_palette_unlisted_window_after, delete_pm_resource_holder, get_current_palette, higher_priority_p,
+  Functions: ROMlib_palette_hilite_changed, ROMlib_palette_unlisted_window_after, delete_pm_resource_holder,
+             get_current_palette, higher_priority_p,
              lookup_pm_resource_holders, pm_allocate_animated_elt, pm_allocate_tolerant_elt, pm_deallocate_entry,
              pm_front_window_maybe_changed_hook, pm_window_closed, window_p
 
@@ -563,6 +564,92 @@ static void pm_do_updates_gd_changed(void)
 
     dirty_rect_update_screen();
     vdriver_set_colors(0, CTAB_SIZE(gd_ctab) + 1, CTAB_TABLE(gd_ctab));
+}
+
+static unsigned palette_rgb_distance(const RGBColor* a, const RGBColor* b)
+{
+    const unsigned red = abs((int)CW(a->red) - (int)CW(b->red));
+    const unsigned green = abs((int)CW(a->green) - (int)CW(b->green));
+    const unsigned blue = abs((int)CW(a->blue) - (int)CW(b->blue));
+    return MAX(MAX(red, green), blue);
+}
+
+/* The original Palette Manager's low-depth highlight tables put a colored
+   highlight in slot 2 at two bits and blend the closest color at four bits. */
+static void palette_hilite_colors(RGBColor* colors, int depth, const RGBColor* highlight)
+{
+    const ColorSpec* defaults = depth == 2 ? ctab_2bpp_values : ctab_4bpp_values;
+    for (int i = 0; i < (1 << depth); ++i)
+        colors[i] = defaults[i].rgb;
+
+    if (depth == 2) {
+        if ((CW(highlight->red) >> 8) != (CW(highlight->green) >> 8) ||
+            (CW(highlight->red) >> 8) != (CW(highlight->blue) >> 8)) {
+            colors[1] = (RGBColor){CWC(0x7fff), CWC(0x7fff), CWC(0x7fff)};
+            colors[2] = *highlight;
+        }
+        return;
+    }
+
+    unsigned distance = 0xffff;
+    int closest = 1;
+    for (int i = 14; i >= 1; --i) {
+        const unsigned candidate = palette_rgb_distance(&colors[i], highlight);
+        if (candidate < distance) {
+            distance = candidate;
+            closest = i;
+        }
+    }
+    RGBColor* target = &colors[closest];
+    while (palette_rgb_distance(target, highlight) > 0x3000) {
+        target->red = CW(((unsigned)CW(target->red) + CW(highlight->red)) / 2);
+        target->green = CW(((unsigned)CW(target->green) + CW(highlight->green)) / 2);
+        target->blue = CW(((unsigned)CW(target->blue) + CW(highlight->blue)) / 2);
+    }
+}
+
+void ROMlib_palette_hilite_changed(void)
+{
+    GDHandle device = MR(MainDevice);
+    if (!device || !GD_CLUT_P(device) ||
+        (GD_FLAGS_X(device) & CWC((1 << gdDevType) | (1 << screenActive))) !=
+            CWC((1 << gdDevType) | (1 << screenActive)))
+        return;
+    PixMapHandle pixmap = GD_PMAP(device);
+    const int depth = PIXMAP_PIXEL_SIZE(pixmap);
+    if (depth != 2 && depth != 4)
+        return;
+    CTabHandle table = PIXMAP_TABLE(pixmap);
+    if (!table || CTAB_SIZE(table) != (1 << depth) - 1)
+        return;
+
+    pm_resource_holder_t* holders = NULL;
+    for (int i = 0; i < n_resource_holders; ++i)
+        if (device_to_resholder[i] == device) {
+            holders = pm_resource_holders[i];
+            break;
+        }
+    if (!holders)
+        return;
+
+    RGBColor colors[16];
+    palette_hilite_colors(colors, depth, &HiliteRGB);
+    int changed = 0;
+    ColorSpec* entries = CTAB_TABLE(table);
+    for (int i = 1; i < CTAB_SIZE(table); ++i) {
+        holders[i].default_rgb = colors[i];
+        if (!holders[i].palette && !(entries[i].value & CTAB_RESERVED_BIT_X) &&
+            memcmp(&entries[i].rgb, &colors[i], sizeof colors[i])) {
+            entries[i].rgb = colors[i];
+            changed = 1;
+        }
+    }
+    if (changed) {
+        GDHandle previous = GetGDevice();
+        SetGDevice(device);
+        pm_do_updates_gd_changed();
+        SetGDevice(previous);
+    }
 }
 
 #define gd_index_mask gd_ctab_size

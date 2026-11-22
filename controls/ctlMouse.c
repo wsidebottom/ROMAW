@@ -91,11 +91,16 @@ P3(PUBLIC pascal trap, INTEGER, FindControl, Point, p, /* IMI-323 */
     retval = 0;
     if (w && ROMlib_get_root_control(w, &root) == noErr) {
         /* Embedded foreground controls paint after their background panes. */
-        for (ControlHandle c = WINDOW_CONTROL_LIST(w); c; c = CTL_NEXT_CONTROL(c))
-            if (CTL_HILITE(c) != 255 && ROMlib_control_visible_at(c, p) && (retval = TestControl(c, p))) {
-                HIDDEN_RAW_SET(*cp, RM(c));
-                break;
+        for (ControlHandle c = WINDOW_CONTROL_LIST(w); c; c = CTL_NEXT_CONTROL(c)) {
+            if (CTL_HILITE(c) != INACTIVE && ROMlib_control_visible_at(c, p)) {
+                ControlHandle target = ROMlib_control_hit_target(c);
+                retval = TestControl(target, p);
+                if (retval || target != c) {
+                    HIDDEN_RAW_SET(*cp, RM(target));
+                    return retval;
+                }
             }
+        }
     }
     else if (w)
         retval = find_control_helper(p, WINDOW_CONTROL_LIST(w), cp);

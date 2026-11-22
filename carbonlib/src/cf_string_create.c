@@ -97,8 +97,31 @@ uint32 ROMlib_cfstring_pascal(uint32 allocator, uint32 bytes, uint32 encoding)
     ROMlib_carbon_reference reference;
     if (cfp_reference("CFStringCreateWithPascalString", 0x376fc, arguments, 3, &reference, &result)) {
         const uint8* length = ROMlib_carbon_guest_memory(bytes, 1, 0);
-        if (length)
+        if (length) {
             result = string_funnel(&reference, allocator, bytes, *length + 1, encoding, 0, 0, 1, 0, 0, UINT32_MAX);
+            /* Carbon's control title API passes an explicit TextEncoding
+               variant. The installed Unicode TOC may lack its CF mapping. */
+            if (!result && (encoding == 0x10000 || encoding == 0x20000)) {
+                static const struct {
+                    uint16_t value, base, accent;
+                } roman[] = {
+
+#include "disk-images/src/macroman.inc"
+                };
+                const uint8* text = ROMlib_carbon_guest_memory(bytes, *length + 1, 0);
+                if (!text)
+                    return 0;
+                _Alignas(512) uint16_t characters[255];
+                for (unsigned i = 0; i < text[0]; ++i) {
+                    const unsigned byte = text[i + 1];
+                    uint16_t character = byte < 128 ? byte : roman[byte - 128].value;
+                    if (byte == 0xdb && encoding == 0x10000)
+                        character = 0xa4;
+                    characters[i] = CW(character);
+                }
+                result = ROMlib_cfstring_characters(allocator, US_TO_SYN68K(characters), text[0]);
+            }
+        }
     }
     return result;
 }

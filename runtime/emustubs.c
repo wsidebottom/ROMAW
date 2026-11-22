@@ -76,6 +76,8 @@
 #include "CommTool.h"
 
 #include "rsys/pstuff.h"
+#include "rsys/cquick.h"
+#include "rsys/ctl.h"
 #include "rsys/file.h"
 #include "rsys/time.h"
 #include "rsys/mman.h"
@@ -1410,9 +1412,12 @@ PRIVATE selectorblock_t palette_dispatch_block[] = {
 
 STUB(PaletteDispatch)
 {
-    /* FIXME: inspection of the register contents seems to indicate the
-     selector is passed in d0, more reliable sources should verify
-     this */
+    /* PaletteMgr.a uses D0's low byte. Selector 11 takes no arguments. */
+    if ((EM_D0 & 0xff) == 11) {
+        ROMlib_palette_hilite_changed();
+        EM_D0 = 0;
+        RTS();
+    }
     return do_selector_block(palette_dispatch_block, EM_D0 & 0xFF, PaletteDispatch);
 }
 
@@ -1823,6 +1828,52 @@ STUB(MenuDispatch)
         return retaddr;
     }
     return do_selector_block(menu_item_dispatch_block, selector, MenuDispatch);
+}
+
+PRIVATE ptocblock_t control_supervisor_ptoc[] = {
+    {ROMlib_set_control_supervisor, 2 | (5 << 3) | (5 << 6)},
+};
+
+PRIVATE ptocblock_t control_input_ptoc[] = {
+    {ROMlib_handle_control_click, 2 | (5 << 3) | (3 << 6) | (2 << 9) | (5 << 12)},
+    {ROMlib_handle_control_key, 2 | (5 << 3) | (2 << 6) | (2 << 9) | (2 << 12)},
+};
+
+static OSErr control_dispatch_set_data(ControlHandle control, INTEGER part, ResType tag, Size size, Byte* data)
+{
+    return ROMlib_control_data(control, part, tag, size, data, NULL, ROMLIB_CONTROL_WRITE);
+}
+
+static OSErr control_dispatch_get_data(ControlHandle control, INTEGER part, ResType tag, Size size, Byte* data,
+                                       Size* actual)
+{
+    return ROMlib_control_data(control, part, tag, size, data, actual, ROMLIB_CONTROL_READ);
+}
+
+static OSErr control_dispatch_measure_data(ControlHandle control, INTEGER part, ResType tag, Size* actual)
+{
+    if (!actual)
+        return paramErr;
+    return ROMlib_control_data(control, part, tag, 0, NULL, actual, ROMLIB_CONTROL_MEASURE);
+}
+
+PRIVATE ptocblock_t control_data_ptoc[] = {
+    {ROMlib_get_control_features, 2 | (5 << 3) | (5 << 6)},
+    {control_dispatch_set_data, 2 | (5 << 3) | (2 << 6) | (4 << 9) | (4 << 12) | (5 << 15)},
+    {control_dispatch_get_data, 2 | (5 << 3) | (2 << 6) | (4 << 9) | (4 << 12) | (5 << 15) | (5 << 18)},
+    {control_dispatch_measure_data, 2 | (5 << 3) | (2 << 6) | (4 << 9) | (5 << 12)},
+};
+
+PRIVATE selectorblock_t control_dispatch_block[] = {
+    {0x0a, 0x0b, 1, control_input_ptoc},
+    {0x11, 0x14, 1, control_data_ptoc},
+    {0x1a, 0x1a, 1, control_supervisor_ptoc},
+    {0, 0, 0, NULL},
+};
+
+STUB(ControlDispatch)
+{
+    return do_selector_block(control_dispatch_block, EM_D0 & 0xffff, ControlDispatch);
 }
 
 STUB(DialogDispatch)

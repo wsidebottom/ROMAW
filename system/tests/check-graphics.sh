@@ -195,7 +195,7 @@ case "$check" in
         -fno-jump-tables -Wl,--gc-sections -DHAVE_CONFIG_H \
         -I"$root/system/obj" -I. -Iinclude -Ifrontend-sdl \
         -Iplatform/os/mingw32 -I"platform/arch/$arch" -Iplatform/os/cygwin32 \
-        -I"$prefix/include" system/tests/palette_bounds_test.c \
+        -I"$prefix/include" system/tests/palette_bounds_test.c quickdraw/default_ctab_values.c \
         -o "$root/build/palette-bounds-test.exe"
       "$root/build/palette-bounds-test.exe"
     )

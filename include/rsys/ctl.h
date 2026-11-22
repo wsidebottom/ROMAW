@@ -74,6 +74,7 @@ typedef struct PACKED {
     int32 range[4]; /* Carbon value, minimum, maximum and view size. */
     uint32 custom_definition;
     uint32 color_proc;
+    INTEGER image_transform;
     uint32 supervisor;
 } ROMlib_aux_control_data;
 
@@ -85,7 +86,10 @@ extern int32 ROMlib_set_up_control_color(ControlHandle control, int16 depth, Byt
 extern OSErr ROMlib_create_root_control(WindowPtr window, HIDDEN_ControlHandle* root);
 extern OSErr ROMlib_get_root_control(WindowPtr window, HIDDEN_ControlHandle* root);
 extern OSErr ROMlib_embed_control(ControlHandle control, ControlHandle parent);
+extern OSErr ROMlib_set_control_supervisor(ControlHandle control, ControlHandle supervisor);
 extern ControlHandle ROMlib_control_hit_target(ControlHandle control);
+extern INTEGER ROMlib_handle_control_click(ControlHandle control, Point where, INTEGER modifiers, ProcPtr action);
+extern INTEGER ROMlib_handle_control_key(ControlHandle control, INTEGER key, INTEGER character, INTEGER modifiers);
 extern void ROMlib_detach_control(ControlHandle control);
 extern OSErr ROMlib_auto_embed_control(ControlHandle control, WindowPtr window);
 extern OSErr ROMlib_set_user_pane_callback(ControlHandle control, ResType tag, const Byte* data);

@@ -140,4 +140,17 @@ CARBON_WINDOWS_COMPAT(SetWindowDoubleClickAction, 0x7464)
 CARBON_WINDOWS_COMPAT(GetWindowDoubleClickAction, 0x74dc)
 
 #undef CARBON_WINDOWS_COMPAT
+
+#define CARBON_SCREEN_BITS(name, offset)                                    \
+    static int carbon_window_##name(ROMlib_carbon_ppc_frame* call)          \
+    {                                                                       \
+        return ROMlib_carbon_window_saved_screen_bits(#name, offset, call); \
+    }
+
+CARBON_SCREEN_BITS(IsScreenBitSavingEnabled, 0xd798)
+CARBON_SCREEN_BITS(SetScreenBitSavingEnabled, 0xd7a0)
+CARBON_SCREEN_BITS(MoveSavedScreenBits, 0xde28)
+CARBON_SCREEN_BITS(GetSavedScreenBitsRepresentativePixMap, 0xdef4)
+
+#undef CARBON_SCREEN_BITS
 #endif

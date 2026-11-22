@@ -14,7 +14,8 @@
              ROMlib_set_control_font_style, ROMlib_set_control_text, ROMlib_set_user_pane_callback, ctl_color_init,
              ROMlib_control_activate, ROMlib_control_best_rect, ROMlib_control_data, ROMlib_control_focus,
              ROMlib_control_idle, ROMlib_control_region, ROMlib_set_up_control_color,
-             ROMlib_live_control_aux, lookup_aux_ctl
+             ROMlib_live_control_aux, ROMlib_set_control_supervisor, ROMlib_control_hit_target,
+             ROMlib_handle_control_click, ROMlib_handle_control_key, lookup_aux_ctl
 
   Origin:    Existing repository source in executor/src/controls; original attribution and provenance comments are
              preserved below.
@@ -338,8 +339,17 @@ PUBLIC OSErr ROMlib_embed_control(ControlHandle control, ControlHandle parent)
         return paramErr;
     int parent_kind = Hx(parent_aux, acReserved);
     if (parent_kind != ROMlib_root_control_proc && (parent_kind & ~15) != ROMlib_group_box_proc &&
-        ((parent_kind & ~15) != ROMlib_user_pane_proc || !(CTL_VALUE(parent) & 2)))
-        return -30590; /* errControlIsNotEmbedder */
+        ((parent_kind & ~15) != ROMlib_user_pane_proc || !(CTL_VALUE(parent) & 2))) {
+        uint32 features;
+        /* A loaded CDEF advertises embedding through its feature message. It
+           has no native pane kind, even for a standard Appearance group box. */
+        if (parent_kind || ROMlib_get_control_features(parent, &features) || !(CL(features) & 2))
+            return -30590; /* errControlIsNotEmbedder */
+        child_aux = ROMlib_live_control_aux(control);
+        parent_aux = ROMlib_live_control_aux(parent);
+        if (!child_aux || !parent_aux || CTL_OWNER(control) != CTL_OWNER(parent))
+            return paramErr;
+    }
     if (Hx(child_aux, acReserved) == ROMlib_root_control_proc)
         return paramErr;
     for (candidate = parent; candidate;) {
@@ -493,6 +503,19 @@ PUBLIC AuxCtlHandle ROMlib_live_control_aux(ControlHandle control)
     return NULL;
 }
 
+PUBLIC OSErr ROMlib_set_control_supervisor(ControlHandle control, ControlHandle supervisor)
+{
+    AuxCtlHandle aux = ROMlib_live_control_aux(control);
+    if (!aux || (supervisor && (!ROMlib_live_control_aux(supervisor) || CTL_OWNER(control) != CTL_OWNER(supervisor))))
+        return paramErr;
+    HIDDEN_ControlHandle root;
+    const OSErr error = ROMlib_get_root_control(CTL_OWNER(control), &root);
+    if (error)
+        return error;
+    ROMlib_aux_control_extra(aux)->supervisor = supervisor ? US_TO_SYN68K(supervisor) : 0;
+    return noErr;
+}
+
 PUBLIC ControlHandle ROMlib_control_hit_target(ControlHandle control)
 {
     AuxCtlHandle aux = ROMlib_live_control_aux(control);
@@ -512,6 +535,46 @@ static boolean_t control_has_feature(ControlHandle control, uint32 feature)
 {
     uint32 features;
     return ROMlib_get_control_features(control, &features) == noErr && (CL(features) & feature);
+}
+
+PUBLIC INTEGER ROMlib_handle_control_click(ControlHandle control, Point where, INTEGER modifiers, ProcPtr action)
+{
+    if (!ROMlib_live_control_aux(control))
+        return 0;
+
+    _Alignas(8) struct PACKED {
+        Point where;
+        INTEGER modifiers;
+        uint32 action;
+    } tracking = {
+        where,
+        CW(modifiers),
+        (uintptr_t)action == UINTPTR_MAX ? (uint32)(uintptr_t)PP_RAW(CTL_ACTION_X(control))
+        : action                         ? CL(US_TO_SYN68K(action))
+                                         : 0,
+    };
+
+    INTEGER result = 0;
+    CTL_CALL_EXCURSION(control, {
+        if (control_has_feature(control, 0x20))
+            result = ROMlib_send_control_message(control, 15, US_TO_SYN68K(&tracking));
+        else
+            result = TrackControl(control, where, action);
+    });
+    return result;
+}
+
+PUBLIC INTEGER ROMlib_handle_control_key(ControlHandle control, INTEGER key, INTEGER character, INTEGER modifiers)
+{
+    if (!ROMlib_live_control_aux(control))
+        return 0;
+    _Alignas(8) INTEGER pressed[] = {CW(modifiers), CW(key), CW(character)};
+    INTEGER result = 0;
+    CTL_CALL_EXCURSION(control, {
+        if (control_has_feature(control, 4))
+            result = ROMlib_send_control_message(control, 17, US_TO_SYN68K(pressed));
+    });
+    return result;
 }
 
 PUBLIC int32 ROMlib_set_up_control_color(ControlHandle control, int16 depth, Byte color_device, boolean_t text)
@@ -667,6 +730,35 @@ PUBLIC void ROMlib_control_idle(WindowPtr window)
     }
 }
 
+static boolean_t system_user_pane_upp(Handle definition, ResType tag)
+{
+    switch (tag) {
+    case T('d', 'r', 'a', 'w'):
+    case T('h', 'i', 't', 't'):
+    case T('t', 'r', 'a', 'k'):
+    case T('i', 'd', 'l', 'e'):
+    case T('k', 'e', 'y', 'd'):
+    case T('a', 'c', 't', 'i'):
+    case T('f', 'o', 'c', 'i'):
+    case T('b', 'a', 'c', 'k'):
+        break;
+    default:
+        return FALSE;
+    }
+    resmaphand owner;
+    typref* type;
+    resref* resource;
+    if (!definition || ROMlib_findres(definition, &owner, &type, &resource) != noErr ||
+        CL(type->rtyp) != TICK("CDEF") || CW(resource->rid) != (ROMlib_user_pane_proc >> 4))
+        return FALSE;
+    for (resmaphand map = (resmaphand)HIDDEN_NATIVE(SysMapHndl_H); map && STARH(map);
+         map = (resmaphand)HxP(map, nextmap)) {
+        if (map == owner)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType tag, Size size, Byte* data,
                                    Size* actual, enum ROMlib_control_data_op operation)
 {
@@ -703,6 +795,23 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
             return noErr;
         }
         const int kind = ROMlib_native_control_kind(control) & ~15;
+        if (tag == TICK("tran") && (kind == ROMlib_image_well_proc || kind == ROMlib_bevel_button_proc)) {
+            const Size required = sizeof(INTEGER);
+            if (actual)
+                *actual = CL(required);
+            if (operation == ROMLIB_CONTROL_MEASURE)
+                return noErr;
+            if (size < required || (operation == ROMLIB_CONTROL_WRITE && size != required))
+                return -30591;
+            void* transform = &ROMlib_aux_control_extra(aux)->image_transform;
+            if (operation == ROMLIB_CONTROL_WRITE) {
+                memcpy(transform, data, required);
+                CTL_CALL_EXCURSION(control, { InvalRect(&CTL_RECT(control)); });
+            }
+            else
+                memcpy(data, transform, required);
+            return noErr;
+        }
         const boolean_t image =
             tag == TICK("cont") && (kind == ROMlib_image_well_proc || kind == ROMlib_bevel_button_proc);
         const boolean_t bevel =
@@ -792,6 +901,13 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
     if ((!CTL_DEFPROC(control) && !ROMlib_aux_control_extra(aux)->custom_definition) ||
         !control_has_feature(control, 1U << 6))
         return -30581;
+    /* The System user-pane CDEF copies a complete UPP even for a short read. */
+    if (part == 0 && operation == ROMLIB_CONTROL_READ && size < (Size)sizeof(uint32) &&
+        system_user_pane_upp(CTL_DEFPROC(control), tag)) {
+        if (actual)
+            *actual = CL(sizeof(uint32));
+        return -30591;
+    }
     /* ControlDataAccessRec is four big-endian words in the CDEF ABI.
        A size query uses the get-data message with a zero size and pointer. */
     _Alignas(16) uint32 fields[4] = {CL(tag), CL((int32)part), CL(size), CL(data ? US_TO_SYN68K(data) : 0)};
@@ -986,11 +1102,22 @@ INTEGER ROMlib_bevel_text_placement(ControlHandle control)
     return aux ? CW(ROMlib_aux_control_extra(aux)->bevel_text_placement) : 0;
 }
 
+static OSErr set_control_short_data(ControlHandle control, ResType tag, INTEGER value)
+{
+    INTEGER encoded = CW(value);
+    return ROMlib_control_data(control, 0, tag, sizeof encoded, (Byte*)&encoded, NULL, ROMLIB_CONTROL_WRITE);
+}
+
 OSErr ROMlib_set_bevel_text_placement(ControlHandle control, INTEGER placement)
 {
-    if (!control || !STARH(control) || placement < -1 || placement > 4)
+    if (!control || !STARH(control))
         return paramErr;
-    if ((ROMlib_native_control_kind(control) & ~15) != ROMlib_bevel_button_proc)
+    int kind = ROMlib_native_control_kind(control);
+    if (!kind)
+        return set_control_short_data(control, TICK("tplc"), placement);
+    if (placement < -1 || placement > 4)
+        return paramErr;
+    if ((kind & ~15) != ROMlib_bevel_button_proc)
         return -30581;
     AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
     if (!aux)
@@ -1014,9 +1141,16 @@ INTEGER ROMlib_bevel_text_offset(ControlHandle control)
 
 OSErr ROMlib_set_bevel_text_alignment(ControlHandle control, INTEGER alignment, INTEGER offset)
 {
-    if (!control || !STARH(control) || alignment < teFlushLeft || alignment > teCenter)
+    if (!control || !STARH(control))
         return paramErr;
-    if ((ROMlib_native_control_kind(control) & ~15) != ROMlib_bevel_button_proc)
+    int kind = ROMlib_native_control_kind(control);
+    if (!kind) {
+        OSErr status = set_control_short_data(control, TICK("tali"), alignment);
+        return status ? status : set_control_short_data(control, TICK("toff"), offset);
+    }
+    if (alignment < teFlushLeft || alignment > teCenter)
+        return paramErr;
+    if ((kind & ~15) != ROMlib_bevel_button_proc)
         return -30581;
     AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
     if (!aux)
@@ -1046,9 +1180,19 @@ Point ROMlib_bevel_graphic_offset(ControlHandle control)
 
 OSErr ROMlib_set_bevel_graphic_alignment(ControlHandle control, INTEGER alignment, INTEGER h, INTEGER v)
 {
-    if (!control || !STARH(control) || alignment < -1 || alignment > 8)
+    if (!control || !STARH(control))
         return paramErr;
-    if ((ROMlib_native_control_kind(control) & ~15) != ROMlib_bevel_button_proc)
+    int kind = ROMlib_native_control_kind(control);
+    if (!kind) {
+        OSErr status = set_control_short_data(control, TICK("gali"), alignment);
+        if (status)
+            return status;
+        Point offset = {CW(v), CW(h)};
+        return ROMlib_control_data(control, 0, TICK("goff"), sizeof offset, (Byte*)&offset, NULL, ROMLIB_CONTROL_WRITE);
+    }
+    if (alignment < -1 || alignment > 8)
+        return paramErr;
+    if ((kind & ~15) != ROMlib_bevel_button_proc)
         return -30581;
     AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
     if (!aux)
@@ -1062,9 +1206,14 @@ OSErr ROMlib_set_bevel_graphic_alignment(ControlHandle control, INTEGER alignmen
 
 OSErr ROMlib_set_bevel_menu_value(ControlHandle control, INTEGER value)
 {
-    if (!control || !STARH(control) || value < 0)
+    if (!control || !STARH(control))
         return paramErr;
-    if ((ROMlib_native_control_kind(control) & ~15) != ROMlib_bevel_button_proc)
+    int kind = ROMlib_native_control_kind(control);
+    if (!kind)
+        return set_control_short_data(control, TICK("mval"), value);
+    if (value < 0)
+        return paramErr;
+    if ((kind & ~15) != ROMlib_bevel_button_proc)
         return -30581;
     AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
     if (!aux)
@@ -1077,7 +1226,10 @@ OSErr ROMlib_get_bevel_menu_value(ControlHandle control, INTEGER* value)
 {
     if (!control || !STARH(control) || !value)
         return paramErr;
-    if ((ROMlib_native_control_kind(control) & ~15) != ROMlib_bevel_button_proc)
+    int kind = ROMlib_native_control_kind(control);
+    if (!kind)
+        return ROMlib_control_data(control, 0, TICK("mval"), sizeof *value, (Byte*)value, NULL, ROMLIB_CONTROL_READ);
+    if ((kind & ~15) != ROMlib_bevel_button_proc)
         return -30581;
     AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
     if (!aux)
@@ -1103,6 +1255,8 @@ OSErr ROMlib_set_control_image_content(ControlHandle control, const Byte* conten
     if (!aux || !content)
         return paramErr;
     int kind = Hx(aux, acReserved) & ~15;
+    if (!kind)
+        return ROMlib_control_data(control, 0, TICK("cont"), 6, (Byte*)content, NULL, ROMLIB_CONTROL_WRITE);
     if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc) ||
         (expected_kind && kind != expected_kind))
         return -30581;
@@ -1122,6 +1276,8 @@ OSErr ROMlib_get_control_image_content(ControlHandle control, Byte* content, int
     if (!aux || !content)
         return paramErr;
     int kind = Hx(aux, acReserved) & ~15;
+    if (!kind)
+        return ROMlib_control_data(control, 0, TICK("cont"), 6, content, NULL, ROMLIB_CONTROL_READ);
     if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc) ||
         (expected_kind && kind != expected_kind))
         return -30581;
@@ -1172,6 +1328,9 @@ PRIVATE boolean_t load_control_image(ControlHandle control, int kind, control_im
 PRIVATE void draw_control_image(const control_image* image, const Rect* bounds, ControlHandle control)
 {
     IconTransformType transform = CTL_HILITE(control) == 255 ? ttDisabled : ttNone;
+    AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
+    if (aux)
+        transform |= CW(ROMlib_aux_control_extra(aux)->image_transform);
     switch (image->type) {
     case 1:
         C_PlotIconID(bounds, atNone, transform, image->id);

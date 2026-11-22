@@ -42,6 +42,10 @@ enum {
     kTemporaryFolderType = T('t', 'e', 'm', 'p'),
     kTextEncodingsFolderType = 0xc4746578,
     kFontFolderType = T('f', 'o', 'n', 't'),
+    kAppearanceFolderType = T('a', 'p', 'p', 'r'),
+    kThemesFolderType = T('t', 'h', 'm', 'e'),
+    kSoundSetsFolderType = T('s', 'n', 'd', 's'),
+    kDesktopPicturesFolderType = 0x647470c4,
 };
 
 extern pascal trap OSErr C_FindFolder(int16 vRefNum, OSType folderType, Boolean createFolder, int16* foundVRefNum,

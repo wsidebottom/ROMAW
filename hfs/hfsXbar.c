@@ -1059,22 +1059,6 @@ A2(PUBLIC trap, OSErrRET, PBExchangeFiles, ParmBlkPtr, pb, BOOLEAN, async)
     FAKEASYNC(pb, async, retval);
 }
 
-/* Inside Macintosh: Files, CSParam and CatPositionRec. Keep the opaque
-   continuation entirely in the caller's 16-byte position record. */
-typedef struct PACKED {
-    COMMONFSQUEUEDEFS;
-    ULONGINT matches;
-    LONGINT requested;
-    LONGINT actual;
-    ULONGINT search_bits;
-    ULONGINT lower;
-    ULONGINT upper;
-    ULONGINT milliseconds;
-    ULONGINT position[4];
-    ULONGINT optional_buffer;
-    LONGINT optional_size;
-} catalog_search_pb_t;
-
 _Static_assert(offsetof(catalog_search_pb_t, position) == 52, "CSParam position ABI");
 _Static_assert(sizeof(catalog_search_pb_t) == 76, "CSParam ABI");
 

@@ -633,6 +633,7 @@ void convert_transparent(const PixMap* src1, const PixMap* src2, PixMap* dst, co
 extern void pm_front_window_maybe_changed_hook(void);
 extern void pm_window_closed(WindowPtr w);
 extern WindowPtr ROMlib_palette_unlisted_window_after(WindowPtr previous);
+extern void ROMlib_palette_hilite_changed(void);
 
 extern void ctl_color_init(void);
 

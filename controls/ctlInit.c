@@ -256,6 +256,13 @@ static void dispose_single_control(ControlHandle c, boolean_t notify)
         HideControl(c);
     ROMlib_forget_control_font_style(c);
     ROMlib_detach_control(c);
+    const uint32 supervisor = US_TO_SYN68K(c);
+    for (ControlHandle candidate = WINDOW_CONTROL_LIST(CTL_OWNER(c)); candidate;
+         candidate = CTL_NEXT_CONTROL(candidate)) {
+        AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(candidate));
+        if (aux && ROMlib_aux_control_extra(aux)->supervisor == supervisor)
+            ROMlib_aux_control_extra(aux)->supervisor = 0;
+    }
     if (notify)
         CTL_CALL_EXCURSION(c, { CTLCALL(c, dispCntl, 0); });
 

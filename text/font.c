@@ -276,8 +276,6 @@ A2(PRIVATE, void, mungfmo, ctrip, cp, FMOutput*, fmop)
     fmop->extra = CB(CB(fmop->extra) + i);
 }
 
-#define MAXTABLES 12
-
 A1(PRIVATE, BOOLEAN, widthlistmatch, FMInput*, fmip)
 {
     MAKE_HIDDEN(WHandle);
@@ -653,7 +651,6 @@ A1(PRIVATE, void, newwidthtable, FMInput*, fmip)
 {
     FHandle fh;
     INTEGER lesser, greater, wanted_family, family, fontresid, powerof2;
-    LONGINT todelete;
     THz savezone;
     boolean_t tried_app_font;
     int n_tried_sys_font;
@@ -662,25 +659,27 @@ A1(PRIVATE, void, newwidthtable, FMInput*, fmip)
     HIDDEN_RAW_SET(TheZone_H, SysZone);
     HIDDEN_RAW_SET(WidthTabHandle_H, (WidthTableHandle)RM(NewHandle((Size)sizeof(WidthTable))));
     HIDDEN_RAW_SET(TheZone_H, savezone);
-    Munger((Handle)MR(WidthListHand), (LONGINT)0, (Ptr)0, 0, (Ptr)&WidthTabHandle_H, sizeof(WidthTabHandle_H));
 
-    /*
- * NOTE: the code below is a bit confusing.  What is going on is we always want
- *       to put the new entry in the front, but if we've grown too large then
- *	 we try to find a (Handle) 0 or a (Handle) -1) to delete.  If we find
- *	 neither we delete the last entry.
- */
-
-    if (GetHandleSize((Handle)MR(WidthListHand)) > (int)sizeof(HIDDEN_Handle) * MAXTABLES) {
-        todelete = 0;
-        if (Munger((Handle)MR(WidthListHand), (LONGINT)0, (Ptr)&todelete, sizeof(todelete), (Ptr) "", 0) < 0) {
-            todelete = -1;
-            if (Munger((Handle)MR(WidthListHand), (LONGINT)0, (Ptr)&todelete, sizeof(todelete), (Ptr) "", 0) < 0) {
-                DisposHandle((Handle)MR(STARH(WIDTHLISTHAND)[MAXTABLES]));
-                SetHandleSize(MR(WidthListHand), (Size)sizeof(HIDDEN_Handle) * MAXTABLES);
-            }
-        }
+    /* The list contains packed guest handles. Insert at its front, using
+       an empty slot first, then a discarded slot, then the oldest table. */
+    HIDDEN_Handle* cache = (HIDDEN_Handle*)STARH(MR(WidthListHand));
+    unsigned discarded = MAXTABLES;
+    unsigned slot;
+    for (slot = 0; slot < MAXTABLES; ++slot) {
+        const uint32_t entry = (uintptr_t)HIDDEN_RAW(cache[slot]);
+        if (!entry)
+            break;
+        if (entry == UINT32_MAX && discarded == MAXTABLES)
+            discarded = slot;
     }
+    if (slot == MAXTABLES)
+        slot = discarded < MAXTABLES ? discarded : MAXTABLES - 1;
+    const Handle evicted = HIDDEN_RAW(cache[slot]);
+    memmove(cache + 1, cache, slot * sizeof *cache);
+    HIDDEN_RAW_SET(cache[0], WidthTabHandle);
+    if (evicted && (uint32_t)(uintptr_t)evicted != UINT32_MAX)
+        DisposHandle(MR(evicted));
+
     HLock((Handle)MR(WidthTabHandle));
     HIDDEN_RAW_SET(WidthPtr_H, HIDDEN_RAW(*MR(WidthTabHandle)));
 

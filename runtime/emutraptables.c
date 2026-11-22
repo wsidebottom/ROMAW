@@ -706,7 +706,7 @@ toolstuff_t toolstuff[0x400] = {
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
-    {{_Unimplemented, -1}, (void*)0},
+    {{_ControlDispatch, -1}, (void*)0}, /* AA73 */
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},

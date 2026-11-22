@@ -183,6 +183,33 @@ static void test_device_updates(void)
     window_palette_alist = NULL;
 }
 
+static void test_hilite_colors(void)
+{
+    RGBColor colors[16];
+    const RGBColor bright = {CWC(0x2222), CWC(0xfafa), CWC(0xeeee)};
+    palette_hilite_colors(colors, 2, &bright);
+    assert(CW(colors[1].red) == 0x7fff && CW(colors[1].green) == 0x7fff && CW(colors[1].blue) == 0x7fff);
+    assert(!memcmp(&colors[2], &bright, sizeof bright));
+    assert(!memcmp(&colors[0], &ctab_2bpp_values[0].rgb, sizeof bright));
+    assert(!memcmp(&colors[3], &ctab_2bpp_values[3].rgb, sizeof bright));
+
+    const RGBColor gray_highlight = {CWC(0x4444), CWC(0x4422), CWC(0x44ee)};
+    palette_hilite_colors(colors, 2, &gray_highlight);
+    for (int i = 0; i < 4; ++i)
+        assert(!memcmp(&colors[i], &ctab_2bpp_values[i].rgb, sizeof gray_highlight));
+
+    palette_hilite_colors(colors, 4, &bright);
+    unsigned changed = 0;
+    for (int i = 1; i <= 14; ++i)
+        if (memcmp(&colors[i], &ctab_4bpp_values[i].rgb, sizeof bright)) {
+            assert(palette_rgb_distance(&colors[i], &bright) <= 0x3000);
+            ++changed;
+        }
+    assert(changed == 1);
+    assert(!memcmp(&colors[0], &ctab_4bpp_values[0].rgb, sizeof bright));
+    assert(!memcmp(&colors[15], &ctab_4bpp_values[15].rgb, sizeof bright));
+}
+
 void* syn68k_guest_to_host(uint32 p)
 {
     assert(p > 0 && p <= pointer_count);
@@ -206,6 +233,7 @@ void _warning(int e, const char* k, const char* f, int l, const char* n, const c
 int main(void)
 {
     test_device_updates();
+    test_hilite_colors();
     unsigned char memory[64] = {0}, before[64];
     PalettePtr ptr = (PalettePtr)(memory + 8);
     HIDDEN_PalettePtr handle;

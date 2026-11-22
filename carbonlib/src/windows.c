@@ -14,7 +14,7 @@
              ROMlib_carbon_window_activation, ROMlib_carbon_window_group,
              ROMlib_carbon_window_property, ROMlib_carbon_window_standard_state,
              ROMlib_carbon_window_update_pending, ROMlib_carbon_window_user_state,
-             ROMlib_carbon_windows_compatibility
+             ROMlib_carbon_windows_compatibility, ROMlib_carbon_window_saved_screen_bits
 
   Origin:    Existing repository source in packages/carbonlib/src; original attribution and provenance comments are
              preserved below.
@@ -266,6 +266,53 @@ static int romaw_window_metadata(uint32_t offset, ROMlib_carbon_ppc_frame* call)
         *output = metadata->drop_threshold;
     }
     return window_result(call, noErr);
+}
+
+int ROMlib_carbon_window_saved_screen_bits(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call)
+{
+    enum { get_enabled = 0xd798, set_enabled = 0xd7a0, move_bits = 0xde28, representative_pixmap = 0xdef4 };
+
+    uint32_t node = call->words[0];
+    if ((offset == move_bits || offset == representative_pixmap) && !node)
+        return window_result(call, 0);
+    ROMlib_carbon_reference ref;
+    if (!ROMlib_carbon_load_reference("WindowsLib", name, &ref))
+        return ROMlib_carbon_report_failure("The saved WindowsLib screen bits are unavailable");
+    if (ref.code_offset != offset || ref.code_size != 0x1cd10 || !ref.toc || ref.toc_offset || ref.toc_size != 0x27ec)
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+
+    if (offset == get_enabled || offset == set_enabled) {
+        Byte* enabled = ROMlib_carbon_guest_memory(US_TO_SYN68K(ref.toc) + 0x76c, 1, offset == set_enabled);
+        if (!enabled)
+            return 0;
+        if (offset == get_enabled)
+            return window_result(call, *enabled);
+        *enabled = (uint8_t)call->words[0] != 0;
+        return window_result(call, noErr);
+    }
+    if (offset == representative_pixmap) {
+        uint32_t world, pixmap = 0;
+        if (node > UINT32_MAX - 0x18 || !cfp_get(node + 0x14, &world))
+            return 0;
+        return (!world || cfp_private(&ref, 0x1b6b8, &world, 1, &pixmap)) && window_result(call, pixmap);
+    }
+
+    /* SaveScreenBits creates one node per device. Each destination's top
+       and left are relative to the new origin, while its extent stays fixed. */
+    const int16_t left = (int16_t)call->words[1], top = (int16_t)call->words[2];
+    for (unsigned devices = 0; node && devices < UINT16_MAX; ++devices) {
+        if (node > UINT32_MAX - 0x18)
+            return 0;
+        Rect* bounds = ROMlib_carbon_guest_memory(node + 4, sizeof *bounds, 1);
+        uint32_t next;
+        if (!bounds || !cfp_get(node + 0x10, &next) || next == node)
+            return 0;
+        const uint32_t move[] = {node + 4, (int16_t)(left - CW(bounds->left)), (int16_t)(top - CW(bounds->top))};
+        if (!cfp_private(&ref, 0x1b760, move, NELEM(move), NULL))
+            return 0;
+        node = next;
+    }
+    return !node && window_result(call, noErr);
 }
 
 int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call)
@@ -2015,6 +2062,15 @@ static int dispatch_property(const char* name, uint32_t offset, enum carbon_prop
         return 0;
     if (!window_property_profile(&ref, offset, control))
         return ROMlib_carbon_invoke_frame(ref.function, call);
+    if (control) {
+        /* CarbonLib switches to ControlsLib's own property collections when
+           its initialized backend flag is set. Keep both callers on that store. */
+        const Byte* saved_controls = ROMlib_carbon_guest_memory(US_TO_SYN68K(ref.toc) + 0x6cd0, 1, 0);
+        if (!saved_controls)
+            return 0;
+        if (*saved_controls)
+            return ROMlib_carbon_invoke_frame(ref.function, call);
+    }
     if (operation == property_button_get || operation == property_button_set)
         return window_button(&ref, operation, argument, call);
     if (operation == property_title_get || operation == property_title_set)

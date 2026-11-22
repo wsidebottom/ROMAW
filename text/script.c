@@ -908,9 +908,7 @@ P1(PUBLIC pascal trap, OSErr, InitDateCache, DateCachePtr, cache)
 
 P2(PUBLIC pascal trap, INTEGER, CharByte, Ptr, textBuf, INTEGER, textOffset)
 {
-    warning_unimplemented(NULL_STRING);
-    /* Single-byte character */
-    return 0;
+    return C_CharacterByteType(textBuf, textOffset, C_FontScript());
 }
 
 P5(PUBLIC pascal trap, Fixed, PortionLine, Ptr, textPtr, LONGINT, textLen, JustStyleCode, styleRunPosition, Point,

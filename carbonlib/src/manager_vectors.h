@@ -102,6 +102,11 @@ TOOLBOX_SELECTOR(SetDepth, 0x1888, 0xaba8, 0xa13, int16_t)
 TOOLBOX_SELECTOR(SetPaletteUpdates, 0x1888, 0xb88, 0x616, uint32_t)
 TOOLBOX_SELECTOR(SmallFract2Fix, 0x0eb8, 0x2be, 0x2, uint32_t)
 
+/* Control Manager D0 selectors. */
+TOOLBOX_SELECTOR(HandleControlClick, 0x17cc, 0xefa8, 0x0a, int16_t)
+TOOLBOX_SELECTOR(HandleControlKey, 0x17cc, 0xaba8, 0x0b, int16_t)
+TOOLBOX_SELECTOR(SetControlSupervisor, 0x17cc, 0xfa8, 0x1a, int16_t)
+
 /* Script Manager and QuickDraw text. */
 TOOLBOX_SELECTOR(FontScript, 0x10d4, 0xee, 0x82000000, int16_t)
 TOOLBOX_SELECTOR(IntlScript, 0x10d4, 0xee, 0x82000002, int16_t)

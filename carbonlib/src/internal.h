@@ -50,6 +50,7 @@ int ROMlib_carbon_clear_window_title(uint32_t window);
 int ROMlib_carbon_window_group(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_window_activation(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_window_saved_screen_bits(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call);
 void ROMlib_carbon_get_gworld(HIDDEN_CGrafPtr* port, HIDDEN_GDHandle* device);
 int ROMlib_carbon_new_gworld_from_ptr(ROMlib_carbon_ppc_frame* call);
 GDHandle ROMlib_carbon_gworld_device(GWorldPtr world);
