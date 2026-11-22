@@ -1,6 +1,6 @@
 # ROMAW source layout
 
-C sources are grouped in library directories at the repository root. Public
+C and C++ sources are grouped in library directories at the repository root. Public
 Macintosh and ROMlib headers live in root `include/`; platform backends are in
 `platform/` and `frontend-sdl/`. Automake mirrors the source subdirectories
 beneath the selected profile's object directory, including dependency files.
@@ -27,6 +27,11 @@ For archive ownership and targeted rebuilds, see [static libraries](../docs/stat
 | `options/` | Options, numeric parsing and preferences |
 | `ui/` | Application chrome, icons, appearance and help balloons |
 | `finder/` | Native x64 Finder desktop, child windows and file operations |
+| `finder-metadata/` | Shared Finder metadata, resource icons and .DS_Store persistence |
+| `disk-images/` | Disk-image formats, codecs and direct image writes |
+| `archives/`, `stuffit/` | Macintosh archive codecs and the pinned StuffIt bridge |
+| `carbonlib/` | Native Carbon and CoreFoundation compatibility |
+| `syn68k/`, `synppc/` | 68K and PowerPC execution, loaders and ROMAW bridges |
 | `services/` | Other Toolbox services, scrap, time, editions and packages |
 | `host/` | Shared host/Unix support |
 | `diagnostics/` | Errors, traces and diagnostic dumps |
@@ -36,8 +41,10 @@ The native Finder is built and linked by ROMAW's Windows wrapper. Its headers
 live in `include/finder`, build tools in `tools/romaw/native_finder`, and tests in
 `system/tests/native-finder`. Editable classic and native resources live in
 `finder/resources`. Generated artwork, objects and test executables
-belong in `system/obj/native-finder`. See `finder/README.md` for its build and
-runtime checks.
+belong in the selected profile's `native-finder/windows-x64` object directory
+(`system/obj/native-finder/windows-x64` for debug). See
+[the Finder guide](../finder/README.md) for its build and runtime checks, and
+[archive support](../archives/README.md) for packaging and extraction contracts.
 
 Enlarged, framed SDL guest windows use optional Direct3D 11 presentation. The
 Macintosh framebuffer and QuickDraw drawing stay in CPU memory; dirty packed
@@ -62,7 +69,7 @@ in `obj/generated`; generated C from `parse.y` belongs in `obj`.
 Explicit generated-include prerequisites must target the consumer's new object
 path (for example `menus/stdmbdf.o`). Native table generators use `tools/*.c`.
 
-The interpreted PPC project lives at workspace-root `synppc/`; its Toolbox import
+The PPC runtime lives at workspace-root `synppc/`; its Toolbox import
 generator reads `runtime/emutraptables.c`. Its PEF loader and CFM bridge also
 provide CFM-68K support. `Makefile.am` is the maintained source list; the obsolete
 flat-directory `romaw.make` list has been removed. Native host architecture

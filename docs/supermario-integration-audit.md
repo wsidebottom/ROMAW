@@ -8,9 +8,14 @@ constants and comments found 864 matching lines in 58 files. Those are **not**
 describe supported error paths or partial implementations. Source review then
 compared selected candidates with the local SuperMario tree.
 
-The reference is `Y:/Source Code/supermario/base/SuperMarioProj.1994-02-09`.
+The local reference used for this audit is
+`Y:/Source Code/supermario/base/SuperMarioProj.1994-02-09`.
 Its hardware assumptions and private records cannot be copied directly into
 ROMAW's host filesystem, native UI or CPU bridges.
+The `references/finder7/` paths below identify local reference material, which
+is excluded from Git. Current implementation paths are relative to this
+repository root; use the [source map](../system/README.sources.md) and
+[Finder guide](../finder/README.md) for maintained code and runtime contracts.
 
 ## Implemented
 
@@ -42,8 +47,8 @@ services and checks cache data, mask hit testing and TextEdit dispatch. Existing
 icon lifetime/disposal/callback fixtures remain part of validation. Generated
 fixtures contain original test data, not redistributed Apple runtime binaries.
 
-The native Toolbox SDK regression and six focused PPC probes (Toolbox, shared
-libraries, callbacks, windows, resources and the extended icon/TextEdit probe)
+At the audit checkpoint, the native Toolbox SDK regression and six focused PPC
+probes (Toolbox, shared libraries, callbacks, windows, resources and the extended icon/TextEdit probe)
 passed. The MacWrite launcher restarted its guest to apply memory settings;
 attaching GDB to that child confirmed the real 68K `GetNextEvent` trap path.
 This is a startup smoke check. Full MacWrite interaction was not tested.
@@ -84,7 +89,8 @@ claim that all styled-text editing or callback hooks are complete.
 
 Native Finder document frames, grow boxes, scrollbars, menu-bar titles and
 desktop patterns now call ROMAW's real WDEF, CDEF, MBDF and PixPat drawing
-through `classic-ui/host_graphics.h`. Host-order requests and RGB output isolate
+through [the host graphics interface](../include/classic-ui/host_graphics.h).
+Host-order requests and RGB output isolate
 the native frontend from packed guest records. Windows still owns the outer
 caption, input, file models and command dispatch. Hidden Toolbox windows supply
 actual WDEF hit testing as well as drawing. Wide output uses horizontal bands

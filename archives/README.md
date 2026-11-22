@@ -8,8 +8,8 @@ automatic application registration cannot replace them.
 
 The portable codec uses miniz **3.1.2**, commit
 `77d0dce8627735138c51770d1799a1ef48f2117d`, under its retained upstream license,
-and the pinned StuffIt C ABI described in `stuffit/README.md`. The small
-`miniz_export.h` is the static-library equivalent of its generated export header.
+and the pinned StuffIt C ABI described in [the bridge guide](../stuffit/README.md).
+The small `miniz_export.h` is the static-library equivalent of its generated export header.
 Sources: [miniz](https://github.com/richgel999/miniz),
 [BinHex RFC 1741](https://www.rfc-editor.org/rfc/rfc1741),
 [MacBinary format](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmail/ec1a8b63-ae1e-47d2-ba3e-473a4b27eb45).

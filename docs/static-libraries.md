@@ -9,7 +9,7 @@ JOBS=10 make                 # CPU dependencies, libraries, executable and stagi
 JOBS=10 make libraries       # All runtime archives; no ROMAW.exe link
 make library-memory         # One Toolbox module; no application link
 make library-classic-ui     # Shared drawing package only
-make library-synppc          # Portable PowerPC runtime only
+make library-synppc         # Portable PowerPC runtime only
 make list-libraries         # Configured Toolbox source ownership
 make check-libraries        # Ownership, membership, rebuild and staged-copy checks
 make check                  # Build and runtime suites; build prerequisites once
@@ -31,8 +31,9 @@ The default optimized profile uses `build/romaw-optimized/obj` and
 The 28 internal Toolbox archives live in `system/obj/libraries`. Their source
 directories are at the repository root (`memory/`, `quickdraw/`, `files/`, and
 the other manager directories below). Shared Toolbox interfaces live in
-`include/`. Root `Makefile.am` and `configure.ac` configure in the selected profile's object tree;
-the handwritten root `Makefile` remains the developer entry point.
+`include/`. Root `Makefile.am` and `configure.ac` configure in the selected
+profile's object tree; the handwritten root `Makefile` remains the developer
+entry point.
 
 The SDL frontend is in `frontend-sdl/`, avoiding a case-insensitive collision
 with the external SDK's `SDL/SDL.h`. Windows host/architecture sources live in
@@ -90,9 +91,10 @@ and are not separately copied into the staged library inventory. See
 [archive formats](../archives/README.md) and [the StuffIt bridge](../stuffit/README.md).
 
 Use `library-finder`, `library-images`, `library-finder-metadata`, `library-carbon`,
-`library-toolbox`, `library-syn68k` and `library-synppc-romaw` for these additional
-targeted builds. The native Toolbox DLL remains an optional existing SDK delivery
-form; ROMAW's runtime subsystem boundaries use static archives.
+`library-syn68k` and `library-synppc-romaw` for these additional targeted builds.
+Select an internal Toolbox archive by its table suffix, such as `library-memory`.
+ROMAW's runtime subsystem boundaries use static archives; the former external
+native application SDK and its DLL probes have been retired.
 
 The shared classic renderer lives in root `classic-ui/`.
 Finder no longer compiles a second copy into its archive. The common
@@ -127,8 +129,8 @@ executable link through explicit prerequisites.
 
 Both application and library-only builds stage the internal Toolbox archives and
 the independent archives listed above under `windows-binaries/bin/libraries/x64`
-(with an `optimized` subdirectory for that profile). `manifest.tsv` records each filename
-and its current build source. `ROMAW_LIBRARY_STAGE_DIR` overrides this directory;
+(with an `optimized` subdirectory for that profile). `manifest.tsv` records each
+filename and its current build source. `ROMAW_LIBRARY_STAGE_DIR` overrides this directory;
 otherwise it follows `ROMAW_STAGE_DIR`. Intermediate objects stay with their
 build owners, never in maintained source directories. The required
 `ROMAW.exe`, `syngen.exe` and `libsyn68k.a` retain their established staging

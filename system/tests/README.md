@@ -44,6 +44,14 @@ described in [synppc](../../synppc/README.md#romaw-integration). Hardware checks
 require their documented physical machine and explicit arguments; listing a
 suite never runs them.
 
+For Macintosh file interchange, use the [sidecar regression guide](README.sidecars),
+[archive codec and Windows UI checks](../../archives/README.md), and
+[StuffIt bridge checks](../../stuffit/README.md). The archive checks require
+independent unar/lsar decoders and are separate from the root suite selection.
+The [DSAT dialog app](dsat-dialogs/README.md) provides manual system-error UI
+scenarios; [the procedure mapping](../resources/system/syserr.md) describes
+the native handlers and guest fallback.
+
 For the C-backed Finder resource procedures, `bash system/tests/check-ui.sh
 finder-code` runs the portable Windows fixture. After building ROMAW, run
 `bash system/tests/check-ui.sh finder-guest /absolute/path/to/ROMAW.exe` to

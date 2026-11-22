@@ -4,11 +4,15 @@ Use [the root overview](../README.md) to start. Current instructions live in the
 owning document below; dated audits record evidence for their stated checkpoint,
 not a guarantee that every later checkout passes those checks. Build generators,
 local SDKs, third-party notices and captured test data keep their own documentation.
+Commands run from the repository root unless a document explicitly says otherwise.
+Local Apple sources, SDKs and reference-machine paths are prerequisites or recorded
+evidence; they are not distributed with ROMAW.
 
 ## Setup and contributing
 
 - [Windows build, profiles, staging and debugging](../README.windows-build)
 - [Runtime settings, profiles, files and input](runtime-guide.md)
+- [Macintosh sidecar formats and command-line settings](../README.md#macintosh-sidecar-files)
 - [Contributor rules and formatting](../Agents.md)
 - [ROMAW source layout](../system/README.sources.md)
 - [Static-library ownership and targeted builds](static-libraries.md)
@@ -20,7 +24,9 @@ local SDKs, third-party notices and captured test data keep their own documentat
 
 - [CPU status and external references](cpu-runtime-status.md)
 - [syn68k build and tests](../syn68k/README.md): [68040](../syn68k/docs/68040-status.md),
-  [MMU](../syn68k/docs/mmu040.md), [JIT/AOT](../syn68k/docs/aot-x64.md)
+  [MMU](../syn68k/docs/mmu040.md),
+  [writeback recovery](../syn68k/docs/68040-writeback-recovery.md),
+  [JIT/AOT](../syn68k/docs/aot-x64.md)
 - [synppc build and embedding](../synppc/README.md): [750 architecture](../synppc/docs/750-status.md),
   [native translation](../synppc/docs/translation-status.md), [CFM-68K](../synppc/tests/CFM68K.md),
   [native runtime libraries](../synppc/docs/native-runtime-libraries.md),
@@ -33,12 +39,16 @@ local SDKs, third-party notices and captured test data keep their own documentat
   [API contracts](../carbonlib/docs/api-notes.md) and
   [implementation audit](../synppc/docs/carbon-native.md)
 - [Native Finder](../finder/README.md) and [reference audit](../finder/REFERENCE_AUDIT.md)
+- [Finder guest resource procedures](../finder/guest/README.md)
 - [Shared classic UI](../classic-ui/README.md) and [QuickDraw host adapter](../windows/README.md)
 - [Icons and host metadata](../finder-metadata/README.md)
 - [Disk-image support and limits](../disk-images/README.md)
+- [ZIP, StuffIt, BinHex and MacBinary archives](../archives/README.md) and
+  [StuffIt bridge and provenance](../stuffit/README.md)
 - [Bitmap artwork](../bitmaps/README.md)
 - [Embedded resources](../system/resources/README.md) and
-  [System resource catalog](../system/resources/system/README.md)
+  [System resource catalog](../system/resources/system/README.md) and
+  [system-error procedure port](../system/resources/system/syserr.md)
 
 ## Application investigations
 
@@ -64,6 +74,7 @@ local SDKs, third-party notices and captured test data keep their own documentat
 - [Document associations](../system/tests/document-associations/README.md),
   [mouse input](../system/tests/mouse-input/README.md),
   [startup display](../system/tests/startup-display/README.md),
+  [system-error dialogs](../system/tests/dsat-dialogs/README.md),
   [type-9 resources](../system/tests/type9-resources/README.md)
 
 ## Reference-machine tools

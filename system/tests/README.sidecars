@@ -72,9 +72,10 @@ files or .DS_Store declare OS X, followed by .AppleDouble and then .finf/.rsrc.
 Unmarked directories retain ROMAW's configured convention (OS X ._name by
 default; -netatalk or -afpd selects .AppleDouble/name). These switches do not
 convert existing files. Renames/moves preserve the individual file's format.
-The root README.md describes the user-facing formats and command-line settings.
-Native Finder destination selection and conversion are documented separately in
-finder/README.md under Shared Macintosh storage layouts.
+The [root overview](../../README.md#macintosh-sidecar-files) describes the
+user-facing formats and command-line settings. Native Finder destination
+selection and conversion are documented separately under
+[Shared Macintosh storage layouts](../../finder/README.md#shared-macintosh-storage-layouts).
 
 Use tools/convert-appledouble.py APPS --backup BACKUP to migrate Netatalk
 and legacy percent sidecars to OS X naming. The tool validates descriptors,
