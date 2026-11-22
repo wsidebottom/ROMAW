@@ -170,7 +170,7 @@ assets retain their existing native compositing path.
   Edit an item's name in Get Info and press Return or close the window to save.
   Escape restores the last saved name. Locked files and read-only images
   display the name without enabling edits.
-  Click the Get Info icon to select it. Use Edit Ã¢â€ â€™ Copy, Paste, or Clear
+  Click the Get Info icon to select it. Use Edit > Copy, Paste, or Clear
   to exchange or remove custom artwork. Copy also publishes a Windows bitmap.
   Paste accepts Finder icon families and Windows clipboard bitmaps. Locked files
   and read-only mounted images allow copying their artwork.

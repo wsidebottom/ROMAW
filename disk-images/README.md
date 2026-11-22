@@ -47,7 +47,7 @@ partition reads. The legacy snapshot APIs remain available for compatibility
 and decoder tests, but runtime mounting uses the direct API.
 
 The reader supports zlib, bzip2, ADC, LZFSE and XZ DMG blocks, as supplied by
-7-Zip. NDIF v10â€“12 images, including self-mounting `.smi` applications, support
+7-Zip. NDIF v10-12 images, including self-mounting `.smi` applications, support
 raw, zero-filled and ADC chunks. Their `bcem` resource is read from OSX,
 Netatalk or BasiliskII sidecars (or a native macOS resource fork). Chunks are
 decoded on demand, with one decoded chunk retained in RAM; mounting creates

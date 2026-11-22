@@ -14,7 +14,7 @@ IEEE extended precision, with provenance and integration changes documented in
 `third_party/softfloat/README.md`. It does not use host double arithmetic or
 the host floating environment.
 
-- FP0Ã¢â‚¬â€œFP7, FPCR/FPSR/FPIAR and reset/null state; state is appended to CPUState
+- FP0-FP7, FPCR/FPSR/FPIAR and reset/null state; state is appended to CPUState
   to preserve existing generated assembly offsets.
 - FMOVE, FADD, FSUB, FMUL, FDIV, FSQRT, FABS, FNEG, FCMP and FTST, including
   explicit single/double variants, FPCR precision and four rounding directions.
@@ -192,7 +192,7 @@ privilege check and invalidated translations even for a no-cache selection.
 
 References:
 
-- [Motorola M68040 User's Manual, sections 8Ã¢â‚¬â€œ9](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf)
+- [Motorola M68040 User's Manual, sections 8-9](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf)
 - [M68000 Family Programmer's Reference Manual](https://www.nxp.com/docs/en/reference-manual/M68000PRM.pdf)
 
 Division's rounded value and writeback data are additionally checked against

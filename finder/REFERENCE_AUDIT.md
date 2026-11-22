@@ -7,7 +7,7 @@ establish feature parity for the entire reconstructed Finder.
 | --- | --- | --- |
 | `finder7/src/interface/menu_parser.c`, `finder_insert_menu_definition` | The classic menu has dynamic `view` entries; native View was a fixed Icons/List pair. | Added Small Icons and seven column sort commands. |
 | `finder7/src/desktop/desktop_launch.c`, `finder_create_menu_command` | Classic menu commands carry a view selector; native commands had no sort/view model. | `views.cpp` owns native view/sort preferences and deterministic comparisons. |
-| Preserved Finder `STR#` 3000 in `finder/resources/text_resources.r`, entries 14Ã¢â‚¬â€œ20 | Name, Date, Size, Kind, Comments, Label and Version had no list columns. | The build generates these column/menu names directly from the editable resource. Metadata uses host file dates, data/resource size, classic type, comments, labels and `vers`. |
+| Preserved Finder `STR#` 3000 in `finder/resources/text_resources.r`, entries 14-20 | Name, Date, Size, Kind, Comments, Label and Version had no list columns. | The build generates these column/menu names directly from the editable resource. Metadata uses host file dates, data/resource size, classic type, comments, labels and `vers`. |
 | Existing per-folder native window persistence | Closing a folder lost its presentation. | Validated `ViewsNative` settings retain view, column and direction. Large-icon positions stay in their existing independent storage. |
 
 List view uses native report rows and small icons. Small Icons uses compact

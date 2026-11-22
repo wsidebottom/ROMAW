@@ -1078,7 +1078,7 @@ The archive also supplies 10 PowerPC FixMath wide operations through both
 CarbonLib and InterfaceLib. These support the original ATS font scaler.
 The Toolbox app checks full-width signed products, carry and borrow,
 arithmetic and rounded shifts, division with optional remainders, overflow
-and square roots. The reference is AppleÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s [QuickDraw GX Mathematics chapter](https://dev.os9.ca/techpubs/mac/pdf/QD_GX_Environment-Utilities/Math_Functions.pdf).
+and square roots. The reference is Apple's [QuickDraw GX Mathematics chapter](https://dev.os9.ca/techpubs/mac/pdf/QD_GX_Environment-Utilities/Math_Functions.pdf).
 
 The next 79 exports cover Component Manager, classic memory and time services,
 TextEdit, Dialog Manager and QuickDraw. The 34 component entries share
