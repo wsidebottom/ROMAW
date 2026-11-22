@@ -115,7 +115,7 @@ static int drive_path_inside(const char* directory, const char* path)
 
 const char* config_drive_format_name(int format)
 {
-    static const char* names[] = {"", "Windows", "OSX", "Netatalk", "BasiliskII", "ROMAW"};
+    static const char* names[] = {"", "Windows", "OSX", "Netatalk", "BasiliskII", "Executor"};
     return format >= CONFIG_DRIVE_UNDECLARED && format <= CONFIG_DRIVE_ROMAW ? names[format] : NULL;
 }
 
@@ -280,6 +280,10 @@ int config_drive_prefs_load(const char* path, const char* apps)
         key[6] += i;
         if (!config_prefs_get(path, "HostDrives", key, name, sizeof name))
             continue;
+        /* Preserve profiles written during the application-brand rename. The
+           percent-sidecar storage convention itself is named Executor. */
+        if (!strcasecmp(name, "ROMAW"))
+            strcpy(name, "Executor");
         int format;
         for (format = CONFIG_DRIVE_WINDOWS; format <= CONFIG_DRIVE_ROMAW; ++format)
             if (!strcasecmp(name, config_drive_format_name(format)))

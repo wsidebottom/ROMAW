@@ -12,6 +12,7 @@
 #   Copyright and Legal notices: Applicable repository license: COPYING.
 # ===================================================================+
 """Validate first-use detection and dropdown order in the normal Windows executable."""
+import argparse
 import ctypes as c
 from ctypes import wintypes as w
 import os
@@ -24,6 +25,9 @@ from private_desktop import api, private_desktop
 
 def main():
     root = Path(__file__).resolve().parents[3]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", type=Path, default=root / "windows-binaries/bin/ROMAW.exe")
+    args = parser.parse_args()
     base = Path(tempfile.mkdtemp(prefix="romaw-drive-formats-ui-"))
     apps = base / ".romaw/Apps"
     (apps / "Desktop Folder").mkdir(parents=True)
@@ -39,7 +43,7 @@ def main():
         "APPDATA": str(base / "AppData/Roaming"),
     }
     with private_desktop() as (desktop, launch):
-        process = launch([str(root / "windows-binaries/bin/ROMAW.exe")], cwd=base, env=environment)
+        process = launch([str(args.runtime.resolve())], cwd=base, env=environment)
         user = c.WinDLL("user32", use_last_error=True)
         callback = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
         enumerate_windows = api(user, "EnumDesktopWindows", w.BOOL, w.HANDLE, callback, w.LPARAM)
@@ -94,7 +98,7 @@ def main():
             return result.value
 
         preferences = wait("Drive Formats")
-        expected = ["Windows", "OSX", "Netatalk", "BasiliskII", "ROMAW"]
+        expected = ["Windows", "OSX", "Netatalk", "BasiliskII", "Executor"]
         for letter in range(26):
             control = get_item(preferences, 100 + letter)
             assert control
@@ -116,7 +120,7 @@ def main():
         assert post(finder, 0x10, 0, 0)
         assert process.wait(30) == 0
     print(
-        "PASS first-start preferences: 26 format dropdowns, detected selections, Windows/OSX/Netatalk/BasiliskII/ROMAW order"
+        "PASS first-start preferences: 26 format dropdowns, detected selections, Windows/OSX/Netatalk/BasiliskII/Executor order"
     )
 
 

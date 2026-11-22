@@ -145,7 +145,11 @@ int main(void)
         assert(config_drive_format("F:/") == CONFIG_DRIVE_UNDECLARED);
         assert(config_drive_format("C:/Users/William/.romaw/Apps") == CONFIG_DRIVE_OSX);
         assert(!config_drive_sidecars("A:/") && config_drive_sidecars("E:/"));
-        assert(!strcmp(config_drive_format_name(CONFIG_DRIVE_ROMAW), "ROMAW"));
+        assert(!strcmp(config_drive_format_name(CONFIG_DRIVE_ROMAW), "Executor"));
+        assert(config_prefs_set(file, "HostDrives", "FormatE", "ROMAW"));
+        assert(config_drive_prefs_load(file, "C:/Users/William/.romaw/Apps"));
+        assert(config_drive_format("E:/") == CONFIG_DRIVE_ROMAW);
+        assert(config_prefs_set(file, "HostDrives", "FormatE", "Executor"));
         formats[4] = CONFIG_DRIVE_ROMAW + 1;
         assert(!config_drive_prefs_save_formats(file, formats, NULL, 0));
         assert(config_drive_format("E:/") == CONFIG_DRIVE_ROMAW);
