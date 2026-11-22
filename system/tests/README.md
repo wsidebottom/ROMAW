@@ -32,6 +32,21 @@ colorization through initialized ROMAW on Windows. It covers 4/8-bit sources,
 and preservation of the source pixels, palette and port colors. `-Executable`
 selects an isolated staged build; this fixture does not require SimFarm assets.
 
+`./system/tests/check-graphics.ps1 window-exposure` checks bringing overlapping
+windows forward after application drawing changes a window's `visRgn`. It
+verifies that covered pixels are repainted and invalidated, uncovered pixels
+are preserved, and repeated activation leaves the window order intact.
+It also checks occlusion, exposure and hiding inside `BeginUpdate`/`EndUpdate`,
+where the saved visibility snapshot must be invalidated and recalculated,
+plus mismatched `EndUpdate` calls and origin changes during an update.
+The exposure calculation follows `BringToFront` in the local SuperMario
+`Toolbox/WindowMgr/WindowMgr.a` reference identified by
+[`references/finder7/SOURCE_REFERENCES.md`](../../references/finder7/SOURCE_REFERENCES.md):
+union the structure regions of visible windows above the target, intersect
+with the target structure, then recalculate visibility over its full structure.
+The update snapshot handling follows `UpdatedVisRgn` in `LayerMgr.c` and the
+matching-window check in `WindowMgr.a`'s `EndUpdate`.
+
 | Area | Suites |
 | --- | --- |
 | Build and generated files | `check-build.sh` |

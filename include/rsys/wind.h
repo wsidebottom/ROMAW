@@ -73,6 +73,7 @@ extern LONGINT ROMlib_windcall(WindowPtr wind, INTEGER mess, intptr_t param);
 
 extern void ROMlib_refresh_grow_icons(void);
 extern void ROMlib_offset_update_vis(GrafPtr port, INTEGER dh, INTEGER dv);
+extern void ROMlib_invalidate_update_vis(GrafPtr port);
 
 extern const RGBColor ROMlib_theme_background_rgb;
 

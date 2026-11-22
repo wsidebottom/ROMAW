@@ -101,11 +101,22 @@ static void bring_to_front_in_layer(WindowPtr w)
     WindowPeek wp;
     RgnHandle hidden;
 
-    if (MR(WindowList) != (WindowPeek)w)
+    if (w && MR(WindowList) != (WindowPeek)w) {
+        for (wp = MR(WindowList); wp && WINDOW_NEXT_WINDOW(wp) != (WindowPeek)w; wp = WINDOW_NEXT_WINDOW(wp))
+            ;
+        if (!wp)
+            return;
+        hidden = NewRgn();
+        if (!hidden)
+            return;
         THEPORT_SAVE_EXCURSION(MR(wmgr_port), {
+            /* WindowMgr.a BringToFront builds clobbered from the structure
+               regions above the target, independently of its mutable visRgn. */
+            for (WindowPeek above = MR(WindowList); above != (WindowPeek)w; above = WINDOW_NEXT_WINDOW(above))
+                if (WINDOW_VISIBLE_X(above))
+                    UnionRgn(WINDOW_STRUCT_REGION(above), hidden, hidden);
+            SectRgn(WINDOW_STRUCT_REGION(w), hidden, hidden);
             SetClip(MR(GrayRgn));
-            for (wp = MR(WindowList); wp && WINDOW_NEXT_WINDOW(wp) != (WindowPeek)w; wp = WINDOW_NEXT_WINDOW(wp))
-                ;
             if (wp) {
                 FIELD_ASSIGN_RAW(WINDOW_NEXT_WINDOW_X(wp), WINDOW_NEXT_WINDOW_X(w));
                 FIELD_ASSIGN_RAW(WINDOW_NEXT_WINDOW_X(w), WindowList);
@@ -115,16 +126,13 @@ static void bring_to_front_in_layer(WindowPtr w)
 		    may have changed */
                     pm_front_window_maybe_changed_hook();
 
-                    hidden = NewRgn();
-                    CopyRgn(PORT_VIS_REGION(w), hidden);
-                    OffsetRgn(hidden, -Cx(PORT_BOUNDS(w).left), -Cx(PORT_BOUNDS(w).top));
-                    XorRgn(WINDOW_STRUCT_REGION(w), hidden, hidden);
                     PaintOne((WindowPeek)w, hidden);
-                    CalcVisBehind((WindowPeek)w, hidden);
-                    DisposeRgn(hidden);
+                    CalcVisBehind((WindowPeek)w, WINDOW_STRUCT_REGION(w));
                 }
             }
         });
+        DisposeRgn(hidden);
+    }
 }
 
 P1(PUBLIC pascal trap, void, BringToFront, WindowPtr, w)
@@ -217,6 +225,7 @@ static void show_hide_in_layer(WindowPtr w, BOOLEAN flag)
         THEPORT_SAVE_EXCURSION(MR(wmgr_port), {
             SetClip(MR(GrayRgn));
             SetEmptyRgn(PORT_VIS_REGION(w));
+            ROMlib_invalidate_update_vis((GrafPtr)w);
             PaintBehind(ROMlib_window_next_all(w), WINDOW_STRUCT_REGION(w));
             CalcVisBehind(ROMlib_window_next_all(w), WINDOW_STRUCT_REGION(w));
         });

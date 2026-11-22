@@ -343,12 +343,17 @@ P1(PUBLIC pascal trap, void, CalcVis, WindowPeek, w)
 {
     WindowPeek wp;
 
-    if (w && WINDOW_VISIBLE_X(w)) {
-        SectRgn(MR(GrayRgn), WINDOW_CONT_REGION(w), PORT_VIS_REGION(w));
-        for (wp = ROMlib_window_first_all(); wp != w; wp = ROMlib_window_next_all(wp))
-            if (WINDOW_VISIBLE_X(wp))
-                DiffRgn(PORT_VIS_REGION(w), WINDOW_STRUCT_REGION(wp), PORT_VIS_REGION(w));
-        OffsetRgn(PORT_VIS_REGION(w), CW(PORT_BOUNDS(w).left), CW(PORT_BOUNDS(w).top));
+    if (w) {
+        if (WINDOW_VISIBLE_X(w)) {
+            SectRgn(MR(GrayRgn), WINDOW_CONT_REGION(w), PORT_VIS_REGION(w));
+            for (wp = ROMlib_window_first_all(); wp != w; wp = ROMlib_window_next_all(wp))
+                if (WINDOW_VISIBLE_X(wp))
+                    DiffRgn(PORT_VIS_REGION(w), WINDOW_STRUCT_REGION(wp), PORT_VIS_REGION(w));
+            OffsetRgn(PORT_VIS_REGION(w), CW(PORT_BOUNDS(w).left), CW(PORT_BOUNDS(w).top));
+        }
+        else
+            SetEmptyRgn(PORT_VIS_REGION(w));
+        ROMlib_invalidate_update_vis((GrafPtr)w);
     }
 }
 

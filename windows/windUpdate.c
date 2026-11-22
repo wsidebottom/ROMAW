@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_invalidate_window_contents, ROMlib_offset_update_vis
+  Functions: ROMlib_invalidate_update_vis, ROMlib_invalidate_window_contents, ROMlib_offset_update_vis
 
   Origin:    Existing repository source in executor/src/windows; original attribution and provenance comments are
              preserved below.
@@ -112,6 +112,18 @@ PUBLIC int ROMlib_emptyvis = 0;
    used for offscreen rendering while that update is in progress. */
 static GrafPtr update_port;
 
+void ROMlib_invalidate_update_vis(GrafPtr port)
+{
+    /* LayerMgr.c UpdatedVisRgn discards an update snapshot when the window
+       manager recalculates visibility while that update is in progress. */
+    if (port == update_port) {
+        update_port = NULL;
+        if (SaveVisRgn)
+            SetEmptyRgn(MR(SaveVisRgn));
+        ROMlib_emptyvis = 0;
+    }
+}
+
 void ROMlib_offset_update_vis(GrafPtr port, INTEGER dh, INTEGER dv)
 {
     if (port == update_port && SaveVisRgn)
@@ -144,10 +156,13 @@ P1(PUBLIC pascal trap, void, BeginUpdate, WindowPtr, w)
 
 P1(PUBLIC pascal trap, void, EndUpdate, WindowPtr, w)
 {
-    CopyRgn(MR(SaveVisRgn), PORT_VIS_REGION(w));
-    CopyRgn(WINDOW_CONT_REGION(w), MR(SaveVisRgn));
-    OffsetRgn(MR(SaveVisRgn), CW(PORT_BOUNDS(w).left), CW(PORT_BOUNDS(w).top));
-    if (update_port == (GrafPtr)w)
-        update_port = NULL;
     ROMlib_emptyvis = 0;
+    /* WindowMgr.a EndUpdate only restores a matching, still-valid snapshot. */
+    if (!w || update_port != (GrafPtr)w) {
+        CalcVis((WindowPeek)w);
+        return;
+    }
+    CopyRgn(MR(SaveVisRgn), PORT_VIS_REGION(w));
+    SetEmptyRgn(MR(SaveVisRgn));
+    update_port = NULL;
 }
