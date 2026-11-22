@@ -19,6 +19,15 @@ bash synppc/tests/check-core.sh core
 powershell.exe -NoProfile -File system/tests/check-runtime.ps1 help -ROMAW D:\Source\ROMAW\windows-binaries\bin\ROMAW.exe
 ```
 
+`./system/tests/check-runtime.ps1 ecf` generates a small PPC window application
+inside an isolated user profile. It checks preferences save/reload, Defaults and
+application overrides, direct Gestalt rules, heap validation and launch restart
+arguments, then lets the real window creation/disposal path finish normally.
+The suite uses x64 GDB by default, retains its GDB script and logs under
+`build/ecf-test.*`, bounds each debugger run to 60 seconds, and restores the
+caller's profile environment. It does not depend on the Appearance graphics
+regression application or modify the user's saved preferences.
+
 The live clipboard probe replaces the Windows clipboard with generated test data.
 It checks transfers through the staged runtime, including QuickDraw pixel comparisons
 for DIB/PICT round trips. Run it explicitly with

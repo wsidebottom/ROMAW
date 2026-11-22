@@ -243,7 +243,7 @@ run "APPFILE"
 function Invoke-Check-ecf {
     param(
         [string]$ROMAW,
-        [string]$Gdb = 'C:\msys64\mingw32\bin\gdb.exe'
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe'
     )
     $ErrorActionPreference = 'Stop'
     $workspace = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -251,20 +251,53 @@ function Invoke-Check-ecf {
     $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
     $Gdb = (Resolve-Path -LiteralPath $Gdb).Path
     $fixture = Join-Path $workspace ('build\ecf-test.' + [guid]::NewGuid().ToString('N'))
-    & python (Join-Path $workspace 'synppc\tests\make_ppc_appearance_probe.py') --output-dir $fixture
+    $profileHome = Join-Path $fixture 'profile'
+    $profileRoot = Join-Path $profileHome '.romaw'
+    $apps = Join-Path $profileRoot 'Apps'
+    $local = Join-Path $profileHome 'AppData/Local'
+    $roaming = Join-Path $profileHome 'AppData/Roaming'
+    foreach ($directory in @($apps, $local, $roaming, (Join-Path $apps 'System Folder'))) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+    & python (Join-Path $workspace 'system/tests/make_ecf_probe.py') $apps
     if ($LASTEXITCODE -ne 0) { throw 'Could not generate ECF fixture' }
-    $bin = Split-Path $ROMAW -Parent
-    Copy-Item -LiteralPath $ROMAW -Destination (Join-Path $fixture 'ROMAW.exe')
-    Get-ChildItem -LiteralPath $bin -Filter '*.dll' | Copy-Item -Destination $fixture
-    Copy-Item -LiteralPath (Join-Path $bin 'ROMAW.rsrc') -Destination $fixture
-    $ROMAW = Join-Path $fixture 'ROMAW.exe'
-    $privatePrefs = Join-Path $fixture 'ROMAW.prefs'
-    New-Item -ItemType Directory -Path (Join-Path $fixture 'Apps\System Folder') -Force | Out-Null
-    $app = (Join-Path $fixture 'PPC Appearance Probe').Replace('\', '/')
+    $privatePrefs = Join-Path $profileRoot 'ROMAW.prefs'
+    $hostSettings = "[HostDrives]`nSidecarDrives=none`n`n"
+    [IO.File]::WriteAllText($privatePrefs, $hostSettings)
+    $app = (Join-Path $apps 'ECF Launch Probe').Replace('\', '/')
+    if (-not (Test-Path -LiteralPath $app)) { throw 'ECF application fixture is missing' }
     $folder = $fixture.Replace('\', '/')
     $saved = Join-Path $fixture 'saved.prefs'
     $script = Join-Path $fixture 'test.gdb'
-    $commands = @'
+    $environment = @{
+        USERPROFILE = $profileHome; LOCALAPPDATA = $local; APPDATA = $roaming
+        ROMAW_ECF_SYSZONE = $null; ROMAW_ECF_APPLZONE = $null; ROMAW_ECF_BROWSER = $null
+    }
+    $previousEnvironment = @{}
+    foreach ($name in $environment.Keys) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    $runProbe = {
+        $log = $script + '.log'
+        $errors = $script + '.err'
+        $process = Start-Process -FilePath $Gdb -ArgumentList @('-q', '-batch', '-x', ('"' + $script + '"'), ('"' + $ROMAW + '"')) -WorkingDirectory $fixture -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError $errors
+        try {
+            if (-not $process.WaitForExit(60000)) { throw "ECF probe timed out; see $log and $errors" }
+            [pscustomobject]@{ ExitCode = $process.ExitCode; Output = ([IO.File]::ReadAllText($log) + [IO.File]::ReadAllText($errors)) }
+        }
+        finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+            $process.Dispose()
+        }
+    }
+    Push-Location $fixture
+    try {
+        foreach ($name in $environment.Keys) {
+            $ecfValue = $environment[$name]
+            if ($null -eq $ecfValue) { $ecfValue = [NullString]::Value }
+            [Environment]::SetEnvironmentVariable($name, $ecfValue, 'Process')
+        }
+        $commands = @'
 set pagination off
 set confirm off
 set print thread-events off
@@ -285,22 +318,23 @@ end
 printf "ECF_SAVE_OK\n"
 quit 0
 end
-run "APP"
+run -syszone 8m -applzone 64m -system 9.2.2 "APP"
 '@
-    [IO.File]::WriteAllText($script, $commands.Replace('FOLDER', $folder).Replace('APP', $app))
-    $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'ECF_SAVE_OK') { throw "ECF save failed: $output" }
-    $text = [IO.File]::ReadAllText($saved)
-    foreach ($option in @('NoWarn32', 'TextDisableHack', 'NoPrefPanel', 'NoLower', 'PrintingHack', 'DisposHandleHack', 'NoSuspend', 'CloseIsQuit', 'RectScreen')) {
-        if ($text -notmatch $option) { throw "Saved ECF lost $option" }
-    }
-    if ($text -notmatch 'AppleChar=20' -or $text -notmatch 'RightButtonModifier=256') { throw 'Saved preferences lost scalar settings' }
-    if ($text -notmatch 'SysZone=8388608' -or $text -notmatch 'ApplZone=16777216') { throw 'Saved preferences lost heap sizes' }
-    if ($text -notmatch '\[APPL.PPRB\]' -or $text -match 'Config000000=') { throw 'Saved preferences did not use readable type/creator settings' }
+        [IO.File]::WriteAllText($script, $commands.Replace('FOLDER', $folder).Replace('APP', $app))
+        $probe = & $runProbe
+        $output = $probe.Output
+        if ($probe.ExitCode -ne 0 -or $output -notmatch 'ECF_SAVE_OK') { throw "ECF save failed: $output" }
+        $text = [IO.File]::ReadAllText($saved)
+        foreach ($option in @('NoWarn32', 'TextDisableHack', 'NoPrefPanel', 'NoLower', 'PrintingHack', 'DisposHandleHack', 'NoSuspend', 'CloseIsQuit', 'RectScreen')) {
+            if ($text -notmatch $option) { throw "Saved ECF lost $option" }
+        }
+        if ($text -notmatch 'AppleChar=20' -or $text -notmatch 'RightButtonModifier=256') { throw 'Saved preferences lost scalar settings' }
+        if ($text -notmatch 'SysZone=8388608' -or $text -notmatch 'ApplZone=16777216') { throw 'Saved preferences lost heap sizes' }
+        if ($text -notmatch '\[APPL.PPRB\]' -or $text -match 'Config000000=') { throw 'Saved preferences did not use readable type/creator settings' }
 
-    # Reload the dialog snapshot through the real startup parser.
-    Copy-Item -LiteralPath $saved -Destination $privatePrefs
-    $commands = @'
+        # Reload the dialog snapshot through the real startup parser.
+        [IO.File]::WriteAllText($privatePrefs, $hostSettings + $text)
+        $commands = @'
 set pagination off
 set confirm off
 set print thread-events off
@@ -315,17 +349,18 @@ quit 0
 end
 run -syszone 8m -applzone 16m "APP"
 '@
-    [IO.File]::WriteAllText($script, $commands.Replace('APP', $app))
-    $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'PREFS_ROUNDTRIP_OK') { throw "Saved preferences reload failed: $output" }
+        [IO.File]::WriteAllText($script, $commands.Replace('APP', $app))
+        $probe = & $runProbe
+        $output = $probe.Output
+        if ($probe.ExitCode -ne 0 -or $output -notmatch 'PREFS_ROUNDTRIP_OK') { throw "Saved preferences reload failed: $output" }
 
-    # Original probe files use APPL/PPRB Finder information.
-    foreach ($case in @(
-            @{Version = '0x860'; Flags = '0xc000000'; Settings = "[Defaults]`nSystemVersion=8.6.0`nCloseIsQuit=1`nNoSuspend=1`n" },
-            @{Version = '0x910'; Flags = '0'; Settings = "[Defaults]`nSystemVersion=8.6.0`nCloseIsQuit=1`nNoSuspend=1`n`n[APPL.PPRB]`nSystemVersion=9.1.0`nOptions=0`n" }
-        )) {
-        [IO.File]::WriteAllText($privatePrefs, $case.Settings)
-        $commands = @'
+        # Original probe files use APPL/PPRB Finder information.
+        foreach ($case in @(
+                @{Version = '0x860'; Flags = '0xc000000'; Settings = "[Defaults]`nSystemVersion=8.6.0`nCloseIsQuit=1`nNoSuspend=1`n" },
+                @{Version = '0x910'; Flags = '0'; Settings = "[Defaults]`nSystemVersion=8.6.0`nCloseIsQuit=1`nNoSuspend=1`n`n[APPL.PPRB]`nSystemVersion=9.1.0`nOptions=0`n" }
+            )) {
+            [IO.File]::WriteAllText($privatePrefs, $hostSettings + $case.Settings)
+            $commands = @'
 set pagination off
 set confirm off
 set print thread-events off
@@ -339,17 +374,18 @@ end
 printf "ECF_LOOKUP_OK\n"
 quit 0
 end
-run "APP"
+run -syszone 8m -applzone 64m "APP"
 '@
-        [IO.File]::WriteAllText($script, $commands.Replace('FOLDER', $folder).Replace('APP', $app).Replace('VERSION', $case.Version).Replace('FLAGS', $case.Flags))
-        $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0 -or $output -notmatch 'ECF_LOOKUP_OK') { throw "Application preferences lookup failed: $output" }
-    }
-    Write-Output 'Preferences save, scalar/flag persistence, defaults and application overrides passed'
+            [IO.File]::WriteAllText($script, $commands.Replace('FOLDER', $folder).Replace('APP', $app).Replace('VERSION', $case.Version).Replace('FLAGS', $case.Flags))
+            $probe = & $runProbe
+            $output = $probe.Output
+            if ($probe.ExitCode -ne 0 -or $output -notmatch 'ECF_LOOKUP_OK') { throw "Application preferences lookup failed: $output" }
+        }
+        Write-Output 'Preferences save, scalar/flag persistence, defaults and application overrides passed'
 
-    # Direct statements retain spaces in FourCCs, embedded equals and hex selectors.
-    [IO.File]::WriteAllText($privatePrefs, "[APPL.PPRB]`nGestalt('tst ')={0,0x12345678};`nGestalt('a=b ')={-5551,0};`nGestalt(0x00747374)={0,7};`n")
-    $commands = @'
+        # Direct statements retain spaces in FourCCs, embedded equals and hex selectors.
+        [IO.File]::WriteAllText($privatePrefs, $hostSettings + "[APPL.PPRB]`nGestalt('tst ')={0,0x12345678};`nGestalt('a=b ')={-5551,0};`nGestalt(0x00747374)={0,7};`n")
+        $commands = @'
 set pagination off
 set confirm off
 set print thread-events off
@@ -373,29 +409,30 @@ call (void)free($response)
 printf "DIRECT_GESTALT_OK\n"
 quit 0
 end
-run "APP"
+run -syszone 8m -applzone 64m "APP"
 '@
-    [IO.File]::WriteAllText($script, $commands.Replace('APP', $app))
-    $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'DIRECT_GESTALT_OK') { throw "Direct Gestalt preferences failed: $output" }
-    Write-Output 'Direct Gestalt statements: FourCC spaces, equals, hex selectors, errors and responses passed'
+        [IO.File]::WriteAllText($script, $commands.Replace('APP', $app))
+        $probe = & $runProbe
+        $output = $probe.Output
+        if ($probe.ExitCode -ne 0 -or $output -notmatch 'DIRECT_GESTALT_OK') { throw "Direct Gestalt preferences failed: $output" }
+        Write-Output 'Direct Gestalt statements: FourCC spaces, equals, hex selectors, errors and responses passed'
 
-    $cases = @(
-        @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = ''; System = 8388608; App = 16777216; Restart = $true },
-        @{ Config = 'SysZone = "8m"; ApplZone = "16m";'; Args = ''; System = 8388608; App = 16777216; Restart = $true },
-        @{ Config = 'SysZone = 131073; ApplZone = 512k;'; Args = ''; System = 139264; App = 524288; Restart = $true },
-        @{ Config = 'SysZone = 4m; ApplZone = 8m; SysZone = 1; ApplZone = 384k;'; Args = ''; System = 4194304; App = 8388608; Restart = $true },
-        @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-syszone 12m'; System = 12582912; App = 16777216; Restart = $true },
-        @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-applzone 20m'; System = 8388608; App = 20971520; Restart = $true },
-        @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-syszone 12m -applzone 20m'; System = 12582912; App = 20971520; Restart = $false },
-        @{ Config = ('SysZone = 4m; ApplZone = 8m; SysZone = ' + ('9' * 1000000) + '; // no final newline'); Args = ''; System = 4194304; App = 8388608; Restart = $true }
-    )
-    foreach ($case in $cases) {
-        [IO.File]::WriteAllText($privatePrefs, "[APPL.PPRB]`n" + $case.Config.Replace("; ", "`n").Replace(";", ""))
-        $stop = if ($case.Restart) { 'ROMlib_win_relaunch' } else { 'ROMlib_launch_ppc_fragment' }
-        $sysvar = if ($case.Restart) { 'system' } else { 'ROMlib_syszone_size' }
-        $appvar = if ($case.Restart) { 'application' } else { 'ROMlib_applzone_size' }
-        $commands = @'
+        $cases = @(
+            @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = ''; System = 8388608; App = 16777216; Restart = $true },
+            @{ Config = 'SysZone = "8m"; ApplZone = "16m";'; Args = ''; System = 8388608; App = 16777216; Restart = $true },
+            @{ Config = 'SysZone = 131073; ApplZone = 512k;'; Args = ''; System = 139264; App = 524288; Restart = $true },
+            @{ Config = 'SysZone = 4m; ApplZone = 8m; SysZone = 1; ApplZone = 384k;'; Args = ''; System = 4194304; App = 8388608; Restart = $true },
+            @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-syszone 12m'; System = 12582912; App = 16777216; Restart = $true },
+            @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-applzone 20m'; System = 8388608; App = 20971520; Restart = $true },
+            @{ Config = 'SysZone = 8m; ApplZone = 16m;'; Args = '-syszone 12m -applzone 20m'; System = 12582912; App = 20971520; Restart = $false },
+            @{ Config = ('SysZone = 4m; ApplZone = 8m; SysZone = ' + ('9' * 1000000) + '; // no final newline'); Args = ''; System = 4194304; App = 8388608; Restart = $true }
+        )
+        foreach ($case in $cases) {
+            [IO.File]::WriteAllText($privatePrefs, $hostSettings + "[APPL.PPRB]`n" + $case.Config.Replace("; ", "`n").Replace(";", ""))
+            $stop = if ($case.Restart) { 'ROMlib_win_relaunch' } else { 'ROMlib_launch_ppc_fragment' }
+            $sysvar = if ($case.Restart) { 'system' } else { 'ROMlib_syszone_size' }
+            $appvar = if ($case.Restart) { 'application' } else { 'ROMlib_applzone_size' }
+            $commands = @'
 set pagination off
 set confirm off
 set print thread-events off
@@ -411,12 +448,60 @@ quit 0
 end
 run ARGS "APP"
 '@
-        $commands = $commands.Replace('FOLDER', $folder).Replace('STOP', $stop).Replace('SYSVAR', $sysvar).Replace('APPVAR', $appvar).Replace('SYSTEM', [string]$case.System).Replace('APPLICATION', [string]$case.App).Replace('ARGS', $case.Args).Replace('APP', $app)
-        [IO.File]::WriteAllText($script, $commands)
-        $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0 -or $output -notmatch 'ECF_MEMORY_OK') { throw "ECF heap case failed: $output" }
+            $commands = $commands.Replace('FOLDER', $folder).Replace('STOP', $stop).Replace('SYSVAR', $sysvar).Replace('APPVAR', $appvar).Replace('SYSTEM', [string]$case.System).Replace('APPLICATION', [string]$case.App).Replace('ARGS', $case.Args).Replace('APP', $app)
+            [IO.File]::WriteAllText($script, $commands)
+            $probe = & $runProbe
+            $output = $probe.Output
+            if ($probe.ExitCode -ne 0 -or $output -notmatch 'ECF_MEMORY_OK') { throw "ECF heap case failed: $output" }
+        }
+        Write-Output 'ECF heap suffixes, quoted values, alignment, malformed/oversized values and CLI precedence passed'
+        $commands = @'
+set pagination off
+set confirm off
+set print thread-events off
+set $disposals=0
+break C_DisposeWindow
+commands
+silent
+set $disposals=$disposals+1
+continue
+end
+run -syszone 8m -applzone 64m -system 9.2.2 "APP"
+if $_exitcode != 0 || $disposals != 1
+quit 1
+end
+printf "ECF_WINDOW_LIFECYCLE_OK\n"
+quit 0
+'@
+        [IO.File]::WriteAllText($script, $commands.Replace('APP', $app))
+        $probe = & $runProbe
+        $output = $probe.Output
+        if ($probe.ExitCode -ne 0 -or $output -notmatch 'ECF_WINDOW_LIFECYCLE_OK') {
+            throw "ECF window lifecycle failed: $output"
+        }
+        Write-Output 'ECF fixture: real PPC window creation, completed disposal and clean process exit passed'
     }
-    Write-Output 'ECF heap suffixes, quoted values, alignment, malformed/oversized values and CLI precedence passed'
+    finally {
+        Pop-Location
+        try {
+            # Heap restarts can outlive the debugger. Only stop processes using this fixture's app.
+            Get-CimInstance Win32_Process -Filter "Name='ROMAW.exe'" | Where-Object {
+                $_.ExecutablePath -eq $ROMAW -and $_.CommandLine -and
+                $_.CommandLine.Replace('\', '/').IndexOf($fixture.Replace('\', '/'), [StringComparison]::OrdinalIgnoreCase) -ge 0
+            } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+        }
+        finally {
+            foreach ($name in $environment.Keys) {
+                $ecfValue = $previousEnvironment[$name]
+                if ($null -eq $ecfValue) { $ecfValue = [NullString]::Value }
+                [Environment]::SetEnvironmentVariable($name, $ecfValue, 'Process')
+                if ([Environment]::GetEnvironmentVariable($name, 'Process') -cne $previousEnvironment[$name]) {
+                    throw "ECF probe did not restore the caller's environment: $name"
+                }
+            }
+        }
+    }
+
 }
 
 function Invoke-Check-build-version {
