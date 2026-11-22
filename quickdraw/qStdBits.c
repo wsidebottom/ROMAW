@@ -463,6 +463,11 @@ P5(PUBLIC pascal trap, void, StdBits,
     StdBitsPicSaveFlag(src_bogo_map, src_rect, dst_rect, mode, mask, TRUE);
 }
 
+static uint16 colorize_channel(uint16 source, uint16 foreground, uint16 background)
+{
+    return ((uint32)source * background + (uint32)(65535 - source) * foreground + 32767) / 65535;
+}
+
 static void ROMlib_real_copy_bits_helper(PixMap* src, PixMap* dst, const Rect* src_rect, const Rect* dst_rect,
                                          INTEGER mode, RgnHandle mask)
 {
@@ -486,6 +491,8 @@ static void ROMlib_real_copy_bits_helper(PixMap* src, PixMap* dst, const Rect* s
     int dst_depth;
 
     const rgb_spec_t* dst_rgb_spec;
+    PixMap colorized_src;
+    CTabHandle colorized_table = NULL;
 
 #if defined(SAVE_CURSOR)
     int save_cursor_visible_p = FALSE;
@@ -530,6 +537,38 @@ static void ROMlib_real_copy_bits_helper(PixMap* src, PixMap* dst, const Rect* s
     }
 
     ROMlib_fg_bk(&fg_color, &bk_color, NULL, NULL, dst_rgb_spec, active_screen_addr_p(dst), dst_depth <= 8);
+
+    /* System 7 colorizes deep indexed copies in RGB space. Applying the
+       foreground/background masks to palette indices instead can turn an
+       entire image black when the background is gray (SimFarm's About box). */
+    if (mode == srcCopy && CW(src->pixelSize) > 1 && CW(src->pixelSize) <= 8 && dst_depth > 1 &&
+        CGrafPort_p(current_port)) {
+        const RGBColor* foreground = &CPORT_RGB_FG_COLOR(current_port);
+        const RGBColor* background = &CPORT_RGB_BK_COLOR(current_port);
+        if (memcmp(foreground, &ROMlib_black_rgb_color, sizeof *foreground) ||
+            memcmp(background, &ROMlib_white_rgb_color, sizeof *background)) {
+            CTabHandle original_table = PPR(src->pmTable);
+            Size size = CTAB_STORAGE_FOR_SIZE(CTAB_SIZE(original_table));
+            colorized_table = (CTabHandle)NewHandle(size);
+            if (!colorized_table) {
+                if (use_display_device)
+                    HIDDEN_RAW_SET(TheGDevice_H, saved_device_x);
+                return;
+            }
+            memcpy(STARH(colorized_table), STARH(original_table), size);
+            CTAB_SEED_X(colorized_table) = CL(GetCTSeed());
+            for (int i = 0; i <= CTAB_SIZE(colorized_table); ++i) {
+                RGBColor* color = &CTAB_TABLE(colorized_table)[i].rgb;
+                color->red = CW(colorize_channel(CW(color->red), CW(foreground->red), CW(background->red)));
+                color->green = CW(colorize_channel(CW(color->green), CW(foreground->green), CW(background->green)));
+                color->blue = CW(colorize_channel(CW(color->blue), CW(foreground->blue), CW(background->blue)));
+            }
+            colorized_src = *src;
+            FIELD_ASSIGN_RAW(colorized_src.pmTable, RM(colorized_table));
+            src = &colorized_src;
+            pixmap_black_white(dst, &fg_color, &bk_color);
+        }
+    }
 
     /* if the source and dest differ in depths, perform a depth
      conversion on the src, so it matches that of the depth */
@@ -725,6 +764,8 @@ static void ROMlib_real_copy_bits_helper(PixMap* src, PixMap* dst, const Rect* s
     TEMP_ALLOC_FREE(temp_overlap_bits);
     TEMP_ALLOC_FREE(temp_scale_bits);
     TEMP_ALLOC_FREE(temp_depth_bits);
+    if (colorized_table)
+        DisposHandle((Handle)colorized_table);
     if (use_display_device)
         HIDDEN_RAW_SET(TheGDevice_H, saved_device_x);
 }

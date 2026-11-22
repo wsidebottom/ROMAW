@@ -26,6 +26,12 @@ for DIB/PICT round trips. Run it explicitly with
 `-ROMAW` and `-Application` arguments select a build and a disposable classic app.
 Other clipboard fixtures intercept Windows calls and preserve the real clipboard.
 
+`./system/tests/check-graphics.ps1 copybits-colorize` checks indexed `srcCopy`
+colorization through initialized ROMAW on Windows. It covers 4/8-bit sources,
+8/32-bit destinations, gray and colored backgrounds, conversion-cache reuse,
+and preservation of the source pixels, palette and port colors. `-Executable`
+selects an isolated staged build; this fixture does not require SimFarm assets.
+
 | Area | Suites |
 | --- | --- |
 | Build and generated files | `check-build.sh` |

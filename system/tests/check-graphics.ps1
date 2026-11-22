@@ -12,6 +12,27 @@
 #   Copyright and Legal notices: Applicable repository license: COPYING.
 # ===================================================================+
 
+function Invoke-Check-copybits-colorize {
+    param(
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
+        [string]$Executable = ''
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $Executable) { $Executable = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $probe = (Join-Path $PSScriptRoot 'copybits_colorize_probe.py').Replace('\', '/')
+    $output = & $Gdb -batch -ex 'set pagination off' -ex 'set confirm off' `
+        -ex 'break romaw_finder_main' -ex 'run -sdlaudio test' `
+        -ex "source $probe" -ex 'quit' $Executable 2>&1
+    $status = $LASTEXITCODE
+    $log = Join-Path $root 'build/copybits-colorize-test.log'
+    $output | Set-Content -LiteralPath $log
+    if ($status -ne 0 -or -not ($output -match 'COPYBITS_COLORIZE_OK:')) {
+        throw "Indexed CopyBits colorization failed; see $log"
+    }
+    Write-Output 'Indexed CopyBits RGB colorization and source/port preservation passed on Windows.'
+}
+
 function Invoke-Check-gworld-staged {
     param(
         [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
@@ -106,4 +127,4 @@ quit 0
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('gworld-staged', 'quickdraw-host') -CheckArguments $args
+Invoke-RegressionCheck -Names @('copybits-colorize', 'gworld-staged', 'quickdraw-host') -CheckArguments $args
