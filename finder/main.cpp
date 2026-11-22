@@ -2677,6 +2677,7 @@ menu()
     };
     HMENU apple = CreatePopupMenu();
     AppendMenuW(apple, MF_STRING, about_system_command, L"About This PC...");
+    AppendMenuW(apple, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(apple, MF_STRING, about_romaw_command, L"About ROMAW...");
     AppendMenuW(apple, MF_STRING, romaw_prefs_command, L"" ROMAW_PREFS_MENU_LABEL);
     std::function<void(HMENU, const fs::path&, unsigned)> populate;
@@ -2749,7 +2750,10 @@ menu()
     auto panels = CreatePopupMenu();
     auto panel_path = romaw_folder / L"System Folder/Control Panels";
     populate(panels, panel_path, 0);
-    AppendMenuW(apple, MF_POPUP, reinterpret_cast<UINT_PTR>(panels), L"Control Panels");
+    if (GetMenuItemCount(panels) > 0)
+        AppendMenuW(apple, MF_POPUP, reinterpret_cast<UINT_PTR>(panels), L"Control Panels");
+    else
+        DestroyMenu(panels);
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(apple), L"Apple");
     auto resource_menu = [&](const wchar_t* title, const auto& entries) {
         HMENU popup = CreatePopupMenu();
