@@ -16,8 +16,9 @@
 #define ROMAW_PREFERENCES_WINRES_H
 
 /* The standalone Visual Studio editor has no project SDK include paths.
-   Builds use the SDK so additional styles saved by the designer remain available. */
-#ifndef APSTUDIO_INVOKED
+   Builds use the SDK so additional styles saved by the designer remain available.
+   Tests use ROMAW_RESOURCE_EDITOR to compare styles without editor-only metadata. */
+#if !defined(APSTUDIO_INVOKED) && !defined(ROMAW_RESOURCE_EDITOR)
 #include <windows.h>
 #include <commctrl.h>
 #else
@@ -49,6 +50,34 @@
 #define LBS_NOINTEGRALHEIGHT 0x0100
 #define WS_EX_CLIENTEDGE 0x00000200
 #define TBS_AUTOTICKS 0x0001
+#define BS_PUSHBUTTON 0x00000000
+#define BS_DEFPUSHBUTTON 0x00000001
+#define BS_CHECKBOX 0x00000002
+#define BS_AUTOCHECKBOX 0x00000003
+#define BS_RADIOBUTTON 0x00000004
+#define BS_3STATE 0x00000005
+#define BS_AUTO3STATE 0x00000006
+#define BS_GROUPBOX 0x00000007
+#define BS_USERBUTTON 0x00000008
+#define BS_AUTORADIOBUTTON 0x00000009
+#define BS_PUSHBOX 0x0000000a
+#define BS_OWNERDRAW 0x0000000b
+#define BS_TYPEMASK 0x0000000f
+#define BS_LEFTTEXT 0x00000020
+#define BS_TEXT 0x00000000
+#define BS_ICON 0x00000040
+#define BS_BITMAP 0x00000080
+#define BS_LEFT 0x00000100
+#define BS_RIGHT 0x00000200
+#define BS_CENTER 0x00000300
+#define BS_TOP 0x00000400
+#define BS_BOTTOM 0x00000800
+#define BS_VCENTER 0x00000c00
+#define BS_PUSHLIKE 0x00001000
+#define BS_MULTILINE 0x00002000
+#define BS_NOTIFY 0x00004000
+#define BS_FLAT 0x00008000
+#define BS_RIGHTBUTTON BS_LEFTTEXT
 
 #endif /* APSTUDIO_INVOKED */
 

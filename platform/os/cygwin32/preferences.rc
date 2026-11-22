@@ -1,194 +1,311 @@
-/*+===================================================================
-  File:      preferences.rc
-
-  Summary:   Visual Studio editable Windows preferences dialog and five tab pages.
-
-  Classes:   Native Windows dialog and common tab control resources.
-
-  Functions: No exported functions; layouts consumed by win_preferences.c.
-
-  Origin:    ROMAW native Windows preferences layout extracted from win_preferences.c.
-
-  Copyright and Legal notices: Applicable repository license: COPYING.
-===================================================================+*/
-
-#include "preferences_winres.h"
+// Microsoft Visual C++ generated resource script.
+//
 #include "preferences_resource.h"
 
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "preferences_winres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (United States) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
 
 IDD_PREFERENCES DIALOGEX 0, 0, 460, 390
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "ROMAW Preferences"
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    CONTROL "", IDC_PREF_TABS, "SysTabControl32", WS_TABSTOP, 8, 8, 444, 332
-    LTEXT "Save retains settings for this application in ROMAW.prefs.", IDC_PREF_DESCRIPTION, 10, 345, 440, 18
-    DEFPUSHBUTTON "OK", IDOK, 284, 368, 50, 18
-    PUSHBUTTON "Save", IDC_PREF_SAVE, 342, 368, 50, 18
-    PUSHBUTTON "Cancel", IDCANCEL, 400, 368, 50, 18
+    CONTROL         "",IDC_PREF_TABS,"SysTabControl32",WS_TABSTOP,8,8,444,332
+    LTEXT           "Save retains settings for this application in ROMAW.prefs.",IDC_PREF_DESCRIPTION,10,345,440,18
+    DEFPUSHBUTTON   "OK",IDOK,284,368,50,18
+    PUSHBUTTON      "Save",IDC_PREF_SAVE,342,368,50,18
+    PUSHBUTTON      "Cancel",IDCANCEL,400,368,50,18
 END
 
-IDD_PREF_GENERAL DIALOGEX 0, 0, 436, 306
+IDD_PREF_GENERAL DIALOGEX 0, 0, 436, 134
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    LTEXT "Reported system version", IDC_PREF_LABEL_SYSTEM_VERSION, 8, 12, 236, 13
-    EDITTEXT IDC_PREF_SYSTEM_VERSION, 250, 9, 42, 15, ES_NUMBER | ES_AUTOHSCROLL
-    LTEXT ".", -1, 297, 12, 5, 13
-    EDITTEXT IDC_PREF_VERSION_MINOR, 306, 9, 42, 15, ES_NUMBER | ES_AUTOHSCROLL
-    LTEXT ".", -1, 353, 12, 5, 13
-    EDITTEXT IDC_PREF_VERSION_PATCH, 362, 9, 42, 15, ES_NUMBER | ES_AUTOHSCROLL
-    LTEXT "Refresh interval (ticks; 0 = automatic)", IDC_PREF_LABEL_REFRESH, 8, 40, 236, 13
-    EDITTEXT IDC_PREF_REFRESH, 250, 37, 48, 15, ES_NUMBER | ES_AUTOHSCROLL
-    CONTROL "", IDC_PREF_REFRESH_SLIDER, "msctls_trackbar32", TBS_AUTOTICKS | WS_TABSTOP, 306, 35, 110, 23
-    LTEXT "Comments", IDC_PREF_LABEL_COMMENTS, 8, 75, 236, 13
-    EDITTEXT IDC_PREF_COMMENTS, 250, 72, 170, 15, ES_AUTOHSCROLL
+    LTEXT           "Reported system version",IDC_PREF_LABEL_SYSTEM_VERSION,8,12,236,13
+    EDITTEXT        IDC_PREF_SYSTEM_VERSION,250,9,42,15,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           ".",-1,297,12,8,13
+    EDITTEXT        IDC_PREF_VERSION_MINOR,306,9,42,15,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           ".",-1,353,12,8,13
+    EDITTEXT        IDC_PREF_VERSION_PATCH,362,9,42,15,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "Refresh interval (ticks; 0 = automatic)",IDC_PREF_LABEL_REFRESH,8,40,236,13
+    EDITTEXT        IDC_PREF_REFRESH,250,37,48,15,ES_AUTOHSCROLL | ES_NUMBER
+    CONTROL         "",IDC_PREF_REFRESH_SLIDER,"msctls_trackbar32",TBS_AUTOTICKS | WS_TABSTOP,306,35,110,23
+    LTEXT           "Comments",IDC_PREF_LABEL_COMMENTS,8,75,236,13
+    EDITTEXT        IDC_PREF_COMMENTS,250,72,170,15,ES_AUTOHSCROLL
 END
 
 IDD_PREF_DISPLAY DIALOGEX 0, 0, 436, 306
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    LTEXT "Delay", IDC_PREF_LABEL_DELAY, 8, 12, 236, 13
-    EDITTEXT IDC_PREF_DELAY, 250, 9, 170, 15, ES_NUMBER | ES_AUTOHSCROLL
-    LTEXT "Right-click modifier (or numeric mask)", IDC_PREF_LABEL_RIGHT_CLICK, 8, 40, 236, 13
-    COMBOBOX IDC_PREF_RIGHT_CLICK, 250, 37, 170, 120, CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Update mode", IDC_PREF_LABEL_UPDATES, 8, 68, 236, 13
-    COMBOBOX IDC_PREF_UPDATES, 250, 65, 170, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Colour depth", IDC_PREF_LABEL_COLORS, 8, 96, 236, 13
-    COMBOBOX IDC_PREF_COLORS, 250, 93, 170, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Display scale (0.25x..16x)", IDC_PREF_LABEL_SCALE, 8, 124, 236, 13
-    COMBOBOX IDC_PREF_SCALE, 250, 121, 170, 120, CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Delay",IDC_PREF_LABEL_DELAY,8,12,236,13
+    EDITTEXT        IDC_PREF_DELAY,250,9,170,15,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "Right-click modifier (or numeric mask)",IDC_PREF_LABEL_RIGHT_CLICK,8,40,236,13
+    COMBOBOX        IDC_PREF_RIGHT_CLICK,250,37,170,120,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Update mode",IDC_PREF_LABEL_UPDATES,8,68,236,13
+    COMBOBOX        IDC_PREF_UPDATES,250,65,170,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Colour depth",IDC_PREF_LABEL_COLORS,8,96,236,13
+    COMBOBOX        IDC_PREF_COLORS,250,93,170,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Display scale (0.25x..16x)",IDC_PREF_LABEL_SCALE,8,124,236,13
+    COMBOBOX        IDC_PREF_SCALE,250,121,170,120,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
 END
 
 IDD_PREF_MEMORY DIALOGEX 0, 0, 436, 306
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    LTEXT "SysZone (system heap)", IDC_PREF_LABEL_SYSZONE, 8, 12, 236, 13
-    COMBOBOX IDC_PREF_SYSZONE, 250, 9, 170, 120, CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
-    LTEXT "ApplZone (application heap)", IDC_PREF_LABEL_APPLZONE, 8, 40, 236, 13
-    COMBOBOX IDC_PREF_APPLZONE, 250, 37, 170, 120, CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Enter bytes, or use k/m suffixes (for example 8m).\r\n\r\nBlank or 0 uses startup defaults. Changes apply on the next launch.\r\n\r\nCommand-line -syszone, -applzone and -memory take precedence.", IDC_PREF_MEMORY_HELP, 8, 75, 412, 100
+    LTEXT           "SysZone (system heap)",IDC_PREF_LABEL_SYSZONE,8,12,236,13
+    COMBOBOX        IDC_PREF_SYSZONE,250,9,170,120,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "ApplZone (application heap)",IDC_PREF_LABEL_APPLZONE,8,40,236,13
+    COMBOBOX        IDC_PREF_APPLZONE,250,37,170,120,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Enter bytes, or use k/m suffixes (for example 8m).\r\n\r\nBlank or 0 uses startup defaults. Changes apply on the next launch.\r\n\r\nCommand-line -syszone, -applzone and -memory take precedence.",IDC_PREF_MEMORY_HELP,8,75,412,100
 END
 
 IDD_PREF_COMPATIBILITY DIALOGEX 0, 0, 436, 306
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    AUTOCHECKBOX "Close requests application Quit", IDC_PREF_CLOSE_QUIT, 8, 9, 202, 14
-    AUTOCHECKBOX "Keep running when inactive", IDC_PREF_NO_SUSPEND, 8, 33, 202, 14
-    AUTOCHECKBOX "Rectangular screen corners", IDC_PREF_RECT_SCREEN, 8, 57, 202, 14
-    AUTOCHECKBOX "Strip 24-bit address flags", IDC_PREF_STRIP_ADDRESS, 8, 81, 202, 14
-    AUTOCHECKBOX "Handle disposal compatibility", IDC_PREF_DISPOSE_HANDLE, 8, 105, 202, 14
-    AUTOCHECKBOX "Disable Preferences after closing", IDC_PREF_NO_PREF_PANEL, 8, 129, 202, 14
-    AUTOCHECKBOX "Hide Macintosh clock", IDC_PREF_NO_CLOCK, 8, 153, 202, 14
-    AUTOCHECKBOX "Map newlines to carriage returns", IDC_PREF_NEWLINE_CR, 8, 177, 202, 14
-    AUTOCHECKBOX "Direct disk access", IDC_PREF_DIRECT_DISK, 8, 201, 202, 14
-    AUTOCHECKBOX "Flush translation cache often", IDC_PREF_FLUSH_CACHE, 8, 225, 202, 14
-    AUTOCHECKBOX "Pretend Help Manager", IDC_PREF_HELP_MANAGER, 218, 9, 202, 14
-    AUTOCHECKBOX "Pretend Edition Manager", IDC_PREF_EDITION_MANAGER, 218, 33, 202, 14
-    AUTOCHECKBOX "Pretend Script Manager", IDC_PREF_SCRIPT_MANAGER, 218, 57, 202, 14
-    AUTOCHECKBOX "Pretend Alias Manager", IDC_PREF_ALIAS_MANAGER, 218, 81, 202, 14
+    CONTROL         "Close requests application Quit",IDC_PREF_CLOSE_QUIT,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,9,202,14
+    CONTROL         "Keep running when inactive",IDC_PREF_NO_SUSPEND,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,33,202,14
+    CONTROL         "Rectangular screen corners",IDC_PREF_RECT_SCREEN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,57,202,14
+    CONTROL         "Strip 24-bit address flags",IDC_PREF_STRIP_ADDRESS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,81,202,14
+    CONTROL         "Handle disposal compatibility",IDC_PREF_DISPOSE_HANDLE,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,105,202,14
+    CONTROL         "Disable Preferences after closing",IDC_PREF_NO_PREF_PANEL,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,129,202,14
+    CONTROL         "Hide Macintosh clock",IDC_PREF_NO_CLOCK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,153,202,14
+    CONTROL         "Map newlines to carriage returns",IDC_PREF_NEWLINE_CR,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,177,202,14
+    CONTROL         "Direct disk access",IDC_PREF_DIRECT_DISK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,201,202,14
+    CONTROL         "Flush translation cache often",IDC_PREF_FLUSH_CACHE,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,225,202,14
+    CONTROL         "Pretend Help Manager",IDC_PREF_HELP_MANAGER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,218,9,202,14
+    CONTROL         "Pretend Edition Manager",IDC_PREF_EDITION_MANAGER,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,218,33,202,14
+    CONTROL         "Pretend Script Manager",IDC_PREF_SCRIPT_MANAGER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,218,57,202,14
+    CONTROL         "Pretend Alias Manager",IDC_PREF_ALIAS_MANAGER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,218,81,202,14
 END
 
-IDD_PREF_ADVANCED DIALOGEX 0, 0, 436, 306
+IDD_PREF_ADVANCED DIALOGEX 0, 0, 436, 220
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    AUTOCHECKBOX "Application debug option", IDC_PREF_DEBUG, 8, 9, 400, 14
-    AUTOCHECKBOX "Suppress 32-bit warnings", IDC_PREF_NO_WARN32, 8, 31, 400, 14
-    GROUPBOX "FAT application CPU preference", -1, 8, 57, 412, 55
-    AUTORADIOBUTTON "PowerPC preferred", IDC_PREF_CPU_PPC, 18, 73, 185, 14, WS_GROUP
-    AUTORADIOBUTTON "m68k preferred", IDC_PREF_PREFER_M68K, 220, 73, 185, 14
-    LTEXT "Save the CPU choice for the next application launch.", IDC_PREF_CPU_HELP, 18, 92, 392, 13
-    AUTOCHECKBOX "Sticky menus (-sticky)", IDC_PREF_STICKY, 8, 132, 400, 14, WS_GROUP
-    AUTOCHECKBOX "Delete key deletes forwards (-pceditkeys)", IDC_PREF_FORWARD_DELETE, 8, 156, 400, 14
-    AUTOCHECKBOX "Detect drawing that bypasses QuickDraw", IDC_PREF_AUTO_REFRESH, 8, 180, 400, 14
-    AUTOCHECKBOX "Substitute standard PostScript fonts", IDC_PREF_SUBSTITUTE_FONTS, 8, 204, 400, 14
+    CONTROL         "Application debug option",IDC_PREF_DEBUG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,9,400,14
+    CONTROL         "Suppress 32-bit warnings",IDC_PREF_NO_WARN32,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,21,400,14
+    GROUPBOX        "FAT application CPU preference",-1,8,36,208,41
+    CONTROL         "PowerPC preferred",IDC_PREF_CPU_PPC,"Button",BS_AUTORADIOBUTTON | WS_GROUP,18,46,94,14
+    CONTROL         "m68k preferred",IDC_PREF_PREFER_M68K,"Button",BS_AUTORADIOBUTTON,122,46,94,14
+    LTEXT           "Save the CPU choice for the next application launch.",IDC_PREF_CPU_HELP,18,62,197,13
+    CONTROL         "Sticky menus (-sticky)",IDC_PREF_STICKY,"Button",BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,8,79,400,14
+    CONTROL         "Delete key deletes forwards (-pceditkeys)",IDC_PREF_FORWARD_DELETE,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,91,400,14
+    CONTROL         "Detect drawing that bypasses QuickDraw",IDC_PREF_AUTO_REFRESH,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,104,400,14
+    CONTROL         "Substitute standard PostScript fonts",IDC_PREF_SUBSTITUTE_FONTS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,117,400,14
 END
 
-IDD_PREF_DRIVES DIALOGEX 0, 0, 436, 306
+IDD_PREF_DRIVES DIALOGEX 0, 0, 436, 220
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    LTEXT "Choose a sidecar format for each drive. The mapped Apps folder always uses OSX sidecars.", -1, 8, 8, 412, 24
-    LTEXT "A:", -1, 8, 43, 18, 13
-    COMBOBOX 100, 28, 40, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "B:", -1, 8, 61, 18, 13
-    COMBOBOX 101, 28, 58, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "C:", -1, 8, 79, 18, 13
-    COMBOBOX 102, 28, 76, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "D:", -1, 8, 97, 18, 13
-    COMBOBOX 103, 28, 94, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "E:", -1, 8, 115, 18, 13
-    COMBOBOX 104, 28, 112, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "F:", -1, 8, 133, 18, 13
-    COMBOBOX 105, 28, 130, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "G:", -1, 8, 151, 18, 13
-    COMBOBOX 106, 28, 148, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "H:", -1, 8, 169, 18, 13
-    COMBOBOX 107, 28, 166, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "I:", -1, 8, 187, 18, 13
-    COMBOBOX 108, 28, 184, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "J:", -1, 148, 43, 18, 13
-    COMBOBOX 109, 168, 40, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "K:", -1, 148, 61, 18, 13
-    COMBOBOX 110, 168, 58, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "L:", -1, 148, 79, 18, 13
-    COMBOBOX 111, 168, 76, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "M:", -1, 148, 97, 18, 13
-    COMBOBOX 112, 168, 94, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "N:", -1, 148, 115, 18, 13
-    COMBOBOX 113, 168, 112, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "O:", -1, 148, 133, 18, 13
-    COMBOBOX 114, 168, 130, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "P:", -1, 148, 151, 18, 13
-    COMBOBOX 115, 168, 148, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Q:", -1, 148, 169, 18, 13
-    COMBOBOX 116, 168, 166, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "R:", -1, 148, 187, 18, 13
-    COMBOBOX 117, 168, 184, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "S:", -1, 288, 43, 18, 13
-    COMBOBOX 118, 308, 40, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "T:", -1, 288, 61, 18, 13
-    COMBOBOX 119, 308, 58, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "U:", -1, 288, 79, 18, 13
-    COMBOBOX 120, 308, 76, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "V:", -1, 288, 97, 18, 13
-    COMBOBOX 121, 308, 94, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "W:", -1, 288, 115, 18, 13
-    COMBOBOX 122, 308, 112, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "X:", -1, 288, 133, 18, 13
-    COMBOBOX 123, 308, 130, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Y:", -1, 288, 151, 18, 13
-    COMBOBOX 124, 308, 148, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Z:", -1, 288, 169, 18, 13
-    COMBOBOX 125, 308, 166, 112, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Mac-compatible folders (mounted at next start)", -1, 8, 206, 412, 13
-    LISTBOX 200, 8, 225, 300, 74, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
-    PUSHBUTTON "Add folder...", 201, 318, 225, 102, 20
-    PUSHBUTTON "Remove", 202, 318, 253, 102, 20
+    LTEXT           "Choose a sidecar format for each drive. The mapped Apps folder always uses OSX sidecars.",-1,8,8,412,8
+    LTEXT           "A:",-1,8,23,18,13
+    COMBOBOX        100,28,20,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "B:",-1,8,36,18,13
+    COMBOBOX        101,28,33,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "C:",-1,8,49,18,13
+    COMBOBOX        102,28,46,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "D:",-1,8,62,18,13
+    COMBOBOX        103,28,59,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "E:",-1,8,75,18,13
+    COMBOBOX        104,28,72,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "F:",-1,8,88,18,13
+    COMBOBOX        105,28,85,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "G:",-1,8,101,18,13
+    COMBOBOX        106,28,98,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "H:",-1,8,114,18,13
+    COMBOBOX        107,28,111,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "I:",-1,8,127,18,13
+    COMBOBOX        108,28,124,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "J:",-1,148,23,18,13
+    COMBOBOX        109,168,20,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "K:",-1,148,36,18,13
+    COMBOBOX        110,168,33,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "L:",-1,148,49,18,13
+    COMBOBOX        111,168,46,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "M:",-1,148,62,18,13
+    COMBOBOX        112,168,59,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "N:",-1,148,75,18,13
+    COMBOBOX        113,168,72,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "O:",-1,148,88,18,13
+    COMBOBOX        114,168,85,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "P:",-1,148,101,18,13
+    COMBOBOX        115,168,98,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Q:",-1,148,114,18,13
+    COMBOBOX        116,168,111,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "R:",-1,148,127,18,13
+    COMBOBOX        117,168,124,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "S:",-1,288,23,18,13
+    COMBOBOX        118,308,20,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "T:",-1,288,36,18,13
+    COMBOBOX        119,308,33,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "U:",-1,288,49,18,13
+    COMBOBOX        120,308,46,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "V:",-1,288,62,18,13
+    COMBOBOX        121,308,59,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "W:",-1,288,75,18,13
+    COMBOBOX        122,308,72,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "X:",-1,288,88,18,13
+    COMBOBOX        123,308,85,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Y:",-1,288,101,18,13
+    COMBOBOX        124,308,98,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Z:",-1,288,114,18,13
+    COMBOBOX        125,308,111,112,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Mac-compatible folders (mounted at next start)",-1,8,141,412,13
+    LISTBOX         200,8,160,300,51,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Add folder...",201,318,160,102,20
+    PUSHBUTTON      "Remove",202,318,188,102,20
 END
 
-IDD_PREF_APPLICATION DIALOGEX 0, 0, 436, 306
+IDD_PREF_APPLICATION DIALOGEX 0, 0, 436, 220
 STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
-FONT 9, "Segoe UI"
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
-    LTEXT "Current application", -1, 8, 10, 412, 13
-    LTEXT "", IDC_PREF_APP_CURRENT_TEXT, 8, 29, 412, 28
-    PUSHBUTTON "Edit current settings", IDC_PREF_APP_CURRENT, 8, 62, 140, 20
-    LTEXT "Saved application profiles", -1, 8, 101, 412, 13
-    LISTBOX IDC_PREF_APP_LIST, 8, 120, 412, 120, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON "Edit selected profile...", IDC_PREF_APP_EDIT, 8, 248, 140, 20
-    LTEXT "Profiles use application type and creator codes. Changes apply on the next launch; unrelated keys and conditional rules are preserved.", IDC_PREF_APP_HELP, 8, 280, 412, 28
+    LTEXT           "Current application",-1,8,10,412,8
+    LTEXT           "",IDC_PREF_APP_CURRENT_TEXT,8,22,412,28
+    PUSHBUTTON      "Edit current settings",IDC_PREF_APP_CURRENT,8,54,140,20
+    LTEXT           "Saved application profiles",-1,8,80,412,8
+    LISTBOX         IDC_PREF_APP_LIST,8,90,412,103,LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Edit selected profile...",IDC_PREF_APP_EDIT,8,195,140,20
+    LTEXT           "Profiles use application type and creator codes. Changes apply on the next launch; unrelated keys and conditional rules are preserved.",IDC_PREF_APP_HELP,151,197,268,18
 END
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "preferences_resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#include ""preferences_winres.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_PREF_GENERAL, DIALOG
+    BEGIN
+    END
+
+    IDD_PREF_MEMORY, DIALOG
+    BEGIN
+    END
+
+    IDD_PREF_ADVANCED, DIALOG
+    BEGIN
+        BOTTOMMARGIN, 164
+    END
+
+    IDD_PREF_DRIVES, DIALOG
+    BEGIN
+    END
+
+    IDD_PREF_APPLICATION, DIALOG
+    BEGIN
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_PREF_DRIVES AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+IDD_PREF_GENERAL AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+IDD_PREF_ADVANCED AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+IDD_PREF_APPLICATION AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+#endif    // English (United States) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+

@@ -171,6 +171,9 @@ static void CALLBACK exercise_dialog(HWND unused, UINT message, UINT_PTR timer, 
     assert(SendDlgItemMessage(state->pages[4], IDC_PREF_PREFER_M68K, BM_GETCHECK, 0, 0) == BST_UNCHECKED);
     SendDlgItemMessage(state->pages[4], IDC_PREF_PREFER_M68K, BM_CLICK, 0, 0);
     if (state->page_count == NATIVE_PREF_PAGE_COUNT) {
+        HWND profiles = GetDlgItem(state->pages[NATIVE_PREF_APPLICATION], IDC_PREF_APP_LIST);
+        assert(GetWindowLongPtr(profiles, GWL_STYLE) & LBS_NOTIFY);
+        assert(GetWindowLongPtr(GetDlgItem(state->pages[NATIVE_PREF_DRIVES], 200), GWL_STYLE) & LBS_NOTIFY);
         SendMessage(state->pages[NATIVE_PREF_APPLICATION], WM_COMMAND, IDC_PREF_APP_CURRENT, 0);
         assert(TabCtrl_GetCurSel(tabs) == 0);
         if (scenario < 2) {

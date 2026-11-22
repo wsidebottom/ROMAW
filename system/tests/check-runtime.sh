@@ -145,9 +145,10 @@ case "$check" in
       out="$root/build/native-preferences"
       mkdir -p "$out"
       x86_64-w64-mingw32-windres -i platform/os/cygwin32/preferences.rc -o "$out/preferences.res" -O res
-      x86_64-w64-mingw32-windres -DAPSTUDIO_INVOKED -i platform/os/cygwin32/preferences.rc \
+      x86_64-w64-mingw32-windres -DROMAW_RESOURCE_EDITOR -i platform/os/cygwin32/preferences.rc \
         -o "$out/preferences-editor.res" -O res
       cmp "$out/preferences.res" "$out/preferences-editor.res"
+      # DESIGNINFO is Visual Studio syntax; compare runtime resources with its style definitions.
       x86_64-w64-mingw32-windres -i "$out/preferences.res" -J res -o "$out/preferences.o" -O coff
       x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -DHAVE_CONFIG_H \
         -I"$obj" -I. -Iinclude -Ifrontend-sdl -Iplatform/os/mingw32 \
