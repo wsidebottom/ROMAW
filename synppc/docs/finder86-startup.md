@@ -34,10 +34,14 @@ font setup and offscreen GWorld creation. Native Appearance drawing-state
 services now preserve actual QuickDraw color/pen state. With the additional
 Toolbox queue bindings and native Help Manager error return, Finder enters menu
 construction. Native MenusLib submenu state and menu visibility/enable bindings
-allow it to proceed through special-folder discovery. The native icon-name adapter allows registry and system-icon lookups. The next
-missing call is `IconServicesLib:CompositeIconRef`, after some unavailable badge
-lookups return no icon. It has not entered a validated desktop event
-loop. Some failure-unwind runs also expose a host heap error during PEF cleanup;
+allow it to proceed through special-folder discovery. The native icon-name
+adapter allows registry and system-icon lookups. The Classic composition gateway
+now reports invalid missing icons or an unavailable compositor, while retaining
+a genuine original implementation when its required dispatch is installed. It
+does not fabricate successful composition. Finder handles the missing badge
+errors and proceeds to a private ScriptUtil call (`0x8006ffae`, with a short and
+a pointer), which currently opens the fatal unknown-selector dialog. It has not
+entered a validated desktop event loop. Some failure-unwind runs also expose a host heap error during PEF cleanup;
 that failure-path issue remains unresolved.
 
 The launcher also reads Finder's own version resource and automatically applies

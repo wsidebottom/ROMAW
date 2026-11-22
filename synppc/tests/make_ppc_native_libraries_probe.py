@@ -31,6 +31,7 @@ def make_probe(destination):
         ("IconServicesLib", name, 2)
         for name in (
             "GetIconRefByName",
+            "CompositeIconRef",
             "GetIconRef",
             "GetIconRefOwners",
             "ReleaseIconRef",
@@ -170,6 +171,23 @@ def make_probe(destination):
     p.expect(0, "name lookup retains its owned family copy")
     p.emit(0x807E0488, 0x809E048C)
     p.equal("custom registration and name lookup share identity")
+    p.emit(0x807E0488, 0x809E048C, 0x38BE04A0)
+    p.call("CompositeIconRef")
+    p.expect(-4, "unavailable compositor reports unimpErr without fake success")
+    p.emit(0x807E04A0)
+    p.expect(0, "unavailable composition clears output")
+    p.emit(0x807E0488, 0x389E0495)
+    p.call("GetIconRefOwners")
+    p.expect(0, "read owners after failed composition")
+    p.emit(0xA07E0495)
+    p.expect(2, "failed composition does not retain input references")
+    for foreground in (False, True):
+        p.emit(0x38600000 if foreground else 0x807E0488, 0x809E048C if foreground else 0x38800000, 0x38BE04A0)
+        p.call("CompositeIconRef")
+        p.expect(-2580, "composition rejects a missing input icon")
+    p.emit(0x807E0488, 0x809E048C, 0x38A00000)
+    p.call("CompositeIconRef")
+    p.expect(-50, "composition requires a valid output pointer")
     p.emit(0x3C606E70, 0x60636963, 0x3C804465, 0x60846D6F)
     p.call("UnregisterIconRef")
     p.expect(0, "unregister custom name without disposing callers' references")

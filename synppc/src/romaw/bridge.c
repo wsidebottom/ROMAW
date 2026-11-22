@@ -1551,6 +1551,30 @@ PRIVATE int ppc_get_views_font(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+PRIVATE int ppc_composite_icon_ref(ROMlib_carbon_ppc_frame* call)
+{
+    void* output = call->words[2] ? ppc_memory(ppc_active_context, call->words[2], 4, TRUE) : NULL;
+    if (!output) {
+        call->words[0] = (uint32)(int32)paramErr;
+        return 1;
+    }
+    memset(output, 0, 4);
+    if (!call->words[0] || !call->words[1]) {
+        call->words[0] = (uint32)(int32)-2580; /* invalidIconRefErr. */
+        return 1;
+    }
+    ROMlib_carbon_reference saved;
+    if (ROMlib_carbon_probe_reference("IconServicesLib", "CompositeIconRef", &saved)) {
+        /* The audited System 9 forwarder needs the real installed IconDispatch
+           vector, exactly like the existing Icon Services fallback adapters. */
+        uint32* dispatch = ppc_memory(ppc_active_context, 0x17d4, 4, FALSE);
+        if (saved.code_size != 0x16fd0 || (dispatch && CL(*dispatch)))
+            return ROMlib_carbon_invoke_frame(saved.function, call);
+    }
+    call->words[0] = (uint32)(int32)-4; /* unimpErr: no compositor is available. */
+    return 1;
+}
+
 PRIVATE int ppc_get_icon_ref_by_name(ROMlib_carbon_ppc_frame* call)
 {
     /* Name lookup uses the same registered creator/type identity and ownership
@@ -3517,10 +3541,15 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
         }
     }
-    if (!strcmp(library, "IconServicesLib") && cfm_architecture(ctx) == kPowerPCArch &&
-        !strcmp(name, "GetIconRefByName")) {
-        binding.function = ppc_get_icon_ref_by_name;
-        binding.magic = ROMLIB_CARBON_PPC_FRAME;
+    if (!strcmp(library, "IconServicesLib") && cfm_architecture(ctx) == kPowerPCArch) {
+        if (!strcmp(name, "GetIconRefByName")) {
+            binding.function = ppc_get_icon_ref_by_name;
+            binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
+        else if (!strcmp(name, "CompositeIconRef")) {
+            binding.function = ppc_composite_icon_ref;
+            binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
     }
     if (!strcmp(library, "WindowsLib"))
         for (i = 0; i < NELEM(windows_imports); ++i)

@@ -160,3 +160,10 @@ shared public/private identity, big-endian reference counts with byte guards,
 unregister/release lifetime, missing names and null outputs in both modes. The
 bundled System still has only a subset of the original named icons and badges.
 These checks do not establish icon composition or full Icon Services support.
+
+The Classic `CompositeIconRef` gateway validates the output and missing inputs,
+clears a valid output on failure, and invokes an available original compositor
+only when its actual dispatch prerequisites are installed. Without one it
+returns `unimpErr`; it does not manufacture a composite IconRef. The fixture
+checks unavailable composition and invalid inputs without changing the source
+icons' ownership. This gateway is not a native compositor.
