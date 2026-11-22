@@ -71,9 +71,10 @@ class ResourceCatalogTests(unittest.TestCase):
             directory = Path(temporary)
             shutil.copytree(ROOT / "bitmaps/syserr", directory / "syserr")
             shutil.copyfile(ROOT / "bitmaps/stop.icns", directory / "stop.icns")
-            icon = bytearray((directory / "syserr/bomb.icns").read_bytes())
+            shutil.copyfile(ROOT / "bitmaps/bomb.icns", directory / "bomb.icns")
+            icon = bytearray((directory / "bomb.icns").read_bytes())
             icon[16] ^= 0x80
-            (directory / "syserr/bomb.icns").write_bytes(icon)
+            (directory / "bomb.icns").write_bytes(icon)
             with mock.patch.object(catalog, "ICONS", directory):
                 changed = catalog.read_rez(source)[0]["payload"]
             differences = [index for index, pair in enumerate(zip(original, changed)) if pair[0] != pair[1]]

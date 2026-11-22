@@ -101,7 +101,7 @@ generated/system_resources.inc: generated/build_version.h $(system_resource_inpu
 
 diagnostics/syserr.$(OBJEXT): generated/syserr_table.inc
 
-syserr_icon_inputs = $(wildcard $(shared_icons_dir)/syserr/*.icns) $(shared_icons_dir)/stop.icns
+syserr_icon_inputs = $(wildcard $(shared_icons_dir)/syserr/*.icns) $(shared_icons_dir)/stop.icns $(shared_icons_dir)/bomb.icns
 
 generated/syserr_table.inc: $(syserr_icon_inputs) $(system_resources_dir)/syserr.r $(shared_icon_tool_inputs) $(srcdir)/tools/romaw/system_resources.py
 	mkdir -p generated

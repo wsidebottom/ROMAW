@@ -51,7 +51,7 @@ resource 'DSAT' (0, sysheap, locked) {
         -11, 10, Alert { 0, 0, -20229, 0, 0 };
         -13, 10, Alert { 0, 0, -20227, 0, 0 };
         -20107, 36, Text { { 94, 114 }, "Sorry, a system error occurred.\0x00" };
-        -16397, 136, Icon { { 81, 60, 113, 92 }, $$icon("syserr/bomb.icns") };
+        -16397, 136, Icon { { 81, 60, 113, 92 }, $$icon("bomb.icns") };
         -20228, 136, Icon { { 315, 236, 347, 268 }, $$icon("syserr/DSAT-0-icon--20228.icns") };
         -20229, 136, Icon { { 315, 236, 347, 268 }, $$icon("syserr/DSAT-0-icon--20229.icns") };
         -20227, 136, Icon { { 315, 236, 347, 268 }, $$icon("syserr/DSAT-0-icon--20227.icns") };
@@ -84,7 +84,7 @@ resource 'DSAT' (2, sysheap, locked) {
         -20108, 48, Text { { 94, 114 }, "Not enough memory is available while using/\0x00" };
         -20004, 42, Text { { 94, 114 }, "Code Fragment could not be prepared.\0x00\0x00" };
         -20005, 34, Text { { 94, 114 }, "Internal Mixed Mode failure.\0x00\0x00" };
-        -16397, 136, Icon { { 81, 60, 113, 92 }, $$icon("syserr/bomb.icns") };
+        -16397, 136, Icon { { 81, 60, 113, 92 }, $$icon("bomb.icns") };
         -16398, 136, Icon { { 12, 20, 44, 52 }, $$icon("syserr/insert.icns") };
         -16401, 136, Icon { { 12, 20, 44, 52 }, $$icon("syserr/remove.icns") };
         -16400, 136, Icon { { 81, 60, 113, 92 }, $$icon("stop.icns") };

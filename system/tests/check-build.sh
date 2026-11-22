@@ -231,7 +231,7 @@ EOF
       make -C "$obj" generated/syserr_table.inc >"$fixture/syserr-regeneration.log" 2>&1
       cmp "$fixture/syserr_table.inc" "$fallback"
       grep -q 'generated/syserr_table.inc' "$obj/diagnostics/.deps/syserr.Po"
-      for input in bitmaps/syserr/*.icns bitmaps/stop.icns system/resources/system/syserr.r tools/rez_types.py tools/romaw/system_resources.py; do
+      for input in bitmaps/syserr/*.icns bitmaps/stop.icns bitmaps/bomb.icns system/resources/system/syserr.r tools/rez_types.py tools/romaw/system_resources.py; do
         make -C "$obj" -n -W "$workspace/$input" diagnostics/syserr.o >"$fixture/syserr-rebuild.log"
         grep -q -- '--alert-table' "$fixture/syserr-rebuild.log"
         grep -q -- '-c.*diagnostics/syserr.c' "$fixture/syserr-rebuild.log"
