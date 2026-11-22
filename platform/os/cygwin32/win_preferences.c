@@ -382,6 +382,11 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
                                                  preferences_page_proc, 0);
             if (!state->pages[i])
                 goto failed;
+            if (i == NATIVE_PREF_APPLICATION || i == NATIVE_PREF_DRIVES) {
+                HWND list = GetDlgItem(state->pages[i], i == NATIVE_PREF_APPLICATION ? IDC_PREF_APP_LIST : 200);
+                /* Notifications are required behavior even when the designer clears the resource style. */
+                SetWindowLongPtr(list, GWL_STYLE, GetWindowLongPtr(list, GWL_STYLE) | LBS_NOTIFY);
+            }
             SetWindowPos(state->pages[i], HWND_TOP, area.left, area.top, area.right - area.left, area.bottom - area.top,
                          SWP_NOACTIVATE);
         }
