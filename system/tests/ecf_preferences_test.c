@@ -105,6 +105,7 @@ pair_t ROMlib_ScreenLocation = {INITIALPAIRVALUE, INITIALPAIRVALUE};
 int main(void)
 {
     ROMlib_extra_preferences prefs;
+    const int32 printing_options = ROMLIB_TEXT_DISABLE_BIT | ROMLIB_NOLOWER_BIT | ROMLIB_PRINTING_HACK_BIT;
     ROMlib_offset = (uintptr_t)lowmem;
     pair_t pair;
     long number;
@@ -131,17 +132,22 @@ int main(void)
     memset(original, 'A', 4095);
     original[4095] = 0;
     ROMlib_WindowName = original;
+    ROMlib_options = printing_options;
     ROMlib_extra_preferences_init(&prefs);
     assert(ROMlib_extra_preferences_apply(&prefs));
     assert(ROMlib_WindowName == original && strlen(original) == 4095);
-    for (i = 0; i < 11; ++i)
+    for (i = 0; i < editable_option_count; ++i)
         prefs.flags |= extra_options[i].bit;
+    assert(!ROMlib_preferences_field_label(7) && !ROMlib_preferences_field_label(8) &&
+           !ROMlib_preferences_field_label(9));
+    for (i = 0; ROMlib_preferences_check_label(i); ++i)
+        assert(!strstr(ROMlib_preferences_check_label(i), "print"));
     strcpy(prefs.fields[0], "Changed title");
     strcpy(prefs.fields[1], "12");
     strcpy(prefs.fields[2], "256");
     assert(!ROMlib_extra_preferences_valid(&prefs, &bad) && bad == 2);
     assert(!ROMlib_extra_preferences_apply(&prefs));
-    assert(!ROMlib_options && !ROMlib_delay && ROMlib_WindowName == original);
+    assert(ROMlib_options == printing_options && !ROMlib_delay && ROMlib_WindowName == original);
     strcpy(prefs.fields[2], "20");
     strcpy(prefs.fields[3], "0x100");
     strcpy(prefs.fields[4], "800,600");

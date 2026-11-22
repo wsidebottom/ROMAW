@@ -207,6 +207,8 @@ static void show_page(HWND dialog, int page)
 {
     unsigned i;
     for (i = 0; i < 19; ++i) {
+        if (!ROMlib_preferences_field_label(i))
+            continue;
         ShowWindow(GetDlgItem(dialog, 100 + i), field_page(i) == page ? SW_SHOW : SW_HIDE);
         ShowWindow(GetDlgItem(dialog, 200 + i), field_page(i) == page ? SW_SHOW : SW_HIDE);
     }
@@ -224,7 +226,7 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
     unsigned i;
     switch (message) {
     case WM_INITDIALOG: {
-        static const char* pages[] = {"General", "Display / printer", "Memory", "Compatibility"};
+        static const char* pages[] = {"General", "Display", "Memory", "Compatibility"};
         unsigned rows[4] = {0};
         RECT owner, bounds, work;
         state = (native_preferences*)lparam;
@@ -235,9 +237,11 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
                              10 + i))
                 goto failed;
         for (i = 0; i < 19; ++i) {
+            const char* label = ROMlib_preferences_field_label(i);
+            if (!label)
+                continue;
             unsigned row = rows[field_page(i)]++;
-            if (!add_control(dialog, "STATIC", ROMlib_preferences_field_label(i), 0, 10, 36 + row * 17, 186, 13,
-                             100 + i) ||
+            if (!add_control(dialog, "STATIC", label, 0, 10, 36 + row * 17, 186, 13, 100 + i) ||
                 !add_control(dialog, i == 18 ? "COMBOBOX" : "EDIT", state->edited.fields[i],
                              i == 18 ? CBS_DROPDOWN | WS_VSCROLL : ES_AUTOHSCROLL, 198, 33 + row * 17, 184,
                              i == 18 ? 120 : 15, 200 + i))
@@ -312,7 +316,8 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
         if (LOWORD(wparam) == IDOK || LOWORD(wparam) == 3) {
             unsigned bad = 0;
             for (i = 0; i < 19; ++i)
-                GetDlgItemTextA(dialog, 200 + i, state->edited.fields[i], 256);
+                if (ROMlib_preferences_field_label(i))
+                    GetDlgItemTextA(dialog, 200 + i, state->edited.fields[i], 256);
             if (!ROMlib_extra_preferences_valid(&state->edited, &bad)) {
                 show_page(dialog, field_page(bad));
                 MessageBoxA(dialog, "Invalid setting. Check the value and its supported range.",

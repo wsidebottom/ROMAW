@@ -80,6 +80,8 @@ typedef struct {
 
 static int field_page(unsigned field)
 {
+    if (!ROMlib_preferences_field_label(field))
+        return -1;
     return field == 10 || field == 11 ? 2 : field >= 12 ? 0 : 1;
 }
 
@@ -129,7 +131,7 @@ static void focus_field(preferences_ui* ui, int field, int select)
 
 static void render(SDL_Surface* canvas, preferences_ui* ui)
 {
-    static const char* pages[] = {"General", "Display/printer", "Memory", "Compatibility"};
+    static const char* pages[] = {"General", "Display", "Memory", "Compatibility"};
     unsigned i;
     box(canvas, 0, 0, WIDTH, HEIGHT, 0);
     text(canvas, 12, 9, "ROMAW Preferences", 1, 61);

@@ -46,12 +46,10 @@ static const struct {
     int* value;
 } live_checks[] = {
     {"Hide Macintosh clock", &ROMlib_noclock},
-    {"Pass PostScript to printer", &ROMlib_passpostscript},
     {"Map newlines to carriage returns", &ROMlib_newlinetocr},
     {"Direct disk access", &ROMlib_directdiskaccess},
     {"Suppress 32-bit warnings", &ROMlib_nowarn32},
     {"Flush translation cache often", &ROMlib_flushoften},
-    {"Font substitution", &ROMlib_fontsubstitution},
     {"Cache heuristics", &ROMlib_cacheheuristic},
     {"Pretend Help Manager", &ROMlib_pretend_help},
     {"Pretend Edition Manager", &ROMlib_pretend_edition},
@@ -68,16 +66,18 @@ static const struct {
     {"RectScreen", "Rectangular screen corners", ROMLIB_RECT_SCREEN_BIT},
     {"DirtyVariant", "Alternate control redraw", ROMLIB_DIRTY_VARIANT_BIT},
     {"StripAddress", "Strip 24-bit address flags", ROMLIB_STRIPADDRESSHACK_BIT},
-    {"TextDisableHack", "Text printing compatibility", ROMLIB_TEXT_DISABLE_BIT},
-    {"NoLower", "Preserve printer letter case", ROMLIB_NOLOWER_BIT},
-    {"PrintingHack", "Printer path compatibility", ROMLIB_PRINTING_HACK_BIT},
     {"DisposHandleHack", "Handle disposal compatibility", ROMLIB_DISPOSHANDLE_HACK_BIT},
     {"NoPrefPanel", "Disable Preferences after closing", ROMLIB_NOPREFS_BIT},
     {"Debug", "Application debug option", ROMLIB_DEBUG_BIT},
     /* Accepted legacy options without additional live controls. Preserve them. */
+    {"TextDisableHack", NULL, ROMLIB_TEXT_DISABLE_BIT},
+    {"NoLower", NULL, ROMLIB_NOLOWER_BIT},
+    {"PrintingHack", NULL, ROMLIB_PRINTING_HACK_BIT},
     {"NoClock", NULL, ROMLIB_NOCLOCK_BIT},
     {"Accelerated", NULL, ROMLIB_ACCELERATED_BIT},
 };
+
+enum { editable_option_count = 8 };
 
 static const char* field_labels[] = {
     "Window title",
@@ -87,9 +87,10 @@ static const char* field_labels[] = {
     "Screen size (width,height)",
     "Mac size (width,height)",
     "Screen location (x,y)",
-    "Printer name",
-    "Printer type label",
-    "Printer version (major.minor)",
+    /* Keep these slots for legacy preference handling without displaying controls. */
+    NULL,
+    NULL,
+    NULL,
     "SysZone (system heap)",
     "ApplZone (application heap)",
     "Reported system version",
@@ -424,24 +425,25 @@ const char* ROMlib_preferences_field_label(unsigned field)
 
 const char* ROMlib_preferences_check_label(unsigned check)
 {
-    return check < 11                        ? extra_options[check].label
-           : check - 11 < NELEM(live_checks) ? live_checks[check - 11].label
-                                             : NULL;
+    return check < editable_option_count                        ? extra_options[check].label
+           : check - editable_option_count < NELEM(live_checks) ? live_checks[check - editable_option_count].label
+                                                                : NULL;
 }
 
 int ROMlib_preferences_check(ROMlib_extra_preferences* prefs, unsigned check)
 {
-    return check < 11                        ? !!(prefs->flags & extra_options[check].bit)
-           : check - 11 < NELEM(live_checks) ? !!(prefs->checks & (1u << (check - 11)))
-                                             : 0;
+    return check < editable_option_count ? !!(prefs->flags & extra_options[check].bit)
+           : check - editable_option_count < NELEM(live_checks)
+               ? !!(prefs->checks & (1u << (check - editable_option_count)))
+               : 0;
 }
 
 void ROMlib_preferences_toggle(ROMlib_extra_preferences* prefs, unsigned check)
 {
-    if (check < 11)
+    if (check < editable_option_count)
         prefs->flags ^= extra_options[check].bit;
-    else if (check - 11 < NELEM(live_checks))
-        prefs->checks ^= 1u << (check - 11);
+    else if (check - editable_option_count < NELEM(live_checks))
+        prefs->checks ^= 1u << (check - editable_option_count);
 }
 
 void ROMlib_preferences_redraw(void)

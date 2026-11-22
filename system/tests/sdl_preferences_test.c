@@ -45,9 +45,9 @@ const char* ROMlib_preferences_field_label(unsigned field)
                                    "Screen size",
                                    "Mac size",
                                    "Location",
-                                   "Printer",
-                                   "Label",
-                                   "Version",
+                                   NULL,
+                                   NULL,
+                                   NULL,
                                    "SysZone (system heap)",
                                    "ApplZone (application heap)",
                                    "System version",
@@ -62,7 +62,7 @@ const char* ROMlib_preferences_field_label(unsigned field)
 
 const char* ROMlib_preferences_check_label(unsigned check)
 {
-    return check < 23 ? "Compatibility option" : NULL;
+    return check < 18 ? "Compatibility option" : NULL;
 }
 
 int ROMlib_preferences_check(ROMlib_extra_preferences* prefs, unsigned check)
