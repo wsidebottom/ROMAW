@@ -43,6 +43,14 @@ After configuring the Windows build, run in WSL with Windows interop enabled:
 
   bash system/tests/check-files.sh sidecar
 
+After building ROMAW, run in PowerShell:
+
+  ./system/tests/check-runtime.ps1 sidecar-options -ROMAW windows-binaries/bin/ROMAW.exe
+
+This checks parsed startup defaults for every format and rejects conflicting
+format switches before graphical initialization. It preserves Windows filename
+escaping and legacy-fork fallback for each selection.
+
 The test compiles the actual fileDouble.c implementation into a Windows
 executable, using CRT filesystem calls in place of ROMAW's host path
 wrappers. It creates disposable fixtures under the workspace build directory.
@@ -70,8 +78,11 @@ The guest File Manager prefers existing companions in this order: valid ._name,
 New companions use the containing directory's convention: valid ._* AppleDouble
 files or .DS_Store declare OS X, followed by .AppleDouble and then .finf/.rsrc.
 Unmarked directories retain ROMAW's configured convention (OS X ._name by
-default; -netatalk or -afpd selects .AppleDouble/name). These switches do not
-convert existing files. Renames/moves preserve the individual file's format.
+default; -netatalk or -afpd selects .AppleDouble/name, -basiliskii selects
+.finf/name plus .rsrc/name, and -executor selects legacy %name AppleDouble).
+Conflicting formats are rejected; -netatalk and -afpd may be combined.
+These switches do not convert existing files. Renames/moves preserve the
+individual file's format.
 The [root overview](../../README.md#macintosh-sidecar-files) describes the
 user-facing formats and command-line settings. Native Finder destination
 selection and conversion are documented separately under

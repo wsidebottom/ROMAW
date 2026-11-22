@@ -279,7 +279,10 @@ Desktop Manager database; mounted HFS images retain their own desktop support.
 The mapped profile Apps folder remains sidecar-capable even when its containing
 Windows drive is DOS. Existing sidecars and directory conventions are detected
 automatically; unmarked directories use OS X `._name` by default. `-netatalk`
-or `-afpd` selects `.AppleDouble/name` as that fallback. See
+or `-afpd` selects `.AppleDouble/name` as that fallback, `-basiliskii` selects
+split `.finf/name` and `.rsrc/name` companions, and `-executor` selects `%name`.
+These guest File Manager defaults do not override native Finder's destination
+storage convention. See
 [Macintosh sidecar files](../README.md#macintosh-sidecar-files) for the supported
 layouts and command-line settings. Drive selection concerns host volumes;
 it does not make ISO or compressed images writable.

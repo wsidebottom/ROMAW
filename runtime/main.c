@@ -319,6 +319,8 @@ capable of color.",
      opt_no_arg, NULL},
     {"netatalk", "use .AppleDouble/name for new sidecars (default ._name)", opt_no_arg, NULL},
     {"afpd", "use afpd conventions for AppleDouble files (implies -netatalk)", opt_no_arg, NULL},
+    {"basiliskii", "use .finf/name and .rsrc/name for new sidecars in unmarked directories", opt_no_arg, NULL},
+    {"executor", "use legacy %name AppleDouble files for new sidecars in unmarked directories", opt_no_arg, NULL},
 
     {"cities",
      "Don't use Helvetica for Geneva, Courier for Monaco and Times "
@@ -1150,16 +1152,24 @@ A2(PUBLIC, int, main, int, argc, char**, argv)
 #endif
 
     afpd_conventions_p = opt_val(common_db, "afpd", NULL);
+    boolean_t netatalk_sidecars = afpd_conventions_p || opt_val(common_db, "netatalk", NULL);
+    boolean_t basilisk_sidecars = opt_val(common_db, "basiliskii", NULL);
+    boolean_t executor_sidecars = opt_val(common_db, "executor", NULL);
+    if (netatalk_sidecars + basilisk_sidecars + executor_sidecars > 1) {
+        fprintf(stderr, "Choose only one sidecar format: -netatalk (or -afpd), -basiliskii, or -executor.\n");
+        exit(-10);
+    }
     /* Retain legacy-fork fallback for every modern layout. */
     netatalk_conventions_p = 1;
-    if (afpd_conventions_p || opt_val(common_db, "netatalk", NULL)) {
-        apple_double_quote_char = ':';
+    apple_double_quote_char = ':';
+    if (netatalk_sidecars)
         apple_double_fork_prefix = ".AppleDouble/";
-    }
-    else {
-        apple_double_quote_char = ':';
+    else if (basilisk_sidecars)
+        apple_double_fork_prefix = ".finf/";
+    else if (executor_sidecars)
+        apple_double_fork_prefix = "%";
+    else
         apple_double_fork_prefix = "._";
-    }
 #if defined(CYGWIN32)
     /* Colons introduce alternate streams on Windows and cannot name folders.
      Filename escaping is independent of the selected AppleDouble layout. */

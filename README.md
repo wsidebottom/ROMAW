@@ -63,6 +63,8 @@ them, rather than for every ordinary host file.
 | No sidecar switch (default) | Use OS X `._name` AppleDouble files for new sidecars in unmarked directories. |
 | `-netatalk` | Use Netatalk `.AppleDouble/name` files for new sidecars in unmarked directories. |
 | `-afpd` | Select the afpd conventions, including the same sidecar default as `-netatalk`. On Windows its sidecar behavior is the same as `-netatalk`; the additional legacy Linux behavior selects alternate default System Folder and application directories. |
+| `-basiliskii` | Use Basilisk II/SheepShaver `.finf/name` metadata and `.rsrc/name` resource forks for new sidecars in unmarked directories. |
+| `-executor` | Use legacy Executor `%name` AppleDouble files for new sidecars in unmarked directories. |
 
 For example, launch an application with Netatalk as the fallback layout:
 
@@ -71,8 +73,9 @@ For example, launch an application with Netatalk as the fallback layout:
 ```
 
 These switches do not convert existing sidecars or override a detected directory
-layout. Basilisk II/SheepShaver folders are detected from `.finf` or `.rsrc`;
-legacy Executor `%name` companions remain readable without a separate setting.
+layout. Select only one format per run; `-netatalk` and its `-afpd` variant may
+be combined. These defaults apply to the guest File Manager. Native Finder
+transfers use their [destination storage convention](finder/README.md#shared-macintosh-storage-layouts).
 See the [sidecar guide](system/tests/README.sidecars) for interoperability,
 conversion tools and regression checks, and the
 [host-drive settings](docs/runtime-guide.md#profile-and-host-volumes) for enabling sidecar

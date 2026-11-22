@@ -385,6 +385,12 @@ int main(void)
     expect_name("unmarked/New", "unmarked/._New");
     apple_double_fork_prefix = ".AppleDouble/";
     expect_name("unmarked/New", "unmarked/.AppleDouble/New");
+    apple_double_fork_prefix = ".finf/";
+    expect_name("unmarked/New", "unmarked/.finf/New");
+    expect_name("osx/New", "osx/._New");
+    apple_double_fork_prefix = "%";
+    expect_name("unmarked/New", "unmarked/%New");
+    expect_name("basilisk/New", "basilisk/.finf/New");
     apple_double_fork_prefix = "._";
     /* A header with no room for its declared table must be rejected. */
     head->nentries = CWC(20);

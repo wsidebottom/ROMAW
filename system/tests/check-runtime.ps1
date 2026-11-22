@@ -437,7 +437,7 @@ function Invoke-Check-help {
                 throw "$($case.Arguments) exited with $($process.ExitCode)"
             }
             $text = [IO.File]::ReadAllText($output)
-            foreach ($option in @('-help', '-debug', '-size', '-window-size', '-fixed-window-size', '-display-scale', '-bpp', '-system', '-ramlog')) {
+            foreach ($option in @('-help', '-debug', '-size', '-window-size', '-fixed-window-size', '-display-scale', '-bpp', '-system', '-ramlog', '-netatalk', '-afpd', '-basiliskii', '-executor')) {
                 if (-not $text.Contains($option)) {
                     throw "$($case.Arguments) omitted $option from help"
                 }
@@ -460,6 +460,73 @@ function Invoke-Check-help {
         $env:SDL_VIDEODRIVER = $savedVideoDriver
     }
     Write-Output 'Command-line help regression tests passed'
+}
+
+function Invoke-Check-sidecar-options {
+    param(
+        [string]$ROMAW,
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe'
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $ROMAW) { $ROMAW = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
+    $fixture = Join-Path $root ('build/sidecar-options-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    # Inspect actual parsed startup state before any graphical initialization.
+    $cases = @(
+        @{ Arguments = ''; Prefix = '._' },
+        @{ Arguments = '-netatalk'; Prefix = '.AppleDouble/' },
+        @{ Arguments = '-afpd'; Prefix = '.AppleDouble/' },
+        @{ Arguments = '-netatalk -afpd'; Prefix = '.AppleDouble/' },
+        @{ Arguments = '-basiliskii'; Prefix = '.finf/' },
+        @{ Arguments = '-executor'; Prefix = '%' }
+    )
+    $commands = @('set pagination off', 'set confirm off', 'set print thread-events off')
+    foreach ($case in $cases) {
+        $commands += @(
+            'tbreak ROMlib_ecf_startup_memory',
+            ('run ' + $case.Arguments),
+            ('python assert gdb.parse_and_eval("apple_double_fork_prefix").string() == "' + $case.Prefix + '"'),
+            ('python assert int(gdb.parse_and_eval("apple_double_fork_prefix_length")) == ' + $case.Prefix.Length),
+            'python assert int(gdb.parse_and_eval("apple_double_quote_char")) == 37',
+            'python assert int(gdb.parse_and_eval("netatalk_conventions_p")) == 1',
+            'kill'
+        )
+    }
+    $commands += @('echo SIDECAR_OPTIONS_OK\n', 'quit 0')
+    $script = Join-Path $fixture 'options.gdb'
+    [IO.File]::WriteAllText($script, ($commands -join "`n") + "`n")
+    $log = Join-Path $fixture 'options.log'
+    $process = Start-Process -FilePath $Gdb -ArgumentList @('-q', '-batch', '-x', ('"' + $script + '"'), ('"' + $ROMAW + '"')) -WorkingDirectory $fixture -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError (Join-Path $fixture 'options.err')
+    try {
+        if (-not $process.WaitForExit(60000)) { throw "Sidecar option probe timed out; see $fixture" }
+        if ($process.ExitCode -ne 0 -or [IO.File]::ReadAllText($log) -notmatch 'SIDECAR_OPTIONS_OK') {
+            throw "Sidecar option probe failed; see $fixture"
+        }
+    }
+    finally {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+        $process.Dispose()
+    }
+    $conflicts = @('-basiliskii -executor', '-executor -basiliskii', '-netatalk -basiliskii',
+        '-afpd -basiliskii', '-executor -netatalk', '-executor -afpd')
+    foreach ($arguments in $conflicts) {
+        $errors = Join-Path $fixture 'stderr.txt'
+        $process = Start-Process -FilePath $ROMAW -ArgumentList ('-debug trace ' + $arguments) -WorkingDirectory $fixture -WindowStyle Hidden -PassThru
+        $null = $process.Handle
+        try {
+            if (-not $process.WaitForExit(10000)) { throw "Conflicting sidecar options did not exit: $arguments" }
+            if ($process.ExitCode -ne -10 -or [IO.File]::ReadAllText($errors) -notmatch 'Choose only one sidecar format') {
+                throw "Conflicting sidecar options were not rejected: $arguments; see $fixture"
+            }
+        }
+        finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+            $process.Dispose()
+        }
+    }
+    Write-Output "PASS: six sidecar startup settings and six conflicting selections; $fixture"
 }
 
 function Invoke-Check-launch-desk-accessory {
@@ -689,4 +756,4 @@ function Invoke-Check-clipboard-live {
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('build-version', 'clipboard-live', 'desk-accessory', 'device-install', 'ecf', 'help', 'launch-desk-accessory', 'launch-parameters', 'number-options', 'printer-options', 'startup-options', 'version-options') -CheckArguments $args
+Invoke-RegressionCheck -Names @('build-version', 'clipboard-live', 'desk-accessory', 'device-install', 'ecf', 'help', 'launch-desk-accessory', 'launch-parameters', 'number-options', 'printer-options', 'sidecar-options', 'startup-options', 'version-options') -CheckArguments $args
