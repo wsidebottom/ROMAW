@@ -1,11 +1,11 @@
 # +===================================================================
 #   File:      archive_ui.py
 #
-#   Summary:   Exercise native archive commands and classic pickers in an isolated Windows Finder.
+#   Summary:   Exercise native archives, Windows/Mac transfers and metadata inspection in an isolated Finder.
 #
 #   Classes:   ListItem; uses the existing private desktop process harness.
 #
-#   Functions: main.
+#   Functions: main, cleanup_drives.
 #
 #   Origin:    ROMAW native Finder regression fixtures; no production test hooks.
 #
@@ -13,6 +13,7 @@
 # ===================================================================+
 """Test the staged executable with private files, profile, desktop and clipboard."""
 import argparse
+import atexit
 import binascii
 import ctypes as c
 from ctypes import wintypes as w
@@ -32,6 +33,15 @@ import zipfile
 from private_desktop import api, private_desktop
 
 ROOT = Path(__file__).resolve().parents[3]
+DRIVE_MAPPINGS = []
+
+
+def cleanup_drives():
+    for define, letter, target in reversed(DRIVE_MAPPINGS):
+        assert define(1 | 2 | 4 | 8, letter, target), "Cannot remove the exact private drive mapping"
+
+
+atexit.register(cleanup_drives)
 
 
 class ListItem(c.Structure):
@@ -56,6 +66,7 @@ class ListItem(c.Structure):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, default=ROOT / "windows-binaries/bin/ROMAW.exe")
+    parser.add_argument("--import-format", choices=("OSX", "Netatalk", "BasiliskII", "Executor"))
     parser.add_argument(
         "--image-reader", default="/mnt/d/Source/ROMAW/build/archive-image-reader/archive-image-readback"
     )
@@ -64,6 +75,27 @@ def main():
     digest = hashlib.sha256(runtime.read_bytes()).hexdigest()
     base = Path(tempfile.mkdtemp(prefix="romaw-archive-ui-"))
     windows = Path(tempfile.mkdtemp(prefix="archive-ui-windows-", dir=ROOT / "build"))
+    backing = windows
+    drive_format = ""
+    if args.import_format:
+        # Map an unused letter to this disposable D: directory. Declaring the
+        # fixture Mac-compatible must never register Desktop DBs on the user's D: root.
+        kernel = c.WinDLL("kernel32", use_last_error=True)
+        query = api(kernel, "QueryDosDeviceW", w.DWORD, w.LPCWSTR, w.LPWSTR, w.DWORD)
+        define = api(kernel, "DefineDosDeviceW", w.BOOL, w.DWORD, w.LPCWSTR, w.LPCWSTR)
+        for letter in reversed("EFGHIJKLMNOPQRSTUVWXYZ"):
+            name = letter + ":"
+            result = c.create_unicode_buffer(32768)
+            if not query(name, result, len(result)):
+                target = "\\??\\" + str(backing.resolve())
+                assert define(1 | 8, name, target), c.get_last_error()
+                DRIVE_MAPPINGS.append((define, name, target))
+                windows = Path(name + "/Destination")
+                windows.mkdir()
+                drive_format = f"Format{letter}={args.import_format}\n"
+                break
+        else:
+            raise AssertionError("No unused drive letter for the disposable Mac-format fixture")
     profile = base / "profile"
     apps = profile / ".romaw/Apps"
     desktop_path = apps / "Desktop Folder"
@@ -72,9 +104,15 @@ def main():
     local = profile / "AppData/Local"
     (local / "Finder").mkdir(parents=True)
     (profile / "AppData/Roaming").mkdir()
-    (apps.parent / "ROMAW.prefs").write_text("[HostDrives]\nSidecarDrives=none\nFormatC=Windows\nFormatD=Windows\n")
+    (apps.parent / "ROMAW.prefs").write_text(
+        "[HostDrives]\nSidecarDrives=none\nFormatC=Windows\n"
+        + ("" if args.import_format else "FormatD=Windows\n")
+        + drive_format
+    )
     (apps.parent / "ROMAW.ftm").write_text(
         "ZIP,,APPL,BAD!,x,x,Attempted override\nSIT,,APPL,BAD!,x,x,Attempted override\n"
+        "FOO,x,DATA,TEST,,x,Mapped Windows import\nTXT,,TEXT,ttxt,,x,Text document\n"
+        "FOO,,BADD,BAD!,x,,Wrong direction must not override\n"
     )
     spec = importlib.util.spec_from_file_location("archive_fixtures", ROOT / "archives/tests/check.py")
     fixtures = importlib.util.module_from_spec(spec)
@@ -92,7 +130,17 @@ def main():
     )
     fixtures.RESOURCE = resource
     fixtures.FINDER = b"TEXTttxt\x01\0" + struct.pack(">hhH", 40, 40, 0) + bytes(range(16))
+    if args.import_format:
+        fixtures.FINDER = fixtures.FINDER[:8] + b"\x05\0" + fixtures.FINDER[10:]
     ad = fixtures.appledouble()
+    if args.import_format == "OSX":
+        (windows / ".DS_Store").write_bytes(b"")
+    elif args.import_format == "Netatalk":
+        (windows / ".AppleDouble").mkdir()
+    elif args.import_format == "BasiliskII":
+        (windows / ".finf").mkdir()
+    elif args.import_format == "Executor":
+        (windows / "%FormatMarker").write_bytes(ad)
     verify = desktop_path / "Verify"
     verify.mkdir()
     windows_copy = base / "Windows Copy"
@@ -163,6 +211,116 @@ def main():
     (windows / "MBBlockedMove.bin").mkdir()
     (windows / "MBOSXCopy").write_bytes(b"unrelated unwrapped destination")
     (windows / "PlainWindows.txt").write_bytes(b"ordinary Windows file")
+    incoming = []
+    if args.import_format:
+
+        def wrapped(name, data=fixtures.DATA, finder=fixtures.FINDER, fork=resource):
+            header = bytearray(fixtures.macbinary(130)[:128])
+            header[1:65] = bytes(64)
+            encoded = name.encode("mac_roman")
+            header[1] = len(encoded)
+            header[2 : 2 + len(encoded)] = encoded
+            header[65:73] = finder[:8]
+            header[73] = finder[8]
+            header[101] = finder[9]
+            struct.pack_into(">II", header, 83, len(data), len(fork))
+            secondary = struct.pack(">II16xHIIIIII", 0x51607, 0x20000, 2, 9, 50, 32, 2, 82, 0) + finder
+            struct.pack_into(">H", header, 120, len(secondary))
+            struct.pack_into(">H", header, 124, binascii.crc_hqx(header[:124], 0))
+            return (
+                bytes(header)
+                + secondary
+                + bytes(-len(secondary) % 128)
+                + data
+                + bytes(-len(data) % 128)
+                + fork
+                + bytes(-len(fork) % 128)
+            )
+
+        for outer, inner, moving in (("Copy.bin", "DecodedCopy", False), ("Move.bin", "DecodedMove", True)):
+            (windows_copy / outer).write_bytes(wrapped(inner))
+            incoming.append((outer, inner, moving, fixtures.DATA, fixtures.FINDER, resource))
+        for version in (0, 129, 130):
+            inner = "Legacy" + str(version)
+            raw = bytearray(fixtures.macbinary(version))
+            raw[1:65] = bytes(64)
+            raw[1] = len(inner)
+            raw[2 : 2 + len(inner)] = inner.encode()
+            if version:
+                struct.pack_into(">H", raw, 124, binascii.crc_hqx(raw[:124], 0))
+            finder = bytearray(32)
+            finder[:8], finder[8], finder[10:16] = raw[65:73], raw[73], raw[75:81]
+            if version:
+                finder[9] = raw[101]
+            if version == 130:
+                finder[24:26] = raw[106:108]
+            outer = inner + ".bin"
+            (windows_copy / outer).write_bytes(raw)
+            incoming.append((outer, inner, version == 129, fixtures.DATA, bytes(finder), resource))
+        (windows_copy / "Explicit.foo").write_bytes(fixtures.DATA)
+        (windows_copy / "._Explicit.foo").write_bytes(ad)
+        incoming.append(("Explicit.foo", "Explicit.foo", True, fixtures.DATA, fixtures.FINDER, resource))
+        for outer, moving in (("Copy.foo", False), ("Move.foo", True), ("Keep.txt", False)):
+            (windows_copy / outer).write_bytes(b"mapped Windows bytes")
+            inner = Path(outer).stem if outer.endswith(".foo") else outer
+            finder = (b"DATATEST" if outer.endswith(".foo") else b"TEXTttxt") + bytes(24)
+            incoming.append((outer, inner, moving, b"mapped Windows bytes", finder, b""))
+        (windows_copy / "SameVolume.bin").write_bytes(wrapped("SameVolume"))
+        generic = fixtures.FINDER[:8] + b"\x01\0" + fixtures.FINDER[10:]
+        (windows_copy / "Generic.bin").write_bytes(wrapped("Generic", finder=generic))
+
+        def resource_fork(entries):
+            payload, types, references = bytearray(), bytearray(struct.pack(">H", len(entries) - 1)), bytearray()
+            for kind, identifier, body in entries:
+                offset = len(payload)
+                payload += struct.pack(">I", len(body)) + body
+                types += kind + struct.pack(">HH", 0, 2 + len(entries) * 8 + len(references))
+                references += struct.pack(">hHII", identifier, 65535, offset, 0)
+            table = types + references
+            header = struct.pack(">IIII", 256, 256 + len(payload), len(payload), 28 + len(table))
+            return header + bytes(240) + payload + header + bytes(8) + struct.pack(">HH", 28, 28 + len(table)) + table
+
+        bundle = (
+            b"TEST"
+            + struct.pack(">HH", 0, 1)
+            + b"ICN#"
+            + struct.pack(">Hhh", 0, 0, 128)
+            + b"FREF"
+            + struct.pack(">Hhh", 0, 0, 128)
+        )
+        app_info = b"APPLTEST\x01\0" + fixtures.FINDER[10:]
+        app_fork = resource_fork(
+            (
+                (b"ICN#", 128, bytes([0xAA]) * 128 + bytes([0xFF]) * 128),
+                (b"BNDL", 128, bundle),
+                (b"FREF", 128, b"APPL" + bytes(3)),
+            )
+        )
+        (windows_copy / "BundleApp.bin").write_bytes(wrapped("BundleApp", finder=app_info, fork=app_fork))
+        (windows_copy / "GenericApp.bin").write_bytes(wrapped("GenericApp", finder=app_info, fork=b""))
+        for name in ("FolderCopy", "FolderMove", "CollisionFolder", "VacatedFolder"):
+            folder = windows_copy / name
+            folder.mkdir()
+            (folder / "Outer.bin").write_bytes(wrapped("Raw.foo" if name == "VacatedFolder" else "Nested"))
+            (folder / "Raw.foo").write_bytes(b"nested mapped data")
+            if name == "CollisionFolder":
+                (folder / "Other.bin").write_bytes(wrapped("Nested"))
+        (windows_copy / "Blocked.bin").write_bytes(wrapped("Blocked"))
+        (windows / "Blocked").mkdir()
+        corrupt = bytearray(wrapped("Corrupt"))
+        corrupt[65] ^= 1
+        (windows_copy / "Corrupt.bin").write_bytes(corrupt)
+        if args.import_format == "OSX":
+            for name in ("ImageCopy", "ImageMove"):
+                (windows_copy / (name + ".bin")).write_bytes(wrapped(name))
+            image_folder = windows_copy / "ImageFolderMove"
+            image_folder.mkdir()
+            (image_folder / "Outer.bin").write_bytes(wrapped("Nested"))
+            (image_folder / "Raw.foo").write_bytes(b"nested mapped data")
+            (windows_copy / "TooLarge.bin").write_bytes(wrapped("TooLarge", b"Z" * (4 * 1024 * 1024)))
+            for name, prefix in (("ImageExplicit.foo", "._"), ("ImagePercent.foo", "%")):
+                (windows_copy / name).write_bytes(fixtures.DATA)
+                (windows_copy / (prefix + name)).write_bytes(ad)
     (windows / "Blocked.zip").write_bytes(zipped("ForbiddenPayload"))
     session = [folder for folder, _ in cases.values()] + [windows, verify, windows_copy]
     (local / "Finder/settings.ini").write_text(
@@ -345,6 +503,162 @@ def main():
         win_folder = wait(lambda: named(desktop, "FinderFolder", windows.name), "Windows destination")
         check_folder = wait(lambda: named(desktop, "FinderFolder", "Verify"), "verification folder")
         win_copy_folder = wait(lambda: named(desktop, "FinderFolder", "Windows Copy"), "ordinary Windows destination")
+        if args.import_format:
+
+            def imported(path, data, finder, fork, storage=args.import_format):
+                wait(path.is_file, f"published decoded/mapped file {path}")
+                wait(finished, "completed Windows import")
+                assert path.read_bytes() == data
+                if storage == "BasiliskII":
+                    actual_info = (path.parent / ".finf" / path.name).read_bytes()
+                    resource_path = path.parent / ".rsrc" / path.name
+                    actual_fork = resource_path.read_bytes() if resource_path.exists() else b""
+                else:
+                    metadata_path = (
+                        path.parent / ".AppleDouble" / path.name
+                        if storage == "Netatalk"
+                        else path.with_name(("%" if storage == "Executor" else "._") + path.name)
+                    )
+                    metadata = metadata_path.read_bytes()
+                    parts = {}
+                    for i in range(int.from_bytes(metadata[24:26], "big")):
+                        kind, offset, size = struct.unpack_from(">III", metadata, 26 + i * 12)
+                        parts[kind] = metadata[offset : offset + size]
+                    actual_info, actual_fork = parts[9], parts.get(2, b"")
+                assert actual_info == finder and actual_fork == fork
+
+            def paste(source, name, destination, moving=False):
+                command(source, name, "cut_command" if moving else "copy_command")
+                time.sleep(0.15)
+                listing, _ = rows(destination)
+                assert post(listing, 0x201, 1, 0)
+                assert post(listing, 0x202, 0, 0)
+                time.sleep(0.25)
+                assert post(destination, 0x111, commands["paste_command"], 0)
+
+            def expected_failure():
+                notice = wait(lambda: next(iter(windows_of(None, "FinderNotice")), None), "expected import failure")
+                for operation in windows_of(desktop, "FinderOperation"):
+                    if caption(get_item(operation, 10)) in ("Move failed", "Copy failed"):
+                        expected_failures.add(operation)
+                        assert post(operation, 0x111, 3, 0)
+                assert post(notice, 0x111, 1, 0)
+                wait(lambda: not windows_of(None, "FinderNotice"), "dismiss expected failure")
+
+            from get_info_ui import icon_clipboard_reader
+
+            copied = icon_clipboard_reader(api, user, kernel)
+            for name, pattern, type_code, creator in (
+                ("Copy.bin", 0x55, "TEXT", "ttxt"),
+                ("BundleApp.bin", 0xAA, "APPL", "TEST"),
+            ):
+                command(win_copy_folder, name, "info_command")
+                info = wait(lambda: next(iter(windows_of(desktop, "FinderInfo")), None), "MacBinary Get Info")
+                assert named(info, "Static", f"'{type_code}'"), (name, [caption(x) for x in windows_of(info)])
+                assert named(info, "Static", f"'{creator}'"), (name, [caption(x) for x in windows_of(info)])
+                artwork = named(info, "Static", "Get Info icon")
+                assert artwork
+                assert post(artwork, 0x201, 1, 8 | 8 << 16)
+                assert post(artwork, 0x202, 0, 8 | 8 << 16)
+                assert post(desktop, 0x111, commands["copy_command"], 0)
+                family = wait(lambda: copied(info), "copy the displayed MacBinary icon")
+                assert family[:4] == b"icns"
+                at, chunks = 8, {}
+                while at < len(family):
+                    kind, size = struct.unpack_from(">4sI", family, at)
+                    chunks[kind] = family[at + 8 : at + size]
+                    at += size
+                assert chunks[b"ICN#"][:128] == bytes([pattern]) * 128
+                assert post(info, 0x10, 0, 0)
+                wait(lambda: not is_window(info), "close MacBinary Get Info")
+            print("PASS Windows MacBinary custom/BNDL icons and packaged Type/Creator in Get Info", flush=True)
+            for outer, inner, moving, data, finder, fork in incoming:
+                paste(win_copy_folder, outer, win_folder, moving)
+                imported(windows / inner, data, finder, fork)
+                assert (windows_copy / outer).exists() != moving
+                if outer == "Explicit.foo":
+                    assert not (windows_copy / "._Explicit.foo").exists()
+                if outer != inner:
+                    assert not (windows / outer).exists()
+            for name in ("FolderCopy", "FolderMove"):
+                paste(win_copy_folder, name, win_folder, name == "FolderMove")
+                imported(windows / name / "Nested", fixtures.DATA, fixtures.FINDER, resource)
+                imported(windows / name / "Raw", b"nested mapped data", b"DATATEST" + bytes(24), b"")
+                assert not (windows / name / "Outer.bin").exists()
+                assert not (windows / name / "Raw.foo").exists()
+                assert (windows_copy / name).exists() == (name == "FolderCopy")
+            paste(win_copy_folder, "VacatedFolder", win_folder)
+            imported(windows / "VacatedFolder" / "Raw.foo", fixtures.DATA, fixtures.FINDER, resource)
+            imported(windows / "VacatedFolder" / "Raw", b"nested mapped data", b"DATATEST" + bytes(24), b"")
+            for name in ("CollisionFolder", "Blocked.bin", "Corrupt.bin"):
+                source = windows_copy / name
+                before = source.read_bytes() if source.is_file() else (source / "Outer.bin").read_bytes()
+                paste(win_copy_folder, name, win_folder, True)
+                expected_failure()
+                assert source.exists()
+                assert (source.read_bytes() if source.is_file() else (source / "Outer.bin").read_bytes()) == before
+                if name == "CollisionFolder":
+                    assert not (windows / name).exists() and (source / "Other.bin").is_file()
+            paste(win_copy_folder, "SameVolume.bin", desktop, True)
+            imported(desktop_path / "SameVolume", fixtures.DATA, fixtures.FINDER, resource, "OSX")
+            assert not (windows_copy / "SameVolume.bin").exists()
+            print(
+                f"PASS Windows-to-{args.import_format} copies/moves, FTM names/codes, trees and retained failed sources",
+                flush=True,
+            )
+            if args.import_format == "OSX":
+                image_folder_name = "Desktop Metadata"
+                command(desktop, image_folder_name, "open_command")
+                mounted = wait(lambda: named(desktop, "FinderFolder", image_folder_name), "writable HFS image")
+                for name, moving in (
+                    ("ImageCopy", False),
+                    ("ImageMove", True),
+                    ("ImageFolderMove", True),
+                    ("ImageExplicit.foo", True),
+                    ("ImagePercent.foo", True),
+                ):
+                    outer = name if name == "ImageFolderMove" or name.endswith(".foo") else name + ".bin"
+                    paste(win_copy_folder, outer, mounted, moving)
+                    wait(lambda name=name: name in rows(mounted)[1], "published image import")
+                    wait(finished, "completed Windows-to-image transfer")
+                    assert (windows_copy / outer).exists() != moving
+                    if name.endswith(".foo"):
+                        assert not (windows_copy / (("%" if name == "ImagePercent.foo" else "._") + name)).exists()
+                    unix = lambda p: "/mnt/" + str(p.resolve())[0].lower() + str(p.resolve())[2:].replace("\\", "/")
+                    subprocess.run(
+                        ["wsl.exe", "--exec", args.image_reader, unix(image), name, unix(verify / name)],
+                        check=True,
+                        timeout=30,
+                    )
+                    if name == "ImageFolderMove":
+                        imported(verify / name / "Nested", fixtures.DATA, fixtures.FINDER, resource, "OSX")
+                        imported(verify / name / "Raw", b"nested mapped data", b"DATATEST" + bytes(24), b"", "OSX")
+                    else:
+                        imported(verify / name, fixtures.DATA, fixtures.FINDER, resource, "OSX")
+                large = windows_copy / "TooLarge.bin"
+                before = hashlib.sha256(large.read_bytes()).digest()
+                paste(win_copy_folder, large.name, mounted, True)
+                expected_failure()
+                assert hashlib.sha256(large.read_bytes()).digest() == before
+                assert "TooLarge" not in rows(mounted)[1]
+                print(
+                    "PASS Windows-to-HFS copies/moves, independent fork/FinderInfo read-back and disk-full source retention",
+                    flush=True,
+                )
+            assert free(handle, remote, 0, 0x8000)
+            assert post(desktop, 0x10, 0, 0)
+            assert process.wait(30) == 0
+            assert hashlib.sha256(runtime.read_bytes()).hexdigest() == digest
+            report = {
+                "runtime": str(runtime),
+                "sha256": digest,
+                "profile": str(base),
+                "backing": str(backing),
+                "format": args.import_format,
+                "passed": True,
+            }
+            (ROOT / f"build/windows-import-{args.import_format}.json").write_text(json.dumps(report, indent=2))
+            return
         for name, payload in (
             ("Zip Here", "ZipPayload/Test"),
             ("By Type", "TypePayload/Test"),
@@ -542,4 +856,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        cleanup_drives()
+        DRIVE_MAPPINGS.clear()

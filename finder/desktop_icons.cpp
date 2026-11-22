@@ -508,6 +508,9 @@ bool DesktopIcons::lookup(const fs::path& path, const MacFile& file, FinderIcon&
 {
     if (!file.creator || !file.type)
         return false;
+    if (file.macbinary && !file.fork.empty() &&
+        finder_parse_icon(file.fork.data(), file.fork.size(), file.creator, file.type, &icon))
+        return true;
     auto roots = state->roots;
     std::stable_sort(roots.begin(), roots.end(), [&](const fs::path& a, const fs::path& b) {
         return inside(a, path) && (!inside(b, path) || a.native().size() > b.native().size());

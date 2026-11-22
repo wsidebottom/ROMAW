@@ -3,10 +3,11 @@
 
   Summary:   Validate archives and preserve Macintosh forks in ditto ZIP and legacy containers.
 
-  Classes:   Item, Zip; standard containers and RAII handles.
+  Classes:   Item, MacBinaryInfo, Zip; standard containers and RAII handles.
 
   Functions: romaw::archives::validate, romaw::archives::metadata, romaw::archives::metadata_part,
-             romaw::archives::zip, romaw::archives::macbinary, romaw::archives::expand, romaw::archives::canonicalize.
+             romaw::archives::zip, romaw::archives::macbinary, romaw::archives::expand, romaw::archives::canonicalize,
+             romaw::archives::inspect_macbinary, romaw::archives::macbinary_metadata.
 
   Origin:    ROMAW codecs using miniz and stuffit-rs. BinHex follows RFC 1741;
              MacBinary follows the published II/III header layout.
@@ -276,40 +277,10 @@ Bytes with_resource(const Bytes& raw, const Bytes& resource)
 
 std::vector<Item> unbinary(const Bytes& bytes)
 {
-    extent(bytes, 0, 128);
-    require(!bytes[0] && bytes[1] && bytes[1] <= 63 && !bytes[74] && !bytes[82], "Invalid MacBinary header");
-    bool modern = bytes[122] == 129 || bytes[122] == 130;
-    require(modern ? bytes[123] <= 130 && crc(bytes, 0, 124) == word(bytes, 124)
-                   : !bytes[122] && !bytes[123] && !word(bytes, 124),
-            "MacBinary header CRC or version failed");
-    size_t secondary = modern ? word(bytes, 120) : 0;
-    size_t data_at = 128 + (secondary + 127) / 128 * 128;
-    size_t data_length = number(bytes, 83), resource_length = number(bytes, 87);
-    require(data_length <= byte_limit && resource_length <= byte_limit - data_length, "MacBinary fork limit exceeded");
-    size_t resource_at = data_at + (data_length + 127) / 128 * 128;
-    Item item{mac_name(bytes, 2, bytes[1]), false, part(bytes, data_at, data_length), {}};
-    require(item.name.find('/') == std::string::npos, "MacBinary filename cannot specify a directory");
-    Bytes finder(32);
-    std::copy_n(bytes.begin() + 65, 8, finder.begin());
-    finder[8] = bytes[73];
-    finder[9] = modern ? bytes[101] : 0;
-    std::copy_n(bytes.begin() + 75, 6, finder.begin() + 10);
-    if (bytes[122] == 130) {
-        finder[24] = bytes[106];
-        finder[25] = bytes[107];
-    }
-    item.metadata = metadata(finder, part(bytes, resource_at, resource_length));
-    if (secondary) {
-        auto extra = part(bytes, 128, secondary);
-        // Unknown secondary headers cannot silently disappear during extraction.
-        metadata_part(extra, 9);
-        auto secondary_resource = metadata_part(extra, 2);
-        require(secondary_resource.empty() || secondary_resource == part(bytes, resource_at, resource_length),
-                "MacBinary secondary resource fork conflicts with its primary fork");
-        item.metadata = secondary_resource.empty() && resource_length
-                            ? with_resource(extra, part(bytes, resource_at, resource_length))
-                            : std::move(extra);
-    }
+    auto info = inspect_macbinary(bytes, bytes.size());
+    Item item{info.name, false, part(bytes, info.data_offset, info.data_size),
+              macbinary_metadata(info, part(bytes, 128, info.secondary_size),
+                                 part(bytes, info.resource_offset, info.resource_size))};
     return {std::move(item)};
 }
 
@@ -413,6 +384,55 @@ std::vector<Item> companions(std::vector<Item> raw)
         out.push_back(std::move(pair.second));
     return out;
 }
+}
+
+MacBinaryInfo inspect_macbinary(const Bytes& bytes, uint64_t file_size)
+{
+    extent(bytes, 0, 128);
+    require(file_size <= byte_limit && !bytes[0] && bytes[1] && bytes[1] <= 63 && !bytes[74] && !bytes[82],
+            "Invalid or oversized MacBinary header");
+    bool modern = bytes[122] == 129 || bytes[122] == 130;
+    require(modern ? bytes[123] <= 130 && crc(bytes, 0, 124) == word(bytes, 124)
+                   : !bytes[122] && !bytes[123] && !word(bytes, 124),
+            "MacBinary header CRC or version failed");
+    MacBinaryInfo info;
+    info.name = mac_name(bytes, 2, bytes[1]);
+    require(info.name.find('/') == std::string::npos, "MacBinary filename cannot specify a directory");
+    validate({{info.name, false, {}, {}}});
+    info.secondary_size = modern ? word(bytes, 120) : 0;
+    info.data_offset = 128 + (info.secondary_size + 127) / 128 * 128;
+    info.data_size = number(bytes, 83);
+    info.resource_size = number(bytes, 87);
+    require(info.data_size <= byte_limit && info.resource_size <= byte_limit - info.data_size,
+            "MacBinary fork limit exceeded");
+    info.resource_offset = info.data_offset + (info.data_size + 127) / 128 * 128;
+    require(128 + info.secondary_size <= file_size && info.data_offset <= file_size &&
+                info.data_size <= file_size - info.data_offset && info.resource_offset <= file_size &&
+                info.resource_size <= file_size - info.resource_offset,
+            "Truncated MacBinary fork");
+    info.finder.resize(32);
+    std::copy_n(bytes.begin() + 65, 8, info.finder.begin());
+    info.finder[8] = bytes[73];
+    info.finder[9] = modern ? bytes[101] : 0;
+    std::copy_n(bytes.begin() + 75, 6, info.finder.begin() + 10);
+    if (bytes[122] == 130) {
+        info.finder[24] = bytes[106];
+        info.finder[25] = bytes[107];
+    }
+    return info;
+}
+
+Bytes macbinary_metadata(const MacBinaryInfo& info, const Bytes& secondary, const Bytes& resource)
+{
+    require(secondary.size() == info.secondary_size && resource.size() == info.resource_size,
+            "Truncated MacBinary metadata");
+    if (secondary.empty())
+        return metadata(info.finder, resource);
+    metadata_part(secondary, 9);
+    auto extra_resource = metadata_part(secondary, 2);
+    require(extra_resource.empty() || extra_resource == resource,
+            "MacBinary secondary resource fork conflicts with its primary fork");
+    return extra_resource.empty() && !resource.empty() ? with_resource(secondary, resource) : secondary;
 }
 
 Bytes metadata_part(const Bytes& bytes, uint32_t id)

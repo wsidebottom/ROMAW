@@ -3457,11 +3457,9 @@ void command(FolderWindow& f, unsigned id)
         if (!contents)
             throw std::runtime_error("The Windows clipboard is busy. Try Paste again.");
         if (f.image_volume) {
-            if (contents->move)
-                throw std::runtime_error(
-                    "Use Copy to paste host files into a Macintosh image. The originals stay on the host.");
-            if (auto job = copy_into_image(copies, contents->files, {}, f.image_volume, f.image_directory, f.path))
-                show_operation(job);
+            if (auto job = copy_into_image(copies, contents->files, {}, f.image_volume, f.image_directory, f.path,
+                                           contents->move ? TransferKind::move : TransferKind::copy))
+                show_operation(job, contents->move ? contents->sequence : 0);
             break;
         }
         if (!contents->files.empty())
@@ -5334,6 +5332,7 @@ extern "C" int romaw_finder_main(void)
         set_drive_format_lookup(config_drive_format);
         set_folder_archive_writer(write_stuffit_folder);
         set_file_archive_writer(write_macbinary_file);
+        set_host_import_services(read_macbinary_file, lookup_host_type);
         wchar_t user[32768];
         if (!GetEnvironmentVariableW(L"USERPROFILE", user, std::size(user)))
             throw std::runtime_error("USERPROFILE is unavailable");

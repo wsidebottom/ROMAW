@@ -3,7 +3,8 @@
 
   Summary:   Host Macintosh metadata and cancellable host or streamed copy operations.
 
-  Classes:   Declared: Copies, CopyJob, MacFile, SuitcaseMember; Used: Copies, CopyJob, MacFile, std::atomic, std::mutex,
+  Classes:   Declared: Copies, CopyJob, MacFile, SuitcaseMember, ImportedFile, HostFileStamp, HostMoveLease;
+             Used: Copies, CopyJob, MacFile, std::atomic, std::mutex,
              std::shared_ptr, std::thread, std::vector, std::wstring
 
   Functions: Interface declarations and inline definitions; see the declarations below.
@@ -17,6 +18,7 @@
 #ifndef FINDER_FILES_H
 #define FINDER_FILES_H
 #include "finder/launcher.h"
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -39,6 +41,8 @@ struct MacFile {
     // Decoded host-order Finder information, not a guest-memory structure.
     uint32_t type = 0, creator = 0;
     bool has_finder_info = false; // Distinguish absent DOS metadata from explicitly empty Macintosh codes.
+    bool macbinary = false;
+    Bytes finder_info; // Complete catalog record, including extended Finder fields.
     uint16_t flags = 0, folder_view = 0;
     // Classic saved positions are relative to the containing folder's icon view.
     int16_t icon_x = 0, icon_y = 0;
@@ -154,6 +158,8 @@ struct CopyJob {
     // Paths are reserved on the UI thread and immutable once the worker starts.
     std::vector<fs::path> sources, destinations;
     std::vector<bool> binary_files; // Keep MacBinary conversion paired with its reserved .bin name.
+    std::vector<bool> import_files; // Windows-to-Mac conversion, including trees and same-volume moves.
+    std::vector<fs::path> import_names;
     // Stream directly into destination staging; sources need not be host files.
     std::function<void(size_t, const fs::path&, CopyJob&)> stream_writer;
     std::vector<bool> stream_directories;
@@ -168,6 +174,36 @@ using FolderArchiveWriter = void (*)(const fs::path&, const fs::path&, const fs:
 void set_folder_archive_writer(FolderArchiveWriter writer);
 using FileArchiveWriter = void (*)(const fs::path&, const fs::path&, const fs::path&, CopyJob&);
 void set_file_archive_writer(FileArchiveWriter writer);
+
+struct ImportedFile {
+    fs::path name;
+    Bytes data, metadata, finder_info, prefix;
+    uint64_t data_offset = 0, data_size = 0, resource_offset = 0, resource_size = 0;
+};
+
+using MacBinaryReader = bool (*)(const fs::path&, ImportedFile&, bool);
+using HostTypeLookup = bool (*)(const fs::path&, uint32_t&, uint32_t&, bool&);
+void set_host_import_services(MacBinaryReader reader, HostTypeLookup lookup);
+bool read_macbinary(const fs::path& path, ImportedFile& file, bool data = false, const fs::path& logical_name = {});
+fs::path host_import_name(const fs::path& path, Bytes* finder_info = nullptr);
+
+struct HostFileStamp {
+    fs::path path;
+    bool directory;
+    std::array<DWORD, 7> identity;
+};
+
+HostFileStamp host_file_stamp(const fs::path& path);
+
+class HostMoveLease {
+  public:
+    virtual ~HostMoveLease() = default;
+    virtual void read(const fs::path& path, uint64_t offset, void* buffer, size_t count) = 0;
+    virtual void verify() = 0;
+    virtual void remove() = 0;
+};
+
+std::shared_ptr<HostMoveLease> lock_host_move(const std::vector<HostFileStamp>& stamps);
 bool windows_destination(const fs::path& folder);
 
 // UI-thread registry. Each job has its own worker and cancellation flag;

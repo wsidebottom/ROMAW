@@ -3,7 +3,7 @@
 
   Summary:   Search and manage mounted image catalogs and stream both forks between images and host folders.
 
-  Classes:   ImageCopySource; uses CopyJob, Copies and owned direct image readers.
+  Classes:   ImageCopySource, ImportNode, ImageImport; uses CopyJob, Copies, HostMoveLease and owned direct image readers.
 
   Functions: finder::copy_image_items, finder::copy_into_image, finder::create_image_folder,
              finder::rename_image_item, finder::label_image_item, finder::stationery_image_item,
@@ -21,6 +21,8 @@
 #include "finder/image_volumes.h"
 #include "finder/views.h"
 #include "rsys/desktop_database.h"
+#include "rsys/mac_storage.h"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <fstream>
@@ -101,11 +103,37 @@ struct ImportNode {
     std::string virtual_path, name;
     ImageCatalogItem live{};
     romaw_image_item info{};
-    uint64_t resource_offset = 0;
+    uint64_t data_offset = 0, resource_offset = 0;
+    Bytes binary_prefix;
+    std::vector<fs::path> companions;
+    std::vector<std::pair<fs::path, uint64_t>> metadata_hashes;
     size_t parent = SIZE_MAX, end = 0;
     uint32_t target_id = 0, target_parent = 0;
     std::string target_name;
 };
+
+uint64_t metadata_hash(const Bytes& bytes, uint64_t hash = 14695981039346656037ULL)
+{
+    for (auto byte : bytes)
+        hash = (hash ^ byte) * 1099511628211ULL;
+    return hash;
+}
+
+std::vector<HostFileStamp> host_tree_stamps(const fs::path& root)
+{
+    std::map<fs::path, HostFileStamp> stamps;
+    auto add = [&](const fs::path& path) { stamps.emplace(path, host_file_stamp(path)); };
+    add(root);
+    for (const auto& companion : mac_companions(root))
+        add(companion);
+    if (fs::is_directory(root))
+        for (const auto& entry : fs::recursive_directory_iterator(root))
+            add(entry.path());
+    std::vector<HostFileStamp> result;
+    for (auto& entry : stamps)
+        result.push_back(std::move(entry.second));
+    return result;
+}
 
 std::wstring catalog_text(const std::string& name)
 {
@@ -220,6 +248,12 @@ struct ImageImport {
     int16_t reference;
     uint32_t directory;
     bool moving;
+    bool host_moving = false;
+    std::map<size_t, std::vector<HostFileStamp>> host_stamps;
+    std::shared_ptr<HostMoveLease> host_lease;
+    size_t verify_node = 0;
+    unsigned verify_fork = 0;
+    uint64_t verify_offset = 0;
     std::vector<ImportNode> nodes;
     std::vector<size_t> roots;
     size_t root = 0, current = 0;
@@ -255,12 +289,50 @@ struct ImageImport {
         ImportNode node;
         node.source = path;
         node.parent = parent;
+        if (host_moving) {
+            node.companions = mac_companions(path);
+            for (const auto& companion : node.companions)
+                node.metadata_hashes.push_back({companion, metadata_hash(read_bytes(companion))});
+        }
         char error[1024]{}, resource[32768]{};
         if (!romaw_images_host_info_utf8(path.u8string().c_str(), &node.info, resource, sizeof resource,
                                          &node.resource_offset, error, sizeof error))
             throw std::runtime_error(error);
         node.resource = fs::u8path(resource);
         node.name = host_mac_name(path, node.info);
+        if (!node.info.directory && windows_destination(path) && mac_companions(path).empty()) {
+            ImportedFile binary;
+            Bytes finder;
+            fs::path name;
+            if (read_macbinary(path, binary)) {
+                unsigned count = 0;
+                if (!romaw_mac_storage_table(binary.metadata.data(), binary.metadata.size(), &count))
+                    throw std::runtime_error("Invalid MacBinary Finder metadata");
+                for (unsigned i = 0; i < count; ++i) {
+                    ROMAWMacStorageEntry entry{};
+                    if (!romaw_mac_storage_entry(binary.metadata.data(), binary.metadata.size(), binary.metadata.size(),
+                                                 i, &entry) ||
+                        (entry.id != 2 && entry.id != 9) || (entry.id == 9 && entry.length > 32))
+                        throw std::runtime_error("This image cannot preserve the MacBinary extended metadata");
+                }
+                name = binary.name;
+                finder = std::move(binary.finder_info);
+                node.info.data_size = binary.data_size;
+                node.info.resource_size = binary.resource_size;
+                node.data_offset = binary.data_offset;
+                node.resource_offset = binary.resource_offset;
+                node.resource = path;
+                node.binary_prefix = std::move(binary.prefix);
+            }
+            else
+                name = host_import_name(path, &finder);
+            node.name = catalog_name(name.wstring());
+            if (!finder.empty()) {
+                if (finder.size() != 32)
+                    throw std::runtime_error("The source has incomplete Finder information");
+                std::copy_n(finder.begin(), 32, node.info.finder_info);
+            }
+        }
         size_t index = nodes.size();
         nodes.push_back(std::move(node));
         if (nodes[index].info.directory)
@@ -340,6 +412,7 @@ struct ImageImport {
 
     int16_t abort() noexcept
     {
+        host_lease.reset();
         input.close();
         if (source_file != -1) {
             ROMlib_finder_image_close_fork(source_file);
@@ -471,6 +544,84 @@ struct ImageImport {
         }
     }
 
+    bool verify_host_move(CopyJob& job, std::chrono::steady_clock::time_point until)
+    {
+        auto& top = nodes[roots[root]];
+        if (!host_lease) {
+            host_lease = lock_host_move(host_stamps.at(roots[root]));
+            for (size_t i = roots[root]; i < top.end; ++i) {
+                auto& node = nodes[i];
+                if (mac_companions(node.source) != node.companions)
+                    throw std::runtime_error("The source metadata changed; original retained");
+                for (const auto& entry : node.metadata_hashes) {
+                    auto stamp = std::find_if(host_stamps.at(roots[root]).begin(), host_stamps.at(roots[root]).end(),
+                                              [&](const auto& value) { return value.path == entry.first; });
+                    if (stamp == host_stamps.at(roots[root]).end())
+                        throw std::runtime_error("The source metadata changed; original retained");
+                    uint64_t size = uint64_t(stamp->identity[3]) << 32 | stamp->identity[4];
+                    uint64_t hash = 14695981039346656037ULL;
+                    for (uint64_t at = 0; at < size;) {
+                        if (job.stop)
+                            return false;
+                        auto count = size_t(std::min<uint64_t>(buffer.size(), size - at));
+                        host_lease->read(entry.first, at, buffer.data(), count);
+                        hash = metadata_hash(Bytes(buffer.begin(), buffer.begin() + count), hash);
+                        at += count;
+                    }
+                    if (hash != entry.second)
+                        throw std::runtime_error("The source metadata changed; original retained");
+                }
+                if (!node.binary_prefix.empty()) {
+                    Bytes bytes(node.binary_prefix.size());
+                    host_lease->read(node.source, 0, bytes.data(), bytes.size());
+                    if (bytes != node.binary_prefix)
+                        throw std::runtime_error("The MacBinary header changed; original retained");
+                }
+            }
+            verify_node = roots[root];
+            verify_fork = 0;
+            verify_offset = 0;
+        }
+        std::array<unsigned char, 65536> original{};
+        while (verify_node < top.end) {
+            if (job.stop)
+                return false;
+            auto& node = nodes[verify_node];
+            if (node.info.directory) {
+                ++verify_node;
+                continue;
+            }
+            auto size = verify_fork ? uint64_t(node.info.resource_size) : uint64_t(node.info.data_size);
+            if (verify_offset == size) {
+                if (source_file != -1) {
+                    mac_error(ROMlib_finder_image_close_fork(source_file));
+                    source_file = -1;
+                }
+                verify_offset = 0;
+                if (++verify_fork == 2) {
+                    ++verify_node;
+                    verify_fork = 0;
+                }
+                continue;
+            }
+            if (source_file == -1)
+                mac_error(ROMlib_finder_image_open_source_fork(reference, node.target_parent, node.target_name.c_str(),
+                                                               verify_fork, &source_file));
+            auto count = size_t(std::min<uint64_t>(buffer.size(), size - verify_offset));
+            host_lease->read(verify_fork ? node.resource : node.source,
+                             (verify_fork ? node.resource_offset : node.data_offset) + verify_offset, original.data(),
+                             count);
+            mac_error(ROMlib_finder_image_read(source_file, buffer.data(), count));
+            if (!std::equal(original.begin(), original.begin() + count, buffer.begin()))
+                throw std::runtime_error("The staged image fork differs from its source; original retained");
+            verify_offset += count;
+            if (std::chrono::steady_clock::now() >= until)
+                return false;
+        }
+        host_lease->verify();
+        return true;
+    }
+
     void cancel(CopyJob& job)
     {
         auto error = abort();
@@ -527,7 +678,15 @@ struct ImageImport {
             }
             job.state = CopyJob::copying;
             if (moving || current == top.end) {
+                if (host_moving && !verify_host_move(job, until))
+                    return;
                 publish(top);
+                mac_error(ROMlib_finder_image_flush(reference));
+                if (host_moving) {
+                    host_lease->remove();
+                    host_lease.reset();
+                    job.archived_sources.push_back(top.source);
+                }
                 if (moving)
                     --job.items;
                 mac_error(ROMlib_finder_image_close_fork(lease));
@@ -603,7 +762,7 @@ struct ImageImport {
                 }
                 else if (!node.reader) {
                     input.open(fork ? node.resource : node.source, std::ios::binary);
-                    input.seekg(fork ? node.resource_offset : 0);
+                    input.seekg(fork ? node.resource_offset : node.data_offset);
                     if (!input)
                         throw std::runtime_error("Cannot open the source fork");
                 }
@@ -742,13 +901,34 @@ std::shared_ptr<CopyJob> copy_into_image(Copies& copies, const std::vector<fs::p
 {
     mac_error(ROMlib_finder_image_writable(reference));
     bool moving = kind == TransferKind::move;
-    if (moving && !host_sources.empty())
-        throw std::runtime_error("Only moves within the same Macintosh image are supported");
-    auto transfer = std::make_shared<ImageImport>(reference, directory, moving);
+    if (moving && !host_sources.empty() && !image_sources.empty())
+        throw std::runtime_error("Move host and image items in separate operations");
+    auto transfer = std::make_shared<ImageImport>(reference, directory, moving && host_sources.empty());
+    transfer->host_moving = moving && !host_sources.empty();
     std::vector<fs::path> sources, destinations;
     for (const auto& path : host_sources) {
+        if (transfer->host_moving) {
+            if (!windows_destination(path))
+                throw std::runtime_error("Host-to-image moves currently require a Windows source drive");
+            transfer->host_stamps.emplace(transfer->nodes.size(), host_tree_stamps(path));
+        }
         transfer->roots.push_back(transfer->nodes.size());
         transfer->add_host(path, SIZE_MAX, 0);
+        if (transfer->host_moving) {
+            auto root = transfer->roots.back();
+            std::set<fs::path> represented;
+            for (size_t i = root; i < transfer->nodes[root].end; ++i) {
+                const auto& node = transfer->nodes[i];
+                represented.insert(node.source);
+                represented.insert(node.companions.begin(), node.companions.end());
+                if (node.info.directory && node.info.resource_size)
+                    throw std::runtime_error("The image cannot represent a source folder resource fork");
+            }
+            for (const auto& stamp : transfer->host_stamps.at(root))
+                if (!stamp.directory && !represented.count(stamp.path))
+                    throw std::runtime_error(
+                        "Some source entries cannot be represented in the image; original retained");
+        }
         sources.push_back(path);
     }
     std::map<fs::path, Reader> readers;
@@ -829,7 +1009,7 @@ std::shared_ptr<CopyJob> copy_into_image(Copies& copies, const std::vector<fs::p
     for (size_t root : transfer->roots) {
         destinations.push_back(image_job_target(destination_key, transfer->nodes[root].name));
     }
-    if (!moving)
+    if (!transfer->moving)
         for (const auto& node : transfer->nodes) {
             if (node.info.data_size > INT32_MAX || node.info.resource_size > INT32_MAX ||
                 node.info.data_size > UINT64_MAX - transfer->total ||

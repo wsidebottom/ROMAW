@@ -5,7 +5,8 @@
 
   Classes:   romaw::stuffit::Entry; CopyJob.
 
-  Functions: finder::write_stuffit_folder, finder::write_macbinary_file.
+  Functions: finder::write_stuffit_folder, finder::write_macbinary_file,
+             finder::read_macbinary_file, finder::lookup_host_type.
 
   Origin:    ROMAW integration with the pinned stuffit-rs C ABI and C++ bridge.
 
@@ -14,11 +15,54 @@
 #include "finder/stuffit.h"
 #include "romaw_stuffit.hpp"
 #include "romaw_archives.hpp"
+#include "rsys/filetypemap.h"
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
 
 namespace finder {
+bool lookup_host_type(const fs::path& path, uint32_t& type, uint32_t& creator, bool& strip)
+{
+    FileTypeMapping mapping{};
+    if (!filetype_map_lookup_path(path.extension().u8string().c_str(), &mapping))
+        return false;
+    type = mapping.type;
+    creator = mapping.creator;
+    strip = mapping.strip != 0;
+    return true;
+}
+
+bool read_macbinary_file(const fs::path& source, ImportedFile& file, bool data)
+{
+    std::ifstream stream(source, std::ios::binary);
+    Bytes header(128);
+    stream.read(reinterpret_cast<char*>(header.data()), header.size());
+    if (stream.gcount() != 128 || header[0] || !header[1] || header[1] > 63 || header[74] || header[82])
+        return false; // Ordinary .bin data is still eligible for FTM mapping.
+    auto info = romaw::archives::inspect_macbinary(header, fs::file_size(source));
+    auto read = [&](uint64_t offset, size_t count) {
+        Bytes bytes(count);
+        stream.seekg(offset);
+        if (count && !stream.read(reinterpret_cast<char*>(bytes.data()), count))
+            throw std::runtime_error("The MacBinary source changed or became unavailable");
+        return bytes;
+    };
+    file.name = fs::u8path(info.name);
+    file.data_offset = info.data_offset;
+    file.data_size = info.data_size;
+    file.resource_offset = info.resource_offset;
+    file.resource_size = info.resource_size;
+    auto secondary = read(128, info.secondary_size);
+    file.prefix = header;
+    file.prefix.insert(file.prefix.end(), secondary.begin(), secondary.end());
+    file.metadata =
+        romaw::archives::macbinary_metadata(info, secondary, read(info.resource_offset, info.resource_size));
+    file.finder_info = romaw::archives::metadata_part(file.metadata, 9);
+    if (data)
+        file.data = read(info.data_offset, info.data_size);
+    return true;
+}
+
 void write_macbinary_file(const fs::path& staged, const fs::path& name, const fs::path& output, CopyJob& job)
 {
     romaw::archives::Item item{name.filename().u8string(), false, read_bytes(staged, romaw::archives::byte_limit), {}};

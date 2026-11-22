@@ -58,6 +58,26 @@ the standard forks and primary fields. Names must fit MacRoman in 63 bytes
 fail before publication. Source files and companions are retired only after a
 verified package is published, including moves within the same host volume.
 
+Windows-to-Mac transfers decode valid `.bin`, `.macbin` and `.macbinary` files
+using their contained names, both forks and FinderInfo. Other Windows files use
+the current FTM's last enabled Mac-direction mapping, including its extension
+stripping setting. Explicit Macintosh companions retain their names and metadata.
+Folders apply these rules to their contents; final-name collisions fail before
+publication, while names vacated by another converted file are supported.
+Undeclared destinations retain the OSX default.
+
+On Windows drives, Finder reads MacBinary metadata and resource forks without
+reading the data fork for listings. Get Info shows the contained codes and flags;
+custom icons and application BNDL icons are available while the container remains
+owned by Finder's archive handler. Extract before editing packaged Mac metadata.
+
+Writable-image imports use the same decoded names and FTM rules. Windows-to-image
+moves verify staged forks against locked original file objects, check source
+identity/tree/metadata, and flush and publish the image item before deleting any
+source files or companions. Unrepresentable image names/metadata and failed
+writes retain the originals. Mixed host/image move batches and moves from other
+host storage formats into an image remain unsupported.
+
 Run `python3 archives/tests/check.py` under WSL for independent ZIP, BinHex and
 MacBinary fixtures, actual StuffIt decoding, corruption/expansion/cycle checks,
 and rejection before output. It also requires `unar` for independent MacBinary
@@ -86,5 +106,23 @@ through the separate disk-image library. Fixtures and the executable hash are
 recorded in `build/archive-ui-report.json`; the user's desktop and clipboard
 remain separate from the test station.
 The same suite checks automatic MacBinary copy/move packaging from OSX,
-Netatalk, BasiliskII and ROMAW layouts, same-volume conversion, unchanged
+Netatalk, BasiliskII and Executor layouts, same-volume conversion, unchanged
 ordinary Windows files, and retained sources after a failed MacBinary move.
+
+The Windows-to-Mac regression uses disposable C: sources and a temporary drive
+letter backed by a private D: directory; real drive roots and user preferences
+are not changed. Run each destination format serially:
+
+```powershell
+python system/tests/native-finder/archive_ui.py --runtime windows-binaries/bin/ROMAW.exe --import-format OSX
+python system/tests/native-finder/archive_ui.py --runtime windows-binaries/bin/ROMAW.exe --import-format Netatalk
+python system/tests/native-finder/archive_ui.py --runtime windows-binaries/bin/ROMAW.exe --import-format BasiliskII
+python system/tests/native-finder/archive_ui.py --runtime windows-binaries/bin/ROMAW.exe --import-format Executor
+```
+
+These check contained filenames, legacy MacBinary I/II/III, full secondary
+FinderInfo, FTM names/codes, explicit metadata, folder conversion/collisions,
+same-volume moves, and actual Get Info custom/BNDL icon clipboard bytes. The OSX
+run also checks writable HFS copies/moves by independent persisted-fork read-back,
+including raw AppleDouble/percent companions and a disk-full failure. Reports
+record the tested executable hash in `build/windows-import-<format>.json`.

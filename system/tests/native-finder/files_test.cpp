@@ -6,7 +6,7 @@
 
   Classes:   Used: Copies, CopyJob, MacFile, std::atomic, std::exception, std::ofstream, std::shared_ptr, std::wstring
 
-  Functions: finder::copy_test_progress, main
+  Functions: finder::copy_test_staged_moves, finder::copy_test_before_publish, finder::copy_test_progress, main
 
   Origin:    Existing repository source in executor/tests/native-finder; original attribution and provenance comments
              are preserved below.
@@ -29,6 +29,8 @@
 
 using namespace finder;
 std::atomic<bool> hold_copies{false}, staged_moves{false}, hold_publication{false}, publication_waiting{false};
+std::atomic<bool> lock_publication{false};
+std::thread publication_release;
 // Fail promptly in unattended Windows runs instead of opening a WER dialog.
 #undef assert
 #define assert(condition)                                                                  \
@@ -47,6 +49,23 @@ bool copy_test_staged_moves()
 
 void copy_test_before_publish(CopyJob& job)
 {
+    if (lock_publication.exchange(false)) {
+        HANDLE lock = INVALID_HANDLE_VALUE;
+        for (const auto& entry : fs::directory_iterator(job.destinations.front().parent_path()))
+            if (entry.is_directory() && entry.path().filename().wstring().rfind(L".Finder-copy-", 0) == 0) {
+                auto payload = entry.path() / L"data";
+                if (fs::is_directory(payload)) {
+                    lock = CreateFileW(payload.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                       OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+                    break;
+                }
+            }
+        assert(lock != INVALID_HANDLE_VALUE);
+        publication_release = std::thread([lock] {
+            Sleep(70);
+            CloseHandle(lock);
+        });
+    }
     if (hold_publication) {
         publication_waiting = true;
         while (hold_publication && !job.stop)
@@ -1009,6 +1028,23 @@ int main()
         cancelled_stream->worker.join();
         assert(cancelled_stream->state == CopyJob::cancelled && !fs::exists(cancelled_target));
         assert(!manager.active());
+        {
+            auto source = root / L"Temporarily busy folder", destination = root / L"Busy destination";
+            fs::create_directories(source);
+            fs::create_directory(destination);
+            write(source / L"Data", Bytes{1, 2, 3});
+            write(sidecar(source / L"Data"), original);
+            staged_moves = true;
+            lock_publication = true;
+            auto job = manager.start({source}, destination, TransferKind::move);
+            wait(job);
+            assert(publication_release.joinable());
+            publication_release.join();
+            staged_moves = false;
+            assert(job->state == CopyJob::complete && !fs::exists(source));
+            assert(read_bytes(destination / source.filename() / L"Data") == Bytes({1, 2, 3}));
+            assert(read_bytes(sidecar(destination / source.filename() / L"Data")) == original);
+        }
         for (const auto& entry : fs::directory_iterator(root))
             assert(entry.path().filename().wstring().rfind(L".Finder-copy-", 0) != 0);
         fs::remove_all(root);

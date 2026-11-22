@@ -3,7 +3,7 @@
 
   Summary:   Bounded ZIP, StuffIt, BinHex and MacBinary codecs preserving AppleDouble.
 
-  Classes:   Item.
+  Classes:   Item, MacBinaryInfo.
 
   Functions: Interface declarations; see archives.cpp.
 
@@ -28,6 +28,16 @@ struct Item {
 };
 
 constexpr size_t byte_limit = 256 * 1024 * 1024;
+
+struct MacBinaryInfo {
+    std::string name;
+    Bytes finder;
+    size_t secondary_size = 0, data_offset = 0, data_size = 0, resource_offset = 0, resource_size = 0;
+};
+
+// Inspect bounded fork extents without reading the data fork for a Finder listing.
+MacBinaryInfo inspect_macbinary(const Bytes& header, uint64_t file_size);
+Bytes macbinary_metadata(const MacBinaryInfo& info, const Bytes& secondary, const Bytes& resource);
 // Validate every entry before callers create any filesystem output.
 void validate(const std::vector<Item>& items);
 std::vector<Item> canonicalize(std::vector<Item> osx_layout);

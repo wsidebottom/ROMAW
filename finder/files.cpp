@@ -19,7 +19,8 @@
              finder::relocate_mac_companions, finder::rename_item, finder::encode_comment, finder::set_comment,
              finder::set_label, finder::set_stationery, finder::write_icon_metadata,
              finder::set_drive_format_lookup, finder::set_folder_archive_writer, finder::set_file_archive_writer,
-             finder::windows_destination,
+             finder::windows_destination, finder::set_host_import_services, finder::read_macbinary,
+             finder::host_import_name, finder::host_file_stamp, finder::lock_host_move,
              finder::sidecar, finder::special_folder_kind, finder::is_mac_suitcase, finder::suitcase_members
 
   Origin:    Existing repository source in executor/src/finder; original attribution and provenance comments are
@@ -52,6 +53,14 @@ namespace finder {
 static std::atomic<int (*)(const char*)> drive_format_lookup{nullptr};
 static std::atomic<FolderArchiveWriter> folder_archive_writer{nullptr};
 static std::atomic<FileArchiveWriter> file_archive_writer{nullptr};
+static std::atomic<MacBinaryReader> binary_reader{nullptr};
+static std::atomic<HostTypeLookup> host_type_lookup{nullptr};
+
+void set_host_import_services(MacBinaryReader reader, HostTypeLookup lookup)
+{
+    binary_reader = reader;
+    host_type_lookup = lookup;
+}
 
 void set_file_archive_writer(FileArchiveWriter writer)
 {
@@ -222,8 +231,18 @@ void win_error(DWORD e)
 // Publish a staged payload without replacing an existing destination.
 void commit(const fs::path& from, const fs::path& to)
 {
-    if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH))
-        win_error(GetLastError());
+    for (unsigned attempt = 0;; ++attempt) {
+        if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH))
+            return;
+        auto error = GetLastError();
+        // Directory enumerators and scanners can briefly deny rename/delete
+        // sharing. Retry the same non-replacing publication, never change ACLs
+        // or delete an occupied target to make a retry succeed.
+        if (attempt == 20 ||
+            (error != ERROR_ACCESS_DENIED && error != ERROR_SHARING_VIOLATION && error != ERROR_LOCK_VIOLATION))
+            throw std::system_error(error, std::system_category(), "Cannot publish " + to.u8string());
+        Sleep(10);
+    }
 }
 
 struct Interrupted {};
@@ -248,6 +267,7 @@ struct RootCopy {
     bool directory;
     bool archive = false;
     bool binary = false;
+    bool importing = false;
     bool rename = false;
     bool convert = false;
     StorageFormat format = StorageFormat::osx;
@@ -559,6 +579,9 @@ StorageFormat destination_format(fs::path directory)
             return StorageFormat::percent;
         }
     }
+    // File callers inherit the containing directory's storage markers.
+    if (fs::is_regular_file(directory))
+        directory = directory.parent_path();
     wchar_t volume[32768]{};
     if (!GetVolumePathNameW(directory.c_str(), volume, std::size(volume)))
         win_error(GetLastError());
@@ -813,6 +836,99 @@ void convert_metadata_tree(const fs::path& root, StorageFormat format, CopyJob& 
     }
 }
 
+// Windows imports transform only verified private staging. Folder publication
+// remains atomic even when two decoded or stripped names collide.
+fs::path import_staged_file(const fs::path& path, const fs::path& logical, CopyJob& job)
+{
+    if (job.stop)
+        throw Interrupted();
+    if (!mac_companions(path).empty())
+        return logical.filename();
+    ImportedFile binary;
+    fs::path name = logical.filename();
+    Bytes metadata;
+    if (read_macbinary(path, binary, true, logical)) {
+        name = binary.name;
+        metadata = std::move(binary.metadata);
+        remove_staged_metadata(path);
+        std::ofstream stream(path, std::ios::binary);
+        stream.write(reinterpret_cast<const char*>(binary.data.data()), binary.data.size());
+        stream.close();
+        if (!stream || read_bytes(path, binary.data.size()) != binary.data)
+            throw std::runtime_error("Cannot verify the decoded MacBinary data fork");
+    }
+    else {
+        uint32_t type = 0, creator = 0;
+        bool strip = false;
+        const auto lookup = host_type_lookup.load();
+        if (!lookup || !lookup(logical, type, creator, strip))
+            return name;
+        if (strip && logical.has_extension())
+            name = logical.stem();
+        metadata.resize(70);
+        const unsigned char header[] = {0, 5, 22, 7, 0, 2, 0, 0};
+        std::copy(std::begin(header), std::end(header), metadata.begin());
+        metadata[25] = 1;
+        ROMAWMacStorageEntry entry{9, 38, 32, 0};
+        if (!romaw_mac_storage_store(metadata.data(), metadata.size(), metadata.size(), 0, &entry))
+            throw std::runtime_error("Cannot create mapped Finder information");
+        for (unsigned i = 0; i < 4; ++i) {
+            metadata[38 + i] = type >> (24 - i * 8);
+            metadata[42 + i] = creator >> (24 - i * 8);
+        }
+    }
+    auto companion = path.parent_path() / (L"._" + path.filename().wstring());
+    std::ofstream stream(companion, std::ios::binary);
+    stream.write(reinterpret_cast<const char*>(metadata.data()), metadata.size());
+    stream.close();
+    if (!stream || read_bytes(companion, metadata.size()) != metadata)
+        throw std::runtime_error("Cannot verify imported Macintosh metadata");
+    return name;
+}
+
+void import_staged_tree(const fs::path& root, CopyJob& job)
+{
+    std::vector<fs::path> files;
+    for (auto it = fs::recursive_directory_iterator(root); it != fs::recursive_directory_iterator(); ++it) {
+        if (hidden_metadata(it->path())) {
+            if (it->is_directory())
+                it.disable_recursion_pending();
+        }
+        else if (it->is_regular_file())
+            files.push_back(it->path());
+    }
+
+    struct Planned {
+        fs::path source, target, temporary;
+    };
+
+    auto less = [](const fs::path& a, const fs::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    };
+    std::set<fs::path, decltype(less)> sources(less), targets(less);
+    std::vector<Planned> planned;
+    sources.insert(files.begin(), files.end());
+    for (const auto& file : files) {
+        auto target = file.parent_path() / host_import_name(file);
+        if (!targets.insert(target).second ||
+            ((fs::exists(target) || !mac_companions(target).empty()) && !sources.count(target)))
+            throw std::runtime_error("Decoded or mapped filenames collide; original retained");
+        planned.push_back({file, target, temp_name(file.parent_path())});
+    }
+    // Move every completed file through a private name so a valid rename cycle
+    // or a target vacated by another mapped file never depends on traversal order.
+    for (const auto& item : planned) {
+        if (import_staged_file(item.source, item.source.filename(), job) != item.target.filename())
+            throw std::runtime_error("The decoded or mapped source name changed during the transfer");
+        relocate_mac_companions(item.source, item.temporary);
+        commit(item.source, item.temporary);
+    }
+    for (const auto& item : planned) {
+        relocate_mac_companions(item.temporary, item.target);
+        commit(item.temporary, item.target);
+    }
+}
+
 // Plan and copy one job into temporary containers, then publish complete
 // logical items. Cancellation removes unfinished staging; already committed
 // items remain.
@@ -836,12 +952,13 @@ void run(const std::shared_ptr<CopyJob>& job)
             root.archive = root.directory && root.format == StorageFormat::windows &&
                            destination_format(source) != StorageFormat::windows;
             root.binary = job->binary_files[i];
+            root.importing = job->import_files[i];
             if (root.binary && !file_archive_writer.load())
                 throw std::runtime_error("The MacBinary encoder is unavailable");
             if (root.archive && (!job->stuffit_folders || !folder_archive_writer.load()))
                 throw std::runtime_error("MacBinary cannot contain folders; choose ZIP or StuffIt first");
             root.rename = moving_transfer(job->kind) && same_storage_volume(source, root.target.parent_path());
-            if (root.archive || root.binary)
+            if (root.archive || root.binary || root.importing)
                 root.rename = false;
 #ifdef FINDER_TESTING
             if (copy_test_staged_moves())
@@ -1038,6 +1155,13 @@ void run(const std::shared_ptr<CopyJob>& job)
             // Cross-volume moves verify the original staged streams first and
             // retain their no-write/no-delete source locks during conversion.
             if (root.convert) {
+                if (root.importing) {
+                    if (root.directory)
+                        import_staged_tree(root.payload, *job);
+                    else if (import_staged_file(root.payload, root.source.filename(), *job) !=
+                             job->import_names[size_t(&root - roots.data())])
+                        throw std::runtime_error("The decoded or mapped source name changed during the transfer");
+                }
                 convert_metadata_tree(root.temporary, root.archive || root.binary ? StorageFormat::osx : root.format,
                                       *job);
                 root.companions.clear();
@@ -1120,7 +1244,7 @@ void run(const std::shared_ptr<CopyJob>& job)
                     file.remove();
                 for (auto directory = source_directories.rbegin(); directory != source_directories.rend(); ++directory)
                     directory->remove();
-                if (root.archive || root.binary)
+                if (root.archive || root.binary || root.importing)
                     job->archived_sources.push_back(root.source);
                 else
                     job->moved.push_back({root.source, root.target});
@@ -1165,6 +1289,129 @@ bool same_storage_volume(const fs::path& source, const fs::path& destination)
 bool windows_destination(const fs::path& folder)
 {
     return destination_format(folder) == StorageFormat::windows;
+}
+
+HostFileStamp host_file_stamp(const fs::path& path)
+{
+    reject_link(path);
+    bool directory = fs::is_directory(path);
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING, directory ? FILE_FLAG_BACKUP_SEMANTICS : 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        win_error(GetLastError());
+    try {
+        auto identity = file_identity(handle);
+        CloseHandle(handle);
+        return {path, directory, identity};
+    }
+    catch (...) {
+        CloseHandle(handle);
+        throw;
+    }
+}
+
+std::shared_ptr<HostMoveLease> lock_host_move(const std::vector<HostFileStamp>& stamps)
+{
+    struct Lease final : HostMoveLease {
+        std::vector<HostFileStamp> stamps;
+        std::vector<MoveSource> locked;
+        std::map<fs::path, size_t> indexes;
+
+        explicit Lease(const std::vector<HostFileStamp>& source) : stamps(source)
+        {
+            for (const auto& stamp : stamps) {
+                indexes.emplace(stamp.path, locked.size());
+                locked.emplace_back(stamp.path, stamp.directory);
+            }
+            verify();
+        }
+
+        void verify() override
+        {
+            for (size_t i = 0; i < stamps.size(); ++i) {
+                const auto& stamp = stamps[i];
+                if (file_identity(locked[i].handle) != stamp.identity)
+                    throw std::runtime_error("The move source changed; original retained");
+                if (stamp.directory) {
+                    std::set<fs::path> expected, actual;
+                    for (const auto& child : stamps)
+                        if (child.path.parent_path() == stamp.path)
+                            expected.insert(child.path);
+                    for (const auto& child : fs::directory_iterator(stamp.path)) {
+                        reject_link(child.path());
+                        actual.insert(child.path());
+                    }
+                    if (expected != actual)
+                        throw std::runtime_error("The source folder changed; original retained");
+                }
+            }
+        }
+
+        void read(const fs::path& path, uint64_t offset, void* buffer, size_t count) override
+        {
+            auto handle = locked.at(indexes.at(path)).handle;
+            LARGE_INTEGER position{};
+            position.QuadPart = offset;
+            DWORD received = 0;
+            if (count > MAXDWORD || !SetFilePointerEx(handle, position, nullptr, FILE_BEGIN) ||
+                !ReadFile(handle, buffer, DWORD(count), &received, nullptr) || received != count)
+                throw std::runtime_error("Cannot verify the original move source");
+        }
+
+        void remove() override
+        {
+            // The destination has already been flushed and published. Remove
+            // verified objects by their handles, never by a replaceable path.
+            for (size_t i = 0; i < stamps.size(); ++i)
+                if (!stamps[i].directory)
+                    locked[i].remove();
+            for (size_t i = stamps.size(); i > 0; --i)
+                if (stamps[i - 1].directory)
+                    locked[i - 1].remove();
+        }
+    };
+
+    return std::make_shared<Lease>(stamps);
+}
+
+bool read_macbinary(const fs::path& path, ImportedFile& file, bool data, const fs::path& logical_name)
+{
+    const auto& name = logical_name.empty() ? path : logical_name;
+    auto extension = name.extension().wstring();
+    if (_wcsicmp(extension.c_str(), L".bin") && _wcsicmp(extension.c_str(), L".macbin") &&
+        _wcsicmp(extension.c_str(), L".macbinary"))
+        return false;
+    const auto reader = binary_reader.load();
+    return reader && reader(path, file, data);
+}
+
+fs::path host_import_name(const fs::path& path, Bytes* info)
+{
+    if (info)
+        info->clear();
+    if (fs::is_directory(path) || !mac_companions(path).empty())
+        return path.filename();
+    ImportedFile binary;
+    if (read_macbinary(path, binary)) {
+        if (info)
+            *info = std::move(binary.finder_info);
+        return binary.name;
+    }
+    uint32_t type = 0, creator = 0;
+    bool strip = false;
+    const auto lookup = host_type_lookup.load();
+    if (lookup && lookup(path, type, creator, strip)) {
+        if (info) {
+            info->resize(32);
+            for (unsigned i = 0; i < 4; ++i) {
+                (*info)[i] = type >> (24 - i * 8);
+                (*info)[4 + i] = creator >> (24 - i * 8);
+            }
+        }
+        if (strip && path.has_extension())
+            return path.stem();
+    }
+    return path.filename();
 }
 
 bool moving_transfer(TransferKind kind)
@@ -1229,10 +1476,16 @@ std::vector<fs::path> mac_companions(const fs::path& path)
         if (fs::is_regular_file(candidate, error)) {
             if (candidate.filename().wstring().rfind(L"%", 0) == 0) {
                 std::array<unsigned char, 512> header{};
-                std::ifstream input(candidate, std::ios::binary);
-                input.read(reinterpret_cast<char*>(header.data()), header.size());
+                HANDLE input =
+                    CreateFileW(candidate.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING, 0, nullptr);
+                if (input == INVALID_HANDLE_VALUE)
+                    continue;
+                DWORD received = 0;
+                bool read = ReadFile(input, header.data(), DWORD(header.size()), &received, nullptr) != 0;
+                CloseHandle(input);
                 unsigned count;
-                if (!romaw_mac_storage_table(header.data(), size_t(input.gcount()), &count))
+                if (!read || !romaw_mac_storage_table(header.data(), received, &count))
                     continue;
             }
             result.push_back(candidate);
@@ -1331,6 +1584,7 @@ MacFile mac_file(const fs::path& p)
         unsigned char info[32]{};
         std::copy_n(b.data() + offset, std::min(length, sizeof info), info);
         auto catalog = mac_catalog_info(info, fs::is_directory(p));
+        out.finder_info.assign(info, info + 32);
         out.has_finder_info = true;
         out.type = catalog.type;
         out.creator = catalog.creator;
@@ -1343,7 +1597,28 @@ MacFile mac_file(const fs::path& p)
         out.folder_view = catalog.folder_view;
         have_info = true;
     };
-    for (const auto& companion : mac_companions(p)) {
+    ImportedFile binary;
+    auto extension = p.extension().wstring();
+    bool binary_name = !_wcsicmp(extension.c_str(), L".bin") || !_wcsicmp(extension.c_str(), L".macbin") ||
+                       !_wcsicmp(extension.c_str(), L".macbinary");
+    if (binary_name && binary_reader.load() && windows_destination(p) && read_macbinary(p, binary)) {
+        out.macbinary = true;
+        for (const auto& entry : entries(binary.metadata)) {
+            if (entry.type == 9)
+                apply_info(binary.metadata, entry.offset, entry.length);
+            else if (entry.type == 2)
+                out.fork = slice(binary.metadata, entry.offset, entry.length);
+            else if (entry.type == 4 && entry.length <= 4096) {
+                int length =
+                    MultiByteToWideChar(10000, 0, reinterpret_cast<const char*>(binary.metadata.data() + entry.offset),
+                                        int(entry.length), nullptr, 0);
+                out.comment.resize(length);
+                MultiByteToWideChar(10000, 0, reinterpret_cast<const char*>(binary.metadata.data() + entry.offset),
+                                    int(entry.length), out.comment.data(), length);
+            }
+        }
+    }
+    for (const auto& companion : out.macbinary ? std::vector<fs::path>{} : mac_companions(p)) {
         try {
             auto b = read_bytes(companion);
             if (companion.parent_path().filename() == MAC_STORAGE_RESOURCE_DIRECTORY) {
@@ -1563,6 +1838,8 @@ namespace {
 // the complete write and close succeed.
 void write_sidecar(const fs::path& p, const fs::path& path, const Bytes& b)
 {
+    if (mac_file(p).macbinary)
+        throw std::runtime_error("Extract this MacBinary file before editing its Finder metadata.");
     auto temporary = temp_name(p.parent_path());
     HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
@@ -2160,6 +2437,10 @@ std::shared_ptr<CopyJob> Copies::start_targets(const std::vector<std::pair<fs::p
         if (source == source.root_path() || (fs::is_directory(source) && beneath(source, directory)))
             throw std::runtime_error("A folder cannot be copied into itself");
         fs::path target = directory / change.second.filename();
+        bool importing = !job->stream_writer && windows_destination(source) && !windows_destination(directory);
+        auto import_name = importing ? host_import_name(source) : source.filename();
+        if (importing && change.second.filename() == source.filename())
+            target = directory / import_name;
         bool binary = windows_destination(directory) &&
                       (job->stream_writer ? !job->stream_directories[job->sources.size()]
                                           : !fs::is_directory(source) &&
@@ -2215,10 +2496,11 @@ std::shared_ptr<CopyJob> Copies::start_targets(const std::vector<std::pair<fs::p
             throw std::runtime_error("An item already has the requested document name.");
         while ((unique_transfer_names(kind) || same(source, target)) && occupied()) {
             ++number;
-            auto name = source.stem().wstring() + L" copy";
+            auto basis = importing ? import_name : source.filename();
+            auto name = basis.stem().wstring() + L" copy";
             if (number > 1)
                 name += L" " + std::to_wstring(number);
-            target = directory / (name + source.extension().wstring());
+            target = directory / (name + basis.extension().wstring());
             if (binary)
                 target += L".bin";
             if (fs::is_directory(source) && windows_destination(directory) && !windows_destination(source))
@@ -2227,6 +2509,8 @@ std::shared_ptr<CopyJob> Copies::start_targets(const std::vector<std::pair<fs::p
         job->sources.push_back(source);
         job->destinations.push_back(target);
         job->binary_files.push_back(binary);
+        job->import_files.push_back(importing);
+        job->import_names.push_back(import_name);
     }
     if (job->sources.empty())
         return {};
