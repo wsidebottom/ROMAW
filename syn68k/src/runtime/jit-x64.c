@@ -3121,7 +3121,8 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     }
     if (packet.exit != FPU_EXIT_DONE)
         return -1;
-    *result = (Syn68kFPUStep){.next = next, .trace_flow = trace_flow};
+    *result =
+        (Syn68kFPUStep){.next = next, .trace_flow = trace_flow, .prefetch_address = packet.exception.prefetch_address};
     return 1;
 }
 

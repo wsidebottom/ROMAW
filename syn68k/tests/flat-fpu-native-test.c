@@ -256,6 +256,7 @@ static void flat_compare(unsigned opcode, unsigned command, unsigned mode, unsig
         /* The compiled frontend returns PC/trap data, not component-only
            T0 eligibility. Direct component calls still compare that field. */
         expected.trace_flow = 0;
+        expected.prefetch_address = 0;
         if (flat_trap.vector)
             assert(next == 0x7654);
         syn68k_x64_release(code);
@@ -291,7 +292,11 @@ static void flat_trace_setup(unsigned opcode, unsigned command, unsigned counter
         cpu_state.regs[0].ul.n = counter;
         put(start + 4, 2, 2);
     }
-    if (special == 1) {
+    if (special == 3 || special == 4) {
+        if ((opcode & 0xfff8) == 0xf248 || (opcode & 0xffc0) == 0xf2c0)
+            put(start + 4, 1, 2);
+    }
+    if (special == 1 || special == 4) {
         cpu_state.fpu.fpcr = 0x8000;
         cpu_state.fpu.fpsr = 0x01000000;
     }
@@ -307,7 +312,7 @@ static void flat_trace_compare(unsigned opcode, unsigned command, unsigned count
     flat_trace_setup(opcode, command, counter, special, sr);
     Syn68kFPUStep expected;
     assert(syn68k_fpu_step_decoded(start, opcode, NULL, &expected));
-    unsigned vector = special == 1                                                                     ? 48
+    unsigned vector = (special == 1 || special == 4)                                                   ? 48
                       : special == 2                                                                   ? 49
                       : opcode == 0xf27c                                                               ? 7
                       : (opcode == 0xf200 && command == 0x5c00) || (opcode == 0xf240 && command == 32) ? 11
@@ -319,11 +324,18 @@ static void flat_trace_compare(unsigned opcode, unsigned command, unsigned count
     memcpy(expected_ram, ram, sizeof ram);
     unsigned expected_calls = flat_device_count;
     memcpy(expected_flat_events, flat_events, sizeof flat_events);
+    if (!expected.vector && special == 3) {
+        unsigned reference = start + ((opcode & 0xfff8) == 0xf248 ? 5 : 3);
+        assert(expected.prefetch_address == reference);
+        expected = (Syn68kFPUStep){
+            .next = start, .exception_pc = start, .fault_address = reference & ~1u, .vector = 3, .format = 2};
+    }
     if (!expected.vector && ((sr & 0x8000) || ((sr & 0x4000) && flow)))
         expected = (Syn68kFPUStep){
             .next = start, .exception_pc = expected.next, .fault_address = start, .vector = 9, .format = 2};
     /* Both dispatch frontends return a PC or the architectural trap record. */
     expected.trace_flow = 0;
+    expected.prefetch_address = 0;
     flat_trace_setup(opcode, command, counter, special, sr);
     native_active = compiled ? expected.vector ? 2 : 1 : 0;
     uint32 next;
@@ -364,10 +376,13 @@ static void flat_trace_cases(void)
         {0xf200, 0x9000, 0, 1, 0}, {0xf210, 0xbc00, 0, 1, 0}, {0xf210, 0x9c00, 0, 1, 0}, {0xf210, 0xf080, 0, 1, 0},
         {0xf210, 0xd080, 0, 1, 0}, {0xf310, 0, 0, 1, 0},      {0xf350, 0, 0, 1, 0},      {0xf27c, 15, 0, 0, 0},
         {0xf200, 0x5c00, 0, 0, 0}, {0xf240, 32, 0, 0, 0},     {0xf240, 16, 0, 0, 1},     {0xf210, 0x6000, 0, 0, 2},
+        {0xf280, 1, 0, 0, 3},      {0xf28f, 1, 0, 1, 3},      {0xf2c0, 0, 0, 0, 3},      {0xf2cf, 0, 0, 1, 3},
+        {0xf248, 0, 0, 1, 3},      {0xf248, 0, 1, 1, 3},      {0xf248, 15, 1, 1, 3},     {0xf290, 1, 0, 0, 4},
+        {0xf248, 16, 1, 1, 4},
     };
 
     for (unsigned compiled = 0; compiled < 2; ++compiled)
-        for (unsigned trace = 0; trace < 3; ++trace) {
+        for (unsigned trace = 0; trace < 4; ++trace) {
             for (unsigned i = 0; i < sizeof instructions / sizeof *instructions; ++i)
                 flat_trace_compare(instructions[i].opcode, instructions[i].command, instructions[i].counter,
                                    instructions[i].special, instructions[i].flow, trace << 14, compiled);

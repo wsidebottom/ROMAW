@@ -183,7 +183,7 @@ int main(int argc, char** argv)
     if (argc == 3) {
         for (predicate_flags = 0; predicate_flags < 16; ++predicate_flags) {
             predicate_counter = predicate_flags & 3 ? 0xffff : 0;
-            predicate_displacement = predicate_flags & 2 ? 0xfffffffe : 0x2000;
+            predicate_displacement = (predicate_flags & 2 ? 0xfffffffe : 0x2000) | (predicate_flags & 1);
             compare_predicate(0xf240, predicate_flags, 1);
             compare_predicate(0xf252, predicate_flags | 16, 1);
             compare_predicate(0xf248, predicate_flags, 1);
@@ -203,14 +203,15 @@ int main(int argc, char** argv)
             for (unsigned condition = 0; condition < 32; ++condition) {
                 for (unsigned ea = 0; ea < 64; ++ea)
                     compare_predicate(0xf240 | ea, condition, condition & 1);
-                for (unsigned counter = 0; counter < 4; ++counter) {
-                    predicate_counter = counters[counter];
-                    predicate_displacement = displacements[counter];
-                    for (unsigned reg = 0; reg < 8; ++reg)
-                        compare_predicate(0xf248 | reg, condition, 1);
-                    compare_predicate(0xf280 | condition, 0, 1);
-                    compare_predicate(0xf2c0 | condition, 0, 1);
-                }
+                for (unsigned odd = 0; odd < 2; ++odd)
+                    for (unsigned counter = 0; counter < 4; ++counter) {
+                        predicate_counter = counters[counter];
+                        predicate_displacement = displacements[counter] | odd;
+                        for (unsigned reg = 0; reg < 8; ++reg)
+                            compare_predicate(0xf248 | reg, condition, 1);
+                        compare_predicate(0xf280 | condition, 0, 1);
+                        compare_predicate(0xf2c0 | condition, 0, 1);
+                    }
             }
     predicate_flags = predicate_enabled = predicate_counter = predicate_displacement = 0;
     native_bus = 1;

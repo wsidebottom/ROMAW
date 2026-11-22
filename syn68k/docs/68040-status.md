@@ -457,8 +457,8 @@ state. LINK captures its already-fetched displacement in host-step metadata;
 the mapped runner commits An/SP assignments once, using live callback SP, and
 clears that metadata before publishing the retired writeback record. Normal T1
 and deferred CT use instruction-entry trace bits; these straight-line operations
-do not trace for T0 alone. Call instructions and their odd-target exception
-priority remain separate unfinished work.
+do not trace for T0 alone. Calls and their odd-target exception priority use the
+control-flow protocol described below.
 
 The focused mapped group contains 215,040 component/retirement checks across
 both instruction and bus bindings. It covers every LINK register, word/long
@@ -478,6 +478,56 @@ cases: 47 cold emissions and zero warm emissions, with a stable cache identity.
 Windows help, Browser startup and Speedometer 4.02's 68K startup also pass.
 Speedometer reaches its event loop with the ordinary no-FPU capability report;
 this is not a completed FPU benchmark or physical-68040 validation.
+
+## Control-flow prefetch and call recovery
+
+Decoded integer branches retain their actual taken decision, so T0 does not
+rely on comparing the target with the following PC. Calls, jumps and returns
+qualify even when their target equals fallthrough. Their normal T1/T0 and queued
+call-store CT use instruction-entry SR, preserving callback changes to live SR.
+Other integer trace classes still require the wider audit.
+
+MC68040UM 8.2.2 prefetches both conditional paths: an odd speculative target can
+raise an address error even when execution falls through. Integer and FPU step
+records retain the decoded reference without rereading an extension or issuing
+an odd prefetch bus cycle. Checked and emitted FPU bodies capture FBcc/FDBcc
+references before condition/counter resolution. The shared flat/mapped dispatch
+helper reports format 2 with the source instruction PC and the reference's A0
+cleared, before trace. Existing forced/FPU exceptions retain priority. An odd
+entry PC also precedes a pending interrupt, following table 8-4.
+
+The untraced flat FPU fast path checks the live displacement before changing
+counter or condition state. An odd reference leaves through the checked
+exception path. Only direct RAM has been consumed at this point; device ranges
+leave before their fetch. The normal even-reference path remains native.
+The FPU result and private invocation tail gained a prefetch field; earlier
+field offsets and CPUState are unchanged. Source-based cache identity
+invalidates images compiled against the old layout.
+
+BSR/JSR final writes to even targets can retire through WB1/WB2 and CT. An odd
+target instead requires certified abort/replay: all checkpointed results must
+match instruction entry except the owned SP predecrement. The runner restores
+only SP, retains the pending scalar and original PC, and lets guest cleanup/RTE
+restart the call. After its store succeeds, the normal address error takes
+priority over trace. Changed callback registers, banks, flags or FPU state deny
+rollback and remain live. No continuation bit or undefined frame field stores
+the pending address error.
+
+Focused checks cover 393,216 integer branch cases, 3,584 FPU branch
+prefetch/BSUN/fetch-fault cases, 33,600 user call writeback/RTE cases and 1,024
+callback/replay guards across both instruction and bus bindings. Another 32
+checks cover odd-PC/interrupt priority. The call group includes three BSR widths
+and ten JSR forms, including A7, memory indirect, PC relative and full base
+displacements, both page sizes, aligned physical prefixes and ATC faults. Guest
+handlers preserve their general-register scratch state and DFC. Flat dispatch
+and compiled FPU paths pass 352 trace/prefetch cases in cold and warm AOT runs.
+Combined control-register, MMU and native040 checks pass. MMU validation reports
+7,087,172 mapped stream cases. Full RTE, FPU-native and combined cold/warm AOT
+validation remain unfinished. A matching candidate bundle has been rebuilt and
+passes Windows help, Browser startup and Speedometer's 68K startup; promotion
+to the current bundle awaits the remaining checks. Supervisor stack overlap,
+further EA variants and the broader compatibility work remain separate
+requirements.
 
 ## Classic Mac LINK comparisons
 

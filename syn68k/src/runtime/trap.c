@@ -260,6 +260,14 @@ static uint32 final_store_exception(Syn68kIntegerStep* step, const Syn68kEAConte
     return next;
 }
 
+static uint32 call_store_exception(Syn68kIntegerStep* step, const Syn68kEAContext* context, uint32 pc, uint32 target)
+{
+    uint32 next = final_store_exception(step, context, 2, pc);
+    if (step && step->store_state == 1)
+        step->store_next = target;
+    return next;
+}
+
 /* A failed frame read has not popped the current frame. Resume at the live
    privileged SP; earlier throwaway frames and callback effects stay committed. */
 static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step)
@@ -608,7 +616,7 @@ static uint32 control_address(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         if (context->error) {
             if (pea)
                 return final_store_exception(step, context, 2, pc);
-            return integer_exception(step, context, 2, pc, context->fault_address, 7);
+            return call_store_exception(step, context, pc, ea.address);
         }
         if (!pea && !context->memory)
             cache_return(next);
@@ -696,13 +704,19 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         int32 displacement = (int16)syn68k_ea_fetch_memory(context, context->pc, 2);
         if (context->error)
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
+        /* The conditional-branch prefetch rule also applies on fallthrough. */
+        if (step && (displacement & 1))
+            step->prefetch_address = integer_pc(context, pc + 2 + displacement);
         if (!condition_true((opcode >> 8) & 15)) {
             unsigned reg = opcode & 7;
             uint32 original = cpu_state.regs[reg].ul.n;
             uint16 counter = original - 1;
             cpu_state.regs[reg].ul.n = (original & 0xffff0000u) | counter;
-            if (counter != 0xffff)
+            if (counter != 0xffff) {
+                if (step)
+                    step->flow_changed = 1;
                 return integer_pc(context, pc + 2 + displacement);
+            }
         }
         return integer_pc(context, pc + 4);
     }
@@ -718,7 +732,14 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
                 displacement = (int16)displacement;
             context->pc += size;
         }
-        return integer_pc(context, condition_true((opcode >> 8) & 15) ? pc + 2 + displacement : context->pc);
+        uint32 target = integer_pc(context, pc + 2 + displacement);
+        unsigned taken = condition_true((opcode >> 8) & 15);
+        if (step) {
+            step->flow_changed = taken;
+            if (target & 1)
+                step->prefetch_address = target;
+        }
+        return taken ? target : integer_pc(context, context->pc);
     }
     if ((opcode & 0xff00) == 0x6100) {
         context->pc = pc + 2;
@@ -735,7 +756,7 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         EM_A7 -= 4;
         write_stack_long(context, integer_pc(context, context->pc));
         if (context->error)
-            return integer_exception(step, context, 2, pc, context->fault_address, 7);
+            return call_store_exception(step, context, pc, integer_pc(context, pc + 2 + displacement));
         if (!context->memory)
             cache_return(integer_pc(context, context->pc));
         return integer_pc(context, pc + 2 + displacement);

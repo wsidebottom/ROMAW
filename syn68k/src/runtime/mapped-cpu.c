@@ -184,7 +184,7 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
 {
     const Syn68kMMU040Access* access = &record->access;
     uint16 ssw;
-    /* Producers finish all nonmemory work before offering a final scalar.
+    /* Producers finish nonmemory work or capture LINK's deferred assignments.
        Only locked transfers retain the stricter alignment/progress contract. */
     return record->vector == 2 && record->format == 7 && record->store_state && record->store_state <= 3 &&
            !record->restartable_read && record->store_locked <= 1 && access->rmw == record->store_locked &&
@@ -224,6 +224,18 @@ static int mmu_moves_trace_opcode(unsigned opcode)
 {
     return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
            (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0);
+}
+
+static int control_flow_opcode(unsigned opcode)
+{
+    return (opcode >> 12) == 6 || (opcode & 0xf0f8) == 0x50c8 || (opcode & 0xffc0) == 0x4e80 ||
+           (opcode & 0xffc0) == 0x4ec0 || opcode == 0x4e73 || opcode == 0x4e74 || opcode == 0x4e75 || opcode == 0x4e77;
+}
+
+static int unconditional_flow_opcode(unsigned opcode)
+{
+    return (opcode & 0xff00) == 0x6100 || (opcode & 0xffc0) == 0x4e80 || (opcode & 0xffc0) == 0x4ec0 ||
+           opcode == 0x4e73 || opcode == 0x4e74 || opcode == 0x4e75 || opcode == 0x4e77;
 }
 
 static int linear_stack_store_opcode(unsigned opcode)
@@ -268,16 +280,17 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
     while (result->completed < budget) {
         result->step = (Syn68kIntegerStep){.next = cpu->pc};
         result->opcode = 0;
-        result->interrupt_level = cpu->movem_pending ? 0 : pending_interrupt();
-        if (result->interrupt_level) {
-            result->reason = SYN68K_MAPPED_INTERRUPT;
-            return 1;
-        }
         if (cpu->pc & 1) {
             result->step.vector = 3;
             result->step.format = 2;
-            result->step.exception_pc = result->step.fault_address = cpu->pc;
+            result->step.exception_pc = cpu->pc;
+            result->step.fault_address = cpu->pc & ~1u;
             exception(cpu, result);
+            return 1;
+        }
+        result->interrupt_level = cpu->movem_pending ? 0 : pending_interrupt();
+        if (result->interrupt_level) {
+            result->reason = SYN68K_MAPPED_INTERRUPT;
             return 1;
         }
         InstructionBus bus = {.original = cpu->memory};
@@ -340,8 +353,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (!handled)
                 handled = syn68k_integer_step_decoded(cpu->pc, opcode, &memory, &result->step);
         }
-        unsigned trace_flow = handled && mmu_moves_trace_opcode(opcode);
-        unsigned trace_scope = trace_flow || (handled && linear_stack_store_opcode(opcode));
+        unsigned trace_flow = handled && (mmu_moves_trace_opcode(opcode) || unconditional_flow_opcode(opcode) ||
+                                          result->step.flow_changed);
+        unsigned trace_scope =
+            trace_flow || (handled && (linear_stack_store_opcode(opcode) || control_flow_opcode(opcode)));
         if (!handled) {
             Syn68kFPUStep fp;
             int fpu_handled = 0;
@@ -429,6 +444,15 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                                                    .fault_address = format ? cpu->pc : 0};
             }
         }
+        if (!result->step.vector && ((result->step.prefetch_address | result->step.next) & 1)) {
+            /* Address errors precede trace. A conditional branch can prefetch
+               an odd target even when its architectural next PC is even. */
+            uint32 reference = result->step.prefetch_address & 1 ? result->step.prefetch_address : result->step.next;
+            result->step.vector = 3;
+            result->step.format = 2;
+            result->step.exception_pc = cpu->pc;
+            result->step.fault_address = reference & ~1u;
+        }
         if (!result->step.vector && trace_scope && instruction_traced(before.sr, trace_flow)) {
             result->step.vector = 9;
             result->step.format = 2;
@@ -436,6 +460,27 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             result->step.fault_address = cpu->pc;
         }
         if (result->step.vector) {
+            if (result->step.store_state == 1 && (result->step.store_next & 1) &&
+                ((opcode & 0xff00) == 0x6100 || (opcode & 0xffc0) == 0x4e80)) {
+                /* The data fault precedes an odd target's address error. Abort
+                   the call, drain its scalar through the guest, then restart
+                   the original instruction without a private continuation bit. */
+                Syn68kIntegerStep offer = result->step;
+                offer.store_next = cpu->pc;
+                ReadCheckpoint expected = before;
+                expected.regs[15].ul.n -= 4;
+                if (!bus.callback_state_changed && scalar_store_fault(&offer) &&
+                    unchanged_results(&expected, opcode, 16)) {
+                    offer.next = offer.store_next = offer.exception_pc;
+                    offer.store_state = 4;
+                    offer.store_ccr = 0;
+                    offer.prefetch_address = 0;
+                    if (replay_store_fault(&offer)) {
+                        result->step = offer;
+                        cpu_state.regs[15] = before.regs[15];
+                    }
+                }
+            }
             if (result->step.store_state == 1 && scalar_store_fault(&result->step)) {
                 unsigned ccr = result->step.store_ccr;
                 cpu_state.ccc = ccr & 1;

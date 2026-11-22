@@ -43,15 +43,40 @@ live CCR, including callback changes, while the retained write data remains the
 value captured before the callback. LINK also captures its decoded displacement:
 the component fault leaves An/SP unfinished, then the mapped runner uses live SP
 to finish the register assignments and clears the displacement before publishing
-a retired record. No extension is fetched again. This host-step field does not
-change the native invocation packet. Call stack writes still need completion
-protocols; the common validator does not infer completion for those instructions.
+a retired record. No extension is fetched again. This LINK host-step field does
+not change the native invocation packet. BSR/JSR producers additionally capture
+the already decoded target; their completion is explicit, not inferred by the
+common validator.
 
 LINK saves its register source before decrementing SP, including the A7 alias.
 PEA resolves the complete source EA before its stack update. Both are linear for
 trace purposes: T1 applies, T0 alone does not. A separate resident supervisor
 stack permits user-mode guest WB1/WB2 cleanup and RTE even when LINK leaves an
 odd or wrapped user SP. Supervisor frame overlap remains an explicit audit item.
+
+## Calls and pending odd references
+
+Even-target BSR/JSR final writes retire at the target PC, including a target
+that equals fallthrough. These calls always qualify for T0; CT eligibility uses
+entry SR, while the saved live flags retain callback effects.
+
+For an odd target, a data fault is handled first. The runner certifies unchanged
+checkpointed state apart from SP minus four, then restores SP and publishes the
+existing canonical scalar abort/replay record. Guest WB1/WB2 cleanup and RTE
+return to the original call. Reexecution performs its push once at the same
+address and reports the address error before trace. Prefix memory writes and
+descriptor history are retained. Callback mutations deny rollback without
+undoing their live state. A completed call is not retired to an odd PC, and no
+private continuation bit or undefined effective-address field is used.
+
+Instruction-local integer/FPU metadata separately retains speculative odd
+branch references, including conditional fallthrough. Once instruction work
+completes, dispatch creates a format-2 address error with source PC and an
+A0-cleared reference. Forced and floating-point exceptions remain ahead of that
+error; trace and interrupts follow it. FPU metadata is emitted directly from the
+live decoded displacement in mapped execution. The untraced flat fast path
+leaves before counter/condition effects when an odd reference requires its
+checked exception path; only side-effect-free RAM could have been consumed.
 
 ## MOVES spaces and trace
 

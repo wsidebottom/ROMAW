@@ -54,6 +54,7 @@ typedef struct {
     unsigned replay_store, replay_ea_size, replay_numeric;
     uint32 replay_fpsr;
     unsigned trace_flow;
+    uint32 prefetch_address;
     unsigned frame_clear;
     uint32 store_tail;
     unsigned store_tail_valid;
@@ -1082,6 +1083,8 @@ static void execute(FPUContext* context)
             reserved_instruction(context);
         uint32 base = context->pc;
         int32 displacement = opcode & 0x40 ? (int32)fetch(context, 4) : (int16)fetch(context, 2);
+        if ((base + displacement) & 1)
+            context->prefetch_address = base + displacement;
         if (condition(context, opcode & 63)) {
             context->trace_flow = 1;
             context->pc = base + displacement;
@@ -1107,6 +1110,8 @@ static void execute(FPUContext* context)
         {
             uint32 base = context->pc;
             int16 displacement = fetch(context, 2);
+            if ((base + displacement) & 1)
+                context->prefetch_address = base + displacement;
             if (!condition(context, extension)) {
                 unsigned reg = ea & 7;
                 uint16 counter = EM_DREG(reg) - 1;
@@ -1173,6 +1178,7 @@ static void execute(FPUContext* context)
 static void step_result(FPUContext* context, unsigned exception, Syn68kFPUStep* result)
 {
     result->trace_flow = context->trace_flow;
+    result->prefetch_address = context->prefetch_address;
     if (!exception) {
         result->next = context->pc;
         return;

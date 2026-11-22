@@ -33,8 +33,9 @@ typedef struct {
     /* A scalar decoder can offer its completed flags/next PC without changing
      component-step fault semantics. Only the stream runner retires it (2).
      0: absent, 1: candidate, 2: retired store, 3: retired store/trace pending,
-     4: certified FPU store abort/replay with WB1/WB2 pending; numeric output
-     FPSR/FPIAR can be retained while source state is unchanged. */
+     4: certified scalar store abort/replay with WB1/WB2 pending. FPU numeric
+     output FPSR/FPIAR can be retained while source state is unchanged; an odd
+     BSR/JSR target instead restarts after certified rollback of its SP update. */
     uint32_t store_next, store_trace_pc;
     unsigned store_ccr, store_state;
     /* 1: indexed/PC-relative MOVEM read continuation, including restart fetch faults;
@@ -56,6 +57,11 @@ typedef struct {
        callback, then clears this field before publishing a retired record.
        This host-step tail is not part of a native invocation packet. */
     uint32_t store_link_displacement;
+    /* Instruction-local branch metadata, not an exception-frame encoding.
+       Capture an odd speculative branch target even when the branch is untaken;
+       no instruction prefetch bus cycle is performed at that address. */
+    uint32_t prefetch_address;
+    unsigned flow_changed;
 } Syn68kIntegerStep;
 
 /* Internal MULU/MULS/DIVU/DIVS, MOVEM/MOVES/MOVEP, JSR/JMP/LEA/PEA and

@@ -53,11 +53,15 @@ typedef struct {
    completed counts instructions that finish without a reported exception.
    Exceptions/interrupts stop before delivery. A caller owns exception frames,
    continuation/restart and hardware bus locking.
-   Successful FPU/MMU instructions report T1/T0 trace using instruction-entry
-   SR bits. T0 includes their pipeline-serializing forms and taken FBcc;
-   FDBcc always qualifies. Forced or floating-point exceptions retain priority
-   and leave trace handling to their guest handler. Other data faults defer
-   tracing until restart, or carry CT when the FPU store has already retired.
+   Successful FPU/MMU instructions and decoded integer control flow, PEA and
+   LINK report trace using instruction-entry SR. T0 includes serializing forms
+   and taken branches; FDBcc always qualifies. Odd instruction references use
+   format 2 before trace or interrupts, including an untaken conditional target.
+   Forced/floating-point exceptions retain priority and leave trace to their
+   guest handler. Data faults defer trace until restart, or carry CT when a
+   scalar store has retired. An odd call target uses certified SP rollback and
+   ordinary guest writeback/RTE before restarting the call; no continuation bit
+   is invented for its later address error.
    Unsupported legitimate instructions stop explicitly instead of being simulated
    as successful NOPs.
    Invalid arguments return zero; a zero budget performs no bus transfers. */

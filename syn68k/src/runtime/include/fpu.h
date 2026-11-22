@@ -56,12 +56,23 @@ typedef struct {
     unsigned store_ea_size;
     /* Numeric output status captured before any destination store callback. */
     uint32_t replay_fpsr;
+    /* Decoded speculative branch reference. Only odd references are retained;
+       an untaken branch can still raise an address error without a bus cycle. */
+    uint32_t prefetch_address;
 } Syn68kFPUStep;
 
-/* Dispatch bookkeeping only: component stepping leaves trace to its caller.
-   Forced/FPU exceptions own trace handling; normal trace uses the entry SR. */
+/* Dispatch bookkeeping: component stepping leaves prefetch errors and trace
+   to its caller. Forced/FPU exceptions precede prefetch errors, which precede
+   normal trace. Trace eligibility uses the instruction-entry SR. */
 static inline void syn68k_fpu_trace_result(Syn68kFPUStep* result, uint16_t entry_sr, uint32_t pc)
 {
+    if (!result->vector && ((result->prefetch_address | result->next) & 1)) {
+        uint32_t reference = result->prefetch_address & 1 ? result->prefetch_address : result->next;
+        result->vector = 3;
+        result->format = 2;
+        result->exception_pc = pc;
+        result->fault_address = reference & ~1u;
+    }
     if (!result->vector && ((entry_sr & 0x8000) || ((entry_sr & 0x4000) && result->trace_flow))) {
         result->vector = 9;
         result->format = 2;

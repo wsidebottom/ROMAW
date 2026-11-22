@@ -1159,6 +1159,14 @@ static int fpu_mapped_conditional(emitter* out, unsigned opcode, uint32 pc)
         if (extra == 2)
             FP_BYTES(out, 0x0f, 0xbf, 0xc0);
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, displacement), 0);
+        if (branch || (ea >= 8 && ea < 16)) {
+            byte(out, 0x05);
+            word32(out, pc + (branch ? 2 : 4));
+            FP_BYTES(out, 0xf6, 0xc0, 1); // TEST AL,1: retain only an odd target.
+            unsigned even = jump(out, 0x84);
+            fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, exception.prefetch_address), 0);
+            patch(out, even, out->size);
+        }
     }
     fpu_constant(out, offsetof(FPUInvocation, next), pc + next, 0);
     fpu_mapped_signal_condition(out, pc, code, failures, &count);
@@ -1381,6 +1389,14 @@ static int fpu_conditional(emitter* out, unsigned opcode, uint32 pc)
     if (extra)
         fpu_fetch_value(out, pc, pc + (branch ? 2 : 4), extra, offsetof(FPUInvocation, displacement));
     pointer_r8(out, RELOC_FPU_FRAME);
+    if (branch || (ea >= 8 && ea < 16)) {
+        /* Only direct RAM was consumed here; devices leave before the fetch.
+           Exit before counter/condition effects for an odd speculative target. */
+        fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, displacement), 0);
+        byte(out, 0xa9);
+        word32(out, 1);
+        failures[count++] = jump(out, 0x85);
+    }
     fpu_signal_condition(out, code, failures, &count);
     fpu_condition_value(out, code);
     if (branch || ea >= 8) {
