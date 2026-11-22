@@ -45,7 +45,7 @@ void C_MoveWindow(WindowPtr window, INTEGER left, INTEGER top, BOOLEAN front)
     moved_top = top;
 }
 
-static int launches;
+static int launches, preferences_shown;
 static OSType launch_type;
 static OSErr info_error, launch_error;
 
@@ -57,8 +57,16 @@ OSErr C_FSpGetFInfo(FSSpecPtr spec, FInfo* info)
 
 void C_GetItem(MenuHandle menu, INTEGER item, StringPtr name)
 {
-    assert(menu == panels_menu && item == 1);
-    memcpy(name, "\012Calculator", 11);
+    assert((menu == panels_menu && item == 1) || (menu == apple_menu && (item == 1 || item == 2)));
+    if (menu == apple_menu && item == 2)
+        memcpy(name, ROMAW_PREFS_MENU_NAME, sizeof ROMAW_PREFS_MENU_NAME);
+    else
+        memcpy(name, "\012Calculator", 11);
+}
+
+void ROMlib_show_preferences(void)
+{
+    ++preferences_shown;
 }
 
 void C_HiliteMenu(INTEGER menu)
@@ -226,6 +234,16 @@ int main(void)
     assert(bytes == sizeof remaining - 1 && !memcmp(contents, remaining, bytes));
     ROMlib_desk_folder_names(NULL);
     {
+        MenuInfo apple = {0};
+        HIDDEN_Ptr apple_pointer = {(Ptr)RM((Ptr)&apple)};
+        apple_menu = (MenuHandle)&apple_pointer;
+        apple.menuID = CWC(128);
+        assert(!ROMlib_desk_menu_select(128L << 16));
+        assert(!ROMlib_desk_menu_select((128L << 16) | 1));
+        assert(!ROMlib_desk_menu_select((129L << 16) | 2));
+        assert(ROMlib_desk_menu_select((128L << 16) | 2));
+        assert(preferences_shown == 1 && launches == 0);
+        apple_menu = NULL;
         MenuInfo info = {0};
         HIDDEN_Ptr pointer = {(Ptr)RM((Ptr)&info)};
         panels_menu = (MenuHandle)&pointer;

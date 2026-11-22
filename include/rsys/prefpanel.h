@@ -18,6 +18,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define ROMAW_PREFS_MENU_NAME "\013ROMAW Prefs"
+extern void ROMlib_show_preferences(void);
+
 typedef struct {
     int32_t flags;
     uint32_t checks;

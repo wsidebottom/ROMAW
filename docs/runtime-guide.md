@@ -90,7 +90,8 @@ requests, Finder's known minimum and the event-loop guard.
 
 ## Memory
 
-Alt-Shift-5 opens Preferences. Save writes the current application's section in
+Choose **ROMAW Prefs** from the Apple menu of a running Mac app or press
+Alt-Shift-5. Save writes the current application's section in
 the profile `ROMAW.prefs`; MyABCD uses `[APPL.FP98]`.
 
 The Memory page accepts bytes or k/m suffixes. Equivalent application preference keys are:

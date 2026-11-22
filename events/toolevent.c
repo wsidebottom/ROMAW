@@ -310,7 +310,7 @@ int saveprefvalues(char* savefilename, LONGINT locationx, LONGINT locationy)
     return retval;
 }
 
-PRIVATE void dopreferences(void)
+void ROMlib_show_preferences(void)
 {
 #if defined(SDL)
     static BOOLEAN active;
@@ -442,7 +442,7 @@ A3(PRIVATE, BOOLEAN, doevent, INTEGER, em, EventRecord*, evt, BOOLEAN, remflag) 
             case '5':
             case '%': /* command shift 5: Preferences */
                 retval = FALSE;
-                dopreferences();
+                ROMlib_show_preferences();
                 break;
             case '6':
             case '^': /* command shift 6: Don't restart ROMAW */

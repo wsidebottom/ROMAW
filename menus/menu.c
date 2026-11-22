@@ -38,6 +38,8 @@
 
 #include "rsys/common.h"
 #include "rsys/desk.h"
+#include "rsys/options.h"
+#include "rsys/prefpanel.h"
 #include "QuickDraw.h"
 #include "MenuMgr.h"
 #include "WindowMgr.h"
@@ -1096,6 +1098,8 @@ P2(PUBLIC pascal trap, void, AddResMenu, MenuHandle, mh, ResType, restype)
             about_box_menu_name_pstr = (StringPtr) "\015About CCRS...";
         if (restype == TICK("DRVR") && about_box_menu_name_pstr[0])
             app(about_box_menu_name_pstr, 0, 0, 0, 0, FALSE, &endinf);
+        if (restype == TICK("DRVR") && !(ROMlib_options & ROMLIB_NOPREFS_BIT))
+            app((StringPtr)ROMAW_PREFS_MENU_NAME, 0, 0, 0, 0, FALSE, &endinf);
 
         if (restype == TICK("DRVR"))
             ROMlib_desk_folder_names(temph);

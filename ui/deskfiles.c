@@ -19,6 +19,7 @@
 #include "rsys/common.h"
 #include "rsys/everything.h"
 #include "rsys/desk.h"
+#include "rsys/prefpanel.h"
 #include "OSUtil.h"
 #include "rsys/device.h"
 #include "rsys/wind.h"
@@ -227,11 +228,22 @@ void ROMlib_desk_menu_setup(MenuHandle menu)
 BOOLEAN
 ROMlib_desk_menu_select(LONGINT selection)
 {
-    Str255 name;
-    INTEGER result;
-    if (!panels_menu || (selection >> 16) != CW(HxX(panels_menu, menuID)) || !(selection & 0xffff))
+    INTEGER item = selection & 0xffff;
+    if (!item)
         return FALSE;
-    GetItem(panels_menu, selection & 0xffff, name);
+    Str255 name;
+    if (apple_menu && (selection >> 16) == CW(HxX(apple_menu, menuID))) {
+        GetItem(apple_menu, item, name);
+        if (!EqualString(name, (StringPtr)ROMAW_PREFS_MENU_NAME, TRUE, TRUE))
+            return FALSE;
+        HiliteMenu(0);
+        ROMlib_show_preferences();
+        return TRUE;
+    }
+    if (!panels_menu || (selection >> 16) != CW(HxX(panels_menu, menuID)))
+        return FALSE;
+    INTEGER result;
+    GetItem(panels_menu, item, name);
     HiliteMenu(0);
     open_folder_item(name, 1, &result);
     return TRUE;
