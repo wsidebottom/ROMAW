@@ -385,6 +385,7 @@ function Invoke-Check-build-version {
             $output = Join-Path $fixture 'version.txt'
             $errors = Join-Path $fixture 'errors.txt'
             $process = Start-Process -FilePath $ROMAW -ArgumentList $arguments -WorkingDirectory $fixture -WindowStyle Hidden -PassThru -RedirectStandardOutput $output -RedirectStandardError $errors
+            $null = $process.Handle
             if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'Version output did not exit promptly' }
             if ($process.ExitCode -ne 0 -or (Get-Content -Raw -LiteralPath $output).Trim() -cne $expected) {
                 throw 'Command-line version does not match the build version'
