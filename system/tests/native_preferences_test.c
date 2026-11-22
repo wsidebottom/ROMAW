@@ -132,6 +132,12 @@ static void CALLBACK exercise_dialog(HWND unused, UINT message, UINT_PTR timer, 
         for (unsigned i = 0; i < state->page_count; ++i)
             assert(!!(GetWindowLongPtr(state->pages[i], GWL_STYLE) & WS_VISIBLE) == (i == page));
     }
+    if (scenario == 6)
+        assert(!IsWindowEnabled(state->pages[NATIVE_PREF_DRIVES]));
+    if (scenario == 5) {
+        collect_fields(dialog, state);
+        assert(!strcmp(state->edited.fields[17], "0"));
+    }
     for (unsigned field = 0; field < 19; ++field) {
         if (!ROMlib_preferences_field_label(field))
             continue;
@@ -195,11 +201,11 @@ int main(void)
 {
     char fixture[L_tmpnam];
     assert(tmpnam(fixture));
-    for (scenario = 0; scenario < 5; ++scenario) {
+    for (scenario = 0; scenario < 7; ++scenario) {
         ROMlib_extra_preferences prefs = {0};
         strcpy(prefs.fields[0], "original");
         strcpy(prefs.fields[12], "7.1.1");
-        strcpy(prefs.fields[17], "8");
+        strcpy(prefs.fields[17], scenario == 5 ? "0" : "8");
         assert(SetTimer(NULL, 0, 50, exercise_dialog));
         int accepted;
         if (scenario == 4) {
@@ -211,8 +217,8 @@ int main(void)
             accepted = show_preferences(NULL, &profile) == IDOK;
         }
         else
-            accepted =
-                scenario == 1 ? ROMlib_win_default_preferences(NULL, fixture) : ROMlib_win_preferences(&prefs, fixture);
+            accepted = scenario == 1 ? ROMlib_win_default_preferences(NULL, fixture)
+                                     : ROMlib_win_preferences(&prefs, scenario == 6 ? NULL : fixture);
         assert(accepted == (scenario != 0));
         if (scenario == 0) {
             assert(!strcmp(prefs.fields[0], "original"));
@@ -229,7 +235,7 @@ int main(void)
             assert(result.checks == 0x1fffff);
         }
     }
-    assert(applied == 2 && saved == 1 && defaults_saved == 2);
+    assert(applied == 4 && saved == 1 && defaults_saved == 2);
     assert(!remove(fixture));
     puts(
         "Native preferences: resource pages, tab selection, control routing, Custom scale, Cancel, defaults Save, application Save and OK passed");

@@ -65,7 +65,7 @@ to verify startup scaling, preference precedence and invalid options.
 
 ## Application architecture and system version
 
-FAT applications prefer PowerPC by default. In Preferences → Advanced, select
+FAT applications prefer PowerPC by default. In Preferences ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Advanced, select
 **Prefer m68k for FAT apps** and click **Save** to use the 68K entry on the next
 launch. The equivalent app preference is `PreferM68K=1`. A single-architecture
 application still uses its available entry. The command-line `-ppc` option
@@ -95,6 +95,56 @@ Alt-Shift-5. Save writes the current application's section in
 the profile `ROMAW.prefs`; MyABCD uses `[APPL.FP98]`.
 In Finder, **ROMAW Prefs** opens the same preferences window. Save writes
 changes to `[Defaults]` for subsequent Mac app launches.
+
+The Windows preferences window uses General, Display, Memory, Compatibility,
+Advanced, Drive formats and Application settings tabs. System version uses three
+numeric boxes (major, minor, patch), each limited to the existing 0..15 component
+range, with a nonzero major version. Update mode and colour depth use named
+choices; mouse modifiers, memory sizes and display scale offer presets with custom
+values where supported. The FAT application CPU preference uses radio buttons.
+Hidden legacy WindowName and AppleChar values are retained when saving.
+
+**Refresh interval (ticks; 0 = automatic)** uses 1/60-second intervals: 1 is about
+60 refreshes per second, 2 about 30, and 10 about 6. The slider covers 0..60 ticks;
+the numeric box retains support for existing larger saved intervals. Zero uses
+normal drawing updates with automatic refresh detection when that option is enabled.
+
+Advanced adds checkboxes for sticky menus (`-sticky`), forward Delete
+(`-pceditkeys`), automatic refresh detection (inverse of `-noautorefresh`) and
+PostScript font substitution (inverse of `-cities`). They persist as StickyMenus,
+ForwardDelete, AutoRefresh and SubstituteFonts in Defaults or the application
+section. Explicit command-line switches take precedence on launch.
+
+Drive formats contains all drive format selectors and the Mac-compatible folder
+list. Edits are saved with the dialog's Save/OK action; Cancel discards them.
+The first-start drive setup remains available. Folder mounts take effect on the
+next launch.
+
+Application settings provides **Edit current settings** for the current app
+(or Finder's defaults), plus a list of saved type/creator profiles. **Edit selected
+profile** opens that profile's settings in a separate editor. Saving an inactive
+profile changes its next launch without applying its values to the running app.
+The editor changes direct preference keys; launch-time conditional rules and
+unrelated keys remain intact. Unknown saved choice values are retained until a
+supported choice is selected.
+
+The editable layouts live in
+`platform/os/cygwin32/preferences.rc`: open that file in Visual Studio's C++
+Resource Editor (use **Open With > Resource Editor** if it opens as text). Select
+`IDD_PREFERENCES` for the outer window or an `IDD_PREF_*` dialog for a tab's contents.
+Keep the control IDs in
+`preferences_resource.h` unchanged: they connect the resources to the existing
+settings model. `preferences_winres.h` supplies the Windows resource constants
+so the standalone editor does not require SDK include paths. Tab captions and
+page creation are in `win_preferences.c`; validation, application and persistence
+remain in the shared preferences code.
+The root build compiles these resources with MinGW; a Visual Studio project is
+not required for building ROMAW. Run
+`bash system/tests/check-runtime.sh native-preferences` for Windows resource/tab
+routing and Save/OK/Cancel regression checks; the shared model is covered by
+`ecf-unit` and the portable view by `sdl-preferences`. Run
+`system/tests/check-runtime.ps1 preferences-parser` to exercise the real parser,
+independent boolean settings and command-line overrides on Windows.
 
 The Memory page accepts bytes or k/m suffixes. Equivalent application preference keys are:
 

@@ -19,6 +19,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <commctrl.h>
+#include <limits.h>
 #include "preferences_resource.h"
 #include "rsys/prefpanel.h"
 #include "rsys/configprefs.h"
@@ -240,7 +241,7 @@ static HWND preferences_container(HWND dialog, int id)
 static void show_page(HWND dialog, int page)
 {
     native_preferences* state = (native_preferences*)GetWindowLongPtr(dialog, DWLP_USER);
-    if (page == NATIVE_PREF_DRIVES && !state->drive_initialized) {
+    if (page == NATIVE_PREF_DRIVES && state->filename && !state->drive_initialized) {
         drive_preferences_proc(state->pages[page], WM_INITDIALOG, 0, (LPARAM)state->filename);
         state->drive_initialized = 1;
     }
@@ -293,8 +294,17 @@ static void initialize_choice(HWND page, int id, const char* const* labels, cons
         if (*text && !*end && current == (values ? values[i] : (int)i))
             SendDlgItemMessage(page, id, CB_SETCURSEL, index, 0);
     }
-    if (SendDlgItemMessage(page, id, CB_GETCURSEL, 0, 0) == CB_ERR)
-        SetDlgItemTextA(page, id, text);
+    if (SendDlgItemMessage(page, id, CB_GETCURSEL, 0, 0) == CB_ERR) {
+        if ((GetWindowLongPtr(GetDlgItem(page, id), GWL_STYLE) & 3) == CBS_DROPDOWNLIST) {
+            char saved[288];
+            snprintf(saved, sizeof saved, "Saved value: %.255s", text);
+            LRESULT index = SendDlgItemMessageA(page, id, CB_ADDSTRING, 0, (LPARAM)saved);
+            SendDlgItemMessage(page, id, CB_SETITEMDATA, index, LONG_MIN);
+            SendDlgItemMessage(page, id, CB_SETCURSEL, index, 0);
+        }
+        else
+            SetDlgItemTextA(page, id, text);
+    }
 }
 
 static void initialize_version(HWND dialog, native_preferences* state)
@@ -332,9 +342,11 @@ static void collect_fields(HWND dialog, native_preferences* state)
         HWND page = preferences_container(dialog, 200 + i);
         LRESULT selected =
             (i == 3 || i == 16 || i == 17) ? SendDlgItemMessage(page, 200 + i, CB_GETCURSEL, 0, 0) : CB_ERR;
-        if (selected != CB_ERR)
-            snprintf(state->edited.fields[i], 256, "%lld",
-                     (long long)SendDlgItemMessage(page, 200 + i, CB_GETITEMDATA, selected, 0));
+        if (selected != CB_ERR) {
+            LRESULT value = SendDlgItemMessage(page, 200 + i, CB_GETITEMDATA, selected, 0);
+            if (value != LONG_MIN)
+                snprintf(state->edited.fields[i], 256, "%lld", (long long)value);
+        }
         else
             GetDlgItemTextA(page, 200 + i, state->edited.fields[i], 256);
     }
@@ -373,6 +385,8 @@ static INT_PTR CALLBACK preferences_proc(HWND dialog, UINT message, WPARAM wpara
             SetWindowPos(state->pages[i], HWND_TOP, area.left, area.top, area.right - area.left, area.bottom - area.top,
                          SWP_NOACTIVATE);
         }
+        if (state->page_count > NATIVE_PREF_DRIVES && !state->filename)
+            EnableWindow(state->pages[NATIVE_PREF_DRIVES], FALSE);
         for (i = 0; i < 19; ++i) {
             if (!ROMlib_preferences_field_label(i))
                 continue;
