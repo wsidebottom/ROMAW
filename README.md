@@ -45,6 +45,18 @@ The generated font resource beside the executable is `ROMAW.rsrc`.
 The user profile is always `.romaw`. A new profile is created directly there;
 startup does not discover or import other profile directories.
 
+## JIT and AOT execution
+
+Both CPU runtimes support just-in-time (JIT) translation to native x64 code.
+68K native execution is enabled by default. Its opt-in persistent ahead-of-time
+(AOT) cache saves translated code for reuse on later launches; see
+[68K JIT and AOT](syn68k/docs/aot-x64.md) for setup and cache behavior.
+
+PowerPC uses interpretation by default. `-ppc-jit` enables native translation;
+`-ppc-aot` also prepares linked code before execution and persists translations
+between launches. See [PowerPC translation caching](synppc/docs/translation-cache.md)
+for preparation, persistence and fallback behavior.
+
 ## Loading disk images
 
 Open a disk image in ROMAW's Finder by double-clicking it or choosing File > Open.
