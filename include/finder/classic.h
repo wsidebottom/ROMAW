@@ -151,6 +151,7 @@ void chrome_art(HICON close, HICON zoom, HICON grow, HICON clicked = nullptr);
 void menu_icon(unsigned command, HICON icon);
 // Movable notices disable/re-enable their owner, restore focus and forward quit.
 int message_box(HWND owner, const wchar_t* text, UINT flags);
+void about_box(HWND owner);
 // IDYES replaces, IDNO skips, IDCANCEL stops this transfer only.
 int conflict_box(HWND owner, const wchar_t* text);
 bool confirm(HWND owner, const wchar_t* text, const wchar_t* affirmative);

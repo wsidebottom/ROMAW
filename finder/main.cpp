@@ -3695,10 +3695,7 @@ void command(FolderWindow& f, unsigned id)
         show_about_system();
         break;
     case about_romaw_command:
-        message(
-            f.window,
-            ROMAW_VERSION_W L"\nROMAW — Run Old Mac Apps on Windows\nNative x64 Finder with classic Macintosh application support.\n\n68K applications, desk accessories and control panels; PowerPC support depends on the runtime.\n\nApplication: " +
-                runtime_path().wstring());
+        classic::about_box(desktop);
         break;
     case romaw_prefs_command: {
         const auto path = file_manager_path((romaw_folder.parent_path() / L"ROMAW.prefs").native());

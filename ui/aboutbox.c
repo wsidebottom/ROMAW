@@ -29,33 +29,27 @@
 #include "FontMgr.h"
 #include "Gestalt.h"
 #include "ToolboxEvent.h"
-
-enum { ABOUT_WIDTH = 354, ABOUT_HEIGHT = 164, ABOUT_MARGIN = 16 };
+#include "classic-ui/host_graphics.h"
 
 StringPtr about_box_menu_name_pstr = (StringPtr) "\016About ROMAW...";
 
 /* Keep the labels and values aligned even when memory totals change width. */
-static void draw_memory_row(const char* label, const char* value, int baseline)
+static void draw_memory_row(const char* label, const char* value, int left, int baseline)
 {
-    MoveTo(ABOUT_MARGIN, baseline);
+    MoveTo(left + ROMAW_ABOUT_MARGIN, baseline);
     DrawText((Ptr)label, 0, strlen(label));
-    MoveTo(ABOUT_WIDTH - ABOUT_MARGIN - TextWidth((Ptr)value, 0, strlen(value)), baseline);
+    MoveTo(left + ROMAW_ABOUT_WIDTH - ROMAW_ABOUT_MARGIN - TextWidth((Ptr)value, 0, strlen(value)), baseline);
     DrawText((Ptr)value, 0, strlen(value));
 }
 
-static void draw_about_box(WindowPtr window)
+void ROMlib_draw_about_contents(int left, int top)
 {
-    BeginUpdate(window);
-    PenNormal();
-    ForeColor(blackColor);
-    BackColor(whiteColor);
-    EraseRect(&window->portRect);
     TextFont(helvetica);
     TextSize(20);
-    MoveTo(ABOUT_MARGIN, 29);
+    MoveTo(left + ROMAW_ABOUT_MARGIN, top + 29);
     DrawText((Ptr)ROMlib_romaw_version, 0, strlen(ROMlib_romaw_version));
     TextSize(12);
-    MoveTo(ABOUT_MARGIN, 48);
+    MoveTo(left + ROMAW_ABOUT_MARGIN, top + 48);
     static const char copyright[] = "Copyright \251 ARDI 1986-2006. All rights reserved.";
     DrawText((Ptr)copyright, 0, sizeof copyright - 1);
 
@@ -68,15 +62,25 @@ static void draw_about_box(WindowPtr window)
     }
     else
         snprintf(value, sizeof value, "Unavailable");
-    draw_memory_row("Emulated RAM", value, 75);
+    draw_memory_row("Emulated RAM", value, left, top + 75);
 
     snprintf(value, sizeof value, "%lu KB / %u KB", FreeMemSys() / 1024UL, ROMlib_syszone_size / 1024U);
-    draw_memory_row("System RAM free", value, 93);
+    draw_memory_row("System RAM free", value, left, top + 93);
 
     ZONE_SAVE_EXCURSION(ApplZone, {
         snprintf(value, sizeof value, "%lu KB / %u KB", FreeMem() / 1024UL, ROMlib_applzone_size / 1024U);
     });
-    draw_memory_row("Application RAM free", value, 111);
+    draw_memory_row("Application RAM free", value, left, top + 111);
+}
+
+static void draw_about_box(WindowPtr window)
+{
+    BeginUpdate(window);
+    PenNormal();
+    ForeColor(blackColor);
+    BackColor(whiteColor);
+    EraseRect(&window->portRect);
+    ROMlib_draw_about_contents(0, 0);
     DrawControls(window);
     EndUpdate(window);
 }
@@ -126,16 +130,17 @@ void do_about_box(void)
     busy = TRUE;
     ZONE_SAVE_EXCURSION(SysZone, {
         Rect bounds;
-        int left = MAX(0, ((int)vdriver_width - ABOUT_WIDTH) / 2);
-        int top = MAX(28, ((int)vdriver_height - ABOUT_HEIGHT) / 3);
-        SetRect(&bounds, left, top, left + ABOUT_WIDTH, top + ABOUT_HEIGHT);
+        int left = MAX(0, ((int)vdriver_width - ROMAW_ABOUT_WIDTH) / 2);
+        int top = MAX(28, ((int)vdriver_height - ROMAW_ABOUT_HEIGHT) / 3);
+        SetRect(&bounds, left, top, left + ROMAW_ABOUT_WIDTH, top + ROMAW_ABOUT_HEIGHT);
         WindowPtr window = (WindowPtr)NewCWindow(NULL, &bounds, (StringPtr) "\013About ROMAW", FALSE, dBoxProc,
                                                  (CWindowPtr)-1, FALSE, 0);
         if (window) {
             THEPORT_SAVE_EXCURSION(window, {
                 Rect button;
-                SetRect(&button, ABOUT_WIDTH - ABOUT_MARGIN - 86, ABOUT_HEIGHT - 38, ABOUT_WIDTH - ABOUT_MARGIN,
-                        ABOUT_HEIGHT - ABOUT_MARGIN);
+                int right = ROMAW_ABOUT_WIDTH - ROMAW_ABOUT_MARGIN;
+                int bottom = ROMAW_ABOUT_HEIGHT - ROMAW_ABOUT_MARGIN;
+                SetRect(&button, right - ROMAW_ABOUT_BUTTON_WIDTH, bottom - ROMAW_ABOUT_BUTTON_HEIGHT, right, bottom);
                 ControlHandle close =
                     NewControl(window, &button, (StringPtr) "\005Close", TRUE, 0, 0, 1, pushButProc, 0);
                 if (close) {

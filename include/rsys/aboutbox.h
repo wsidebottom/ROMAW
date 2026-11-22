@@ -18,5 +18,7 @@
 
 extern StringPtr about_box_menu_name_pstr;
 extern void do_about_box(void);
+/* Draw the About text in the current QuickDraw port at the given origin. */
+extern void ROMlib_draw_about_contents(int left, int top);
 
 #endif /* !_RSYS_ABOUTBOX_H_ */

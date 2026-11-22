@@ -17,6 +17,7 @@
 #include "rsys/common.h"
 #include "QuickDraw.h"
 #include "CQuickDraw.h"
+#include "rsys/aboutbox.h"
 #include "rsys/blockinterrupts.h"
 #include "rsys/classic_ui_qd.h"
 
@@ -599,6 +600,23 @@ static int host_drawing(struct host_surface* surface, const ROMAWGraphicsRequest
     return noErr;
 }
 
+static void host_about(const Rect* bounds)
+{
+    /* The classic dBoxProc surrounds its content with two black rules. */
+    Rect rule_bounds = *bounds;
+    C_FrameRect(&rule_bounds);
+    C_InsetRect(&rule_bounds, 1, 1);
+    RGBColor frame_gray = host_rgb(0xaaaaaa);
+    C_RGBForeColor(&frame_gray);
+    C_PenSize(2, 2);
+    C_FrameRect(&rule_bounds);
+    C_InsetRect(&rule_bounds, 2, 2);
+    C_PenNormal();
+    C_RGBForeColor(&ROMlib_black_rgb_color);
+    C_FrameRect(&rule_bounds);
+    ROMlib_draw_about_contents(ROMAW_ABOUT_FRAME, ROMAW_ABOUT_FRAME);
+}
+
 /* Entry points take host-order values and produce native RGB pixels. Packed
    records and big-endian 32-bit QuickDraw pixels never reach the Win32 layer. */
 static int host_render(const ROMAWGraphicsRequest* r, uint32_t* pixels, size_t stride, ROMAWGraphicsMetrics* output)
@@ -610,7 +628,9 @@ static int host_render(const ROMAWGraphicsRequest* r, uint32_t* pixels, size_t s
          r->kind != ROMAW_GRAPHICS_DESKTOP && r->kind != ROMAW_GRAPHICS_MENU_ITEM &&
          r->kind != ROMAW_GRAPHICS_CHECKBOX && r->kind != ROMAW_GRAPHICS_BUTTON && r->kind != ROMAW_GRAPHICS_RADIO &&
          r->kind != ROMAW_GRAPHICS_TEXT && r->kind != ROMAW_GRAPHICS_FIELD && r->kind != ROMAW_GRAPHICS_PROGRESS &&
-         r->kind != ROMAW_GRAPHICS_DRAWING) ||
+         r->kind != ROMAW_GRAPHICS_DRAWING && r->kind != ROMAW_GRAPHICS_ABOUT) ||
+        (r->kind == ROMAW_GRAPHICS_ABOUT && (r->width != ROMAW_ABOUT_WIDTH + 2 * ROMAW_ABOUT_FRAME ||
+                                             r->height != ROMAW_ABOUT_HEIGHT + 2 * ROMAW_ABOUT_FRAME)) ||
         (r->kind == ROMAW_GRAPHICS_DRAWING && (!pixels || !host_drawing_valid(r))) ||
         (r->kind == ROMAW_GRAPHICS_MENU_ITEM && (!r->title || r->icon_width < 0 || r->icon_width > 256)) ||
         (r->kind == ROMAW_GRAPHICS_TEXT &&
@@ -693,6 +713,8 @@ static int host_render(const ROMAWGraphicsRequest* r, uint32_t* pixels, size_t s
             error = host_control(r, surface->world);
         else if (r->kind == ROMAW_GRAPHICS_TEXT)
             error = host_text(r, &metrics, pixels != NULL);
+        else if (r->kind == ROMAW_GRAPHICS_ABOUT)
+            host_about(&bounds);
         else if (r->kind == ROMAW_GRAPHICS_FIELD || r->kind == ROMAW_GRAPHICS_PROGRESS)
             host_field(r);
         else {

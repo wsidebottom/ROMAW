@@ -37,7 +37,18 @@ enum {
     ROMAW_GRAPHICS_TEXT,
     ROMAW_GRAPHICS_FIELD,
     ROMAW_GRAPHICS_PROGRESS,
-    ROMAW_GRAPHICS_DRAWING
+    ROMAW_GRAPHICS_DRAWING,
+    ROMAW_GRAPHICS_ABOUT
+};
+
+/* Content geometry shared by the classic dialog and the Finder popup. */
+enum {
+    ROMAW_ABOUT_WIDTH = 354,
+    ROMAW_ABOUT_HEIGHT = 164,
+    ROMAW_ABOUT_MARGIN = 16,
+    ROMAW_ABOUT_FRAME = 4,
+    ROMAW_ABOUT_BUTTON_WIDTH = 86,
+    ROMAW_ABOUT_BUTTON_HEIGHT = 22
 };
 
 enum {

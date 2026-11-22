@@ -3532,6 +3532,7 @@ struct Notice {
     bool conflict = false;
     std::wstring simple_name{};
     bool changing_find = false;
+    bool about = false;
 };
 
 enum FindControl { find_toggle = 11057, find_field = 11052, find_relation, find_value, find_batch, find_scope };
@@ -3721,9 +3722,10 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     auto* data = reinterpret_cast<Notice*>(GetWindowLongPtrW(w, GWLP_USERDATA));
     if (msg == WM_NCCREATE) {
-        decorate(w);
-        SetPropW(w, L"FinderWhite", reinterpret_cast<HANDLE>(1));
         data = static_cast<Notice*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        if (!data->about)
+            decorate(w);
+        SetPropW(w, L"FinderWhite", reinterpret_cast<HANDLE>(1));
         SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
     }
     if (!data)
@@ -3731,6 +3733,17 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     if (msg == WM_CREATE) {
         RECT r;
         GetClientRect(w, &r);
+        if (data->about) {
+            int right = r.right - ROMAW_ABOUT_FRAME - ROMAW_ABOUT_MARGIN;
+            int bottom = r.bottom - ROMAW_ABOUT_FRAME - ROMAW_ABOUT_MARGIN;
+            auto close = CreateWindowW(L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                                       right - ROMAW_ABOUT_BUTTON_WIDTH, bottom - ROMAW_ABOUT_BUTTON_HEIGHT,
+                                       ROMAW_ABOUT_BUTTON_WIDTH, ROMAW_ABOUT_BUTTON_HEIGHT, w,
+                                       reinterpret_cast<HMENU>(INT_PTR(IDOK)), GetModuleHandleW(nullptr), nullptr);
+            if (!close)
+                return -1;
+            return 0;
+        }
         if (data->find) {
             build_find_controls(w, *data);
             return 0;
@@ -3780,6 +3793,27 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (data->edit)
             SetFocus(data->edit);
         return 0;
+    }
+    if (data->about) {
+        LRESULT result{};
+        if (owner_draw(msg, lp, result))
+            return result;
+        if (msg == WM_ERASEBKGND)
+            return TRUE;
+        if (msg == WM_PAINT) {
+            PAINTSTRUCT paint{};
+            HDC dc = BeginPaint(w, &paint);
+            RECT bounds{};
+            GetClientRect(w, &bounds);
+            if (!paint_manager_control(dc, bounds, ROMAW_GRAPHICS_ABOUT, 0, nullptr)) {
+                fill(dc, bounds, RGB(255, 255, 255));
+                auto previous = SelectObject(dc, chicago);
+                draw_text(dc, L"About ROMAW", -1, &bounds, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+                SelectObject(dc, previous);
+            }
+            EndPaint(w, &paint);
+            return 0;
+        }
     }
     if (msg == WM_PAINT && data->find && data->find->expanded) {
         PAINTSTRUCT paint{};
@@ -3888,12 +3922,10 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 
 // Run a movable classic notice, disabling its owner during the loop, restoring
 // prior focus and forwarding quit messages.
-int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
-           const wchar_t* affirmative = L"Stop and Quit", bool conflict = false, FindOptions* find = nullptr,
-           bool has_selection = false, const std::vector<SearchRoot>* disks = nullptr)
+static int run_notice(HWND owner, Notice data)
 {
     if (!chicago)
-        return MessageBoxW(owner, text, L"Finder", MB_OK | flags);
+        return MessageBoxW(owner, data.text, L"Finder", MB_OK | data.flags);
     auto root = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
     WNDCLASSW c{};
     c.hInstance = GetModuleHandleW(nullptr);
@@ -3904,22 +3936,28 @@ int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
     HDC dc = GetDC(nullptr);
     auto old = SelectObject(dc, chicago);
     RECT measured{0, 0, alert_text.right - alert_text.left, 0};
-    draw_text(dc, text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    draw_text(dc, data.text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, old);
     ReleaseDC(nullptr, dc);
-    int width = alert_width + 4, height = std::clamp(int(measured.bottom) + (input ? 88 : 52), alert_height, 600) + 21;
+    int width = alert_width + 4;
+    int height = std::clamp(int(measured.bottom) + (data.input ? 88 : 52), alert_height, 600) + 21;
     RECT area;
     GetWindowRect(root ? root : GetDesktopWindow(), &area);
-    if (find) {
-        width = (find->expanded ? find_expanded_width : find_simple_width) + 4;
-        height = (find->expanded ? find_expanded_height : find_simple_height) + 21;
+    if (data.find) {
+        width = (data.find->expanded ? find_expanded_width : find_simple_width) + 4;
+        height = (data.find->expanded ? find_expanded_height : find_simple_height) + 21;
     }
-    Notice data{IDCANCEL, text, flags, input, nullptr, affirmative, find, disks, has_selection, conflict};
-    if (find && find->query.field == FindField::name)
-        data.simple_name = find->query.text;
+    if (data.about) {
+        width = ROMAW_ABOUT_WIDTH + 2 * ROMAW_ABOUT_FRAME;
+        height = ROMAW_ABOUT_HEIGHT + 2 * ROMAW_ABOUT_FRAME;
+    }
+    if (data.find && data.find->query.field == FindField::name)
+        data.simple_name = data.find->query.text;
     HWND focus = GetFocus(), previous = front;
-    HWND dialog = CreateWindowExW(WS_EX_DLGMODALFRAME, L"FinderNotice", find ? L"Find" : L"Finder",
-                                  WS_POPUP | WS_CAPTION | WS_SYSMENU, area.left + (area.right - area.left - width) / 2,
+    DWORD style = WS_POPUP | (data.about ? WS_CLIPCHILDREN : WS_CAPTION | WS_SYSMENU);
+    const wchar_t* title = data.about ? L"About ROMAW" : data.find ? L"Find" : L"Finder";
+    HWND dialog = CreateWindowExW(data.about ? 0 : WS_EX_DLGMODALFRAME, L"FinderNotice", title, style,
+                                  area.left + (area.right - area.left - width) / 2,
                                   area.top + (area.bottom - area.top - height) / 2, width, height, root, nullptr,
                                   c.hInstance, &data);
     if (!dialog)
@@ -3927,7 +3965,10 @@ int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
     if (root)
         EnableWindow(root, FALSE);
     ShowWindow(dialog, SW_SHOW);
-    activate(dialog);
+    if (data.about)
+        SetFocus(GetDlgItem(dialog, IDOK));
+    else
+        activate(dialog);
     MSG msg;
     while (IsWindow(dialog)) {
         int got = GetMessageW(&msg, nullptr, 0, 0);
@@ -3941,8 +3982,8 @@ int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
             continue;
         }
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
-            int command = conflict || (flags & MB_YESNO) ? IDYES : IDOK;
-            if (conflict) {
+            int command = data.conflict || (data.flags & MB_YESNO) ? IDYES : IDOK;
+            if (data.conflict) {
                 int focused = GetDlgCtrlID(GetFocus());
                 if (focused == IDYES || focused == IDNO || focused == IDCANCEL)
                     command = focused;
@@ -3966,6 +4007,21 @@ int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
     if (IsWindow(focus))
         SetFocus(focus);
     return data.result;
+}
+
+int notice(HWND owner, const wchar_t* text, UINT flags, std::wstring* input,
+           const wchar_t* affirmative = L"Stop and Quit", bool conflict = false, FindOptions* find = nullptr,
+           bool has_selection = false, const std::vector<SearchRoot>* disks = nullptr)
+{
+    return run_notice(owner,
+                      {IDCANCEL, text, flags, input, nullptr, affirmative, find, disks, has_selection, conflict});
+}
+
+void about_box(HWND owner)
+{
+    Notice data{IDCANCEL, L"About ROMAW", 0};
+    data.about = true;
+    run_notice(owner, data);
 }
 
 // Return a standard dialog result from the shared classic notice
