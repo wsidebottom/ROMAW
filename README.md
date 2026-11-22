@@ -12,6 +12,13 @@ in [the documentation index](docs/README.md).
 
 AI tools were used to create some of this project's contents.
 
+## Download
+
+[Download ROMAW 1.0 for Windows x64](https://github.com/wsidebottom/ROMAW/releases/download/v1.0/ROMAW-1.0-windows-x64.zip).
+Extract the entire ZIP, then run `ROMAW.exe`. Windows 10 or later is required.
+See the [version 1.0 release](https://github.com/wsidebottom/ROMAW/releases/tag/v1.0)
+for release notes and the SHA-256 checksum.
+
 ## Build and run
 
 Build from WSL at `/mnt/d/Source/ROMAW` after preparing the dependencies in
