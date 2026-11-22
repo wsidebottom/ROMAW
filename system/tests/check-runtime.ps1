@@ -180,6 +180,66 @@ quit 0
     Write-Output "Driver installation, dispatch, removal and host mapping passed: $fixture/probe.log"
 }
 
+function Invoke-Check-preferences-parser {
+    param(
+        [string]$ROMAW,
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe'
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $ROMAW) { $ROMAW = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $fixture = Join-Path $root ('build/preferences-parser.' + [guid]::NewGuid().ToString('N'))
+    & python (Join-Path $root 'synppc/tests/make_ppc_appearance_probe.py') $fixture | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create parser launch fixture' }
+    $prefs = Join-Path $fixture 'parser.prefs'
+    [IO.File]::WriteAllText($prefs, "[APPL.TEST]`nStickyMenus=0`nForwardDelete=0`nAutoRefresh=1`nSubstituteFonts=1`n")
+    foreach ($mask in @(0, 15)) {
+        $commands = @'
+set pagination off
+set confirm off
+set print thread-events off
+break launchchain
+commands
+silent
+set ROMlib_options=0x8000000
+set ROMlib_sticky_menus_p=1
+set ROMlib_forward_del_p=1
+set do_autorefresh_p=0
+set substitute_fonts_p=0
+call ROMlib_preferences_set_cli_overrides(MASK)
+set configfile=config_prefs_open("PREFS", "APPL.TEST")
+if configfile == 0
+quit 1
+end
+set validblock=1
+set $parsed=yyparse()
+call (int)fclose(configfile)
+if $parsed != 0 || ROMlib_options != 0x8000000
+quit 1
+end
+if ROMlib_sticky_menus_p != EXPECTED || ROMlib_forward_del_p != EXPECTED || do_autorefresh_p != INVERSE || substitute_fonts_p != INVERSE
+quit 1
+end
+printf "PREFERENCES_PARSER_OK\n"
+quit 0
+end
+run "APPFILE"
+'@
+        $expected = if ($mask) { '1' } else { '0' }
+        $inverse = if ($mask) { '0' } else { '1' }
+        $commands = $commands.Replace('MASK', [string]$mask).Replace('EXPECTED', $expected).Replace('INVERSE', $inverse)
+        $commands = $commands.Replace('PREFS', $prefs.Replace('\', '/')).Replace('APPFILE', (Join-Path $fixture 'PPC Appearance Probe').Replace('\', '/'))
+        $script = Join-Path $fixture "parser-$mask.gdb"
+        [IO.File]::WriteAllText($script, $commands)
+        $output = & $Gdb -q -batch -x $script $ROMAW 2>&1 | Out-String
+        [IO.File]::WriteAllText((Join-Path $fixture "parser-$mask.log"), $output)
+        if ($LASTEXITCODE -ne 0 -or $output -notmatch 'PREFERENCES_PARSER_OK') {
+            throw "Preferences parser failed: $output"
+        }
+    }
+    Write-Output 'PASS: real startup parser loads boolean preferences, preserves option flags and honours command-line overrides'
+}
+
 function Invoke-Check-ecf {
     param(
         [string]$ROMAW,
@@ -191,7 +251,7 @@ function Invoke-Check-ecf {
     $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
     $Gdb = (Resolve-Path -LiteralPath $Gdb).Path
     $fixture = Join-Path $workspace ('build\ecf-test.' + [guid]::NewGuid().ToString('N'))
-    & python (Join-Path $workspace 'synppc\tests\make_ppc_appearance_probe.py') $fixture
+    & python (Join-Path $workspace 'synppc\tests\make_ppc_appearance_probe.py') --output-dir $fixture
     if ($LASTEXITCODE -ne 0) { throw 'Could not generate ECF fixture' }
     $bin = Split-Path $ROMAW -Parent
     Copy-Item -LiteralPath $ROMAW -Destination (Join-Path $fixture 'ROMAW.exe')
@@ -756,4 +816,4 @@ function Invoke-Check-clipboard-live {
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('build-version', 'clipboard-live', 'desk-accessory', 'device-install', 'ecf', 'help', 'launch-desk-accessory', 'launch-parameters', 'number-options', 'printer-options', 'sidecar-options', 'startup-options', 'version-options') -CheckArguments $args
+Invoke-RegressionCheck -Names @('build-version', 'clipboard-live', 'desk-accessory', 'device-install', 'ecf', 'help', 'launch-desk-accessory', 'launch-parameters', 'number-options', 'printer-options', 'preferences-parser', 'sidecar-options', 'startup-options', 'version-options') -CheckArguments $args

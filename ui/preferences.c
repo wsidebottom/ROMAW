@@ -8,6 +8,8 @@
   Functions: ROMlib_extra_preferences_apply, ROMlib_extra_preferences_init, ROMlib_extra_preferences_save,
              ROMlib_extra_preferences_valid, ROMlib_preferences_check, ROMlib_preferences_check_label,
              ROMlib_preferences_field_label, ROMlib_preferences_redraw, ROMlib_preferences_toggle,
+             ROMlib_profile_preferences_init, ROMlib_profile_preferences_save, ROMlib_preferences_capture_defaults,
+             ROMlib_preferences_set_cli_overrides, ROMlib_preferences_boolean_overridden,
              ROMlib_preferences_write_string
 
   Origin:    Existing repository source in executor/src/ui; original attribution and provenance comments are preserved
@@ -40,6 +42,9 @@
 #include "rsys/version.h"
 #include "rsys/cquick.h"
 #include "rsys/vdriver.h"
+#include "rsys/menu.h"
+#include "rsys/text.h"
+#include "rsys/autorefresh.h"
 
 static const struct {
     const char *key, *label;
@@ -55,7 +60,26 @@ static const struct {
     {"PretendAlias", "Pretend Alias Manager", &ROMlib_pretend_alias},
     {"NoWarn32", "Suppress 32-bit warnings", &ROMlib_nowarn32},
     {"PreferM68K", "Prefer m68k for FAT apps", &ROMlib_prefer_m68k},
+    {"StickyMenus", "Sticky menus", &ROMlib_sticky_menus_p},
+    {"ForwardDelete", "Delete key deletes forwards", &ROMlib_forward_del_p},
+    {"AutoRefresh", "Detect drawing that bypasses QuickDraw", &do_autorefresh_p},
+    {"SubstituteFonts", "Substitute standard PostScript fonts", &substitute_fonts_p},
 };
+
+static unsigned cli_overrides;
+
+void ROMlib_preferences_set_cli_overrides(unsigned mask)
+{
+    cli_overrides = mask;
+}
+
+int ROMlib_preferences_boolean_overridden(const int* value)
+{
+    for (unsigned i = 0; i < 4; ++i)
+        if (value == live_checks[10 + i].value)
+            return !!(cli_overrides & (1u << i));
+    return 0;
+}
 
 static const struct {
     const char *name, *label;
@@ -80,9 +104,9 @@ static const struct {
 enum { editable_option_count = 7 };
 
 static const char* field_labels[] = {
-    "Window title",
+    NULL, /* Retained for existing preference files, not shown in the editor. */
     "Delay",
-    "Apple-menu character (0..255)",
+    NULL,
     "Right-click modifiers (0..65535)",
     /* Keep these slots for legacy preference handling without displaying controls. */
     NULL,
@@ -94,7 +118,7 @@ static const char* field_labels[] = {
     "SysZone (system heap)",
     "ApplZone (application heap)",
     "Reported system version",
-    "Refresh rate",
+    "Refresh interval (ticks; 0 = automatic)",
     "Comments",
     NULL,
     "Updates (0 normal/1 trap/2 anim)",
@@ -273,22 +297,37 @@ static const char* const default_field_keys[] = {
 };
 static const char* const update_keys[] = {"BlitInOSEvent", "BlitAtTrapEnd", "BlitOften"};
 
-static int default_flag(const char* filename, const char* key, int fallback)
+static int profile_flag(const char* filename, const char* section, const char* key, int fallback)
 {
     char value[8];
-    if (config_prefs_get(filename, "Defaults", key, value, sizeof value) != 1)
+    if (config_prefs_get(filename, section, key, value, sizeof value) != 1)
         return fallback;
     return value[0] == '1' ? 1 : value[0] == '0' ? 0 : fallback;
 }
 
-void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char* filename)
+static ROMlib_extra_preferences startup_defaults;
+static int have_startup_defaults;
+
+void ROMlib_preferences_capture_defaults(void)
 {
-    ROMlib_extra_preferences_init(prefs);
+    if (!have_startup_defaults) {
+        ROMlib_extra_preferences_init(&startup_defaults);
+        have_startup_defaults = 1;
+    }
+}
+
+static void load_profile(ROMlib_extra_preferences* prefs, const char* filename, const char* section)
+{
+    char options[8];
+    if (config_prefs_get(filename, section, "Options", options, sizeof options) == 1 && options[0] == '0') {
+        prefs->flags = 0;
+        prefs->checks &= ~((1u << 9) - 1);
+    }
     for (unsigned i = 0; i < NELEM(default_field_keys); ++i) {
         char value[258];
         if (!default_field_keys[i])
             continue;
-        size_t length = config_prefs_get(filename, "Defaults", default_field_keys[i], value, sizeof value);
+        size_t length = config_prefs_get(filename, section, default_field_keys[i], value, sizeof value);
         if (!length)
             continue;
         if (string_field(i) && length >= 2 && value[0] == '"' && value[length - 1] == '"') {
@@ -298,18 +337,18 @@ void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char
         snprintf(prefs->fields[i], sizeof prefs->fields[i], "%.255s", value);
     }
     for (unsigned i = 0; i < NELEM(update_keys); ++i)
-        if (default_flag(filename, update_keys[i], 0))
+        if (profile_flag(filename, section, update_keys[i], 0))
             snprintf(prefs->fields[16], sizeof prefs->fields[16], "%u", i);
     for (unsigned i = 0; i < editable_option_count; ++i) {
         int32 bit = extra_options[i].bit;
-        if (default_flag(filename, extra_options[i].name, (prefs->flags & bit) != 0))
+        if (profile_flag(filename, section, extra_options[i].name, (prefs->flags & bit) != 0))
             prefs->flags |= bit;
         else
             prefs->flags &= ~bit;
     }
     for (unsigned i = 0; i < NELEM(live_checks); ++i) {
         uint32_t bit = 1u << i;
-        if (default_flag(filename, live_checks[i].key, (prefs->checks & bit) != 0))
+        if (profile_flag(filename, section, live_checks[i].key, (prefs->checks & bit) != 0))
             prefs->checks |= bit;
         else
             prefs->checks &= ~bit;
@@ -317,9 +356,25 @@ void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char
     memcpy(prefs->original, prefs->fields, sizeof prefs->fields);
 }
 
+void ROMlib_profile_preferences_init(ROMlib_extra_preferences* prefs, const char* filename, const char* section)
+{
+    if (have_startup_defaults)
+        *prefs = startup_defaults;
+    else
+        ROMlib_extra_preferences_init(prefs);
+    load_profile(prefs, filename, "Defaults");
+    if (strcmp(section, "Defaults"))
+        load_profile(prefs, filename, section);
+}
+
+void ROMlib_default_preferences_init(ROMlib_extra_preferences* prefs, const char* filename)
+{
+    ROMlib_profile_preferences_init(prefs, filename, "Defaults");
+}
+
 /* Publish only changed controls so advanced rules and other Defaults survive. */
-int ROMlib_default_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
-                                    const char* filename)
+int ROMlib_profile_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
+                                    const char* filename, const char* section)
 {
     const char* keys[NELEM(default_field_keys) + NELEM(update_keys) + editable_option_count + NELEM(live_checks)];
     const char* values[NELEM(keys)];
@@ -372,7 +427,13 @@ int ROMlib_default_preferences_save(ROMlib_extra_preferences* prefs, const ROMli
             values[count++] = prefs->checks & bit ? "1" : "0";
         }
     }
-    return !count || config_prefs_set_many(filename, "Defaults", keys, values, count);
+    return !count || config_prefs_set_many(filename, section, keys, values, count);
+}
+
+int ROMlib_default_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
+                                    const char* filename)
+{
+    return ROMlib_profile_preferences_save(prefs, original, filename, "Defaults");
 }
 
 int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs)
@@ -504,6 +565,8 @@ void ROMlib_extra_preferences_save(FILE* file)
 {
     unsigned i;
     fprintf(file, "PreferM68K=%d\n", ROMlib_prefer_m68k);
+    for (i = 10; i < NELEM(live_checks); ++i)
+        fprintf(file, "%s=%d\n", live_checks[i].key, !!*live_checks[i].value);
     if (ROMlib_display_scale != 100)
         fprintf(file, "DisplayScale=%d\n", ROMlib_display_scale);
     for (i = 0; i < NELEM(extra_options); ++i)
@@ -541,6 +604,8 @@ int ROMlib_preferences_check_page(unsigned check)
     if (check < editable_option_count)
         return extra_options[check].bit == ROMLIB_DEBUG_BIT ? ROMAW_PREF_ADVANCED : ROMAW_PREF_COMPATIBILITY;
     check -= editable_option_count;
+    if (check >= 10 && check < NELEM(live_checks))
+        return ROMAW_PREF_ADVANCED;
     if (check < NELEM(live_checks) &&
         (live_checks[check].value == &ROMlib_nowarn32 || live_checks[check].value == &ROMlib_prefer_m68k))
         return ROMAW_PREF_ADVANCED;

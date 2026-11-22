@@ -1336,6 +1336,10 @@ A2(PUBLIC, int, main, int, argc, char**, argv)
         do_autorefresh_p = !no_auto;
     }
 
+    ROMlib_preferences_set_cli_overrides((opt_val(common_db, "sticky", NULL) ? ROMAW_PREF_CLI_STICKY : 0) |
+                                         (opt_val(common_db, "pceditkeys", NULL) ? ROMAW_PREF_CLI_FORWARD_DELETE : 0) |
+                                         (opt_val(common_db, "noautorefresh", NULL) ? ROMAW_PREF_CLI_AUTO_REFRESH : 0) |
+                                         (opt_val(common_db, "cities", NULL) ? ROMAW_PREF_CLI_SUBSTITUTE_FONTS : 0));
     opt_int_val(common_db, "refresh", &ROMlib_refresh, &bad_arg_p);
     check_arg("refresh", &ROMlib_refresh, 0, 60);
 

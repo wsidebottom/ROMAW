@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      ROMAW.rc
 
-  Summary:   ROMAW executable identity and icon; running Macintosh applications may supply their own icon.
+  Summary:   ROMAW executable icon and editable native preferences resources.
 
   Classes:   None.
 
@@ -17,3 +17,5 @@
 1 ICON "ROMAW.ico"
 
 // The integrated Finder resource supplies the Git-based VERSIONINFO.
+
+#include "preferences.rc"

@@ -154,8 +154,8 @@ static void render(SDL_Surface* canvas, preferences_ui* ui)
             y += 10;
         }
         if (ui->page == ROMAW_PREF_ADVANCED) {
-            text(canvas, 12, 96, "FAT apps use PowerPC by default.", 1, 61);
-            text(canvas, 12, 114, "Save the CPU choice for the next launch.", 1, 61);
+            text(canvas, 12, 150, "FAT apps use PowerPC by default.", 1, 61);
+            text(canvas, 12, 168, "Save the CPU choice for the next launch.", 1, 61);
         }
     }
     for (i = 0; i < 19; ++i)

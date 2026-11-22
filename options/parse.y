@@ -1,11 +1,11 @@
 /*+===================================================================
   File:      parse.y
 
-  Summary:   Implements parse support for ROMAW build and development support.
+  Summary:   Parse application preferences, compatibility flags and persistent command-line settings.
 
   Classes:   None.
 
-  Functions: No explicitly exported functions.
+  Functions: yyparse, binfind and yyerror; lexer and parsing helpers.
 
   Origin:    Existing repository source in executor/src; original attribution and provenance comments are preserved
              below.
@@ -25,6 +25,10 @@
 #include "rsys/print.h"
 #include "rsys/version.h"
 #include "rsys/ecf.h"
+#include "rsys/menu.h"
+#include "rsys/text.h"
+#include "rsys/autorefresh.h"
+#include "rsys/prefpanel.h"
 #include <limits.h>
 
 /* Copyright 1992 - 2000 by Abacus Research and Development, Inc.
@@ -89,6 +93,7 @@ void yyerror(const char *str);
 %token SYSZONE APPLZONE
 %token DISPLAY_SCALE
 %token PREFER_M68K
+%token STICKY_MENUS FORWARD_DELETE AUTO_REFRESH SUBSTITUTE_FONTS
 %token <number> SIZE_MULTIPLIER
 
 %type <cptr> STRINGCONSTANT
@@ -97,6 +102,7 @@ void yyerror(const char *str);
 %type <cptrptr> stringvar
 %type <iptr>	optionsvar
 %type <iptr>	numervar
+%type <iptr> booleanvar
 %type <number> number optionvalues
 %type <pptr> pairvar
 %type <number> blockbegin	/* holds previous validblock */
@@ -116,6 +122,13 @@ assignmentsandblocks: assignment
 	;
 
 assignment:	stringassignment
+        | booleanvar '=' number ';'
+        { if (validblock) {
+            if ($3 != 0 && $3 != 1)
+              yyerror("boolean settings must be 0 or 1");
+            else if (!ROMlib_preferences_boolean_overridden($1))
+              *$1 = $3;
+          } }
 	| flagassignment
 	| arrayassignment
 	| optionsassignment
@@ -272,6 +285,12 @@ stringvar:	WINDOWNAME
 			      "in configuration files"); }
 	;
 
+booleanvar: STICKY_MENUS { $$ = &ROMlib_sticky_menus_p; }
+        | FORWARD_DELETE { $$ = &ROMlib_forward_del_p; }
+        | AUTO_REFRESH { $$ = &do_autorefresh_p; }
+        | SUBSTITUTE_FONTS { $$ = &substitute_fonts_p; }
+        ;
+
 numervar:	RDELAY
 	{ $$ = &ROMlib_delay; }
 	| REFRESHNUMBER
@@ -389,6 +408,10 @@ struct namevaluestr {
     long lval;
 } reserved[] = 
 {	/* NOTE: these are sorted so we can use a binary search */
+  { "AutoRefresh", AUTO_REFRESH, 0 },
+  { "ForwardDelete", FORWARD_DELETE, 0 },
+  { "StickyMenus", STICKY_MENUS, 0 },
+  { "SubstituteFonts", SUBSTITUTE_FONTS, 0 },
   { "Accelerated",	OPTIONSCONSTANT,	ROMLIB_ACCELERATED_BIT },
   { "AppleChar",	APPLECHAR,              0 },
   { "ApplZone", APPLZONE, 0 },

@@ -37,3 +37,7 @@
 
 /synppc/obj/
 ._windows-binaries
+
+# Visual Studio resource-editor caches and temporary resource scripts.
+*.aps
+/platform/os/cygwin32/RC[0-9a-fA-F]*

@@ -448,7 +448,8 @@ include_sources = include/rsys/component.h \
 # ICNS assets are compiled into obj/generated/*.inc, never in src/.
 
 EXTRA_DIST = tools/build_version.py windows/README.md $(system_resource_inputs) $(syserr_icon_inputs) tools/romaw/system_resources.py tools/romaw/font_suitcase.py $(font_inputs) resources/systemprefs.h \
-             platform/os/cygwin32/ROMAW.rc bitmaps/ROMAW.icns \
+             platform/os/cygwin32/ROMAW.rc platform/os/cygwin32/preferences.rc \
+             platform/os/cygwin32/preferences_resource.h platform/os/cygwin32/preferences_winres.h bitmaps/ROMAW.icns \
              tools/romaw/icns_to_c.py \
              COPYING.LGPLv2.1         \
              bitmaps/wind_close_clicked.icns              \
@@ -542,13 +543,16 @@ finder-metadata/libromaw-finder-metadata.a: $(metadata_inputs)
 	cmake --build finder-metadata --target romaw-finder-metadata --parallel 10
 ROMAW_LDADD += finder-metadata/libromaw-finder-metadata.a
 ROMAW_LDFLAGS += -mwindows -static-libgcc -static-libstdc++
-ROMAW_LDADD += generated/ROMAW-res.o -loleaut32 -luuid -lsapi
+ROMAW_LDADD += generated/ROMAW-res.o -loleaut32 -luuid -lsapi -lcomctl32
 CLEANFILES += generated/ROMAW-res.o
 generated/ROMAW.ico: $(shared_icons_dir)/ROMAW.icns $(shared_icon_tool_inputs)
 	mkdir -p generated
 	$(PYTHON) $(shared_tools_dir)/mac_icons.py $< $@
 
-generated/ROMAW-res.o: $(srcdir)/platform/os/cygwin32/ROMAW.rc generated/ROMAW.ico
+generated/ROMAW-res.o: $(srcdir)/platform/os/cygwin32/ROMAW.rc \
+                      $(srcdir)/platform/os/cygwin32/preferences.rc \
+                      $(srcdir)/platform/os/cygwin32/preferences_resource.h \
+                      $(srcdir)/platform/os/cygwin32/preferences_winres.h generated/ROMAW.ico
 	mkdir -p generated
 	$(WINDRES) -Igenerated -i $< -o $@ -O coff
 

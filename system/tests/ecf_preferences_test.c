@@ -31,6 +31,8 @@ int ROMlib_fontsubstitution, ROMlib_cacheheuristic;
 int ROMlib_pretend_help, ROMlib_pretend_edition, ROMlib_pretend_script, ROMlib_pretend_alias;
 int ROMlib_refresh, ROMlib_desired_bpp = 8;
 int ROMlib_prefer_m68k;
+int ROMlib_sticky_menus_p, ROMlib_forward_del_p;
+boolean_t do_autorefresh_p, substitute_fonts_p;
 int vdriver_bpp = 8;
 int ROMlib_display_scale = 100;
 
@@ -105,6 +107,11 @@ pair_t ROMlib_ScreenLocation = {INITIALPAIRVALUE, INITIALPAIRVALUE};
 
 int main(void)
 {
+    ROMlib_preferences_set_cli_overrides(ROMAW_PREF_CLI_STICKY | ROMAW_PREF_CLI_AUTO_REFRESH);
+    assert(ROMlib_preferences_boolean_overridden(&ROMlib_sticky_menus_p));
+    assert(ROMlib_preferences_boolean_overridden(&do_autorefresh_p));
+    assert(!ROMlib_preferences_boolean_overridden(&ROMlib_forward_del_p));
+    ROMlib_preferences_set_cli_overrides(0);
     ROMlib_extra_preferences prefs;
     const int32 legacy_options =
         ROMLIB_DIRTY_VARIANT_BIT | ROMLIB_TEXT_DISABLE_BIT | ROMLIB_NOLOWER_BIT | ROMLIB_PRINTING_HACK_BIT;
@@ -153,7 +160,7 @@ int main(void)
         if (!strcmp(label, "Prefer m68k for FAT apps"))
             ROMlib_preferences_toggle(&prefs, i);
     }
-    assert(advanced == 3);
+    assert(advanced == 7);
     strcpy(prefs.fields[0], "Changed title");
     strcpy(prefs.fields[1], "12");
     strcpy(prefs.fields[2], "256");
@@ -196,6 +203,30 @@ int main(void)
     assert(strstr(text, "DisplayScale=150"));
     assert(strstr(text, "PreferM68K=1"));
     assert(!strcmp(ROMlib_new_label, "Printer \"label\""));
+    char profile_path[L_tmpnam];
+    assert(tmpnam(profile_path));
+    assert(config_prefs_set(profile_path, "Defaults", "SysZone", "8m"));
+    assert(config_prefs_set(profile_path, "Defaults", "StickyMenus", "1"));
+    assert(config_prefs_set(profile_path, "APPL.TEST", "SystemVersion", "9.2.2"));
+    assert(config_prefs_set(profile_path, "APPL.TEST", "AutoRefresh", "0"));
+    assert(config_prefs_set(profile_path, "APPL.TEST", "WindowName", "\"Preserved legacy title\""));
+    assert(config_prefs_set(profile_path, "APPL.OTHR", "Comments", "\"Unrelated\""));
+    ROMlib_extra_preferences profile, before;
+    ROMlib_profile_preferences_init(&profile, profile_path, "APPL.TEST");
+    assert(!strcmp(profile.fields[10], "8m") && !strcmp(profile.fields[12], "9.2.2"));
+    assert(profile.checks & (1u << 10));
+    assert(!(profile.checks & (1u << 12)));
+    before = profile;
+    strcpy(profile.fields[12], "8.6.0");
+    profile.checks ^= 1u << 13;
+    assert(ROMlib_profile_preferences_save(&profile, &before, profile_path, "APPL.TEST"));
+    config_prefs_get(profile_path, "APPL.TEST", "SystemVersion", text, sizeof text);
+    assert(!strcmp(text, "8.6.0"));
+    config_prefs_get(profile_path, "APPL.TEST", "WindowName", text, sizeof text);
+    assert(!strcmp(text, "\"Preserved legacy title\""));
+    config_prefs_get(profile_path, "APPL.OTHR", "Comments", text, sizeof text);
+    assert(!strcmp(text, "\"Unrelated\""));
+    assert(!remove(profile_path));
     free(ROMlib_WindowName);
     free(ROMlib_new_printer_name);
     free(ROMlib_new_label);

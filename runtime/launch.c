@@ -68,6 +68,7 @@
 #include "rsys/pstuff.h"
 #include "rsys/jumpvectors.h"
 #include "rsys/prefs.h"
+#include "rsys/prefpanel.h"
 #include "rsys/flags.h"
 #include "rsys/aboutpanel.h"
 #include "rsys/segment.h"
@@ -179,6 +180,7 @@ PRIVATE void ParseConfigFile(StringPtr exefname, OSType creator, OSType file_typ
     char* dot;
     INTEGER fname0;
 
+    ROMlib_preferences_capture_defaults();
     fname0 = name0stripappl(exefname);
     free(ROMlib_configfilename);
     ROMlib_configfilename = malloc(strlen(ROMlib_userdir) + sizeof "/ROMAW.prefs");

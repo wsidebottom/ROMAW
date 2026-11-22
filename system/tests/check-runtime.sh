@@ -17,7 +17,7 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'quit' 'robustness' 'sdl-preferences' 'syserr'
+    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
     ;;
   syserr)
     (
@@ -135,6 +135,28 @@ case "$check" in
       "$root/build/cooperative-context-test"
     )
     ;;
+  native-preferences)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      cd "$root"
+      obj=${ROMAW_OBJ_DIR:-$root/build/romaw-optimized/obj}
+      prefix=${WINDOWS_PREFIX:-$root/win64-prefix}
+      out="$root/build/native-preferences"
+      mkdir -p "$out"
+      x86_64-w64-mingw32-windres -i platform/os/cygwin32/preferences.rc -o "$out/preferences.res" -O res
+      x86_64-w64-mingw32-windres -DAPSTUDIO_INVOKED -i platform/os/cygwin32/preferences.rc \
+        -o "$out/preferences-editor.res" -O res
+      cmp "$out/preferences.res" "$out/preferences-editor.res"
+      x86_64-w64-mingw32-windres -i "$out/preferences.res" -J res -o "$out/preferences.o" -O coff
+      x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -DHAVE_CONFIG_H \
+        -I"$obj" -I. -Iinclude -Ifrontend-sdl -Iplatform/os/mingw32 \
+        -Iplatform/arch/x86_64 -Iplatform/os/cygwin32 -I"$prefix/include" \
+        system/tests/native_preferences_test.c runtime/configprefs.c runtime/prefspacing.c \
+        "$out/preferences.o" -lcomctl32 -lshell32 -lole32 -luuid -o "$out/native-preferences-test.exe"
+      "$out/native-preferences-test.exe"
+    )
+    ;;
   ecf-unit)
     (
       set -euo pipefail
@@ -158,7 +180,7 @@ case "$check" in
       cd "$root"
       for test in ecf_preferences ecf_memory image_session image_warning native_launch; do
         extra_sources=()
-        if [[ $test == image_session ]]; then
+        if [[ $test == image_session || $test == ecf_preferences ]]; then
           extra_sources+=(runtime/configprefs.c runtime/prefspacing.c)
         fi
         "$cc" -std=gnu17 -g -O0 \

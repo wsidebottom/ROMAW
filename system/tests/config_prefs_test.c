@@ -32,8 +32,18 @@ static void expect_script(const char* path, const char* section, const char* tex
     assert(file);
     size_t n = fread(bytes, 1, sizeof bytes - 1, file);
     bytes[n] = 0;
+    if (strcmp(bytes, text))
+        fprintf(stderr, "Expected script:\n%sActual script:\n%s", text, bytes);
     assert(!strcmp(bytes, text));
     assert(!fclose(file));
+}
+
+static int collect_application(const char* section, void* context)
+{
+    unsigned* count = context;
+    assert(!strcmp(section, "APPL.TEST") || !strcmp(section, "APPL.OTHR"));
+    ++*count;
+    return 1;
 }
 
 int main(int argc, char** argv)
@@ -53,6 +63,20 @@ int main(int argc, char** argv)
     assert(config_prefs_set("scale.ini", "APPL.OTHR", "DisplayScale", "200"));
     expect_script("scale.ini", "APPL.TEST", "DisplayScale=150;\n");
     expect_script("scale.ini", "APPL.OTHR", "DisplayScale=200;\n");
+    const char* switches[] = {"StickyMenus", "ForwardDelete", "AutoRefresh", "SubstituteFonts"};
+    for (unsigned i = 0; i < sizeof switches / sizeof switches[0]; ++i) {
+        char line[128];
+        snprintf(line, sizeof line, "%s=1", switches[i]);
+        assert(config_prefs_validate_line(line));
+        snprintf(line, sizeof line, "%s=2", switches[i]);
+        assert(!config_prefs_validate_line(line));
+        assert(config_prefs_set("boolean.ini", "APPL.TEST", switches[i], "1"));
+    }
+    expect_script("boolean.ini", "APPL.TEST", "SubstituteFonts=1;\nAutoRefresh=1;\nForwardDelete=1;\nStickyMenus=1;\n");
+    write_text("applications.ini", "[Defaults]\n[HostDrives]\n[APPL.TEST]\n[invalid]\n[0x4150504c.0x4f544852]\n");
+    unsigned applications = 0;
+    assert(config_prefs_visit_applications("applications.ini", collect_application, &applications));
+    assert(applications == 2);
     const char* prefs = "ROMAW.prefs";
     assert(config_prefs_seed(prefs, "missing-master"));
     write_text(

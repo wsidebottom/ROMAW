@@ -27,6 +27,7 @@ const char* config_prefs_parameter_help(void);
 int config_prefs_seed(const char* path, const char* master);
 int config_prefs_remove_startup(const char* path);
 void config_prefs_app_section(uint32_t type, uint32_t creator, char section[CONFIG_PREFS_SECTION_SIZE]);
+int config_prefs_visit_applications(const char* path, int (*visit)(const char*, void*), void* context);
 size_t config_prefs_get(const char* path, const char* section, const char* key, char* value, size_t capacity);
 int config_prefs_set(const char* path, const char* section, const char* key, const char* value);
 /* Publish a group of values together, preserving all unrelated settings. */

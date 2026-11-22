@@ -28,6 +28,19 @@ typedef struct {
     char fields[19][256], original[19][256];
 } ROMlib_extra_preferences;
 
+enum {
+    ROMAW_PREF_CLI_STICKY = 1,
+    ROMAW_PREF_CLI_FORWARD_DELETE = 2,
+    ROMAW_PREF_CLI_AUTO_REFRESH = 4,
+    ROMAW_PREF_CLI_SUBSTITUTE_FONTS = 8
+};
+
+extern void ROMlib_preferences_set_cli_overrides(unsigned mask);
+extern int ROMlib_preferences_boolean_overridden(const int* value);
+extern void ROMlib_preferences_capture_defaults(void);
+extern void ROMlib_profile_preferences_init(ROMlib_extra_preferences* prefs, const char* filename, const char* section);
+extern int ROMlib_profile_preferences_save(ROMlib_extra_preferences* prefs, const ROMlib_extra_preferences* original,
+                                           const char* filename, const char* section);
 extern void ROMlib_extra_preferences_init(ROMlib_extra_preferences* prefs);
 extern int ROMlib_extra_preferences_valid(ROMlib_extra_preferences* prefs, unsigned* bad);
 extern int ROMlib_extra_preferences_apply(ROMlib_extra_preferences* prefs);

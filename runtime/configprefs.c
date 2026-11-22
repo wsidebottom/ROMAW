@@ -10,7 +10,7 @@
              config_drive_sidecars, config_drive_format, config_drive_format_name, config_drive_detect_format,
              config_drive_prefs_save_formats, config_prefs_app_section, config_prefs_get, config_prefs_open,
              config_prefs_parameter_help, config_prefs_remove_startup, config_prefs_seed, config_prefs_set,
-             config_prefs_set_many, config_prefs_store, config_prefs_store_ini, config_prefs_validate_line
+             config_prefs_set_many, config_prefs_visit_applications, config_prefs_store, config_prefs_store_ini, config_prefs_validate_line
 
   Origin:    Existing repository source in executor/src/runtime; original attribution and provenance comments are
              preserved below.
@@ -685,6 +685,35 @@ static int section_matches(const char* line, size_t length, const char* section)
            creator == wanted_creator;
 }
 
+/* Enumerate canonical application identities, never unrelated INI sections. */
+int config_prefs_visit_applications(const char* path, int (*visit)(const char*, void*), void* context)
+{
+    size_t length;
+    char* bytes = read_path(path, &length);
+    if (!bytes || !visit) {
+        free(bytes);
+        return 0;
+    }
+    int ok = 1;
+    for (size_t off = 0; ok && off < length;) {
+        size_t end = off;
+        while (end < length && bytes[end] != '\n' && bytes[end] != '\r')
+            ++end;
+        uint32_t type, creator;
+        if (end - off > 2 && bytes[off] == '[' && bytes[end - 1] == ']' &&
+            section_identity(bytes + off + 1, end - off - 2, &type, &creator)) {
+            char section[CONFIG_PREFS_SECTION_SIZE];
+            config_prefs_app_section(type, creator, section);
+            ok = visit(section, context);
+        }
+        off = end;
+        while (off < length && (bytes[off] == '\r' || bytes[off] == '\n'))
+            ++off;
+    }
+    free(bytes);
+    return ok;
+}
+
 static int matches_key(const char* line, size_t length, const char* key, size_t* equals)
 {
     size_t e = 0;
@@ -839,6 +868,8 @@ static const char* const flag_keys[] = {
     "PretendEdition",   "PretendHelp",   "PretendScript",    "PretendSound", "PrintingHack",   "RectScreen",
     "Refresh",          "SoundOff",      "SoundOn",          "StripAddress", "TextDisableHack"};
 
+static const char* const boolean_keys[] = {"StickyMenus", "ForwardDelete", "AutoRefresh", "SubstituteFonts"};
+
 static int key_in(const char* key, size_t n, const char* const* table, size_t count)
 {
     for (size_t i = 0; i < count; ++i)
@@ -850,7 +881,7 @@ static int key_in(const char* key, size_t n, const char* const* table, size_t co
 #define KEY_IN(key, n, table) key_in(key, n, table, sizeof table / sizeof table[0])
 
 /* 1 scalar, 2 point/size, 3 option flag, 4 conditional rule, 5 empty options,
-   6 a direct Gestalt statement. */
+   6 a direct Gestalt statement, 8 an independent boolean. */
 static int natural_key(const char* line, size_t n, size_t* equals, size_t* key_length)
 {
     size_t e = 0;
@@ -889,6 +920,8 @@ static int natural_key(const char* line, size_t n, size_t* equals, size_t* key_l
         return 1;
     if (KEY_IN(line, k, pair_keys))
         return 2;
+    if (KEY_IN(line, k, boolean_keys))
+        return 8;
     if (KEY_IN(line, k, flag_keys))
         return 3;
     if (k == 7 && !strncasecmp(line, "Options", k))
@@ -952,7 +985,7 @@ int config_prefs_validate_line(const char* line)
         long long percent;
         return settings_number(value, n, 0, &percent) && percent >= 25 && percent <= 1600;
     }
-    if (kind == 3 || (key == 10 && !strncasecmp(line, "PreferM68K", key)))
+    if (kind == 3 || kind == 8 || (key == 10 && !strncasecmp(line, "PreferM68K", key)))
         return n == 1 && (*value == '0' || *value == '1');
     int quoted = 0, braces = 0, parentheses = 0;
     for (size_t i = 0; i < n; ++i) {
