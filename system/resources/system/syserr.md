@@ -40,7 +40,9 @@ the extracted offsets, require existing bounded guest memory, and never allocate
 substitute module structures. These checks do not establish full System 7 module
 or virtual-memory compatibility.
 
-Text records explicitly contain terminating NULs and word padding. The edited
+Native drawing uses Toolbox dispatch wrappers so guest trap patches remain active.
+Text records explicitly contain terminating NULs and word padding. Slash separators
+advance the baseline by fourteen pixels, including blank lines and trailing separators. The edited
 `Quit ` button is six bytes after termination/padding; its old declared length of
 eight was stale. Unterminated original button strings were also terminated and
 their lengths recomputed. Missing icon records -20227, -20228 and -20229 were

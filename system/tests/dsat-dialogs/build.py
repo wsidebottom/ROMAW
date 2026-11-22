@@ -87,7 +87,7 @@ def guest_code(single=None):
     relative(0x6700, "return")
     label("wait")
     # Wait for a click/key after the buttonless icon/module previews.
-    words(0x4267, 0x3F3C, 0x000A, 0x486B, 8, 0x2F3C, 0, 1, 0x42A7, 0xA860, 0x301F, 0x4A00)
+    words(0x4267, 0x3F3C, 0x000A, 0x486B, 8, 0x2F3C, 0, 1, 0x42A7, 0xA860, 0x101F, 0x4A00)
     relative(0x6700, "wait")
     label("return")
     relative(0x6000, "chooser" if single is None else "quit")
@@ -147,7 +147,21 @@ def build(output, single=None):
     if not executable.is_file():
         executable = ROOT / "windows-binaries/bin/ROMAW.exe"
     launcher = output / (name + ".cmd")
-    launcher.write_text(f'@echo off\nstart "" "{executable}" "{app}"\n', encoding="utf-8", newline="\r\n")
+    launcher_lines = [
+        "@echo off",
+        "setlocal",
+        'set "DSAT_APP_DIR=%USERPROFILE%\\.romaw\\Apps\\DSAT Dialogs Test"',
+        'if not exist "%DSAT_APP_DIR%" mkdir "%DSAT_APP_DIR%"',
+        'if not exist "%USERPROFILE%\\.romaw\\Apps\\System Folder" mkdir "%USERPROFILE%\\.romaw\\Apps\\System Folder"',
+        'if /I "%~dp0"=="%DSAT_APP_DIR%\\" goto launch',
+        f'copy /y "%~dp0{name}" "%DSAT_APP_DIR%\\{name}" >nul',
+        "if errorlevel 1 exit /b 1",
+        f'copy /y "%~dp0._{name}" "%DSAT_APP_DIR%\\._{name}" >nul',
+        "if errorlevel 1 exit /b 1",
+        ":launch",
+        f'start "" "{executable}" -32bit -syszone 8388608 -applzone 4194304 "%DSAT_APP_DIR%\\{name}"',
+    ]
+    launcher.write_text("\n".join(launcher_lines) + "\n", encoding="utf-8", newline="\r\n")
     print(app)
     return app
 

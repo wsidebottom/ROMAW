@@ -107,6 +107,13 @@ static void C_ShutDwnPower(void)
     ++shutdowns;
 }
 
+#define MoveTo C_MoveTo
+#define DrawText C_DrawText
+#define DrawChar C_DrawChar
+#define UnionRect C_UnionRect
+#define ExitToShell C_ExitToShell
+#define ShutDwnStart C_ShutDwnStart
+#define ShutDwnPower C_ShutDwnPower
 #include "../../diagnostics/syserr_procedures.c"
 
 static unsigned checks;

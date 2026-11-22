@@ -76,19 +76,19 @@ static uint32 guest_long(uint32 address)
 /* Longword pushes in the 68K bodies place vertical before horizontal on the Pascal stack. */
 static void move_to(ROMlib_syserr_context* context, INTEGER vertical, INTEGER horizontal)
 {
-    C_MoveTo(horizontal + context->offsetx, vertical + context->offsety);
+    MoveTo(horizontal + context->offsetx, vertical + context->offsety);
 }
 
 static void draw_text(const char* text)
 {
-    C_DrawText((Ptr)text, 0, strlen(text));
+    DrawText((Ptr)text, 0, strlen(text));
 }
 
 static void draw_guest_string(uint32 address)
 {
     const unsigned char* text = guest_bytes(address, 1);
     if (text && guest_bytes(address, 1 + text[0]))
-        C_DrawText((Ptr)(text + 1), 0, text[0]);
+        DrawText((Ptr)(text + 1), 0, text[0]);
 }
 
 /* -21108: show the application name and, for a damaged name, restart advice. */
@@ -106,9 +106,9 @@ static void draw_application(ROMlib_syserr_context* context)
         name = address < limit && !(address & 1) ? guest_bytes(address, 1) : NULL;
     }
     if (name && name[0] < 32 && guest_bytes(address, 1 + name[0])) {
-        C_DrawChar(0xd2);
+        DrawChar(0xd2);
         draw_guest_string(address);
-        C_DrawChar(0xd3);
+        DrawChar(0xd3);
     }
     if (damaged) {
         move_to(context, 136, 114);
@@ -135,8 +135,8 @@ static void draw_error(ROMlib_syserr_context* context)
     }
     draw_text("error type ");
     if (error / 10)
-        C_DrawChar((error / 10) | '0');
-    C_DrawChar((error % 10) | '0');
+        DrawChar((error / 10) | '0');
+    DrawChar((error % 10) | '0');
 }
 
 /* -21112: the ROM unions into a private stack frame; retain native bounds here. */
@@ -144,16 +144,16 @@ static void extend_alert_bounds(ROMlib_syserr_context* context)
 {
     Rect bounds = DSAlertRect;
     bounds.top = CW(CW(bounds.top) & 0x7fff);
-    C_UnionRect(&bounds, &context->bounds, &context->bounds);
+    UnionRect(&bounds, &context->bounds, &context->bounds);
 }
 
 /* -21111 draws a supplied Pascal module/disk name between curly quotes. */
 static void draw_module_name(ROMlib_syserr_context* context, uint32 name)
 {
     move_to(context, 40, 72);
-    C_DrawChar(0xd2);
+    DrawChar(0xd2);
     draw_guest_string(name);
-    C_DrawChar(0xd3);
+    DrawChar(0xd3);
 }
 
 /* These offsets refer to guest-owned module state; never create a substitute. */
@@ -170,9 +170,9 @@ void ROMlib_syserr_procedure(INTEGER identity, ROMlib_syserr_context* context)
         /* Both original bodies eject volumes and enter ROMBase+10 to reboot.
            ROMAW's Shutdown Manager owns restart/exit and volume teardown. */
         if (context->table == 0)
-            C_ExitToShell(); /* User changed this table's button to Quit. */
+            ExitToShell(); /* User changed this table's button to Quit. */
         else
-            C_ShutDwnStart();
+            ShutDwnStart();
         break;
     case -21101:
         move_to(context, 24, 72);
@@ -189,7 +189,7 @@ void ROMlib_syserr_procedure(INTEGER identity, ROMlib_syserr_context* context)
                 *flags &= 0x7f;
         }
         EM_A5 = context->guest_a5;
-        C_ExitToShell();
+        ExitToShell();
         break;
     }
     case -21103:
@@ -207,14 +207,14 @@ void ROMlib_syserr_procedure(INTEGER identity, ROMlib_syserr_context* context)
         break;
     case -21105:
         /* ShutDwnPower owns shutdown in ROMAW, including ExitToShell. */
-        C_ShutDwnPower();
+        ShutDwnPower();
         break;
     case -21107:
         move_to(context, 94, 114);
         draw_text("Force ");
-        C_DrawChar(0xd2);
-        C_DrawText((Ptr)(CurApName + 1), 0, MIN(CurApName[0], sizeof(CurApName) - 1));
-        C_DrawChar(0xd3);
+        DrawChar(0xd2);
+        DrawText((Ptr)(CurApName + 1), 0, MIN(CurApName[0], sizeof(CurApName) - 1));
+        DrawChar(0xd3);
         draw_text(" to quit?");
         extend_alert_bounds(context);
         break;

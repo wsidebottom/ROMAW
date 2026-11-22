@@ -12,6 +12,10 @@ python system/tests/dsat-dialogs/build.py
 The output is `build/dsat-dialogs/DSAT Dialogs`, its required AppleDouble companion
 `._DSAT Dialogs`, and `DSAT Dialogs.cmd`. Open the app with the rebuilt ROMAW or
 run the generated launcher. Keep the app and AppleDouble sidecar together.
+The launcher copies just these two files into your mapped Apps folder under
+`DSAT Dialogs Test`, so resource forks work regardless of the host drive format.
+It selects the test app's declared 32-bit, 4 MiB application partition and an
+8 MiB system partition before initialization, avoiding an automatic relaunch.
 The launcher prefers the isolated `build/syserr-port/stage/ROMAW-optimized.exe`
 when present, otherwise `windows-binaries/bin/ROMAW.exe`; rebuild the launcher
 if the preferred executable is built later.

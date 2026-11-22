@@ -78,8 +78,23 @@ A3(PRIVATE, void, drawtextstring, INTEGER, id, INTEGER, offsetx, INTEGER, offset
     struct tdef* tp;
 
     if (id && (tp = (struct tdef*)findid(id))) {
-        MoveTo(CW(tp->loc.h) + offsetx, CW(tp->loc.v) + offsety);
-        DrawText_c_string(tp->text);
+        INTEGER horizontal = CW(tp->loc.h) + offsetx;
+        INTEGER vertical = CW(tp->loc.v) + offsety;
+        unsigned length = (unsigned short)CW(tp->alen);
+        if (length < sizeof(Point))
+            return;
+        length -= sizeof(Point);
+        MoveTo(horizontal, vertical);
+        unsigned first = 0, position = 0;
+        for (; position < length && tp->text[position]; ++position) {
+            if (tp->text[position] == '/') {
+                DrawText((Ptr)tp->text, first, position - first);
+                vertical += 14;
+                MoveTo(horizontal, vertical);
+                first = position + 1;
+            }
+        }
+        DrawText((Ptr)tp->text, first, position - first);
     }
 }
 
