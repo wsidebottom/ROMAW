@@ -40,16 +40,18 @@ static inline void syn68k_fpu_final_store_fault(Syn68kFPUStep* result, uint32_t 
 
 /* An unfinished pure FPU store can offer abort/replay, never retirement.
    The runner must certify every architectural register before accepting it.
-   At an ATC page-boundary fault WB2 retains the full scalar operand. */
+   WB1 retains a physical fault operand; WB2 retains an ATC fault operand.
+   Neither case introduces a continuation bit or changes the saved PC. */
 static inline void syn68k_fpu_replay_store_fault(Syn68kFPUStep* result)
 {
     const Syn68kMMU040Access* access = &result->access;
     uint16_t ssw;
     if (!result->store_state && result->vector == 2 && result->format == 7 && !(result->exception_pc & 1) &&
-        access->writing && !access->rmw && access->completed < access->size && !access->bus_error &&
+        access->writing && !access->rmw && access->completed < access->size &&
         (access->size == 2 || access->size == 4) &&
         access->logical == (uint32_t)(access->request + access->completed) && (access->fc == 1 || access->fc == 5) &&
-        syn68k_mmu040_access_ssw(access, &ssw) && (ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))) {
+        syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+        (access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))))) {
         result->store_next = result->exception_pc;
         result->store_state = 2;
     }

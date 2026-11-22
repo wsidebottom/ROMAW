@@ -85,6 +85,10 @@ static int unchanged_results(const ReadCheckpoint* before, unsigned opcode, unsi
 static int fpu_replay_results(const ReadCheckpoint* before, unsigned opcode, const Syn68kFPUStep* fp)
 {
     ReadCheckpoint expected = *before;
+    /* Class-0 stores have already cleared null state before writing. Require
+       that owned transition; a callback restoring null must deny replay. */
+    if ((opcode & ~63u) == 0xf200 && expected.fpu.null_state == 1)
+        expected.fpu.null_state = 0;
     if (fp->store_state == 3) {
         if ((opcode & ~63u) != 0xf200 || before->fpu.frame_size || fp->access.size != 2)
             return 0;
@@ -127,10 +131,10 @@ static int replay_store_fault(const Syn68kIntegerStep* record)
            record->fault_address == access->logical && !record->store_ccr && !record->store_trace_pc &&
            !(record->exception_pc & 1) && !record->movem_state && !record->fpu_vector && !record->store_tail_valid &&
            !record->store_locked && !record->restartable_read && access->writing && !access->rmw &&
-           access->completed < access->size && !access->bus_error && (access->size == 2 || access->size == 4) &&
+           access->completed < access->size && (access->size == 2 || access->size == 4) &&
            access->logical == (uint32)(access->request + access->completed) && (access->fc == 1 || access->fc == 5) &&
-           syn68k_mmu040_access_ssw(access, &ssw) && (ssw & 0x400) &&
-           (!access->completed || !(access->logical & 0xfff));
+           syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+           (access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))));
 }
 
 static unsigned pending_interrupt(void)
@@ -451,7 +455,7 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
          WB1 (physical bus fault) or WB2 (translation fault), with an optional
          following FPU longword or CAS2 operand in the next slot. WB1 data follows memory
          lanes; WB2 and WB3 data stay register aligned. A certified FPU store
-         abort retains its original PC and one WB2, with no continuation bits. */
+         abort retains its original PC and one WB1/WB2, with no continuation bits. */
         syn68k_mmu040_access_ssw(&record->access, &ssw);
         int pending = record->store_state == 2 || record->store_state == 3 || record->store_state == 4;
         if (record->fpu_vector)

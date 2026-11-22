@@ -95,30 +95,30 @@ typedef struct {
    while retaining FPU/EA results without changing CCRs. FScc likewise retires
    its completed condition/EA state with one pending byte store. A partial ATC
    write fault retains the full operand in WB2; guest cleanup can repeat the
-   completed prefix after repairing the second page. Partial physical faults,
-   earlier stores outside the certified pure-FPU abort path and MOVE16
-   continuation/writeback formats remain unsupported.
+   completed prefix after repairing the second page. Physical FPU faults retain
+   the full scalar in WB1 with ATC/MA clear, even after successful subcycles.
+   MOVE16 continuation/writeback formats remain unsupported.
    A pending post-instruction FPU exception carries CP and the original EA;
    RTE reports it after writeback cleanup, ahead of trace. The FPU handler
    owns the stacked trace condition and pending busy-frame recovery.
    FMOVEM can retire its final longword or its final two longwords
-   after earlier register stores have completed; auto-update earlier or partial physical FMOVEM
-   store faults remain unsupported.
+   after earlier register stores have completed, including partial physical
+   faults. Earlier stores require the abort certificate described below.
    A pending tail retains its own data function code after callback changes.
    Control-register lists and FSAVE likewise retire their last or penultimate
    longword while retaining earlier stores and completed EA updates.
-   A first-store ATC fault in a three-register control-list store can instead
-   abort at its original PC, with one pending WB2. This requires unchanged
-   registers/status/FPU state apart from non-null entry, non-auto-update EA,
-   consistent scalar progress at an ATC fault. Cleanup completes WB2;
-   RTE reexecutes the list, including that first store. The same unchanged-state
-   check permits earlier non-auto-update FMOVEM/FSAVE word/longword ATC faults,
-   repeating their successful prefix on reexecution. FSAVE retains its pending
-   frame until reexecution completes. A partial scalar keeps its full operand
-   in WB2 and sets MA; cleanup and reexecution can repeat its completed prefix.
+   Early control-list, FMOVEM, FSAVE and FMOVE.X faults can instead abort at
+   the original PC with one WB1 (physical) or WB2 (ATC) pending. The runner
+   certifies all general registers, stack banks, SR/CCR and FPU state, allowing
+   the owned non-null entry transition, captured numeric FPSR/FPIAR and an
+   exact auto-update EA change. It restores only that EA register. Callback
+   changes to certified state, including reversal of non-null entry, deny replay.
+   A partial ATC scalar must end at a page boundary and sets MA; physical
+   prefixes keep ATC/MA clear. Cleanup completes the full scalar before RTE
+   reexecutes the instruction, including earlier stores. FSAVE retains its
+   pending frame until reexecution completes. No continuation bits are added.
    Traced aborts retain their SR with no CT; the reexecuted instruction reports
-   trace after it finishes, including T0 on these serializing forms.
-   Early numeric move-outs still require caller-managed recovery.
+   trace after it finishes, including T0 on the serializing forms.
    Their pending tail value is sampled after the failed callback, matching the
    next normal transfer. FSAVE commits saved-frame cleanup only after validating
    the candidate; component stepping leaves it pending.

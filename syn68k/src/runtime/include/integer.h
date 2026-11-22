@@ -33,7 +33,7 @@ typedef struct {
     /* A scalar decoder can offer its completed flags/next PC without changing
      component-step fault semantics. Only the stream runner retires it (2).
      0: absent, 1: candidate, 2: retired store, 3: retired store/trace pending,
-     4: certified FPU store abort/replay with WB2 pending; numeric output
+     4: certified FPU store abort/replay with WB1/WB2 pending; numeric output
      FPSR/FPIAR can be retained while source state is unchanged. */
     uint32_t store_next, store_trace_pc;
     unsigned store_ccr, store_state;

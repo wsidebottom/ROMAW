@@ -210,6 +210,8 @@ static int operand_write(void* opaque, uint32_t physical, const unsigned char* b
             cpu_state.ccx ^= 1;
         if (write_mutation & 4096)
             cpu_state.usp ^= 2;
+        if (write_mutation & 8192)
+            cpu_state.fpu.null_state ^= 1;
         if (write_mutation & 16)
             for (unsigned i = 0; i < sizeof cpu_state.fpu.frame; ++i)
                 cpu_state.fpu.frame[i] ^= (i & 7) + 1;
@@ -2929,8 +2931,11 @@ static void fpu_control_replay_guards(void)
             trace_read_physical = physical(0x10000);
             trace_read_sr = 0;
         }
-        if (guard == 4)
-            fail_write_physical = 0x14000;
+        if (guard == 4) {
+            memory.aligned_transfers = 1;
+            fail_write_physical = mutate_write_physical = 0x14000;
+            write_mutation = 4;
+        }
         else
             put32(pte(0x29000), 0x14005);
         if (guard < 2) {
@@ -2941,11 +2946,14 @@ static void fpu_control_replay_guards(void)
             replay_read_physical = physical(0x10002);
             replay_read_mutation = guard - 4;
         }
+        unsigned expected_a1 = EM_A1 ^ 0x100;
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.store_state);
+        if (guard == 4)
+            assert(write_mutated && EM_A1 == expected_a1);
         CPUState before = cpu_state;
         unsigned old_reads = reads, old_writes = writes;
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
@@ -2953,17 +2961,23 @@ static void fpu_control_replay_guards(void)
                !memcmp(&before, &cpu_state, sizeof before));
         ++cases;
     }
-    fail_write_physical = replay_read_physical = UINT32_MAX;
+    memory.aligned_transfers = 0;
+    fail_write_physical = mutate_write_physical = replay_read_physical = UINT32_MAX;
     replay_read_mutation = 0;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
 
-static void fpu_control_replay_record_guards(void)
+static void fpu_control_replay_bus_record_guards(unsigned physical_bus)
 {
     fpu_store_setup(0, 1, 0, 2, 0x29000, 0, 0, 0);
     fpu_control_store(2, 7, 0, 0x29000, 12);
-    put32(pte(0x29000), 0x14005);
+    if (physical_bus) {
+        memory.aligned_transfers = 1;
+        fail_write_physical = fpu_store_physical(0x29000);
+    }
+    else
+        put32(pte(0x29000), 0x14005);
     Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
     Syn68kMappedRun run;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
@@ -3017,7 +3031,7 @@ static void fpu_control_replay_record_guards(void)
             record.access.completed = 1;
             break;
         case 15:
-            record.access.bus_error = 1;
+            record.access.bus_error = !physical_bus;
             break;
         case 16:
             record.access.size = 1;
@@ -3034,6 +3048,10 @@ static void fpu_control_replay_record_guards(void)
         case 20:
             record.access.completed = 1;
             record.fault_address = ++record.access.logical;
+            if (physical_bus) {
+                record.access.bus_error = 0;
+                record.access.translation.fault = MMU040_WRITE_PROTECTED;
+            }
             break;
         case 21:
             record.access.completed = record.access.size;
@@ -3041,7 +3059,7 @@ static void fpu_control_replay_record_guards(void)
             record.fault_address = record.access.logical;
             break;
         case 22:
-            record.access.translation.fault = MMU040_OK;
+            record.access.translation.fault = physical_bus ? MMU040_BAD_REQUEST : MMU040_OK;
             break;
         }
         CPUState before = cpu_state;
@@ -3053,8 +3071,16 @@ static void fpu_control_replay_record_guards(void)
         ++cases;
         cpu_state.sr &= ~0xc000;
     }
+    memory.aligned_transfers = 0;
+    fail_write_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
+}
+
+static void fpu_control_replay_record_guards(void)
+{
+    fpu_control_replay_bus_record_guards(0);
+    fpu_control_replay_bus_record_guards(1);
 }
 
 static unsigned pure_store_setup(enum FPUStoreKind kind, unsigned page8k, unsigned privileged, unsigned mode,
@@ -3089,7 +3115,7 @@ static unsigned pure_store_setup(enum FPUStoreKind kind, unsigned page8k, unsign
     return next;
 }
 
-static void guest_fpu_pure_replays(enum FPUStoreKind kind, unsigned completed)
+static void guest_fpu_pure_bus_replays(enum FPUStoreKind kind, unsigned completed, unsigned physical_bus)
 {
     const unsigned modes[] = {2, 3, 4, 5, 6, 7};
     const unsigned list_sizes[] = {12, 24, 96}, frame_sizes[] = {52, 100};
@@ -3106,133 +3132,199 @@ static void guest_fpu_pure_replays(enum FPUStoreKind kind, unsigned completed)
                             unsigned whole = kind == FPU_STORE_LIST    ? list_sizes[variant]
                                              : kind == FPU_STORE_FRAME ? frame_sizes[variant]
                                                                        : 12;
-                            for (unsigned offset = 0; offset < whole - 8;) {
-                                unsigned size =
-                                    (kind == FPU_STORE_LIST || kind == FPU_STORE_MOVE) && offset % 12 < 4 ? 2 : 4;
-                                if (completed >= size) {
+                            for (unsigned lane = 0; lane < (physical_bus && !completed ? 4U : 1U); ++lane)
+                                for (unsigned offset = 0; offset < whole - 8;) {
+                                    unsigned size =
+                                        (kind == FPU_STORE_LIST || kind == FPU_STORE_MOVE) && offset % 12 < 4 ? 2 : 4;
+                                    if (completed >= size) {
+                                        offset += size;
+                                        continue;
+                                    }
+                                    unsigned fault = (physical_bus == 2 ? 0x28104 : 0x28000 + (page8k ? 8192 : 4096)) -
+                                                     completed + lane,
+                                             operand = fault - offset;
+                                    unsigned mode = modes[m];
+                                    if (kind != FPU_STORE_CONTROL && kind != FPU_STORE_MOVE && mode == 3) {
+                                        offset += size;
+                                        continue;
+                                    }
+                                    unsigned next = pure_store_setup(kind, page8k, privileged, mode, operand, variant,
+                                                                     sign, statuses[c], whole);
+                                    unsigned initial_a0 = EM_A0;
+                                    Syn68kMappedCPU cpu = {
+                                        .pc = 0x10000, .memory = &memory, .native = native_execution};
+                                    Syn68kMappedRun run;
+                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    unsigned traced = !!(statuses[c] & (kind == FPU_STORE_MOVE ? 0x8000 : 0xc000));
+                                    assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                           cpu.pc == next);
+                                    if (traced)
+                                        assert(run.step.vector == 9 && run.step.format == 2 &&
+                                               run.step.fault_address == 0x10000);
+                                    unsigned expected_a0 = EM_A0;
+                                    Syn68kFPUState expected = cpu_state.fpu;
+                                    unsigned expected_sr = status();
+                                    unsigned char bytes[100];
+                                    for (unsigned i = 0; i < whole; ++i)
+                                        bytes[i] = ram[fpu_store_physical(operand + i)];
+                                    pure_store_setup(kind, page8k, privileged, mode, operand, variant, sign,
+                                                     statuses[c], whole);
+                                    Syn68kFPUState at_fault = cpu_state.fpu;
+                                    if (kind == FPU_STORE_MOVE)
+                                        at_fault = expected;
+                                    else if (kind != FPU_STORE_FRAME)
+                                        at_fault.null_state = 0;
+                                    unsigned fault_pte = pte(fault + completed), root = privileged ? 0x6000 : 0x3000;
+                                    if (physical_bus) {
+                                        memory.aligned_transfers = 1;
+                                        fail_write_physical = fpu_store_physical(fault + completed);
+                                    }
+                                    else
+                                        put32(fault_pte, 0x14005);
+                                    watched_physical = fpu_store_physical(fault);
+                                    watched_tail_physical = offset ? fpu_store_physical(operand) : UINT32_MAX;
+                                    watched_tail_successes = 0;
+                                    cpu.pc = 0x10000;
+                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                           run.step.store_state == 4 && cpu.pc == 0x10000 && EM_A0 == initial_a0 &&
+                                           status() == expected_sr && watched_successes == !!completed &&
+                                           watched_tail_successes == !!offset && !run.step.store_tail_valid &&
+                                           !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
+                                    unsigned value = 0;
+                                    for (unsigned i = offset; i < offset + size; ++i)
+                                        value = value << 8 | bytes[i];
+                                    assert(run.step.access.size == size && run.step.access.request == fault &&
+                                           run.step.access.value == value && run.step.access.completed == completed &&
+                                           run.step.access.logical == fault + completed &&
+                                           run.step.access.bus_error == !!physical_bus);
+                                    for (unsigned i = 0; i < whole; ++i)
+                                        assert(ram[fpu_store_physical(operand + i)] ==
+                                               (i < offset + completed ? bytes[i] : 0xa5));
+                                    fail_write_physical = UINT32_MAX;
+                                    supervisor = 1;
+                                    put32(pte(0x10000 + page_size), 0xe001);
+                                    put32(pte(0x20000), 0x18001);
+                                    unsigned table_page = root & ~(page_size - 1);
+                                    put32(pte(0x30000), table_page | 1);
+                                    unsigned target = 0x30000 + fault_pte - table_page;
+                                    const unsigned program[] = {0x23fc,
+                                                                1,
+                                                                physical_bus == 2 ? 1U : 0x4001,
+                                                                target >> 16,
+                                                                target & 65535,
+                                                                0xf518,
+                                                                0x226f,
+                                                                physical_bus ? 40U : 32U,
+                                                                physical_bus ? 0x242f
+                                                                : size == 2  ? 0x342f
+                                                                             : 0x242f,
+                                                                physical_bus ? 44U
+                                                                : size == 2  ? 38U
+                                                                             : 36U,
+                                                                0x7600 | (privileged ? 5 : 1),
+                                                                0x4e7b,
+                                                                0x3001,
+                                                                size == 2 ? 0x0e51 : 0x0e91,
+                                                                0x2800,
+                                                                0x5284,
+                                                                0x4e73};
+                                    unsigned handler = 0x10000 + page_size + 0x40;
+                                    unsigned end = handler;
+                                    for (unsigned i = 0; i < sizeof program / sizeof *program; ++i) {
+                                        if (physical_bus && i == sizeof program / sizeof *program - 4) {
+                                            const unsigned rotation[] = {0x2609, 0x0283, 0, 3, 0xe78b, 0xe7ba};
+                                            for (unsigned j = 0; j < sizeof rotation / sizeof *rotation; ++j) {
+                                                code_word(end, rotation[j]);
+                                                end += 2;
+                                            }
+                                            if (size == 2) {
+                                                code_word(end, 0x4842);
+                                                end += 2;
+                                            }
+                                        }
+                                        code_word(end, program[i]);
+                                        end += 2;
+                                    }
+                                    cpu_state.vbr = 0x20000;
+                                    put32(physical(cpu_state.vbr + 8), handler);
+                                    Syn68kMappedDelivery delivery;
+                                    assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+                                    unsigned frame = 0x20100 - 60, fc = privileged ? 5 : 1;
+                                    unsigned data = value;
+                                    if (physical_bus) {
+                                        data <<= (4 - size) * 8;
+                                        unsigned rotation = (fault & 3) * 8;
+                                        if (rotation)
+                                            data = data >> rotation | data << (32 - rotation);
+                                    }
+                                    assert(mapped_value(frame + 2, 4) == 0x10000 &&
+                                           mapped_value(frame + 12, 2) ==
+                                               ((physical_bus ? 0 : 0x400) | fc | (size == 2 ? 0x40 : 0) |
+                                                (!physical_bus && completed ? 0x800 : 0)) &&
+                                           mapped_value(frame + (physical_bus ? 18 : 16), 2) ==
+                                               (0x80 | fc | (size == 2 ? 0x40 : 0)) &&
+                                           !mapped_value(frame + (physical_bus ? 16 : 18), 2) &&
+                                           !mapped_value(frame + 14, 2) && mapped_value(frame + 20, 4) == fault &&
+                                           mapped_value(frame + (physical_bus ? 40 : 32), 4) == fault &&
+                                           mapped_value(frame + (physical_bus ? 44 : 36), 4) == data);
+                                    assert(syn68k_mapped_cpu_run(&cpu, 9 + (physical_bus ? 4 + (size == 2) : 0), &run));
+                                    assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 && EM_D4 == 1 &&
+                                           watched_successes == 1 + !!completed && watched_tail_successes == !!offset &&
+                                           !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
+                                    for (unsigned i = 0; i < whole; ++i)
+                                        assert(ram[fpu_store_physical(operand + i)] ==
+                                               (i < offset + size ? bytes[i] : 0xa5));
+                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                           cpu.pc == next && EM_A0 == expected_a0 && status() == expected_sr &&
+                                           watched_successes == 2 + !!completed &&
+                                           watched_tail_successes == 2 * !!offset &&
+                                           !memcmp(&expected, &cpu_state.fpu, sizeof expected));
+                                    if (traced)
+                                        assert(run.step.vector == 9 && run.step.format == 2 &&
+                                               run.step.fault_address == 0x10000);
+                                    for (unsigned i = 0; i < whole; ++i)
+                                        assert(ram[fpu_store_physical(operand + i)] == bytes[i]);
+                                    ++cases;
                                     offset += size;
-                                    continue;
                                 }
-                                unsigned fault = 0x28000 + (page8k ? 8192 : 4096) - completed, operand = fault - offset;
-                                unsigned mode = modes[m];
-                                if (kind != FPU_STORE_CONTROL && kind != FPU_STORE_MOVE && mode == 3) {
-                                    offset += size;
-                                    continue;
-                                }
-                                unsigned next = pure_store_setup(kind, page8k, privileged, mode, operand, variant, sign,
-                                                                 statuses[c], whole);
-                                unsigned initial_a0 = EM_A0;
-                                Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
-                                Syn68kMappedRun run;
-                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                unsigned traced = !!(statuses[c] & (kind == FPU_STORE_MOVE ? 0x8000 : 0xc000));
-                                assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
-                                       cpu.pc == next);
-                                if (traced)
-                                    assert(run.step.vector == 9 && run.step.format == 2 &&
-                                           run.step.fault_address == 0x10000);
-                                unsigned expected_a0 = EM_A0;
-                                Syn68kFPUState expected = cpu_state.fpu;
-                                unsigned expected_sr = status();
-                                unsigned char bytes[100];
-                                for (unsigned i = 0; i < whole; ++i)
-                                    bytes[i] = ram[fpu_store_physical(operand + i)];
-                                pure_store_setup(kind, page8k, privileged, mode, operand, variant, sign, statuses[c],
-                                                 whole);
-                                Syn68kFPUState at_fault = cpu_state.fpu;
-                                if (kind == FPU_STORE_MOVE)
-                                    at_fault = expected;
-                                else if (kind != FPU_STORE_FRAME)
-                                    at_fault.null_state = 0;
-                                unsigned fault_pte = pte(fault + completed), root = privileged ? 0x6000 : 0x3000;
-                                put32(fault_pte, 0x14005);
-                                watched_physical = fpu_store_physical(fault);
-                                watched_tail_physical = offset ? fpu_store_physical(operand) : UINT32_MAX;
-                                watched_tail_successes = 0;
-                                cpu.pc = 0x10000;
-                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
-                                       run.step.store_state == 4 && cpu.pc == 0x10000 && EM_A0 == initial_a0 &&
-                                       status() == expected_sr && watched_successes == !!completed &&
-                                       watched_tail_successes == !!offset && !run.step.store_tail_valid &&
-                                       !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
-                                unsigned value = 0;
-                                for (unsigned i = offset; i < offset + size; ++i)
-                                    value = value << 8 | bytes[i];
-                                assert(run.step.access.size == size && run.step.access.request == fault &&
-                                       run.step.access.value == value && run.step.access.completed == completed &&
-                                       run.step.access.logical == fault + completed);
-                                for (unsigned i = 0; i < whole; ++i)
-                                    assert(ram[fpu_store_physical(operand + i)] ==
-                                           (i < offset + completed ? bytes[i] : 0xa5));
-                                supervisor = 1;
-                                put32(pte(0x10000 + page_size), 0xe001);
-                                put32(pte(0x20000), 0x18001);
-                                unsigned table_page = root & ~(page_size - 1);
-                                put32(pte(0x30000), table_page | 1);
-                                unsigned target = 0x30000 + fault_pte - table_page;
-                                const unsigned program[] = {0x23fc,
-                                                            1,
-                                                            0x4001,
-                                                            target >> 16,
-                                                            target & 65535,
-                                                            0xf518,
-                                                            0x226f,
-                                                            32,
-                                                            size == 2 ? 0x342f : 0x242f,
-                                                            size == 2 ? 38U : 36U,
-                                                            0x7600 | (privileged ? 5 : 1),
-                                                            0x4e7b,
-                                                            0x3001,
-                                                            size == 2 ? 0x0e51 : 0x0e91,
-                                                            0x2800,
-                                                            0x5284,
-                                                            0x4e73};
-                                unsigned handler = 0x10000 + page_size + 0x40;
-                                for (unsigned i = 0; i < sizeof program / sizeof *program; ++i)
-                                    code_word(handler + i * 2, program[i]);
-                                cpu_state.vbr = 0x20000;
-                                put32(physical(cpu_state.vbr + 8), handler);
-                                Syn68kMappedDelivery delivery;
-                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-                                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
-                                unsigned frame = 0x20100 - 60, fc = privileged ? 5 : 1;
-                                assert(mapped_value(frame + 2, 4) == 0x10000 &&
-                                       mapped_value(frame + 12, 2) ==
-                                           (0x400 | fc | (size == 2 ? 0x40 : 0) | (completed ? 0x800 : 0)) &&
-                                       mapped_value(frame + 16, 2) == (0x80 | fc | (size == 2 ? 0x40 : 0)) &&
-                                       mapped_value(frame + 20, 4) == fault && mapped_value(frame + 32, 4) == fault &&
-                                       mapped_value(frame + 36, 4) == value);
-                                assert(syn68k_mapped_cpu_run(&cpu, 9, &run));
-                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 && EM_D4 == 1 &&
-                                       watched_successes == 1 + !!completed && watched_tail_successes == !!offset &&
-                                       !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
-                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
-                                       cpu.pc == next && EM_A0 == expected_a0 && status() == expected_sr &&
-                                       watched_successes == 2 + !!completed && watched_tail_successes == 2 * !!offset &&
-                                       !memcmp(&expected, &cpu_state.fpu, sizeof expected));
-                                if (traced)
-                                    assert(run.step.vector == 9 && run.step.format == 2 &&
-                                           run.step.fault_address == 0x10000);
-                                for (unsigned i = 0; i < whole; ++i)
-                                    assert(ram[fpu_store_physical(operand + i)] == bytes[i]);
-                                ++cases;
-                                offset += size;
-                            }
                         }
-    watched_physical = watched_tail_physical = UINT32_MAX;
+    memory.aligned_transfers = 0;
+    fail_write_physical = watched_physical = watched_tail_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
 
-static void fpu_auto_control_replay_guards(void)
+static void guest_fpu_pure_replays(enum FPUStoreKind kind, unsigned completed)
+{
+    guest_fpu_pure_bus_replays(kind, completed, 0);
+}
+
+static void guest_fpu_physical_replays(void)
+{
+    for (unsigned bus = 1; bus <= 2; ++bus)
+        for (unsigned completed = 0; completed < 4; ++completed) {
+            guest_fpu_pure_bus_replays(FPU_STORE_MOVE, completed, bus);
+            guest_fpu_pure_bus_replays(FPU_STORE_CONTROL, completed, bus);
+            guest_fpu_pure_bus_replays(FPU_STORE_LIST, completed, bus);
+            guest_fpu_pure_bus_replays(FPU_STORE_FRAME, completed, bus);
+        }
+}
+
+static void fpu_auto_control_replay_bus_guards(unsigned physical_bus)
 {
     for (unsigned mode = 3; mode <= 4; ++mode)
         for (unsigned mutation = 0; mutation < 6; ++mutation) {
-            unsigned operand = 0x28ffe;
+            unsigned operand = physical_bus == 2 ? 0x28102 : 0x28ffe;
             pure_store_setup(FPU_STORE_CONTROL, 0, 1, mode, operand, 0, 0, 0, 12);
-            put32(pte(0x29000), 0x14005);
+            if (physical_bus) {
+                memory.aligned_transfers = 1;
+                fail_write_physical = fpu_store_physical(operand + 2);
+            }
+            else
+                put32(pte(0x29000), 0x14005);
             mutate_write_physical = fpu_store_physical(operand);
             const unsigned mutations[] = {1, 4, 8, 16, 32, 2};
             write_mutation = mutations[mutation];
@@ -3252,18 +3344,31 @@ static void fpu_auto_control_replay_guards(void)
             ++cases;
         }
     mutate_write_physical = replay_read_physical = UINT32_MAX;
+    memory.aligned_transfers = 0;
+    fail_write_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
 
-static void fpu_numeric_replay_guards(void)
+static void fpu_auto_control_replay_guards(void)
 {
-    const unsigned mutations[] = {1, 4, 8, 16, 32, 2, 64, 128, 256, 512, 1024, 2048, 4096};
+    for (unsigned bus = 0; bus < 3; ++bus)
+        fpu_auto_control_replay_bus_guards(bus);
+}
+
+static void fpu_numeric_replay_bus_guards(unsigned physical_bus)
+{
+    const unsigned mutations[] = {1, 4, 8, 16, 32, 2, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
     for (unsigned mode = 2; mode <= 4; ++mode) {
         for (unsigned i = 0; i < sizeof mutations / sizeof *mutations; ++i) {
-            unsigned operand = 0x28fff;
+            unsigned operand = physical_bus == 2 ? 0x28103 : 0x28fff;
             pure_store_setup(FPU_STORE_MOVE, 0, 1, mode, operand, 0, 0, 0, 12);
-            put32(pte(0x29000), 0x14005);
+            if (physical_bus) {
+                memory.aligned_transfers = 1;
+                fail_write_physical = fpu_store_physical(operand + 1);
+            }
+            else
+                put32(pte(0x29000), 0x14005);
             mutate_write_physical = fpu_store_physical(operand);
             write_mutation = mutations[i];
             Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
@@ -3287,6 +3392,8 @@ static void fpu_numeric_replay_guards(void)
                 assert(cpu_state.fpu.regs[0].significand == (UINT64_C(0xa000000000000000) ^ UINT64_C(0x04030201)));
             if (mutation & 512)
                 assert(cpu_state.fpu.frame_size == 52);
+            if (mutation & 8192)
+                assert(cpu_state.fpu.null_state == 1);
             CPUState before = cpu_state;
             unsigned old_reads = reads, old_writes = writes;
             Syn68kMappedDelivery delivery;
@@ -3299,7 +3406,12 @@ static void fpu_numeric_replay_guards(void)
            numeric exception suppresses stores, even on a protected page. */
         pure_store_setup(FPU_STORE_MOVE, 0, 1, mode, 0x29000, 2, 0, 0x8000, 12);
         cpu_state.fpu.fpcr |= 0x4000;
-        put32(pte(0x29000), 0x14005);
+        if (physical_bus) {
+            memory.aligned_transfers = 1;
+            fail_write_physical = fpu_store_physical(0x29000);
+        }
+        else
+            put32(pte(0x29000), 0x14005);
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
@@ -3308,8 +3420,16 @@ static void fpu_numeric_replay_guards(void)
         ++cases;
     }
     mutate_write_physical = UINT32_MAX;
+    memory.aligned_transfers = 0;
+    fail_write_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
+}
+
+static void fpu_numeric_replay_guards(void)
+{
+    for (unsigned bus = 0; bus < 3; ++bus)
+        fpu_numeric_replay_bus_guards(bus);
 }
 
 static void fpu_list_frame_replay_guards(enum FPUStoreKind kind)
@@ -3324,13 +3444,15 @@ static void fpu_list_frame_replay_guards(enum FPUStoreKind kind)
             trace_read_physical = physical(0x10000);
             trace_read_sr = 0;
         }
-        if (guard == 3 || guard == 9)
+        if (guard == 3 || guard == 9) {
+            memory.aligned_transfers = 1;
             fail_write_physical = 0x14000;
+        }
         else
             put32(pte(0x29000), 0x14005);
-        if (guard == 0 || (guard >= 4 && guard <= 7)) {
+        if (guard == 0 || guard == 3 || guard == 9 || (guard >= 4 && guard <= 7)) {
             mutate_write_physical = fpu_store_physical(operand);
-            write_mutation = guard == 0 ? 32 : mutations[guard - 4];
+            write_mutation = guard == 0 ? 32 : guard == 3 || guard == 9 ? 4 : mutations[guard - 4];
         }
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
@@ -3338,7 +3460,7 @@ static void fpu_list_frame_replay_guards(enum FPUStoreKind kind)
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.store_state &&
                run.step.exception_pc == 0x10000 && run.step.access.completed == (guard >= 8) &&
-               write_mutated == (guard == 0 || (guard >= 4 && guard <= 7)));
+               write_mutated == (guard == 0 || guard == 3 || guard == 9 || (guard >= 4 && guard <= 7)));
         if (kind == FPU_STORE_FRAME)
             assert(cpu_state.fpu.frame_size == 52 && cpu_state.fpu.pending_vector);
         CPUState before = cpu_state;
@@ -3348,6 +3470,7 @@ static void fpu_list_frame_replay_guards(enum FPUStoreKind kind)
                !memcmp(&before, &cpu_state, sizeof before));
         ++cases;
     }
+    memory.aligned_transfers = 0;
     fail_write_physical = mutate_write_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
@@ -3439,6 +3562,9 @@ static void fpu_final_writeback_guards(void)
         fpu_store_setup(0, 1, forms[i].format, 2, operand, 0, 0, 15);
         fpu_store_exception(forms[i].exception);
         fail_write_physical = fpu_store_physical(operand + forms[i].failed_offset);
+        mutate_write_physical = fail_write_physical;
+        write_mutation = 4;
+        unsigned d2 = EM_D2, d3 = EM_D3, a1 = EM_A1;
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
@@ -3449,6 +3575,7 @@ static void fpu_final_writeback_guards(void)
             assert(cpu_state.fpu.frame_size == 100 &&
                    cpu_state.fpu.pending_vector == (forms[i].exception == 3 ? 53U : 49U) &&
                    (cpu_state.fpu.frame[0x49] & 0x10));
+        assert(write_mutated && EM_D2 == (d2 ^ 0x04030201) && EM_D3 == (d3 ^ 0x04030201) && EM_A1 == (a1 ^ 0x100));
         CPUState before = cpu_state;
         unsigned old_reads = reads, old_writes = writes;
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
@@ -3456,7 +3583,7 @@ static void fpu_final_writeback_guards(void)
                !memcmp(&before, &cpu_state, sizeof before));
         ++cases;
     }
-    fail_write_physical = watched_physical = UINT32_MAX;
+    fail_write_physical = mutate_write_physical = watched_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
@@ -3470,12 +3597,16 @@ static void fpu_list_writeback_guards(void)
         fpu_list_store(2, 0x81, 0, operand, 24);
         fail_write_physical = fpu_store_physical(operand + offsets[i]);
         watched_physical = fail_write_physical;
+        mutate_write_physical = fail_write_physical;
+        write_mutation = 4;
+        unsigned d2 = EM_D2, d3 = EM_D3, a1 = EM_A1;
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.store_state &&
                !watched_successes && run.step.exception_pc == 0x10000 && cpu.pc == 0x10000);
+        assert(write_mutated && EM_D2 == (d2 ^ 0x04030201) && EM_D3 == (d3 ^ 0x04030201) && EM_A1 == (a1 ^ 0x100));
         CPUState before = cpu_state;
         unsigned old_reads = reads, old_writes = writes;
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
@@ -3483,7 +3614,7 @@ static void fpu_list_writeback_guards(void)
                !memcmp(&before, &cpu_state, sizeof before));
         ++cases;
     }
-    fail_write_physical = watched_physical = UINT32_MAX;
+    fail_write_physical = mutate_write_physical = watched_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
@@ -3497,12 +3628,16 @@ static void fpu_control_writeback_guards(void)
         fpu_control_store(2, 7, 0, operand, 12);
         fail_write_physical = fpu_store_physical(operand + offsets[i]);
         watched_physical = fail_write_physical;
+        mutate_write_physical = fail_write_physical;
+        write_mutation = 4;
+        unsigned d2 = EM_D2, d3 = EM_D3, a1 = EM_A1;
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.store_state &&
                !watched_successes && run.step.exception_pc == 0x10000 && cpu.pc == 0x10000);
+        assert(write_mutated && EM_D2 == (d2 ^ 0x04030201) && EM_D3 == (d3 ^ 0x04030201) && EM_A1 == (a1 ^ 0x100));
         CPUState before = cpu_state;
         unsigned old_reads = reads, old_writes = writes;
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
@@ -3510,7 +3645,7 @@ static void fpu_control_writeback_guards(void)
                !memcmp(&before, &cpu_state, sizeof before));
         ++cases;
     }
-    fail_write_physical = watched_physical = UINT32_MAX;
+    fail_write_physical = mutate_write_physical = watched_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
@@ -3527,6 +3662,9 @@ static void fpu_frame_writeback_guards(void)
         Syn68kFPUState pending = cpu_state.fpu;
         fail_write_physical = fpu_store_physical(operand + offsets[i]);
         watched_physical = fail_write_physical;
+        mutate_write_physical = fail_write_physical;
+        write_mutation = 4;
+        unsigned d2 = EM_D2, d3 = EM_D3, a1 = EM_A1;
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
@@ -3534,6 +3672,7 @@ static void fpu_frame_writeback_guards(void)
         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.store_state &&
                !watched_successes && run.step.exception_pc == 0x10000 && cpu.pc == 0x10000 &&
                !memcmp(&pending, &cpu_state.fpu, sizeof pending));
+        assert(write_mutated && EM_D2 == (d2 ^ 0x04030201) && EM_D3 == (d3 ^ 0x04030201) && EM_A1 == (a1 ^ 0x100));
         CPUState before = cpu_state;
         unsigned old_reads = reads, old_writes = writes;
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
@@ -3551,7 +3690,7 @@ static void fpu_frame_writeback_guards(void)
            component.store_state == 1 && component.store_next == 0x10002 && component.store_frame_clear == 1 &&
            !memcmp(&pending, &cpu_state.fpu, sizeof pending));
     ++cases;
-    fail_write_physical = watched_physical = UINT32_MAX;
+    fail_write_physical = mutate_write_physical = watched_physical = UINT32_MAX;
     set_status(0x2000);
     syn68k_fpu_reset();
 }
@@ -3841,6 +3980,7 @@ int main(int argc, char** argv)
             if (emitted)
                 assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
             guest_fpu_physical_writebacks();
+            guest_fpu_physical_replays();
             partial_writeback_record_guards();
             for (unsigned reg = 0; reg < 8; ++reg)
                 guest_fpu_control_replays(reg);
@@ -3912,6 +4052,7 @@ int main(int argc, char** argv)
             guest_fpu_unaligned_writebacks();
             guest_fpu_partial_atc_writebacks();
             guest_fpu_physical_writebacks();
+            guest_fpu_physical_replays();
             guest_fpu_mmu_traces();
             guest_fpu_trace_writebacks();
             for (unsigned reg = 0; reg < 8; ++reg)

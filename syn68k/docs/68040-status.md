@@ -145,6 +145,8 @@ The mapped stream runner constructs supported CPU exception frames and handles
 the read-restart and writeback cases described in [the MMU integration notes](mmu040.md).
 Mapped FPU/MMU trace uses instruction-entry T1/T0, including deferred CT after
 retired FPU stores and trace after complete reexecution of unchanged aborts.
+Physical bus prefixes and certified early stores are described in the
+[writeback recovery contract](68040-writeback-recovery.md).
 This is distinct from enabling paging in ROMAW: its Toolbox and host-pointer
 interfaces still use flat guest memory. Physical cache/bus behavior belongs to
 the embedding memory implementation; the operand boundary is not a cycle model.
@@ -154,7 +156,7 @@ the embedding memory implementation; the operand boundary is not a cycle model.
 - General busy-frame continuation, including FPSP-generated internal states
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
-- Remaining mapped access-error continuations: partial physical writes,
+- Remaining mapped access-error continuations: unaligned integer writes,
   nonindexed MOVEM restart, MOVEM/MOVE16 stores and the constructed user-mode
   throwaway-RTE case. Supported scalar/FPU/locked writebacks already populate
   format-7 slots; this is no longer an address-only fault model. Saved-EA MOVEM

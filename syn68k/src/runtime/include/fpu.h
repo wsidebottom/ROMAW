@@ -25,8 +25,8 @@ typedef struct {
     unsigned vector, format;
     Syn68kMMU040Access access;
     /* Final move-out, FMOVEM, control-list, FSAVE and FScc stores can
-       use WB1/WB2/WB3. A partial ATC writeback retains the whole operand;
-       cleanup can repeat the completed first-page prefix.
+       use WB1/WB2/WB3. Physical and ATC writebacks retain the whole scalar;
+       cleanup can repeat completed bus-subcycle or first-page prefixes.
        1 offers already completed FPU/EA state and the following PC; it does
        not retire the component step. A pending post-instruction exception is
        captured separately, with its original calculated EA.
@@ -40,7 +40,7 @@ typedef struct {
     unsigned post_vector;
     /* One following longword at access.request + 4. Move-out/FMOVEM capture
        before the failed callback; controls/FSAVE sample the following live
-       source afterward. Earlier successful transfers must not be repeated. */
+       source afterward. Retired stores do not repeat earlier transfers. */
     uint32_t store_tail;
     unsigned store_tail_valid;
     /* FSAVE clears its saved-frame state only when the runner retires it. */
