@@ -66,7 +66,7 @@ resource 'INTL' (1) {
         },
         0, 201, 0, 3, /* suppress day, format, leading zero, abbreviation length */
         "\0x00\0x00\0x00\0x00", ", \0x00\0x00", " \0x00\0x00\0x00", ", \0x00\0x00", "\0x00\0x00\0x00\0x00", /* long-date separators */
-        0, 20085 /* version and local routine (68K RTS) */
+        0, NativeLocalization /* version and native C localization entry */
     }
 };
 
