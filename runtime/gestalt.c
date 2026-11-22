@@ -7,7 +7,7 @@
 
   Functions: ROMlib_add_to_gestalt_list, ROMlib_clear_gestalt_list, ROMlib_gestalt_value, gestalt_set_memory_size,
              gestalt_set_physical_gestalt_callback, gestalt_set_system_version, replace_physgestalt_selector,
-             ROMlib_powerpc_cache_read
+             ROMlib_powerpc_cache_read, ROMlib_remove_gestalt_handlers
 
   Origin:    Existing repository source in executor/src/runtime; original attribution and provenance comments are
              preserved below.
@@ -345,6 +345,19 @@ typedef struct gestalt_link_str {
 } gestalt_link_t;
 
 PRIVATE gestalt_link_t* gestalt_head;
+
+void ROMlib_remove_gestalt_handlers(int (*matches)(ProcPtr, void*), void* owner)
+{
+    for (gestalt_link_t** link = &gestalt_head; *link;) {
+        gestalt_link_t* entry = *link;
+        if (matches(entry->selectorFunction, owner)) {
+            *link = entry->next;
+            DisposPtr((Ptr)entry);
+        }
+        else
+            link = &entry->next;
+    }
+}
 
 PRIVATE gestalt_link_t* find_selector_on_list(OSType selector)
 {

@@ -180,6 +180,7 @@ extern trap OSErrRET NewGestalt(OSType selector, ProcPtr selFunc);
 extern trap OSErrRET ReplaceGestalt(OSType selector, ProcPtr selFunc, ProcPtr* oldSelFuncp);
 
 extern trap OSErrRET C_GestaltTablesOnly(OSType selector, LONGINT* responsep);
+extern void ROMlib_remove_gestalt_handlers(int (*matches)(ProcPtr, void*), void* owner);
 
 #endif
 

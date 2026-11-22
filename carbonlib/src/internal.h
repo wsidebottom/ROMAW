@@ -76,6 +76,7 @@ int ROMlib_carbon_nqd_put_pic_word(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_nqd_check_picture(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_nqd_hilite_rect(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_nqd_hilite_region(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_nqd_unflatten_pixpat(ROMlib_carbon_ppc_frame* call);
 BOOLEAN ROMlib_carbon_window_hilited(WindowPtr window);
 BOOLEAN ROMlib_carbon_window_update_pending(WindowPtr window);
 Rect* ROMlib_carbon_window_standard_state(WindowPtr window, Rect* bounds);

@@ -493,6 +493,21 @@ PUBLIC AuxCtlHandle ROMlib_live_control_aux(ControlHandle control)
     return NULL;
 }
 
+PUBLIC ControlHandle ROMlib_control_hit_target(ControlHandle control)
+{
+    AuxCtlHandle aux = ROMlib_live_control_aux(control);
+    if (!aux)
+        return control;
+    ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+    if (!extra->supervisor)
+        return control;
+    ControlHandle supervisor = SYN68K_TO_US(extra->supervisor);
+    if (ROMlib_live_control_aux(supervisor) && CTL_OWNER(control) == CTL_OWNER(supervisor))
+        return supervisor;
+    extra->supervisor = 0;
+    return control;
+}
+
 static boolean_t control_has_feature(ControlHandle control, uint32 feature)
 {
     uint32 features;

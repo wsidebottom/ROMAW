@@ -16,7 +16,8 @@
              ROMlib_launch_cfm68k_fragment, ROMlib_launch_cfm68k_resource, ROMlib_launch_ppc_fragment,
              ROMlib_ppc_callback, ROMlib_ppc_callback_failed, ROMlib_ppc_code_fragment, ROMlib_ppc_completion,
              ROMlib_ppc_begin_launch, ROMlib_ppc_request_system,
-             ROMlib_ppc_component_entry, ROMlib_ppc_event_loop_entered, ROMlib_ppc_gestalt, ROMlib_ppc_mixed_entry,
+             ROMlib_ppc_component_entry, ROMlib_ppc_display_dispatch, ROMlib_ppc_event_loop_entered, ROMlib_ppc_gestalt,
+             ROMlib_ppc_mixed_entry,
              ROMlib_ppc_mixed_entry_error, ROMlib_ppc_set_aot, ROMlib_ppc_set_jit, ROMlib_ppc_set_system
 
   Origin:    Existing repository source in synppc/src/executor; original attribution and provenance comments are
@@ -54,6 +55,7 @@
 #include "Iconutil.h"
 #include "Finder.h"
 #include "NotifyMgr.h"
+#include "ShutDown.h"
 #include "CommTool.h"
 #include <limits.h>
 #include <float.h>
@@ -75,6 +77,7 @@
 #include "rsys/process.h"
 #include "rsys/prefs.h"
 #include "rsys/resource.h"
+#include "rsys/system_resources.h"
 #include "rsys/speech.h"
 #include "rsys/menu.h"
 #include "HelpMgr.h"
@@ -169,6 +172,27 @@ typedef struct ppc_notifier {
     int active;
 } ppc_notifier;
 
+typedef struct ppc_folder_notification {
+    struct ppc_folder_notification* next;
+    ROMlib_pef_image* owner;
+    uint32 procedure, refcon;
+    boolean_t removed;
+} ppc_folder_notification;
+
+typedef struct ppc_display_notification {
+    struct ppc_display_notification* next;
+    ROMlib_pef_image* owner;
+    ProcessSerialNumber process;
+    uint32 procedure, refcon;
+    boolean_t extended;
+} ppc_display_notification;
+
+typedef struct ppc_shutdown_callback {
+    struct ppc_shutdown_callback* next;
+    uint32 procedure, code;
+    uint16 flags;
+} ppc_shutdown_callback;
+
 /* Appearance drawing states are opaque guest tokens with per-launch ownership.
    They save color/pen state, not a port, clip region or font selection. */
 typedef struct ppc_theme_state {
@@ -196,6 +220,8 @@ typedef struct {
     char translation_path[4096];
     ppc_allocation* allocations;
     ppc_callback_stack* callback_stacks;
+    ppc_shutdown_callback* shutdown_callbacks;
+    int shutting_down;
     unsigned callback_depth, allocating_callback_stack;
     const ROMlib_ppc_registers* native_caller;
     ppc_import* imports;
@@ -210,6 +236,7 @@ typedef struct {
     FSSpec startup_spec;
     ppc_fragment* init_order[512];
     unsigned n_initialized, graph_depth, graph_index;
+    uint32 saved_desktop_device_loop_return;
     ppc_fragment* graph_stack[512];
     uint32 loader_vectors;
     uint32 closure, ctype_data, iob_data, carbon_data, flt_max, dbl_max;
@@ -224,10 +251,29 @@ typedef struct {
     int exited, retry_system, application_started, application_running;
     uint32 required_system;
     ppc_notifier* notifiers;
+    ppc_folder_notification* folder_notifications;
+    unsigned folder_notification_depth;
     ppc_theme_state* theme_states;
     ppc_fragment* notifying_owner;
     uint32 notifier_serial;
     int floating_windows_inactive;
+    boolean_t display_initialized;
+    ppc_display_notification* display_notifications;
+
+    struct {
+        GDHandle device;
+        uint32 id;
+    } displays[32];
+
+    unsigned display_count;
+    uint32 next_display_id;
+
+    struct {
+        uint32 procedure;
+        ROMlib_pef_image* owner;
+    } desktop_draw, display_patches[4];
+
+    uint32 desktop_draw_refcon;
     ROMlib_ppc_threads* threads;
     ROMlib_native_memory* memory_manager;
     Point iconographer_mouse;
@@ -346,6 +392,17 @@ PRIVATE void* ppc_allocate(void* opaque, uint32 size, uint32 alignment, uint32* 
     return a->aligned;
 }
 
+static int ppc_allocation_has_address(const ppc_allocation* allocation, uintptr_t address)
+{
+    const uintptr_t base = (uintptr_t)allocation->aligned;
+    return address >= base && address - base < allocation->size;
+}
+
+static int ppc_gestalt_handler_in_allocation(ProcPtr procedure, void* opaque)
+{
+    return ppc_allocation_has_address(opaque, (uintptr_t)procedure);
+}
+
 PRIVATE void ppc_release(void* opaque, void* p)
 {
     ppc_context* ctx = opaque;
@@ -354,6 +411,17 @@ PRIVATE void ppc_release(void* opaque, void* p)
         if ((*link)->aligned == p) {
             ppc_allocation* a = *link;
             *link = a->next;
+            ROMlib_remove_gestalt_handlers(ppc_gestalt_handler_in_allocation, a);
+            for (ppc_shutdown_callback** callback = &ctx->shutdown_callbacks; *callback;) {
+                ppc_shutdown_callback* entry = *callback;
+                if (ppc_allocation_has_address(a, (uintptr_t)SYN68K_TO_US(entry->procedure)) ||
+                    ppc_allocation_has_address(a, (uintptr_t)SYN68K_TO_US(entry->code))) {
+                    *callback = entry->next;
+                    free(entry);
+                }
+                else
+                    callback = &entry->next;
+            }
             DisposPtr(a->base);
             free(a);
             return;
@@ -403,6 +471,8 @@ PRIVATE int ppc_cfm_service(ppc_context*, const char*, ROMlib_ppc_registers*);
 static int ppc_fragment_notify(ppc_context*, ppc_fragment*, uint32, uint32, unsigned);
 PRIVATE int ppc_mixed_service(ppc_context*, const char*, ROMlib_ppc_registers*, const ROMlib_carbon_ppc_frame*);
 PRIVATE int ppc_service(void*, uint32, ROMlib_ppc_registers*);
+static int ppc_initialize_desktop_appearance(ppc_context*);
+static int ppc_shutdown_service(ppc_context*, const char*, ROMlib_ppc_registers*);
 
 PRIVATE ROMlib_pef_image* cfm68k_prepare_resource(ppc_context* ctx, FSSpecPtr spec)
 {
@@ -503,9 +573,10 @@ PRIVATE ROMlib_pef_image* ppc_prepare_file_status(ppc_context* ctx, FSSpecPtr sp
     ROMlib_pef_environment env;
     ROMlib_pef_image* image = NULL;
     INTEGER ref = 0;
-    LONGINT eof, amount;
+    LONGINT eof;
     OSErr err;
-    void* bytes = NULL;
+    unsigned char* bytes = NULL;
+    Ptr read_buffer = NULL;
     if (file_error)
         *file_error = noErr;
     memset(&env, 0, sizeof env);
@@ -526,13 +597,25 @@ PRIVATE ROMlib_pef_image* ppc_prepare_file_status(ppc_context* ctx, FSSpecPtr sp
         if (length > (uint32)eof - offset || length > INT32_MAX)
             err = paramErr;
     }
-    if (err == noErr && !(bytes = malloc(length)))
+    if (err == noErr && !(bytes = malloc(length ? length : 1)))
         err = memFullErr;
     if (err == noErr)
         err = SetFPos(ref, fsFromStart, offset);
-    amount = length;
-    if (err == noErr)
-        err = FSReadAll(ref, &amount, bytes);
+    /* File Manager buffers use guest addresses. Large host allocations can
+       exhaust the host aliases and can span multiple alias pages. */
+    const unsigned read_size = MIN(length, 64 * 1024U);
+    if (err == noErr && read_size && !(read_buffer = NewPtr(read_size)))
+        err = memFullErr;
+    for (unsigned copied = 0; err == noErr && copied < length;) {
+        LONGINT amount = MIN(read_size, length - copied);
+        err = FSReadAll(ref, &amount, read_buffer);
+        if (err == noErr) {
+            memcpy(bytes + copied, read_buffer, amount);
+            copied += amount;
+        }
+    }
+    if (read_buffer)
+        DisposPtr(read_buffer);
     FSClose(ref);
     if (err == noErr) {
         image = ROMlib_pef_prepare_arch(bytes, length, &env, cfm_architecture(ctx));
@@ -795,8 +878,23 @@ PRIVATE int ppc_external_symbol(ppc_context* ctx, const char* library, const cha
          (!strcmp(requester->name, "FontObjects") && !strcmp(library, "FontObjectsGlobals") && name[0] == 'g') ||
          (!strcmp(requester->name, "ATSStreaming") &&
           ((!strcmp(library, "ATSSupport") && !strcmp(name, "identityMatrix")) ||
-           (!strcmp(library, "GlyphsCache") && name[0] == 'g'))));
-    if (actual_class != symbol_class && !font_data) {
+           (!strcmp(library, "GlyphsCache") && name[0] == 'g'))) ||
+         /* ATSUnicodeLib at 0x6920, ATSGlue at 0x8f8 and 0xa64, and LayoutCore
+            at 0x7bc and 0x551c read through the relocated pointers as data. */
+         ((!strcmp(requester->name, "ATSUnicodeLib") || !strcmp(requester->name, "ATSGlue")) &&
+          !strcmp(library, "GlyphsCache") && !strcmp(name, "gFracBmapAGPtr")) ||
+         ((!strcmp(requester->name, "ATSGlue") || !strcmp(requester->name, "LayoutCore")) &&
+          !strcmp(library, "ATSSupport") && !strcmp(name, "identityMatrix")) ||
+         (!strcmp(requester->name, "LayoutCore") && !strcmp(library, "GlyphsCache") &&
+          !strcmp(name, "gImagePathAGPtr")));
+    /* These two System 9 libraries load the context pointer through their
+       relocated TOC slots (WindowsLib +0x610, ControlsLib +0x1f8). Their
+       import tables declare transition vectors, but ToolboxUtils exports data. */
+    const boolean_t toolbox_context =
+        requester && actual_class == 1 && symbol_class == 2 &&
+        (!strcmp(requester->name, "WindowsLib") || !strcmp(requester->name, "ControlsLib")) &&
+        !strcmp(library, "ToolboxUtils") && !strcmp(name, "gSystemToolboxContext");
+    if (actual_class != symbol_class && !font_data && !toolbox_context) {
         snprintf(ctx->error, sizeof ctx->error, "PowerPC symbol class mismatch: %s:%s", library, name);
         return -1;
     }
@@ -813,10 +911,6 @@ static int ppc_install_import(ppc_context* ctx, ppc_import binding, const char* 
     uint32* words;
     if (ctx->n_imports >= 0x03fffffe)
         return 0;
-    grown = realloc(ctx->imports, (ctx->n_imports + 1) * sizeof *grown);
-    if (!grown)
-        return 0;
-    ctx->imports = grown;
     binding.name = malloc(strlen(library) + strlen(name) + 2);
     if (binding.name)
         sprintf(binding.name, "%s:%s", library, name);
@@ -827,6 +921,15 @@ static int ppc_install_import(ppc_context* ctx, ppc_import binding, const char* 
         free(binding.name);
         return 0;
     }
+    /* NewPtr may invoke a guest grow-zone callback, which can register imports.
+       Reserve the table slot only after that callback has returned. */
+    grown = ctx->n_imports < 0x03fffffe ? realloc(ctx->imports, (ctx->n_imports + 1) * sizeof *grown) : NULL;
+    if (!grown) {
+        ppc_release(ctx, words);
+        free(binding.name);
+        return 0;
+    }
+    ctx->imports = grown;
     if (cfm_architecture(ctx) == kMotorola68KArch)
         stub_address = callback_install(cfm68k_import, (void*)(uintptr_t)(ctx->n_imports + 1));
     else
@@ -1815,6 +1918,17 @@ PRIVATE LONGINT ppc_cur_dir_store(void)
     return CL(CurDirStore);
 }
 
+static OSErr ppc_replace_gestalt(OSType selector, ProcPtr procedure, HIDDEN_ProcPtr* previous)
+{
+    if (!previous || !ROMlib_win_accessible_span(previous, sizeof *previous, TRUE))
+        return paramErr;
+    ProcPtr old_procedure;
+    const OSErr result = ReplaceGestalt(selector, procedure, &old_procedure);
+    if (!result)
+        HIDDEN_RAW_SET(*previous, RM(old_procedure));
+    return result;
+}
+
 PRIVATE void ppc_set_cur_dir_store(LONGINT directory)
 {
     CurDirStore = CL(directory);
@@ -1837,6 +1951,14 @@ PUBLIC int ROMlib_ppc_gestalt(OSType selector, LONGINT* response)
         *response = CL((1 << 0) | (1 << 2) | (1 << 3));
         return 1;
     }
+    /* The saved initializer probes the registry before it creates the
+       shared font collections and registers its own Appearance selectors. */
+    if (selector == TICK("appr"))
+        for (const ppc_fragment* fragment = ppc_active_context->fragments; fragment; fragment = fragment->next)
+            if (fragment == fragment->owner && fragment->initialized == 1 && fragment->image &&
+                !strcmp(fragment->name, "AppearanceLib"))
+                return 0;
+
     /* The native Appearance bindings are available to PowerPC fragments. */
     if (selector == TICK("appr") || selector == TICK("apvr")) {
         *response = CL(selector == TICK("appr") ? 1 : 0x0100);
@@ -2163,6 +2285,30 @@ PRIVATE void* ppc_key_map(void)
     return KeyMap;
 }
 
+static void ppc_lm_get_desk_pattern(Pattern* output)
+{
+    if (output && ROMlib_win_accessible_span(output, sizeof *output, TRUE))
+        memmove(output, DeskPattern, sizeof *output);
+}
+
+static void ppc_lm_set_desk_pattern(const Pattern* input)
+{
+    if (input && ROMlib_win_accessible_span(input, sizeof *input, FALSE))
+        memmove(DeskPattern, input, sizeof *input);
+}
+
+static void ppc_lm_get_drag_pattern(Pattern* output)
+{
+    if (output && ROMlib_win_accessible_span(output, sizeof *output, TRUE))
+        memmove(output, DragPattern, sizeof *output);
+}
+
+static void ppc_lm_set_drag_pattern(const Pattern* input)
+{
+    if (input && ROMlib_win_accessible_span(input, sizeof *input, FALSE))
+        memmove(DragPattern, input, sizeof *input);
+}
+
 PRIVATE GDHandle ppc_dm_first_screen_device(Boolean active_only)
 {
     const uint16_t mask = (1 << screenDevice) | (active_only ? 1 << screenActive : 0);
@@ -2172,24 +2318,74 @@ PRIVATE GDHandle ppc_dm_first_screen_device(Boolean active_only)
     return NULL;
 }
 
+enum { dm_sw_not_initialized = -6227, dm_display_not_found = -6229, dm_first_display_id = 0x100 };
+
+static unsigned ppc_dm_device_index(const ppc_context* ctx, GDHandle device)
+{
+    unsigned i = 0;
+    while (i < ctx->display_count && ctx->displays[i].device != device)
+        ++i;
+    return i;
+}
+
+static OSErr ppc_dm_refresh_devices(ppc_context* ctx)
+{
+    const GDHandle first = ppc_dm_first_screen_device(FALSE);
+    for (unsigned i = 0; i < ctx->display_count;) {
+        GDHandle live = first;
+        while (live && (live != ctx->displays[i].device || !(CW(GD_FLAGS_X(live)) & (1 << screenDevice))))
+            live = GD_NEXT_GD(live);
+        if (live)
+            ++i;
+        else
+            ctx->displays[i] = ctx->displays[--ctx->display_count];
+    }
+    if (!first)
+        return dm_sw_not_initialized;
+    if (!ctx->next_display_id) {
+        ctx->next_display_id = dm_first_display_id;
+        const GDHandle main = MR(MainDevice);
+        if (main && (CW(GD_FLAGS_X(main)) & (1 << screenDevice))) {
+            ctx->displays[0].device = main;
+            ctx->displays[0].id = ctx->next_display_id++;
+            ctx->display_count = 1;
+        }
+    }
+    for (GDHandle device = first; device; device = GD_NEXT_GD(device)) {
+        if (!(CW(GD_FLAGS_X(device)) & (1 << screenDevice)))
+            continue;
+        const unsigned i = ppc_dm_device_index(ctx, device);
+        if (i < ctx->display_count)
+            continue;
+        if (i == NELEM(ctx->displays) || ctx->next_display_id == UINT32_MAX)
+            return memFullErr;
+        ctx->displays[i].device = device;
+        ctx->displays[i].id = ctx->next_display_id++;
+        ++ctx->display_count;
+    }
+    return noErr;
+}
+
 PRIVATE OSErr ppc_dm_get_display_id(GDHandle requested, uint32* id, Boolean fall_back_to_main)
 {
     if (!id)
         return paramErr;
-    const GDHandle main = MR(MainDevice);
-    uint32 display_id = 0x101;
-    for (GDHandle device = MR(DeviceList); device; device = GD_NEXT_GD(device)) {
-        if (!(CW(GD_FLAGS_X(device)) & (1 << screenDevice)))
-            continue;
-        if (device == requested) {
-            *id = CL(device == main ? 0x100 : display_id);
-            return noErr;
-        }
-        if (device != main)
-            ++display_id;
-    }
-    *id = CL(fall_back_to_main && main ? 0x100 : 0);
-    return *id ? noErr : paramErr;
+    *id = 0;
+    ppc_context* ctx = ppc_active_context;
+    if (!ctx)
+        return dm_sw_not_initialized;
+    const OSErr status = ppc_dm_refresh_devices(ctx);
+    if (status)
+        return status;
+    if (!requested && !fall_back_to_main)
+        return paramErr;
+    unsigned index = ppc_dm_device_index(ctx, requested);
+    if (index == ctx->display_count && fall_back_to_main)
+        index = ppc_dm_device_index(ctx, MR(MainDevice));
+    if (index == ctx->display_count)
+        return dm_display_not_found;
+    *id = CL(ctx->displays[index].id);
+    return noErr;
 }
 
 PRIVATE Handle ppc_top_resource_map(void)
@@ -2476,8 +2672,10 @@ PRIVATE ControlHandle ppc_find_control_under_mouse(Point where, WindowPtr window
                 if (embedded)
                     break;
             }
-        if (found)
+        if (found) {
+            found = ROMlib_control_hit_target(found);
             hit = TestControl(found, where);
+        }
     }
     if (part)
         *part = CW(hit);
@@ -2916,7 +3114,20 @@ PRIVATE void ppc_n_set_trap(uint32 address, uint16 trap_no, uint16 type)
         ppc_set_os_trap(address, trap_no);
 }
 
+static int ppc_script_char_byte(ROMlib_carbon_ppc_frame* call)
+{
+    /* Classic ScriptUtil selector 0x10 takes two arguments. */
+    uint32 result;
+    if (!ROMlib_carbon_call_toolbox_vector(0x10d4, 0xbee, 0x82060010, call, &result))
+        return 0;
+    call->words[0] = (int16)result;
+    return 1;
+}
+
 PRIVATE const ppc_native_import native_imports[] = {
+    {"CharByte", ppc_script_char_byte, ROMLIB_CARBON_PPC_FRAME},
+    /* Saved TextEdit dispatch code uses this InterfaceLib entry as its base. */
+    {"TEFeatureFlag", C_TEFeatureFlag, PTOC_TEFeatureFlag},
     {"WaitNextEvent", ppc_wait_next_event, M4(1, 2, 5, 4, 5)},
     {"GetNextEvent", ppc_get_next_event, M2(1, 2, 5)},
     {"EventAvail", ppc_event_avail, M2(1, 2, 5)},
@@ -3154,6 +3365,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetDateTime", GetDateTime, M1(0, 5)},
     {"SysEnvirons", ppc_sys_environs, M2(4, 2, 4)},
     {"Gestalt", ppc_gestalt, M2(2, 4, 5)},
+    {"NewGestalt", NewGestalt, M2(2, 4, 5)},
+    {"ReplaceGestalt", ppc_replace_gestalt, M3(2, 4, 5, 5)},
     {"GetDblTime", GetDblTime, M0(4)},
     {"GetCaretTime", GetCaretTime, M0(4)},
     {"GetPort", C_GetPort, PTOC_GetPort},
@@ -3230,6 +3443,10 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"InitZone", ppc_init_zone, M4(0, 5, 2, 5, 5)},
     {"DMGetFirstScreenDevice", ppc_dm_first_screen_device, M1(5, 1)},
     {"DMGetDisplayIDByGDevice", ppc_dm_get_display_id, M3(2, 5, 5, 1)},
+    {"LMGetDeskPattern", ppc_lm_get_desk_pattern, M1(0, 5)},
+    {"LMSetDeskPattern", ppc_lm_set_desk_pattern, M1(0, 5)},
+    {"LMGetDragPattern", ppc_lm_get_drag_pattern, M1(0, 5)},
+    {"LMSetDragPattern", ppc_lm_set_drag_pattern, M1(0, 5)},
     {"LMGetTopMapHndl", ppc_top_resource_map, M0(5)},
     {"LMGetCurApRefNum", ppc_cur_ap_ref, M0(2)},
     {"LMGetCurDirStore", ppc_cur_dir_store, M0(4)},
@@ -3312,7 +3529,39 @@ PRIVATE const struct {
 #include "generated/ppc-toolbox.inc"
 };
 
+/* The private Mixed Mode worker uses the saved nanokernel register order:
+   D0-D3, A0-A3, D4-D7, A4-A6, then the condition-code selectors. */
+PRIVATE uint32 ppc_set_emulator_register(uint32 selector, uint32 value)
+{
+    static const uint8 register_index[] = {0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7, 12, 13, 14};
+    if (selector < NELEM(register_index)) {
+        M68kReg* reg = &cpu_state.regs[register_index[selector]];
+        const uint32 previous = reg->ul.n;
+        reg->ul.n = value;
+        cpu_state.ccc = cpu_state.ccv = 0;
+        cpu_state.ccnz = value != 0;
+        cpu_state.ccn = (int32)value < 0;
+        return previous;
+    }
+    if (selector == 15)
+        return 15;
+    if (selector > 20)
+        return 16;
+
+    const unsigned shift = selector - 16;
+    const uint32 previous = (!!cpu_state.ccc) | ((!!cpu_state.ccv) << 1) | ((!cpu_state.ccnz) << 2) |
+                            ((!!cpu_state.ccn) << 3) | ((!!cpu_state.ccx) << 4);
+    const uint32 updated = previous | (value << shift);
+    cpu_state.ccc = updated & 1;
+    cpu_state.ccv = updated & 2;
+    cpu_state.ccnz = !(updated & 4);
+    cpu_state.ccn = updated & 8;
+    cpu_state.ccx = updated & 16;
+    return (previous >> shift) & 1;
+}
+
 PRIVATE const ppc_native_import private_imports[] = {
+    {"SetEmulatorRegister", ppc_set_emulator_register, M2(4, 4, 4)},
     {"PBXGetVolInfoSync", ppc_PBXGetVolInfoSync, M1(2, 4)},
     {"HasDepth", C_HasDepth, PTOC_HasDepth},
     {"SndManagerStatus", C_SndManagerStatus, PTOC_SndManagerStatus},
@@ -3403,6 +3652,10 @@ PRIVATE int ppc_special_function(const char* library, const char* name, int ppc)
 {
     if (ppc && !strcmp(library, "Memory Manager") && ROMlib_native_memory_handles(name))
         return 1;
+    if (ppc && !strcmp(library, "InterfaceLib") &&
+        (!strcmp(name, "ShutDwnInstall") || !strcmp(name, "ShutDwnRemove") || !strcmp(name, "ShutDwnPower") ||
+         !strcmp(name, "ShutDwnStart")))
+        return 1;
     static const char* math[] = {
         "acos",       "asin",          "atan",          "cos",         "sin",      "tan",          "cosh",
         "sinh",       "tanh",          "exp",           "log",         "log10",    "sqrt",         "fabs",
@@ -3490,7 +3743,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     }
     /* These weak imports are called directly by classic applications. Report
      unavailable notification support through the Display Manager API. */
-    if (!strcmp(library, "DisplayLib") &&
+    if (!strcmp(library, "DisplayLib") && cfm_architecture(ctx) == kMotorola68KArch &&
         (!strcmp(name, "DMRegisterExtendedNotifyProc") || !strcmp(name, "DMRemoveExtendedNotifyProc"))) {
         binding.function = ppc_display_notification_unavailable;
         binding.magic = 2;
@@ -3686,6 +3939,8 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     }
     {
         const ROMlib_carbon_export* native = ROMlib_carbon_find_library_export(library, name, symbol_class);
+        if (!native && !strcmp(library, "ControlsLib") && !strcmp(name, "IsValidControlHandle"))
+            native = ROMlib_carbon_find_export(name, symbol_class);
         if (!native && !strcmp(library, "MenusLib")) {
             static const char* const menu_reexports[] = {
                 "ShowMenuBar",
@@ -3703,16 +3958,27 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
             static const char* const carbon_reexports[] = {
                 "BlockZero",
                 "DeleteGestaltValue",
+                "DMDrawDesktopRect",
+                "DMDrawDesktopRegion",
                 "GetMaxResourceSize",
                 "LMGetSysResName",
+                "LMSetHiliteRGB",
                 "MaxBlock",
                 "NewGestaltValue",
                 "ReadPartialResource",
+                "ReallocateHandle",
                 "ReplaceGestaltValue",
                 "SetGestaltValue",
                 "PtrToXHand",
                 "Enqueue",
                 "Dequeue",
+                "DMRegisterNotifyProc",
+                "DMRemoveNotifyProc",
+                "DMRegisterExtendedNotifyProc",
+                "DMRemoveExtendedNotifyProc",
+                "FolderManagerRegisterNotificationProc",
+                "FolderManagerUnregisterNotificationProc",
+                "FolderManagerRegisterCallNotificationProcs",
             };
             for (i = 0; i < NELEM(carbon_reexports); ++i)
                 if (!strcmp(name, carbon_reexports[i])) {
@@ -3720,6 +3986,10 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                     break;
                 }
         }
+        if (!native && !strcmp(library, "DisplayLib") &&
+            (!strcmp(name, "DMRegisterExtendedNotifyProc") || !strcmp(name, "DMRemoveExtendedNotifyProc") ||
+             !strcmp(name, "DMRegisterNotifyProc") || !strcmp(name, "DMRemoveNotifyProc")))
+            native = ROMlib_carbon_find_export(name, symbol_class);
         if (!carbon_classic_reference)
             native = NULL;
         if (native && cfm_architecture(ctx) == kMotorola68KArch &&
@@ -3773,6 +4043,26 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                                     symbol_class, address);
         if (found > 0)
             return 1;
+        if (!found && cfm_architecture(ctx) == kPowerPCArch && !strcmp(library, "ControlsLib")) {
+            /* The six private system-property exports have the same ABI in
+               CarbonLib 1.4 and the System 9 ControlsLib. Keep real symbols
+               first and use the Carbon property store when they are absent. */
+            static const char* const properties[] = {
+                "GetControlSystemProperty",           "GetControlSystemPropertySize",
+                "SetControlSystemProperty",           "RemoveControlSystemProperty",
+                "GetControlSystemPropertyAttributes", "ChangeControlSystemPropertyAttributes",
+            };
+            for (i = 0; i < NELEM(properties); ++i)
+                if (!strcmp(name, properties[i])) {
+                    const ROMlib_carbon_export* entry = ROMlib_carbon_find_export(name, symbol_class);
+                    if (entry) {
+                        binding.function = entry->function;
+                        binding.magic = entry->signature;
+                        return ppc_native_dependency(ctx, "CarbonLib") && ppc_install_import(ctx, binding, library, name, symbol_class, address);
+                    }
+                    break;
+                }
+        }
         if (weak) {
             memcpy(ctx->error, previous_error, sizeof ctx->error);
             return 0;
@@ -4512,6 +4802,45 @@ static int ppc_call_typed_native(ppc_context* ctx, const ppc_native_import* bind
     return !ctx->error[0];
 }
 
+PRIVATE int ppc_layer_dispatch(ppc_context* ctx, const char* import, ROMlib_ppc_registers* r)
+{
+    static const struct {
+        const char* name;
+        uint32 selector;
+        uint32 proc_info;
+    } operations[] = {
+        {"NewLayer", 1, 0x3d7a8},     {"IsLayer", 2, 0x398},      {"GetCurLayer", 3, 0xb8},
+        {"SetCurLayer", 4, 0x388},    {"SwapCurLayer", 5, 0x3b8}, {"GetSubWindows", 6, 0x3b8},
+        {"GetParent", 0xfff9, 0x3b8},
+    };
+
+    static const char library[] = "PrivateInterfaceLib:";
+    if (strncmp(import, library, sizeof library - 1))
+        return 0;
+    const uint32 vector = CL(ctx->tool_vectors[0x29]);
+    if (!vector || vector == (uint32)(uintptr_t)toolstuff[0x29].orig)
+        return 0;
+
+    /* Keep the saved Window Manager's layer records within its live trap
+       chain. GetParent's MOVEQ #$f9 passes -7 to the word dispatcher. */
+    const char* name = import + sizeof library - 1;
+    for (unsigned i = 0; i < NELEM(operations); ++i) {
+        if (strcmp(name, operations[i].name))
+            continue;
+        ROMlib_carbon_ppc_frame call_frame = {.stack = r->gpr[1]};
+        memcpy(call_frame.words, r->gpr + 3, sizeof call_frame.words);
+        ROMlib_ppc_registers registers = *r;
+        registers.gpr[3] = vector;
+        registers.gpr[4] = operations[i].proc_info;
+        registers.gpr[5] = operations[i].selector;
+        if (ppc_mixed_service(ctx, "CallUniversalProc", &registers, &call_frame) != 1 || ctx->error[0])
+            return -1;
+        r->gpr[3] = registers.gpr[3];
+        return 1;
+    }
+    return 0;
+}
+
 PRIVATE int ppc_service(void* opaque, uint32 id, ROMlib_ppc_registers* r)
 {
     ppc_context* ctx = opaque;
@@ -4535,6 +4864,17 @@ PRIVATE int ppc_service(void* opaque, uint32 id, ROMlib_ppc_registers* r)
     if (ERROR_ENABLED_P(ERROR_TRACE_INFO))
         fprintf(stderr, "trace: PPC service %s r3=%08lx r4=%08lx\n", binding->name, (unsigned long)r->gpr[3],
                 (unsigned long)r->gpr[4]);
+    if (ctx->saved_desktop_device_loop_return && r->lr == ctx->saved_desktop_device_loop_return &&
+        !strcmp(binding->name, "InterfaceLib:DeviceLoop") && !ppc_initialize_desktop_appearance(ctx))
+        return 0;
+    if (!strncmp(binding->name, "InterfaceLib:ShutDwn", 20)) {
+        int handled = ppc_shutdown_service(ctx, binding->name + 13, r);
+        if (handled)
+            return handled > 0;
+    }
+    const int layer_handled = ppc_layer_dispatch(ctx, binding->name, r);
+    if (layer_handled)
+        return layer_handled > 0;
     if (!strncmp(binding->name, "Memory Manager:", 15)) {
         ROMlib_native_memory_backend backend = ppc_mm_backend(ctx);
         uint32 result;
@@ -4635,6 +4975,15 @@ PRIVATE int ppc_service(void* opaque, uint32 id, ROMlib_ppc_registers* r)
         return ok && !ctx->error[0];
     }
     const ppc_native_import native = {binding->name, binding->function, binding->magic};
+    if (native.function == C_InitWindows && CL(ctx->tool_vectors[0x112]) != (uint32)(uintptr_t)toolstuff[0x112].orig) {
+        /* The patched Window Manager allocates its update scratch region at
+           system startup. A classic InitWindows import clears the low-memory
+           slot, but saved BeginUpdate still uses that same region. */
+        const HIDDEN_RgnHandle saved_visibility = SaveVisRgn_H;
+        const int ok = ppc_call_typed_native(ctx, &native, r);
+        SaveVisRgn_H = saved_visibility;
+        return ok;
+    }
     return ppc_call_typed_native(ctx, &native, r);
 }
 
@@ -5360,6 +5709,193 @@ PRIVATE int ppc_invoke_callback(ppc_context* ctx, uint32 vector, uint32* args, u
     return ppc_invoke_callback_stack(ctx, vector, args, count, result, ctx->native_caller);
 }
 
+static ROMlib_pef_image* ppc_callback_owner(ppc_context* ctx, uint32 vector)
+{
+    const uint32* entry = ppc_memory(ctx, vector, sizeof *entry, FALSE);
+    if (!entry)
+        return NULL;
+    const uint32 code = CL(*entry);
+    for (ppc_fragment* fragment = ctx->fragments; fragment; fragment = fragment->next)
+        if (fragment->image && ROMlib_pef_is_code(fragment->image, code))
+            return fragment->image;
+    return ctx->application && ROMlib_pef_is_code(ctx->application, code) ? ctx->application : NULL;
+}
+
+static void ppc_remove_display_notifications(ppc_context* ctx, ROMlib_pef_image* owner)
+{
+    for (ppc_display_notification** link = &ctx->display_notifications; *link;) {
+        ppc_display_notification* entry = *link;
+        if (!owner || entry->owner == owner) {
+            *link = entry->next;
+            free(entry);
+        }
+        else
+            link = &entry->next;
+    }
+}
+
+static OSErr ppc_display_notify_lifecycle(ppc_context* ctx, uint32 procedure, uint32 refcon, int16 message)
+{
+    const uint32 vector = ppc_callback_vector(ctx, procedure);
+    if (vector) {
+        uint32 args[] = {refcon, message, 0};
+        return ppc_invoke_callback(ctx, vector, args, NELEM(args), NULL) ? noErr : paramErr;
+    }
+    const ROMlib_carbon_ppc_frame callback = {.words = {refcon, message, 0}};
+    uint32 ignored;
+    return ROMlib_carbon_invoke_pascal(procedure, 0xec0, &callback, &ignored) ? noErr : paramErr;
+}
+
+static OSErr ppc_update_display_notifications(ppc_context* ctx, uint16 selector, const uint32 args[4])
+{
+    enum { register_basic = 0x414, register_extended = 0x7ef, remove_extended = 0x726 };
+
+    enum { notify_installed = 1, notify_removed = 3 };
+
+    const boolean_t extended = selector == register_extended || selector == remove_extended;
+    const boolean_t install = selector == register_basic || selector == register_extended;
+    const uint32 procedure = args[0], refcon = extended ? args[1] : 0;
+    const uint32 process_address = args[extended ? (install ? 3 : 2) : 1];
+    if (!procedure || !ppc_memory(ctx, procedure, 2, FALSE))
+        return paramErr;
+
+    ProcessSerialNumber process = {0};
+    if (process_address) {
+        const void* input = ppc_memory(ctx, process_address, sizeof process, FALSE);
+        if (!input)
+            return paramErr;
+        memcpy(&process, input, sizeof process);
+        if (!process.highLongOfPSN && CL(process.lowLongOfPSN) == kCurrentProcess && C_GetCurrentProcess(&process))
+            return paramErr;
+    }
+    ppc_display_notification** link = &ctx->display_notifications;
+    for (; *link; link = &(*link)->next) {
+        ppc_display_notification* entry = *link;
+        if (entry->procedure != procedure || entry->refcon != refcon || entry->extended != extended ||
+            !PSN_EQ_P(entry->process, process))
+            continue;
+        if (install)
+            return noErr;
+        *link = entry->next;
+        free(entry);
+        return extended ? ppc_display_notify_lifecycle(ctx, procedure, refcon, notify_removed) : noErr;
+    }
+    if (!install)
+        return paramErr;
+
+    ppc_display_notification* entry = calloc(1, sizeof *entry);
+    if (!entry)
+        return memFullErr;
+    const uint32 vector = ppc_callback_vector(ctx, procedure);
+    entry->owner = vector ? ppc_callback_owner(ctx, vector) : ctx->application;
+    entry->procedure = procedure;
+    entry->refcon = refcon;
+    entry->process = process;
+    entry->extended = extended;
+    *link = entry;
+    return extended ? ppc_display_notify_lifecycle(ctx, procedure, refcon, notify_installed) : noErr;
+}
+
+static OSErr ppc_display_draw_desktop(ppc_context* ctx, uint32 shape, boolean_t rectangular)
+{
+    const GrafPtr desktop = (GrafPtr)MR(WMgrCPort);
+    if (!desktop || (uint32)(uintptr_t)HIDDEN_RAW(WMgrCPort_H) == UINT32_MAX)
+        return dm_sw_not_initialized;
+    void* bounds = shape ? ppc_memory(ctx, shape, rectangular ? sizeof(Rect) : sizeof(HIDDEN_RgnPtr), FALSE) : NULL;
+    if (!bounds)
+        return paramErr;
+    RgnHandle region = bounds;
+    if (rectangular) {
+        region = C_NewRgn();
+        if (!region)
+            return memFullErr;
+        C_RectRgn(region, bounds);
+    }
+    const GrafPtr previous = thePort;
+    C_SetPort(desktop);
+    OSErr result = noErr;
+    if (ctx->desktop_draw.procedure) {
+        uint32 arguments[] = {ctx->desktop_draw_refcon, 0, US_TO_SYN68K(region)};
+        const uint32 vector = ppc_callback_vector(ctx, ctx->desktop_draw.procedure);
+        if (!vector || !ppc_invoke_callback(ctx, vector, arguments, NELEM(arguments), NULL))
+            result = paramErr;
+    }
+    else if ((USE_DESKCPAT_VAR & USE_DESKCPAT_BIT) && MR(DeskCPat))
+        C_FillCRgn(region, MR(DeskCPat));
+    else
+        C_FillRgn(region, DeskPattern);
+    C_SetPort(previous);
+    if (rectangular)
+        C_DisposeRgn(region);
+    return result;
+}
+
+/* DisplayLib calls the live ABEB vector with the selector in D0. */
+PUBLIC OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4])
+{
+    ppc_context* ctx = ppc_active_context;
+    if (selector == 0xffff || selector == 0xfffe) {
+        if (!ctx)
+            return ppc_dm_first_screen_device(FALSE) ? noErr : dm_sw_not_initialized;
+        const OSErr result = ppc_dm_refresh_devices(ctx);
+        ctx->display_initialized = result == noErr;
+        return result;
+    }
+    if (!ctx)
+        return dm_sw_not_initialized;
+    if (selector == 0x414 || selector == 0x415 || selector == 0x7ef || selector == 0x726)
+        return ppc_update_display_notifications(ctx, selector, args);
+    if (selector == 0x51f) {
+        uint32* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
+        return ppc_dm_get_display_id((GDHandle)MR(args[0]), output, (Boolean)args[2]);
+    }
+    if (selector == 0x520) {
+        HIDDEN_GDHandle* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
+        if (!output)
+            return paramErr;
+        HIDDEN_RAW_SET(*output, NULL);
+        const OSErr status = ppc_dm_refresh_devices(ctx);
+        if (status)
+            return status;
+        GDHandle device = NULL;
+        for (unsigned i = 0; i < ctx->display_count; ++i)
+            if (ctx->displays[i].id == args[0]) {
+                device = ctx->displays[i].device;
+                break;
+            }
+        if (!device && (Boolean)args[2])
+            device = MR(MainDevice);
+        HIDDEN_RAW_SET(*output, RM(device));
+        return device ? noErr : dm_display_not_found;
+    }
+    if (!ctx->display_initialized)
+        return dm_sw_not_initialized;
+    if (selector == 2 || selector == 3)
+        return ppc_display_draw_desktop(ctx, args[0], selector == 2);
+    if (selector != 0x4e2 && selector != 0x8e4)
+        return -4;
+
+    /* The saved System registers the transition vectors with operation 6
+       and removes them with operation 4. */
+    if (selector == 0x8e4 && ((args[0] != 4 && args[0] != 6) || args[2] >= NELEM(ctx->display_patches)))
+        return paramErr;
+    const uint32 procedure = selector == 0x8e4 ? (args[0] == 6 ? args[3] : 0) : args[0];
+    const uint32 vector = procedure ? ppc_callback_vector(ctx, procedure) : 0;
+    ROMlib_pef_image* owner = vector ? ppc_callback_owner(ctx, vector) : NULL;
+    if (procedure && !owner)
+        return paramErr;
+    if (selector == 0x8e4) {
+        ctx->display_patches[args[2]].procedure = procedure;
+        ctx->display_patches[args[2]].owner = owner;
+    }
+    else {
+        ctx->desktop_draw.procedure = procedure;
+        ctx->desktop_draw.owner = owner;
+        ctx->desktop_draw_refcon = args[1];
+    }
+    return noErr;
+}
+
 PUBLIC void* ROMlib_carbon_try_guest_memory(uint32_t address, size_t length, int write_access)
 {
     ppc_context* ctx = ppc_active_context;
@@ -5713,6 +6249,183 @@ PRIVATE int ppc_initialize(ppc_context* ctx, ROMlib_pef_image* image, const FSSp
     return 1;
 }
 
+/* WindowsLib from a saved System file expects that file's WDEFs and the
+   localized strings in System Resources to be on the System resource chain. */
+static void ppc_attach_window_system_resources(FSSpec* spec)
+{
+    if (ROMlib_resource_file_already_open(spec, NULL, NULL))
+        return;
+    const INTEGER previous = C_CurResFile();
+    const INTEGER saved_error = ResErr;
+    const THz saved_zone = GetZone();
+    SetZone(MR(SysZone));
+
+    const INTEGER system_file = C_FSpOpenResFile(spec, fsRdPerm);
+    if (system_file != -1) {
+        if (C_Count1Resources(TICK("WDEF")) && C_Count1Resources(TICK("CDEF"))) {
+            Str255 name = "\020System Resources";
+            FSSpec localized;
+            if (!C_FSMakeFSSpec(CW(spec->vRefNum), CL(spec->parID), name, &localized) &&
+                !ROMlib_resource_file_already_open(&localized, NULL, NULL)) {
+                const INTEGER strings = C_FSpOpenResFile(&localized, fsRdPerm);
+                if (strings != -1 && ROMlib_insert_resource_file(strings, 0))
+                    C_CloseResFile(strings);
+            }
+            /* Leave ROMAW's built-in resources first in the System chain. */
+            if (ROMlib_insert_resource_file(system_file, 0))
+                C_CloseResFile(system_file);
+        }
+        else
+            C_CloseResFile(system_file);
+    }
+    C_UseResFile(previous);
+    ResErr = saved_error;
+    SetZone(saved_zone);
+}
+
+static void ppc_share_window_manager_color_port(ppc_context* ctx, ROMlib_pef_image* image)
+{
+    /* The 9.2.2 initializer reuses an existing low-memory Window Manager
+       port and skips the allocation that also sets its color-port slot. */
+    const uint32 address = image ? ROMlib_pef_init(image) : 0;
+    const uint32* init = address ? ppc_memory(ctx, address, 8, FALSE) : NULL;
+    const uint32* instruction = init ? ppc_memory(ctx, CL(init[0]) + 0x800, 4, FALSE) : NULL;
+    const uint32 color = (uint32)(uintptr_t)WMgrCPort, mono = (uint32)(uintptr_t)WMgrPort;
+    if (!instruction || CL(*instruction) != 0x3bc22460 || !mono || mono == UINT32_MAX || !color || color == UINT32_MAX)
+        return;
+    const uint32 slot = CL(init[1]) + 0x2460;
+    if (!ROMlib_pef_find_section(image, slot, sizeof color, NULL, NULL, NULL, NULL))
+        return;
+    uint32* color_port = ppc_memory(ctx, slot, sizeof *color_port, TRUE);
+    if (color_port && !*color_port)
+        *color_port = color;
+}
+
+static int ppc_initialize_saved_desktop(ppc_context* ctx, uint32 stack)
+{
+    const uint32* desktop = ppc_memory(ctx, 0x9e2, 4, FALSE);
+    if (!desktop || (*desktop && CL(*desktop) != UINT32_MAX))
+        return 1;
+    const uint32 trap_address = CL(ctx->tool_vectors[0x112]); /* _InitWindows */
+    if (trap_address == (uint32)(uintptr_t)toolstuff[0x112].orig)
+        return 1;
+    const uint32 vector = ppc_callback_vector(ctx, trap_address);
+    const uint32* entry = vector ? ppc_memory(ctx, vector, 8, FALSE) : NULL;
+    ROMlib_pef_image* image = vector ? ppc_callback_owner(ctx, vector) : NULL;
+    const uint32 initializer = image ? ROMlib_pef_init(image) : 0;
+    const uint32* init = initializer ? ppc_memory(ctx, initializer, 8, FALSE) : NULL;
+    if (!entry || !init || CL(entry[0]) != CL(init[0]) + 0x1f8)
+        return 1;
+    const uint32* phase_check = ppc_memory(ctx, CL(entry[0]) + 0x10, 4, FALSE);
+    if (!phase_check || CL(*phase_check) != 0x806002b6)
+        return 1;
+
+    /* The saved manager creates the desktop in its system phase. ROMAW's
+       Process Manager is already active by the time the PEF is loaded. */
+    AE_info_ptr expansion = (AE_info_ptr)MR(AE_info);
+    if (!expansion)
+        return ROMlib_carbon_report_failure("Missing Process Manager expansion memory for InitWindows");
+    const INTEGER process_manager = expansion->process_manager_exists;
+    const Byte application_windows = WWExist;
+    expansion->process_manager_exists = 0;
+    /* WindowsLib 9.2.2 creates the desktop before its first themed DeviceLoop.
+       Appearance needs the new desktop, while the loop needs its theme. */
+    ctx->saved_desktop_device_loop_return = CL(entry[0]) - (0x13e24 - 0x6ad8);
+    fprintf(stderr, "trace: PPC initializing the saved Window Manager desktop\n");
+    const int ok = ppc_call_vector(ctx, image, vector, stack, 0, NULL);
+    ctx->saved_desktop_device_loop_return = 0;
+    expansion->process_manager_exists = process_manager;
+    WWExist = application_windows;
+    return ok;
+}
+
+static int ppc_initialize_fragment(ppc_context* ctx, ppc_fragment* member, uint32 stack)
+{
+    if (ctx->n_initialized == NELEM(ctx->init_order))
+        return 0;
+    if (!member->connection && !ppc_allocate(ctx, 4, 4, &member->connection))
+        return 0;
+    fprintf(stderr, "trace: PPC initializing %s\n", member->name);
+    /* Let an initializer resolve its own linked connection while it runs. */
+    member->initialized = 1;
+    member->initialization_closure = ctx->initializing_closure ? ctx->initializing_closure->id : ctx->closure;
+    ppc_adopt_cf_initializers(ctx, member);
+    const int saved_windows = !member->native && !strcmp(member->name, "WindowsLib");
+    if (saved_windows) {
+        ppc_attach_window_system_resources(&member->spec);
+        ppc_share_window_manager_color_port(ctx, member->image);
+    }
+    if (!ppc_initialize(ctx, member->image, &member->spec, member->name, member->offset, member->length,
+                        member->connection, stack, member->memory_address)) {
+        member->initialized = 0;
+        return 0;
+    }
+    member->initialized = 2;
+    if (saved_windows) {
+        /* ROMAW fills unused low memory with -1. The saved layer list uses
+           null until the first layer is installed. */
+        uint32* current_layer = ppc_memory(ctx, 0xa90, 4, TRUE);
+        if (current_layer && CL(*current_layer) == UINT32_MAX)
+            *current_layer = 0;
+    }
+    ctx->init_order[ctx->n_initialized++] = member;
+    ppc_adopt_cf_system_allocator(ctx, member);
+    return ppc_fragment_notify(ctx, member, member->connection, member->initialization_closure, 4);
+}
+
+static int ppc_initialize_desktop_appearance(ppc_context* ctx)
+{
+    const uint32* desktop = ppc_memory(ctx, 0x9e2, 4, FALSE);
+    if (!desktop || !*desktop || CL(*desktop) == UINT32_MAX)
+        return 1;
+    for (ppc_fragment* fragment = ctx->fragments; fragment; fragment = fragment->next) {
+        if (fragment->private_copy || strcmp(fragment->name, "AppearanceLib"))
+            continue;
+        ppc_fragment* owner = fragment->owner;
+        if (owner->native || owner->initialized || !owner->on_stack)
+            return 1;
+        ppc_callback_stack* reserve = ppc_acquire_callback_stack(ctx);
+        if (!reserve)
+            return 0;
+        const int ok = ppc_initialize_fragment(ctx, owner, reserve->address + 256 * 1024 - 256);
+        reserve->busy = 0;
+        return ok;
+    }
+    return 1;
+}
+
+static void ppc_order_window_manager_providers(ppc_fragment** members, unsigned count)
+{
+    const ppc_fragment* windows = NULL;
+    ppc_fragment* providers[2] = {NULL, NULL};
+    for (unsigned i = 0; i < count; ++i) {
+        ppc_fragment* member = members[i];
+        if (member->native)
+            continue;
+        if (!strcmp(member->name, "WindowsLib"))
+            windows = member;
+        else if (!strcmp(member->name, "ToolboxUtils"))
+            providers[0] = member;
+        else if (!strcmp(member->name, "PreferencesLib"))
+            providers[1] = member;
+    }
+    if (!windows || !providers[0] || !providers[1] ||
+        memcmp(&windows->spec, &providers[0]->spec, sizeof windows->spec) ||
+        memcmp(&windows->spec, &providers[1]->spec, sizeof windows->spec))
+        return;
+
+    /* This saved System cohort is cyclic. WindowsLib reads the initialized
+       PreferencesLib collection, which in turn uses ToolboxUtils state. */
+    for (unsigned provider = 0; provider < NELEM(providers); ++provider) {
+        unsigned index = 0;
+        while (members[index] != providers[provider])
+            ++index;
+        --count;
+        memmove(members + index, members + index + 1, (count - index) * sizeof *members);
+        members[count] = providers[provider];
+    }
+}
+
 /* Collapse cyclic fragment groups before running any member initializer.
    A simple DFS would initialize an SCC member before dependencies belonging
    to another member (CarbonLib/AppleHelpLib is one real example). */
@@ -5738,31 +6451,20 @@ PRIVATE int ppc_initialize_library(ppc_context* ctx, ppc_fragment* fragment, uin
             fragment->low = target->visit;
     }
     if (fragment->low == fragment->visit) {
-        ppc_fragment* member;
-        do {
-            member = ctx->graph_stack[--ctx->graph_depth];
+        unsigned first = ctx->graph_depth - 1;
+        while (ctx->graph_stack[first] != fragment)
+            --first;
+        ppc_order_window_manager_providers(ctx->graph_stack + first, ctx->graph_depth - first);
+        while (ctx->graph_depth > first) {
+            ppc_fragment* member = ctx->graph_stack[--ctx->graph_depth];
             member->on_stack = FALSE;
-            if (ctx->n_initialized == 512)
+            if (member->initialized == 2)
+                continue;
+            if (!member->native && !strcmp(member->name, "MenusLib") && !ppc_initialize_saved_desktop(ctx, stack))
                 return 0;
-            if (!member->connection && !ppc_allocate(ctx, 4, 4, &member->connection))
+            if (!ppc_initialize_fragment(ctx, member, stack))
                 return 0;
-            fprintf(stderr, "trace: PPC initializing %s\n", member->name);
-            /* An initializer may find its own already linked connection. Keep
-             it distinct from both an unloaded fragment and completed init. */
-            member->initialized = 1;
-            member->initialization_closure = ctx->initializing_closure ? ctx->initializing_closure->id : ctx->closure;
-            ppc_adopt_cf_initializers(ctx, member);
-            if (!ppc_initialize(ctx, member->image, &member->spec, member->name, member->offset, member->length,
-                                member->connection, stack, member->memory_address)) {
-                member->initialized = 0;
-                return 0;
-            }
-            member->initialized = 2;
-            ctx->init_order[ctx->n_initialized++] = member;
-            ppc_adopt_cf_system_allocator(ctx, member);
-            if (!ppc_fragment_notify(ctx, member, member->connection, member->initialization_closure, 4))
-                return 0;
-        } while (member != fragment);
+        }
     }
     return 1;
 }
@@ -5934,6 +6636,13 @@ PRIVATE int ppc_pascal_argument(ppc_context* ctx, const ROMlib_ppc_registers* re
     return 1;
 }
 
+/* Dispatched descriptors store full selector words, including sign-extended
+   values, even when the original trap only inspects the low byte or word. */
+PRIVATE uint32 ppc_selector_mask(unsigned width)
+{
+    return width == 1 ? UINT8_MAX : width == 2 ? UINT16_MAX : UINT32_MAX;
+}
+
 /* Select a prepared native entry without passing the dispatch selector as
    an ordinary target argument. RoutineRecord flags and relative entry points
    follow Apple's Mixed Mode Manager reference; unsupported layouts fail closed. */
@@ -5961,23 +6670,28 @@ PRIVATE int ppc_dispatch_descriptor(ppc_context* ctx, uint32 target, uint32 info
     count = CW(rd->routineCount) + 1;
     /* This is a bounded linear search; indexable descriptor layouts are not
      implemented here. Ordinary nondispatched callbacks use their own path. */
-    if (rd->routineDescriptorFlags || rd->selectorInfo || count > 256 ||
+    if (rd->routineDescriptorFlags || count > 256 ||
         !ppc_memory(ctx, target, 12 + count * sizeof(RoutineRecord), FALSE))
         goto invalid;
     width = (info >> 6) & 3;
     if (!width)
         goto invalid;
-    selector = r->gpr[5];
-    if (width == 1)
-        selector &= 0xff;
-    if (width == 2)
-        selector &= 0xffff;
+    if (rd->selectorInfo) {
+        const unsigned selector_width = rd->selectorInfo >> 6;
+        if ((rd->selectorInfo & 0x30) || (rd->selectorInfo & 15) != convention || !selector_width ||
+            selector_width > width || (convention == kStackDispatchedPascalStackBased && selector_width != width))
+            goto invalid;
+        width = selector_width;
+    }
+    const uint32 selector_mask = ppc_selector_mask(width);
+    const uint32 record_mask = rd->selectorInfo ? selector_mask : UINT32_MAX;
+    selector = r->gpr[5] & selector_mask;
     for (i = 0; i < count; ++i) {
         RoutineRecord* candidate = &rd->routineRecords[i];
         if (candidate->ISA != cfm_native_isa(ctx))
             continue;
         flags = CW(candidate->routineFlags);
-        if (CL(candidate->selector) == selector) {
+        if ((CL(candidate->selector) & record_mask) == selector) {
             record = candidate;
             break;
         }
@@ -6035,6 +6749,17 @@ invalid:
     return -1;
 }
 
+/* CFM window and control definitions put a 12-byte 68K trampoline before
+   the routine descriptor. RecoverHandle needs the resource's address, while
+   the entry offset is relative to the descriptor at AAFE. */
+PRIVATE int ppc_definition_resource_prefix(ppc_context* ctx, uint32 descriptor)
+{
+    static const unsigned char trampoline[] = {0x60, 0x0a, 0, 0};
+    const unsigned char* prefix = descriptor >= 12 ? ppc_memory(ctx, descriptor - 12, 12, FALSE) : NULL;
+    return prefix && !memcmp(prefix, trampoline, sizeof trampoline) &&
+           (!memcmp(prefix + 4, "WDEF", 4) || !memcmp(prefix + 4, "CDEF", 4));
+}
+
 /* Entry from an actual 68K JSR or patched A-line vector to an AAFE routine
    descriptor. selectorInfo carries the dispatch convention and selector size;
    prepared records describe the selected target with that selector omitted. */
@@ -6052,7 +6777,8 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
         return 0;
     rd = ppc_memory(ctx, descriptor, 12, FALSE);
     if (!rd || rd->goMixedModeTrap != (uint16)CWC(MIXED_MODE_TRAP) || rd->version != kRoutineDescriptorVersion ||
-        rd->routineDescriptorFlags)
+        (rd->routineDescriptorFlags &&
+         (rd->routineDescriptorFlags != 0x20 || !ppc_definition_resource_prefix(ctx, descriptor))))
         goto invalid;
     count = CW(rd->routineCount) + 1;
     if (count > 256 || !ppc_memory(ctx, descriptor, 12 + count * sizeof(RoutineRecord), FALSE))
@@ -6082,7 +6808,7 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     }
     for (i = 0; i < count; ++i)
         if (rd->routineRecords[i].ISA == cfm_native_isa(ctx)) {
-            if (!dispatch || CL(rd->routineRecords[i].selector) == selector) {
+            if (!dispatch || (CL(rd->routineRecords[i].selector) & ppc_selector_mask(selector_width)) == selector) {
                 record = &rd->routineRecords[i];
                 break;
             }
@@ -6449,6 +7175,27 @@ PRIVATE int ppc_textedit_hook(ppc_context* ctx, uint32 target, uint32 info, ROMl
 
 /* Bridge stack-based Universal Procedure calls into the existing 68K engine.
    ProcInfo encodes sizes, not pointer types: all parameters remain guest values. */
+/* A single 68K Pascal record can be passed to CallUniversalProc by a
+   PPC caller. Window Manager WDEF calls also install A3 before entering it. */
+PRIVATE void* ppc_mixed_68k_pascal_target(ppc_context* ctx, uint32 descriptor, uint32 info)
+{
+    const RoutineDescriptor* rd = ppc_memory(ctx, descriptor, sizeof *rd, FALSE);
+    if (!rd || rd->version != kRoutineDescriptorVersion || rd->routineDescriptorFlags || rd->selectorInfo ||
+        rd->routineCount)
+        return NULL;
+    const RoutineRecord* record = rd->routineRecords;
+    const unsigned flags = CW(record->routineFlags);
+    if (record->ISA != kM68kISA || CL(record->procInfo) != info || (flags & ~5))
+        return NULL;
+    int64 address = CL((uint32)PP_RAW(record->procDescriptor));
+    if (flags & 1)
+        address = (int64)descriptor + (int32)address;
+    if (address <= 0 || address > UINT32_MAX || (address & 1))
+        return NULL;
+    uint16* code = ppc_memory(ctx, (uint32)address, 2, FALSE);
+    return code && *code != (uint16)CWC(MIXED_MODE_TRAP) ? code : NULL;
+}
+
 PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_registers* r,
                               const ROMlib_carbon_ppc_frame* argument_frame)
 {
@@ -6607,8 +7354,10 @@ PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_reg
             r->gpr[3] = size == 1 ? (int8)value : size == 2 ? (int16)value : size ? value : 0;
             return 1;
         }
-        if (*(uint16*)proc == (uint16)CWC(MIXED_MODE_TRAP))
-            return -1;
+        if (*(uint16*)proc == (uint16)CWC(MIXED_MODE_TRAP)) {
+            if (convention != kPascalStackBased || !(proc = ppc_mixed_68k_pascal_target(ctx, target, info)))
+                return -1;
+        }
     }
     size = (info >> 4) & 3;
     magic = size == 3 ? 4 : size;
@@ -6709,6 +7458,189 @@ PRIVATE int ppc_carbon_pascal_call(ppc_context* ctx, uint32_t procedure, uint32_
     return 1;
 }
 
+static int ppc_shutdown_service(ppc_context* ctx, const char* name, ROMlib_ppc_registers* r)
+{
+    enum { boot_volume_unmount = 16 };
+
+    const int install = !strcmp(name, "ShutDwnInstall");
+    const int remove = !strcmp(name, "ShutDwnRemove");
+    const int power = !strcmp(name, "ShutDwnPower");
+    if (!install && !remove && !power && strcmp(name, "ShutDwnStart"))
+        return 0;
+
+    const unsigned trap_index = 0xa895 & 0x3ff;
+    const uint32 procedure = CL(ctx->tool_vectors[trap_index]);
+    if (procedure != (uint32)(uintptr_t)toolstuff[trap_index].orig) {
+        const uint32 selector = install ? 3 : remove ? 4 : power ? 1 : 2;
+        const uint32 info = kStackDispatchedPascalStackBased | (2 << 6) |
+                            (install  ? (3 << 8) | (2 << 10)
+                             : remove ? (3 << 8)
+                                      : 0);
+        ROMlib_carbon_ppc_frame call = {.words = {r->gpr[3], r->gpr[4]}};
+        const ROMlib_ppc_registers* saved_caller = ctx->native_caller;
+        ctx->native_caller = r;
+        uint32 ignored;
+        const int ok = ppc_carbon_pascal_call(ctx, procedure, info, selector, &call, &ignored);
+        ctx->native_caller = saved_caller;
+        if (ctx->exited)
+            r->lr = ctx->halt;
+        return ok ? 1 : -1;
+    }
+
+    if (install || remove) {
+        const uint32 address = r->gpr[3];
+        uint32 code = address;
+        if (install) {
+            if (ctx->shutting_down || !address)
+                return 1;
+            if (!ppc_memory(ctx, address, 2, FALSE))
+                return -1;
+            const uint32 vector = ppc_callback_vector(ctx, address);
+            const uint32* transition = vector ? ppc_memory(ctx, vector, 8, FALSE) : NULL;
+            if (transition)
+                code = CL(transition[0]);
+        }
+        ppc_shutdown_callback** link = &ctx->shutdown_callbacks;
+        while (*link && (*link)->procedure != address)
+            link = &(*link)->next;
+        if (remove && *link) {
+            ppc_shutdown_callback* entry = *link;
+            *link = entry->next;
+            free(entry);
+        }
+        if (remove)
+            return 1;
+        if (!*link) {
+            *link = calloc(1, sizeof **link);
+            if (!*link)
+                return -1;
+        }
+        **link = (ppc_shutdown_callback){.procedure = address, .code = code, .flags = r->gpr[4], .next = (*link)->next};
+        return 1;
+    }
+
+    if (ctx->shutting_down)
+        return 1;
+    ctx->shutting_down = TRUE;
+    const unsigned kind = power ? sdOnPowerOff : sdOnRestart;
+    const unsigned stages[] = {sdOnDrivers, sdOnUnmount, boot_volume_unmount, kind};
+    const unsigned stage_mask = sdOnDrivers | sdOnUnmount | boot_volume_unmount;
+    for (unsigned i = 0; i < NELEM(stages); ++i) {
+        const unsigned stage = stages[i];
+        ppc_shutdown_callback** link = &ctx->shutdown_callbacks;
+        while (*link) {
+            ppc_shutdown_callback* entry = *link;
+            const unsigned when = entry->flags & stage_mask;
+            const unsigned kinds = entry->flags & sdOnRestartOrPower;
+            if (!(when ? (when & stage) != 0 : stage == kind) || (kinds && !(kinds & kind))) {
+                link = &entry->next;
+                continue;
+            }
+            const uint32 callback = entry->procedure;
+            *link = entry->next;
+            free(entry);
+            /* CallUniversalProc marshals the register-based D0 argument for
+               68K handlers and the corresponding PPC argument for UPPs. */
+            ROMlib_ppc_registers registers = *r;
+            registers.gpr[3] = callback;
+            registers.gpr[4] = 0x1002;
+            registers.gpr[5] = stage;
+            if (ppc_mixed_service(ctx, "CallUniversalProc", &registers, NULL) != 1 || ctx->error[0])
+                return -1;
+            /* Callback code may remove other entries. Rescan the live list. */
+            link = &ctx->shutdown_callbacks;
+        }
+    }
+    ctx->exited = TRUE;
+    r->lr = ctx->halt;
+    return 1;
+}
+
+static void ppc_sweep_folder_notifications(ppc_context* ctx)
+{
+    if (ctx->folder_notification_depth)
+        return;
+    for (ppc_folder_notification** link = &ctx->folder_notifications; *link;) {
+        ppc_folder_notification* entry = *link;
+        if (entry->removed) {
+            *link = entry->next;
+            free(entry);
+        }
+        else
+            link = &entry->next;
+    }
+}
+
+static void ppc_remove_folder_notifications(ppc_context* ctx, ROMlib_pef_image* owner)
+{
+    for (ppc_folder_notification* entry = ctx->folder_notifications; entry; entry = entry->next)
+        if (!owner || entry->owner == owner)
+            entry->removed = TRUE;
+    ppc_sweep_folder_notifications(ctx);
+}
+
+static int ppc_call_folder_notifications(ppc_context* ctx, const uint32 args[3], uint32* result)
+{
+    ppc_folder_notification* last = ctx->folder_notifications;
+    while (last && last->next)
+        last = last->next;
+
+    ++ctx->folder_notification_depth;
+    *result = noErr;
+    int ok = 1;
+    for (ppc_folder_notification* entry = ctx->folder_notifications; entry; entry = entry->next) {
+        if (!entry->removed) {
+            ROMlib_carbon_ppc_frame callback = {.words = {args[0], args[1], entry->refcon}};
+            uint32 status;
+            ok = ROMlib_carbon_invoke_pascal(entry->procedure, 0xff0, &callback, &status);
+            if (!ok)
+                break;
+            if (status && (args[2] & UINT32_C(0x80000000))) {
+                *result = status;
+                break;
+            }
+        }
+        if (entry == last)
+            break;
+    }
+    --ctx->folder_notification_depth;
+    /* Entries removed while a callback ran stay linked until dispatch ends. */
+    ppc_sweep_folder_notifications(ctx);
+    return ok;
+}
+
+static OSErr ppc_update_folder_notifications(ppc_context* ctx, uint32 procedure, uint32 refcon, boolean_t install)
+{
+    if (!procedure || !ppc_memory(ctx, procedure, 2, FALSE))
+        return paramErr;
+    ppc_folder_notification** tail = &ctx->folder_notifications;
+    for (; *tail; tail = &(*tail)->next) {
+        ppc_folder_notification* entry = *tail;
+        if (!entry->removed && entry->procedure == procedure && entry->refcon == refcon) {
+            if (!install) {
+                if (ctx->folder_notification_depth)
+                    entry->removed = TRUE;
+                else {
+                    *tail = entry->next;
+                    free(entry);
+                }
+            }
+            return noErr;
+        }
+    }
+    if (!install)
+        return paramErr;
+    ppc_folder_notification* entry = calloc(1, sizeof *entry);
+    if (!entry)
+        return memFullErr;
+    const uint32 vector = ppc_callback_vector(ctx, procedure);
+    entry->owner = vector ? ppc_callback_owner(ctx, vector) : ctx->application;
+    entry->procedure = procedure;
+    entry->refcon = refcon;
+    *tail = entry;
+    return noErr;
+}
+
 PUBLIC int ROMlib_carbon_call_toolbox_vector(uint32_t address, uint32_t info, uint32_t selector,
                                              const ROMlib_carbon_ppc_frame* call_frame, uint32_t* result)
 {
@@ -6720,6 +7652,15 @@ PUBLIC int ROMlib_carbon_call_toolbox_vector(uint32_t address, uint32_t info, ui
     const uint32* slot = ppc_memory(ctx, address, sizeof *slot, FALSE);
     if (!slot)
         return ROMlib_carbon_report_failure("Invalid Carbon Toolbox vector address");
+    if (address == 0xe8c && CL(*slot) == (uint32)(uintptr_t)toolstuff[0x23].orig && call_frame && result) {
+        const uint32* args = call_frame->words;
+        if (selector == 0x631)
+            return ppc_call_folder_notifications(ctx, args, result);
+        if (selector == 0x62f || selector == 0x430) {
+            *result = ppc_update_folder_notifications(ctx, args[0], args[1], selector == 0x62f);
+            return 1;
+        }
+    }
     return ppc_carbon_pascal_call(ctx, CL(*slot), info, selector, call_frame, result);
 }
 
@@ -6888,20 +7829,19 @@ PRIVATE uint32 ppc_prepare_routine_resource(ppc_context* ctx, uint32 descriptor,
     void* stack;
     SignedByte state;
     char name[64];
-    /* An unprepared resource starts with its routine descriptor. Recover only
-     that allocation, so a malformed PEF cannot read into the next resource. */
     if (descriptor < 12 || !ppc_memory(ctx, descriptor - 12, 44, FALSE))
         return 0;
-    resource = RecoverHandle((Ptr)SYN68K_TO_US(descriptor));
+    const uint32 resource_start = ppc_definition_resource_prefix(ctx, descriptor) ? descriptor - 12 : descriptor;
+    resource = RecoverHandle((Ptr)SYN68K_TO_US(resource_start));
     if (!resource)
         return 0;
     length = GetHandleSize(resource);
-    if (length < 0 || address < descriptor || address - descriptor >= (uint32)length)
+    if (length < 0 || address < descriptor || address - resource_start >= (uint32)length)
         return 0;
     state = HGetState(resource);
     HLock(resource);
     snprintf(name, sizeof name, "Routine resource %08lx", (unsigned long)address);
-    fragment = ppc_register_memory(ctx, address, length - (address - descriptor), name);
+    fragment = ppc_register_memory(ctx, address, length - (address - resource_start), name);
     if (fragment && ppc_link_pending(ctx, NULL)) {
         stack = ppc_allocate(ctx, 256 * 1024, 16, &stack_address);
         if (stack) {
@@ -7130,6 +8070,13 @@ PRIVATE void ppc_cancel_closure(ppc_context* ctx, ppc_closure* closure)
 
 PRIVATE void ppc_free_closures(ppc_context* ctx)
 {
+    ppc_remove_folder_notifications(ctx, NULL);
+    ppc_remove_display_notifications(ctx, NULL);
+    while (ctx->shutdown_callbacks) {
+        ppc_shutdown_callback* entry = ctx->shutdown_callbacks;
+        ctx->shutdown_callbacks = entry->next;
+        free(entry);
+    }
     while (ctx->theme_states) {
         ppc_theme_state* state = ctx->theme_states;
         ctx->theme_states = state->next;
@@ -7292,6 +8239,19 @@ PRIVATE int ppc_close_closure(ppc_context* ctx, ppc_closure* closure)
             if (stack)
                 ppc_release(ctx, stack);
             return 0;
+        }
+        if (ctx->desktop_draw.owner == fragment->image) {
+            ctx->desktop_draw.procedure = 0;
+            ctx->desktop_draw.owner = NULL;
+            ctx->desktop_draw_refcon = 0;
+        }
+        ppc_remove_folder_notifications(ctx, fragment->image);
+        ppc_remove_display_notifications(ctx, fragment->image);
+        for (unsigned i = 0; i < NELEM(ctx->display_patches); ++i) {
+            if (ctx->display_patches[i].owner == fragment->image) {
+                ctx->display_patches[i].procedure = 0;
+                ctx->display_patches[i].owner = NULL;
+            }
         }
         fragment->closed = 1;
         fragment->initialized = 0;

@@ -34,7 +34,7 @@
              ROMlib_carbon_set_port_printing_reference, ROMlib_carbon_nqd_put_pic_byte,
              ROMlib_carbon_nqd_put_pic_data, ROMlib_carbon_nqd_put_pic_long, ROMlib_carbon_nqd_put_pic_op,
              ROMlib_carbon_nqd_put_pic_word, ROMlib_carbon_nqd_check_picture, ROMlib_carbon_nqd_hilite_rect,
-             ROMlib_carbon_nqd_hilite_region
+             ROMlib_carbon_nqd_hilite_region, ROMlib_carbon_nqd_unflatten_pixpat
 
   Origin:    Port state additions follow CarbonLib 1.4 and Universal Interfaces 3.4.2.
              Existing repository source in packages/carbonlib/src; original attribution and provenance comments are
@@ -1161,4 +1161,97 @@ int ROMlib_carbon_nqd_hilite_rect(ROMlib_carbon_ppc_frame* call)
 int ROMlib_carbon_nqd_hilite_region(ROMlib_carbon_ppc_frame* call)
 {
     return nqd_hilite(call, TRUE);
+}
+
+/* Decode the 28-byte PixPat prefix and its resource-relative offsets.
+   NQD 9.2.2 entry 0x18a48 and unflatten worker 0x16fd0. */
+int ROMlib_carbon_nqd_unflatten_pixpat(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t source = call->words[0], destination = call->words[2];
+    const int32_t size = (int32_t)call->words[1];
+    call->words[0] = paramErr;
+    if (!source || !destination || size < (int32_t)(sizeof(PixPat) + sizeof(PixMap)))
+        return 1;
+
+    const Byte* bytes = ROMlib_carbon_try_guest_memory(source, (uint32_t)size, 0);
+    void* output = ROMlib_carbon_try_guest_memory(destination, sizeof(uint32_t), 1);
+    if (!bytes || !output)
+        return 1;
+
+    PixPat pattern;
+    memcpy(&pattern, bytes, sizeof pattern);
+    const uint32_t map_offset = CL((uint32_t)PP_RAW(pattern.patMap));
+    const uint32_t data_offset = CL((uint32_t)PP_RAW(pattern.patData));
+    if ((uint16_t)CW(pattern.patType) > 3 || map_offset < sizeof pattern || map_offset > (uint32_t)size - sizeof(PixMap))
+        return 1;
+
+    PixMap map;
+    memcpy(&map, bytes + map_offset, sizeof map);
+    const uint32_t table_offset = CL((uint32_t)PP_RAW(map.pmTable));
+    if (data_offset < map_offset + sizeof map || table_offset < data_offset || table_offset > (uint32_t)size)
+        return 1;
+
+    enum { direct_pixel_type = 16 };
+
+    const int table_required = CW(map.pixelType) != direct_pixel_type;
+    const uint32_t pixel_bytes = table_offset - data_offset;
+    uint32_t table_bytes = 0;
+    if (table_required) {
+        enum { table_header = offsetof(ColorTable, ctTable) };
+
+        uint16_t last;
+        if ((uint32_t)size - table_offset < table_header)
+            return 1;
+        memcpy(&last, bytes + table_offset + offsetof(ColorTable, ctSize), sizeof last);
+        const int count = (int16)CW(last) + 1;
+        if (count < 0 || (uint32_t)count > ((uint32_t)size - table_offset - table_header) / sizeof(ColorSpec))
+            return 1;
+        table_bytes = table_header + count * sizeof(ColorSpec);
+    }
+
+    /* Guest heap allocations can move an unlocked source handle. */
+    Byte* payload = malloc(pixel_bytes + table_bytes + 1);
+    if (!payload) {
+        call->words[0] = memFullErr;
+        return 1;
+    }
+    memcpy(payload, bytes + data_offset, pixel_bytes + table_bytes);
+
+    PixPatHandle result = C_NewPixPat();
+    OSErr status = result ? noErr : MemError();
+    if (result) {
+        PixMapHandle target_map = PIXPAT_MAP(result);
+        Handle target_data = PIXPAT_DATA(result);
+        CTabHandle target_table = PIXMAP_TABLE(target_map);
+        SetHandleSize(target_data, pixel_bytes);
+        status = MemError();
+        if (!status && table_required) {
+            SetHandleSize((Handle)target_table, table_bytes);
+            status = MemError();
+        }
+        if (!status) {
+            if (pixel_bytes)
+                memcpy(STARH(target_data), payload, pixel_bytes);
+            if (table_required) {
+                memcpy(STARH(target_table), payload + pixel_bytes, table_bytes);
+                CTAB_SEED_X(target_table) = CL(C_GetCTSeed());
+            }
+            else {
+                DisposHandle((Handle)target_table);
+                target_table = NULL;
+            }
+            FIELD_ASSIGN_RAW(map.pmTable, RM(target_table));
+            map.pmReserved = 0;
+            *STARH(target_map) = map;
+            PIXPAT_TYPE_X(result) = pattern.patType;
+            memcpy(PIXPAT_1DATA(result), pattern.pat1Data, sizeof(Pattern));
+            const uint32_t encoded = CL(US_TO_SYN68K(result));
+            memcpy(output, &encoded, sizeof encoded);
+        }
+        else
+            C_DisposPixPat(result);
+    }
+    free(payload);
+    call->words[0] = status;
+    return 1;
 }
