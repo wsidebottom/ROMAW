@@ -80,7 +80,7 @@ static Handle guest_handle(FinderBridge* bridge, uint32 address)
     return (Handle)SYN68K_TO_US(address);
 }
 
-static void os_trap(FinderBridge* bridge, uint16 trap)
+static void os_trap(FinderBridge* bridge, uint16 trap_word)
 {
     /* Execute the real A-line dispatch so patches, register arguments and
      * trap-word flags (Sys/Clear/NewGestalt) have their normal semantics.
@@ -88,7 +88,7 @@ static void os_trap(FinderBridge* bridge, uint16 trap)
      * stack frame; nested guest calls grow below this reserved storage.
      */
     uint32 entry = bridge->scratch + 32;
-    WRITEUW(entry, trap);
+    WRITEUW(entry, trap_word);
     WRITEUW(entry + 2, 0x4e75);
     destroy_blocks(entry, 4);
     CALL_EMULATOR(entry);
@@ -148,7 +148,7 @@ static uint16_t rom85(void* context)
 
 static Rect* guest_rect(FinderBridge* bridge, const FinderCodeRect* source)
 {
-    Rect* rect = SYN68K_TO_US(bridge->scratch);
+    Rect* rect = (Rect*)SYN68K_TO_US(bridge->scratch);
     *rect = (Rect){CW(source->top), CW(source->left), CW(source->bottom), CW(source->right)};
     return rect;
 }
@@ -190,7 +190,7 @@ static void fill_rect(void* context, const FinderCodeRect* source, const uint8_t
 {
     FinderBridge* bridge = context;
     Rect* rect = guest_rect(bridge, source);
-    Byte* guest_pattern = SYN68K_TO_US(bridge->scratch + 8);
+    Byte* guest_pattern = (Byte*)SYN68K_TO_US(bridge->scratch + 8);
     memcpy(guest_pattern, pattern, 8);
     if (!bridge->error)
         FillRect(rect, guest_pattern);
@@ -199,7 +199,7 @@ static void fill_rect(void* context, const FinderCodeRect* source, const uint8_t
 static void get_fore_color(void* context, uint16_t color[3])
 {
     FinderBridge* bridge = context;
-    RGBColor* native = SYN68K_TO_US(bridge->scratch + 16);
+    RGBColor* native = (RGBColor*)SYN68K_TO_US(bridge->scratch + 16);
     memset(native, 0, sizeof(*native));
     if (!bridge->error)
         GetForeColor(native);
@@ -217,7 +217,7 @@ static void pm_fore_color(void* context, int16_t index)
 static void rgb_fore_color(void* context, const uint16_t color[3])
 {
     FinderBridge* bridge = context;
-    RGBColor* native = SYN68K_TO_US(bridge->scratch + 16);
+    RGBColor* native = (RGBColor*)SYN68K_TO_US(bridge->scratch + 16);
     *native = (RGBColor){CW(color[0]), CW(color[1]), CW(color[2])};
     if (!bridge->error)
         RGBForeColor(native);
