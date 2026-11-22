@@ -2,7 +2,7 @@
 # +===================================================================
 #   File:      make_ppc_file_probe.py
 #
-#   Summary:   Original PPC checks for guest-endian synchronous file I/O.
+#   Summary:   Original PPC checks for guest-endian synchronous file I/O and current-volume state.
 #
 #   Classes:   None declared.
 #
@@ -15,7 +15,7 @@
 #              synppc/COPYING.
 # ===================================================================+
 
-"""Original PPC checks for guest-endian synchronous file I/O."""
+"""Original PPC checks for guest-endian synchronous file I/O and current-volume state."""
 import struct
 import sys
 from pathlib import Path
@@ -51,6 +51,10 @@ def make_file_probe(destination):
         "PBDTGetAPPLAsync",
         "NewAlias",
         "ResolveAlias",
+        "GetVol",
+        "SetVol",
+        "PBHOpenDenySync",
+        "GetWDInfo",
     ]
     code, failures = [], []
 
@@ -87,7 +91,7 @@ def make_file_probe(destination):
         check(0)
 
     emit(0x9421FFC0, 0x7C0802A6, 0x90010044, 0x93C10038, 0x7C5E1378)
-    emit(0x387E0070)
+    emit(0x387E02B8)
     call("GetCurrentProcess")
     check(0)
     # Enumerate the live process from kNoProcess, then reach the list end.
@@ -96,7 +100,7 @@ def make_file_probe(destination):
     call("GetNextProcess")
     check(0)
     for offset in (0, 4):
-        emit(0x807E01C0 + offset, 0x809E0070 + offset, 0x7C032000)
+        emit(0x807E01C0 + offset, 0x809E02B8 + offset, 0x7C032000)
         unequal()
     emit(0x807E01C8)
     check(0x1234)
@@ -142,8 +146,8 @@ def make_file_probe(destination):
     # Compare a real serial with itself and with kCurrentProcess. Boolean
     # output is one byte; the adjacent sentinel must survive each call.
     emit(0x38600000, 0x907E0078, 0x38600002, 0x907E007C)
-    for right in (0x70, 0x78):
-        emit(0x3C60A55A, 0x907E01B0, 0x387E0070, 0x389E0000 | right, 0x38BE01B0)
+    for right in (0x2B8, 0x78):
+        emit(0x3C60A55A, 0x907E01B0, 0x387E02B8, 0x389E0000 | right, 0x38BE01B0)
         call("SameProcess")
         check(0)
         emit(0x887E01B0)
@@ -151,29 +155,29 @@ def make_file_probe(destination):
         emit(0x887E01B1)
         check(0x5A)
     emit(0x38601234, 0x907E007C)
-    emit(0x387E0070, 0x389E0078, 0x38BE01B0)
+    emit(0x387E02B8, 0x389E0078, 0x38BE01B0)
     call("SameProcess")
     check(-50)
     for missing in range(3):
-        emit(0x387E0070, 0x389E0070, 0x38BE01B0)
+        emit(0x387E02B8, 0x389E02B8, 0x38BE01B0)
         emit((0x38600000, 0x38800000, 0x38A00000)[missing])
         call("SameProcess")
         check(-50)
     emit(0x3860003C, 0x907E0080, 0x387E00C0, 0x907E00B8)
-    emit(0x387E0070, 0x389E0080)
+    emit(0x387E02B8, 0x389E0080)
     call("GetProcessInformation")
     check(0)
     # Resplendence/REALbasic supplies a larger record containing its FSSpec.
     # Accept the known prefix and preserve the caller's trailing storage.
     emit(0x38600082, 0x907E0080, 0x3C60DEAD, 0x6063BEEF, 0x907E00BC)
-    emit(0x387E0070, 0x389E0080)
+    emit(0x387E02B8, 0x389E0080)
     call("GetProcessInformation")
     check(0)
     emit(0x807E0080)
     check(130)
     emit(0x807E00BC, 0x3C80DEAD, 0x6084BEEF, 0x7C032000)
     unequal()
-    emit(0x3860003B, 0x907E0080, 0x387E0070, 0x389E0080)
+    emit(0x3860003B, 0x907E0080, 0x387E02B8, 0x389E0080)
     call("GetProcessInformation")
     check(-50)  # truncated record rejected without changing the tail
     emit(0x807E00BC, 0x3C80DEAD, 0x6084BEEF, 0x7C032000)
@@ -181,7 +185,7 @@ def make_file_probe(destination):
     emit(0x38600000, 0x389E0080)
     call("GetProcessInformation")
     check(-50)
-    emit(0x387E0070, 0x38800000)
+    emit(0x387E02B8, 0x38800000)
     call("GetProcessInformation")
     check(-50)
     # Full aliases accept an optional source FSSpec. Round-trip the running
@@ -249,6 +253,69 @@ def make_file_probe(destination):
         emit(0x38600000)
         call(operation)
         check(-50)
+    emit(0x38600000, 0xA89E00C0, 0x80BE00C2)
+    call("HSetVol")
+    check(0)
+    emit(0xA87E00C0, 0x389E02C0, 0x38BE02C4, 0x38DE02C8)
+    call("GetWDInfo")
+    check(0)
+    emit(0xA07E02C0, 0xA09E00C0, 0x7C032000)
+    unequal()
+    emit(0x807E02C4, 0x809E00C2, 0x7C032000)
+    unequal()
+    emit(0x807E02C8)
+    check(0)
+    # Kid Pix supplies no volume-name buffer. The reference is a guest-endian
+    # word. SetVol accepts that reference and errors retain the selected volume.
+    emit(0x3C605A5A, 0x60635A5A, 0x907E02B0, 0x38600000, 0x389E02B0)
+    call("GetVol")
+    check(0)
+    emit(0xA07E02B2)
+    check(0x5A5A)
+    emit(0x38600000, 0xA89E02B0)
+    call("SetVol")
+    check(0)
+    emit(0x387E0300, 0x389E02B4)
+    call("GetVol")
+    check(0)
+    emit(0xA07E02B0, 0xA09E02B4, 0x7C032000)
+    unequal()
+    emit(0x887E0300, 0x2C030000)
+    failures.append(len(code))
+    emit(0x41820000)  # A real volume name must be supplied when requested.
+    emit(0x38600000, 0x38807FFF)
+    call("SetVol")
+    check(-35)
+    emit(0x38600000, 0x389E02B4)
+    call("GetVol")
+    check(0)
+    emit(0xA07E02B0, 0xA09E02B4, 0x7C032000)
+    unequal()
+    # Open the same real data fork using the deny-mode parameter-block API
+    # requested by Kid Pix, then query its length through the returned reference.
+    emit(0x387E0150, 0x907E0212, 0xA07E00C0, 0xB07E0216)
+    emit(0x807E00C2, 0x907E0230, 0x38600031, 0x987E021B, 0x387E0200)
+    call("PBHOpenDenySync")
+    check(0)
+    emit(0xA87E0210)
+    check(0)
+    emit(0xA87E0218)
+    emit(0x389E0118)
+    call("GetEOF")
+    check(0)
+    emit(0x807E0118)
+    check(16)
+    emit(0xA87E0218)
+    call("FSClose")
+    check(0)
+    emit(0x387E0160, 0x907E0212, 0x387E0200)
+    call("PBHOpenDenySync")
+    check(-43)
+    emit(0xA87E0210)
+    check(-43)
+    emit(0x38600000)
+    call("PBHOpenDenySync")
+    check(-50)
     emit(0x38600000, 0xA89E00C0, 0x80BE00C2)
     call("HSetVol")
     check(0)
@@ -345,7 +412,7 @@ def make_file_probe(destination):
     emit(0)
     for branch in failures:
         code[branch] |= (bad - branch) * 4
-    data = bytearray(704)
+    data = bytearray(1024)
     data[384:393] = b"Disk:File"
     data[336:347] = b"\x0aProbe.data"
     data[352:365] = b"\x0cmissing.file"

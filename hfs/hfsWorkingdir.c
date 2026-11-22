@@ -174,7 +174,7 @@ PUBLIC OSErr hfsPBGetWDInfo(WDPBPtr pb, BOOLEAN async)
                 str255assign(PPR(pb->ioNamePtr), (StringPtr)vcbp->vcbVN);
             pb->ioWDProcID = 0;
             pb->ioVRefNum = pb->ioWDVRefNum = vcbp->vcbVRefNum;
-            pb->ioWDDirID = CL((vcbp == MR(DefVCBPtr)) ? DefDirID : 2);
+            pb->ioWDDirID = vcbp == MR(DefVCBPtr) ? DefDirID : CLC(2);
             foundelsewhere = TRUE;
         }
     }

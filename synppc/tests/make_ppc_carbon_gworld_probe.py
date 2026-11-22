@@ -43,7 +43,10 @@ def make_gworld_probe(destination):
         "CallUniversalProc",
         "CarbonFallbackToken",
     ]
-    p = Probe([("CarbonLib", name, 2) for name in names])
+    p = Probe(
+        [("CarbonLib", name, 2) for name in names]
+        + [("InterfaceLib", name, 2) for name in ("AllowPurgePixels", "NoPurgePixels")]
+    )
     struct.pack_into(">4h", p.data, 200, 0, 0, 12, 13)
     p.emit(0x387E0080, 0x389E0084)
     p.call("GetGWorld")
@@ -95,6 +98,12 @@ def make_gworld_probe(destination):
         same_slot(136, "native current world")
         p.emit(0x807E009C)
         same_slot(144, "native current device")
+        state(0)
+        p.emit(0x807E008C)
+        p.call("AllowPurgePixels")
+        state(0x40)
+        p.emit(0x807E008C)
+        p.call("NoPurgePixels")
         state(0)
         base(True)
         p.emit(0x3880005A, 0x98830000)

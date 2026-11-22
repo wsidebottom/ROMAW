@@ -1913,6 +1913,11 @@ PRIVATE INTEGER ppc_cur_ap_ref(void)
     return CW(CurApRefNum);
 }
 
+PRIVATE StringPtr ppc_cur_ap_name(void)
+{
+    return CurApName;
+}
+
 PRIVATE LONGINT ppc_cur_dir_store(void)
 {
     return CL(CurDirStore);
@@ -1932,6 +1937,31 @@ static OSErr ppc_replace_gestalt(OSType selector, ProcPtr procedure, HIDDEN_Proc
 PRIVATE void ppc_set_cur_dir_store(LONGINT directory)
 {
     CurDirStore = CL(directory);
+}
+
+PRIVATE ProcPtr ppc_lm_get_mbar_hook(void)
+{
+    return HIDDEN_NATIVE(MBarHook_H);
+}
+
+PRIVATE void ppc_lm_set_mbar_hook(ProcPtr hook)
+{
+    HIDDEN_RAW_SET(MBarHook_H, RM(hook));
+}
+
+PRIVATE INTEGER ppc_lm_get_paint_white(void)
+{
+    return CW(PaintWhite);
+}
+
+PRIVATE void ppc_lm_set_paint_white(INTEGER value)
+{
+    PaintWhite = CW(value);
+}
+
+PRIVATE Byte ppc_lm_get_sd_volume(void)
+{
+    return SdVolume;
 }
 
 PUBLIC int ROMlib_ppc_gestalt(OSType selector, LONGINT* response)
@@ -2216,6 +2246,22 @@ PRIVATE OSErr ppc_PBHOpenSync(void* pb)
 PRIVATE OSErr ppc_PBHOpenRFSync(void* pb)
 {
     return PBHOpenRF(pb, FALSE);
+}
+
+PRIVATE OSErr ppc_PBHOpenDenySync(HParmBlkPtr pb)
+{
+    return pb ? OpenDeny(pb, FALSE) : paramErr;
+}
+
+PRIVATE OSErr ppc_launch_application(LaunchParamBlockRec* parameters)
+{
+    if (!parameters || !ROMlib_win_accessible_span(parameters, sizeof *parameters, FALSE) ||
+        parameters->launchBlockID != CWC(extendedBlock) || CL(parameters->launchEPBLength) < extendedBlockLen)
+        return paramErr;
+    FSSpec* application = PPR(parameters->launchAppSpec);
+    if (!application || !ROMlib_win_accessible_span(application, sizeof *application, FALSE))
+        return paramErr;
+    return NewLaunch(NULL, 0, parameters);
 }
 
 PRIVATE OSErr ppc_PBGetWDInfoSync(void* pb)
@@ -3382,6 +3428,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"HSV2RGB", C_HSV2RGB, PTOC_HSV2RGB},
     {"RGB2HSV", C_RGB2HSV, PTOC_RGB2HSV},
     {"LockPixels", C_LockPixels, M1(1, 5)},
+    {"AllowPurgePixels", C_AllowPurgePixels, PTOC_AllowPurgePixels},
+    {"NoPurgePixels", C_NoPurgePixels, PTOC_NoPurgePixels},
     {"UnlockPixels", C_UnlockPixels, M1(0, 5)},
     {"LMGetIntlSpec", ppc_intl_spec, M0(4)},
     {"LMSetIntlSpec", ppc_set_intl_spec, M1(0, 4)},
@@ -3422,6 +3470,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"PBHSetFInfoSync", ppc_PBHSetFInfoSync, M1(2, 5)},
     {"PBHOpenSync", ppc_PBHOpenSync, M1(2, 5)},
     {"PBHOpenRFSync", ppc_PBHOpenRFSync, M1(2, 5)},
+    {"PBHOpenDenySync", ppc_PBHOpenDenySync, M1(2, 5)},
+    {"LaunchApplication", ppc_launch_application, M1(2, 5)},
     {"PBGetWDInfoSync", ppc_PBGetWDInfoSync, M1(2, 5)},
     {"PBResolveFileIDRefSync", ppc_PBResolveFileIDRefSync, M1(2, 5)},
     {"PBCreateFileIDRefSync", ppc_PBCreateFileIDRefSync, M1(2, 5)},
@@ -3449,8 +3499,14 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMSetDragPattern", ppc_lm_set_drag_pattern, M1(0, 5)},
     {"LMGetTopMapHndl", ppc_top_resource_map, M0(5)},
     {"LMGetCurApRefNum", ppc_cur_ap_ref, M0(2)},
+    {"LMGetCurApName", ppc_cur_ap_name, M0(5)},
     {"LMGetCurDirStore", ppc_cur_dir_store, M0(4)},
     {"LMSetCurDirStore", ppc_set_cur_dir_store, M1(0, 4)},
+    {"LMGetMBarHook", ppc_lm_get_mbar_hook, M0(5)},
+    {"LMSetMBarHook", ppc_lm_set_mbar_hook, M1(0, 5)},
+    {"LMGetPaintWhite", ppc_lm_get_paint_white, M0(2)},
+    {"LMSetPaintWhite", ppc_lm_set_paint_white, M1(0, 2)},
+    {"LMGetSdVolume", ppc_lm_get_sd_volume, M0(1)},
     {"memcpy", memcpy, M3(5, 5, 5, 4)},
     {"ldiv", ppc_long_divide, M3(0, 4, 4, 4)},
     {"memmove", memmove, M3(5, 5, 5, 4)},
@@ -3511,6 +3567,9 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"HGetFInfo", HGetFInfo, M4(2, 2, 4, 5, 5)},
     {"HSetFInfo", ppc_hsetfinfo, M4(2, 2, 4, 5, 5)},
     {"FlushVol", FlushVol, M2(2, 5, 2)},
+    {"GetVol", GetVol, M2(2, 5, 5)},
+    {"SetVol", SetVol, M2(2, 5, 2)},
+    {"GetWDInfo", GetWDInfo, M4(2, 2, 5, 5, 5)},
     {"HGetVol", ppc_hgetvol, M3(2, 5, 5, 5)},
     {"HSetVol", ppc_hsetvol, M3(2, 5, 2, 4)},
     {"NMInstall", NMInstall, M1(2, 5)},
@@ -4617,6 +4676,16 @@ PRIVATE int ppc_make_code_executable(ppc_context* ctx, uint32 address, uint32 le
 
 static int ppc_call_typed_native(ppc_context* ctx, const ppc_native_import* binding, ROMlib_ppc_registers* r)
 {
+    if (binding->function == C_SndSoundManagerVersion) {
+        /* NumVersion is a four-byte structure in the Classic PPC ABI. The
+           68K/native implementation uses a scalar, but PPC callers supply a
+           hidden result pointer in r3, as for the wide clock results. */
+        uint32* version = r->gpr[3] ? ppc_memory(ctx, r->gpr[3], sizeof *version, TRUE) : NULL;
+        if (!version)
+            return 0;
+        *version = CL(C_SndSoundManagerVersion());
+        return 1;
+    }
     intptr_t args[11] = {0}, result;
     uint32 types[11], value;
     uint64 magic;

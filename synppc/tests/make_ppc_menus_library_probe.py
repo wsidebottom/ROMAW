@@ -46,6 +46,13 @@ def make_probe(destination):
                 "DisposeMenu",
                 "EnableItem",
                 "HMSetMenuResID",
+                "LMGetMBarHook",
+                "LMSetMBarHook",
+                "LMGetPaintWhite",
+                "LMSetPaintWhite",
+                "LMGetCurApName",
+                "LMGetSdVolume",
+                "LaunchApplication",
                 "DebugStr",
             )
         ]
@@ -55,6 +62,34 @@ def make_probe(destination):
         p.data[offset : offset + 1 + len(value)] = bytes([len(value)]) + value
     p.call("InitWindows")
     p.call("InitMenus")
+    for argument in (0x38600000, 0x387E0340):
+        p.emit(argument)
+        p.call("LaunchApplication")
+        p.expect(-50, "Classic launch rejects a null or nonextended block")
+    p.call("LMGetCurApName")
+    p.expect(0x910, "Classic callers receive the live low-memory application name")
+    p.call("LMGetSdVolume")
+    p.emit(0x88800260)
+    p.equal("Classic sound volume reads the actual unsigned low-memory byte")
+    p.call("LMGetMBarHook")
+    p.emit(0x907E01D0, 0x387E0340)
+    p.call("LMSetMBarHook")
+    p.call("LMGetMBarHook")
+    p.emit(0x389E0340)
+    p.equal("menu-hook pointer round-trips through the PPC accessors")
+    p.emit(0x80600A2C, 0x389E0340)
+    p.equal("the hook is stored in the actual guest low-memory slot")
+    p.emit(0x807E01D0)
+    p.call("LMSetMBarHook")
+    p.call("LMGetPaintWhite")
+    p.emit(0x907E01D4, 0x38601234)
+    p.call("LMSetPaintWhite")
+    p.call("LMGetPaintWhite")
+    p.expect(0x1234, "PaintWhite retains the full classic word")
+    p.emit(0xA06009DC)
+    p.expect(0x1234, "the window manager sees the guest-endian PaintWhite word")
+    p.emit(0x807E01D4)
+    p.call("LMSetPaintWhite")
     p.emit(0x3860251C, 0x389E0280)  # Menu ID 9500.
     p.call("NewMenu")
     p.nonzero("create an actual Classic menu")

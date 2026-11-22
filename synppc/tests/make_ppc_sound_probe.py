@@ -52,10 +52,19 @@ def make_probe(destination):
         emit(0x40820000)
 
     emit(0x9421FFC0, 0x7C0802A6, 0x90010044, 0x93C10038, 0x7C5E1378)
-    call(7)
-    emit(0x3C800321, 0x60848000, 0x7C032000)
-    failures.append(len(code))
-    emit(0x40820000)
+    # Classic PPC returns the NumVersion structure through a hidden r3 pointer.
+    # Guard both sides so a host-width store cannot pass this check.
+    for version_import in (7, len(names)):
+        emit(0x3C605A5A, 0x60635A5A, 0x907E0140, 0x907E0144, 0x907E0148, 0x387E0144)
+        call(version_import)
+        emit(0x807E0144)
+        emit(0x3C800321, 0x60848000, 0x7C032000)
+        failures.append(len(code))
+        emit(0x40820000)
+        for offset in (0x140, 0x148):
+            emit(0x807E0000 | offset, 0x3C805A5A, 0x60845A5A, 0x7C032000)
+            failures.append(len(code))
+            emit(0x40820000)
     emit(0x387E0100, 0x388003C0, 0x38A00001)
     call(0)
     emit(0x907E0124, 0x7C661B78, 0x387E0128, 0x38800005, 0x38A00000)
@@ -163,9 +172,9 @@ def make_probe(destination):
     app = pef(
         code,
         data,
-        imports=[("InterfaceLib", name, 2) for name in names],
+        imports=[("InterfaceLib", name, 2) for name in names] + [("PrivateInterfaceLib", "SndSoundManagerVersion", 2)],
         main=0,
-        reloc=[0x4600, 0x4A09, 0xA000, 0x100, 0x4600],
+        reloc=[0x4600, 0x4A0A, 0xA000, 0x100, 0x4600],
     )
     write_fragment(destination, "PPC Sound Probe", app, 1)
 

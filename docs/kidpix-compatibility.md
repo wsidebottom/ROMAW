@@ -1,5 +1,40 @@
 # Kid Pix compatibility checks
 
+## PowerPC Studio Deluxe startup
+
+The installed suite launcher and `Studio Stuff/Kid Pix` contain PowerPC
+fragments. Their startup previously stopped at missing InterfaceLib bindings:
+`GetVol`, `GetWDInfo`, `PBHOpenDenySync`, application-name/menu-hook/window-paint
+and sound-volume low-memory accessors, `AllowPurgePixels`, and
+`LaunchApplication`. The bridge now exposes the existing managers and real
+low-memory state. `SetVol` and `NoPurgePixels` expose the corresponding existing
+operations. LaunchApplication validates its extended block and delegates to
+NewLaunch, retaining the existing separate-process launchContinue behavior.
+
+The volume regression also caught a second byte swap in PBGetWDInfo when a
+volume reference selects the current directory. That branch now copies the
+already guest-endian default directory ID unchanged.
+
+Windows validation reached the suite selection screen, launched Kid Pix using
+its button and reached the canvas. A separate direct launch produced a visible
+pencil stroke. This checks startup, handoff and basic drawing, not complete
+multimedia support.
+The file, menu and GWorld probes passed under both PPC interpreter and JIT
+execution. They check real volume/directory IDs and file references, errors,
+low-memory widths/pointers, malformed launch blocks and pixel purge state.
+Regenerate the file probe between runs because its existing RemoveResource
+test deliberately detaches a resource from the fixture.
+
+The built-in Sound Manager target remains 3.2.1. The PowerPC version API now
+writes the four-byte NumVersion record through its hidden result pointer;
+returning the scalar in r3 left Kid Pix's stack result uninitialized and caused
+the extension warning despite the earlier version change. The 68K convention
+is unchanged. The PPC sound probe checks both InterfaceLib and
+PrivateInterfaceLib result bytes and adjacent guards before exercising queued
+PCM playback and callbacks, under interpreter and JIT execution. The Carbon
+service check uses the same structure-return convention. The rebuilt Windows
+Kid Pix opens its canvas without the Sound Manager warning.
+
 This records the native-dialog checkpoint below. Current Standard File behavior
 uses the classic picker described in [the runtime guide](runtime-guide.md#file-dialogs-and-printing);
 the observations below are historical test evidence.
