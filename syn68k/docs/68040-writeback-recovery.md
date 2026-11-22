@@ -15,6 +15,16 @@ non-null entry or changing other certified state denies replay without undoing
 its effects. Guest cleanup completes one WB1/WB2 scalar; RTE then reexecutes the
 whole instruction and repeats earlier writes. No continuation bit is introduced.
 
+## Read restart certification
+
+Generic read restart restores speculative An updates only when operand and
+descriptor callbacks preserve An and FPU null state, alongside the existing
+checkpoint comparisons for registers, flags, stack banks and FPU state. External
+null-state changes must not be mistaken for normal FPU non-null entry. Callback
+changes deny rollback and remain live; they are never overwritten by a saved An
+snapshot. RTE instead retains its explicit restart certificate at the current
+privileged SP, preserving completed frame progress and callback effects.
+
 ## Completed integer stores
 
 Scalar decoders that finish all nonmemory work can offer their final byte, word
@@ -77,7 +87,7 @@ coverage adds 1,479,936 cases, including zero-byte faults at every lane and
 one/two/three-byte prefixes. Numeric sources include finite, quiet-NaN and
 masked signaling-NaN values; enabled signaling NaNs suppress stores before a
 fault can occur. A focused 1,052-case guard group checks callback effects and
-malformed offers. The combined stream matrix contains 5,382,700 cases;
+malformed offers. The combined stream matrix contains 5,414,348 cases;
 control-flow/RTE coverage adds 101,224 cases. Malformed partial
 writeback records cover both physical and ATC faults without changing CPU state
 or accessing the bus on rejection. Within the total, a focused 2,508,032-case
@@ -87,12 +97,13 @@ are injected after complete operand reads. The fixtures verify retained prefixes
 full WB1/WB2 cleanup, address updates, no repeated operand reads, and entry/live
 SR trace combinations. Status-store physical callbacks additionally change
 all five live CCR bits; cleanup preserves those changes without changing the
-captured SR/CCR operand.
+captured SR/CCR operand. Another 31,648 cases cover read-restart callback
+certification and live-SP RTE recovery, as detailed in the MMU integration notes.
 
 `bash syn68k/tests/check-core.sh aot-x64` also runs the physical matrix and
 record guards through cold and warm persistent native code. The warm run must
 restore cached code without new compilations. The combined replay/physical
-writeback fixture has 2,256,686 cases per run; its warm run restores 1,241,229
+writeback fixture has 2,272,510 cases per run; its warm run restores 1,241,253
 entries with zero compilations. Native FPU helper-exclusion checks remain in
 `bash syn68k/tests/check-core.sh fpu-native`.
 

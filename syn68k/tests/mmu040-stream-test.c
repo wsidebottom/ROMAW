@@ -49,6 +49,29 @@ static uint32_t late_read_physical = UINT32_MAX;
 static uint32_t late_read_pte, late_read_descriptor;
 static uint32_t late_write_physical = UINT32_MAX;
 static uint32_t late_write_pte, late_write_descriptor;
+static uint32_t read_callback_address = UINT32_MAX;
+static unsigned read_callback_kind, read_callback_register, read_callback_mask;
+static unsigned read_callback_fail, read_callback_hits;
+
+/* Observe actual device/descriptor callbacks, including failure returns. */
+static int address_callback(uint32_t address, unsigned kind)
+{
+    if (read_callback_address == UINT32_MAX || address != read_callback_address || kind != read_callback_kind)
+        return 0;
+    if (read_callback_register < 8)
+        EM_AREG(read_callback_register) ^= read_callback_mask;
+    else if (read_callback_register == 8)
+        cpu_state.usp ^= read_callback_mask;
+    else if (read_callback_register == 9)
+        cpu_state.isp ^= read_callback_mask;
+    else if (read_callback_register == 10)
+        cpu_state.msp ^= read_callback_mask;
+    else
+        cpu_state.fpu.null_state ^= read_callback_mask;
+    read_callback_address = UINT32_MAX;
+    ++read_callback_hits;
+    return read_callback_fail;
+}
 
 static void trace_bus(uint32_t address, unsigned kind)
 {
@@ -77,6 +100,8 @@ static int table_read(void* opaque, uint32_t address, uint32_t* value)
 {
     assert(opaque == &mmu);
     trace_bus(address, 2);
+    if (address_callback(address, 2))
+        return 0;
     if (address > sizeof ram - 4)
         return 0;
     *value = (uint32_t)ram[address] << 24 | (uint32_t)ram[address + 1] << 16 | (uint32_t)ram[address + 2] << 8 |
@@ -87,6 +112,8 @@ static int table_read(void* opaque, uint32_t address, uint32_t* value)
 static int table_write(void* opaque, uint32_t address, uint32_t value, int locked)
 {
     uint32_t old;
+    if (address_callback(address, 3))
+        return 0;
     if (!table_read(opaque, address, &old))
         return 0;
     put32(address, locked ? old | value : value);
@@ -101,6 +128,8 @@ static int operand_read(void* opaque, uint32_t physical, unsigned char* bytes, u
     (void)fc;
     ++reads;
     trace_bus(physical, 0);
+    if (address_callback(physical, 1))
+        return 0;
     if (physical == replay_read_physical) {
         switch (replay_read_mutation) {
         case 1:
@@ -309,6 +338,8 @@ static void fixture(unsigned page8k, unsigned privileged)
     trace_read_sr = 0;
     trace_bus_kind = 0;
     late_read_physical = late_write_physical = UINT32_MAX;
+    read_callback_address = UINT32_MAX;
+    read_callback_hits = 0;
 }
 
 static unsigned emit_pc;
@@ -1564,6 +1595,99 @@ static void guest_fpu_read_restarts(void)
                             }
 }
 
+/* Component stepping independently supplies the unrolled-back fault state.
+   The runner may restore owned EA updates only when callbacks preserve An. */
+static void callback_read_setup(unsigned page8k, unsigned privileged, unsigned fpu, unsigned mode, unsigned null,
+                                unsigned kind, unsigned reg, unsigned mutate)
+{
+    fixture(page8k, privileged);
+    syn68k_fpu_reset();
+    cpu_state.fpu.null_state = null;
+    for (unsigned i = 0; i < 16; ++i)
+        cpu_state.regs[i].ul.n = 0x12345600 + i * 4;
+    cpu_state.usp = 0x34560000;
+    cpu_state.isp = 0x20100;
+    cpu_state.msp = 0x201c0;
+    EM_A7 = privileged ? cpu_state.isp : cpu_state.usp;
+    EM_A0 = 0x28000 + (mode == 4 ? 4 : 0);
+    set_status((privileged ? 0x2000 : 0) | 0x15);
+    code_word(0x10000, (fpu ? 0xf200 : 0x2000) | mode << 3);
+    if (fpu)
+        code_word(0x10002, 0x4400); // FMOVE.S <ea>,FP0
+    if (mode == 6) {
+        code_word(fpu ? 0x10004 : 0x10002, 0x0151); // ([A0]), null BD/OD, suppressed index
+        EM_A0 = 0x24080;
+        put32(pte(0x24000), 0x1c001);
+        put32(0x1c080, 0x28000);
+    }
+    put32(pte(0x28000), 0x10001);
+    fail_physical = 0x10000;
+    read_callback_kind = kind >= 6 ? 1 : kind >= 4 ? kind - 2 : kind;
+    read_callback_address = kind == 6   ? 0x1c080
+                            : kind == 7 ? physical(0x10000)
+                            : kind == 8 ? physical(0x10002)
+                            : kind == 1 ? fail_physical
+                                        : pte(0x28000);
+    read_callback_register = reg;
+    read_callback_mask = !mutate ? 0 : reg == 11 ? 1 : 0x10;
+    read_callback_fail = kind == 4 || kind == 5;
+}
+
+static void read_callback_guards(void)
+{
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned fpu = 0; fpu < 2; ++fpu)
+                for (unsigned mode = 2; mode <= 6; ++mode)
+                    for (unsigned null = 0; null <= fpu; ++null)
+                        for (unsigned kind = 1; kind <= 8; ++kind)
+                            for (unsigned reg = 0; reg < 12; ++reg)
+                                for (unsigned mutate = 0; mutate < 2; ++mutate) {
+                                    if (mode == 5 || (kind == 6 && mode != 6) || (kind == 8 && !fpu && mode != 6) ||
+                                        (kind >= 7 && !reg))
+                                        continue;
+                                    callback_read_setup(page8k, privileged, fpu, mode, null, kind, reg, mutate);
+                                    if (fpu) {
+                                        Syn68kFPUStep fp;
+                                        assert(syn68k_fpu_step(0x10000, &memory, &fp));
+                                        assert(fp.vector == 2 && fp.format == 7);
+                                    }
+                                    else {
+                                        Syn68kIntegerStep integer;
+                                        assert(syn68k_integer_step(0x10000, &memory, &integer));
+                                        assert(integer.vector == 2 && integer.format == 7);
+                                    }
+                                    assert(read_callback_hits == 1 && read_callback_address == UINT32_MAX);
+                                    CPUState expected = cpu_state;
+                                    callback_read_setup(page8k, privileged, fpu, mode, null, kind, reg, mutate);
+                                    M68kReg original[16];
+                                    memcpy(original, cpu_state.regs, sizeof original);
+                                    Syn68kMappedCPU cpu = {
+                                        .pc = 0x10000, .memory = &memory, .native = native_execution};
+                                    Syn68kMappedRun run;
+                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    assert(read_callback_hits == 1 && read_callback_address == UINT32_MAX);
+                                    assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                           run.step.format == 7 && run.step.restartable_read == !mutate);
+                                    assert(!memcmp(cpu_state.regs, mutate ? expected.regs : original, sizeof original));
+                                    assert(!memcmp(&cpu_state.fpu, &expected.fpu, sizeof expected.fpu) &&
+                                           cpu_state.usp == expected.usp && cpu_state.isp == expected.isp &&
+                                           cpu_state.msp == expected.msp &&
+                                           status() == ((privileged ? 0x2000 : 0) | 0x15));
+                                    if (mutate) {
+                                        CPUState before = cpu_state;
+                                        unsigned old_reads = reads, old_writes = writes;
+                                        Syn68kMappedDelivery delivery;
+                                        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                        assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == old_reads &&
+                                               writes == old_writes && !memcmp(&before, &cpu_state, sizeof before));
+                                    }
+                                    ++cases;
+                                }
+    read_callback_address = fail_physical = UINT32_MAX;
+    syn68k_fpu_reset();
+}
+
 static void fpu_read_restart_guards(void)
 {
     for (unsigned mutation = 1; mutation <= 6; ++mutation) {
@@ -1937,6 +2061,49 @@ static void rte_callback_restarts(void)
     fail_physical = UINT32_MAX;
     fault_fpu_mutation = 0;
     set_status(0x2000);
+    syn68k_fpu_reset();
+}
+
+/* RTE retains its explicit certificate at the live privileged SP. Even A7
+   changes must not cause the generic checkpoint to restore earlier registers. */
+static void rte_address_callback_restarts(void)
+{
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned reg = 0; reg < 8; ++reg) {
+            fixture(page8k, 1);
+            unsigned frame = 0x20080, alternate = frame ^ 0x200;
+            rte_header(frame, 0x2015, 0);
+            code_word(alternate, 0x2015);
+            put32(physical(alternate + 2), 0x10080);
+            code_word(alternate + 6, 0x7008);
+            put32(physical(alternate + 8), 0x12345678);
+            code_word(alternate + 12, 0);
+            code_word(0x10040, 0x4e73);
+            cpu_state.vbr = 0x20000;
+            put32(physical(cpu_state.vbr + 8), 0x10040);
+            unsigned original = EM_AREG(reg);
+            fail_physical = read_callback_address = physical(frame + 12);
+            read_callback_kind = 1;
+            read_callback_register = reg;
+            read_callback_mask = 0x200;
+            read_callback_fail = 0;
+            Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+            Syn68kMappedRun run;
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+            unsigned live_frame = reg == 7 ? alternate : frame;
+            assert(read_callback_hits == 1 && read_callback_address == UINT32_MAX &&
+                   run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.restartable_read &&
+                   EM_AREG(reg) == (original ^ 0x200) && EM_A7 == live_frame);
+            fail_physical = UINT32_MAX;
+            Syn68kMappedDelivery delivery;
+            assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+            assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && EM_A7 == live_frame - 60);
+            assert(syn68k_mapped_cpu_run(&cpu, 2, &run));
+            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10080 && EM_A7 == live_frame + 60 &&
+                   status() == 0x2015 && (reg == 7 || EM_AREG(reg) == (original ^ 0x200)));
+            ++cases;
+        }
+    fail_physical = read_callback_address = UINT32_MAX;
     syn68k_fpu_reset();
 }
 
@@ -4115,6 +4282,8 @@ int main(int argc, char** argv)
             guest_scalar_writebacks();
             guest_partial_scalar_writebacks();
             guest_scalar_trace_writebacks();
+            read_callback_guards();
+            rte_address_callback_restarts();
             guest_fpu_physical_writebacks();
             guest_fpu_physical_replays();
             partial_writeback_record_guards();
@@ -4160,6 +4329,8 @@ int main(int argc, char** argv)
             guest_scalar_writebacks();
             guest_partial_scalar_writebacks();
             guest_scalar_trace_writebacks();
+            read_callback_guards();
+            rte_address_callback_restarts();
             guest_partial_read_restarts();
             guest_movem_read_continuations();
             movem_fetch_record_guards();

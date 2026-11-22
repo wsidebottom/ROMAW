@@ -28,13 +28,45 @@
 typedef struct {
     Syn68kMMU040Memory* original;
     unsigned write_attempted;
+    /* Separate callback An/null effects from instruction-owned EA/entry changes. */
+    unsigned callback_state_changed;
 } InstructionBus;
 
 static int instruction_read(void* opaque, uint32 physical, unsigned char* bytes, unsigned size, uint32 attributes,
                             unsigned fc)
 {
     InstructionBus* bus = opaque;
-    return bus->original->read && bus->original->read(bus->original->opaque, physical, bytes, size, attributes, fc);
+    M68kReg before[8];
+    unsigned before_null = cpu_state.fpu.null_state;
+    memcpy(before, cpu_state.regs + 8, sizeof before);
+    int ok = bus->original->read && bus->original->read(bus->original->opaque, physical, bytes, size, attributes, fc);
+    bus->callback_state_changed |=
+        memcmp(before, cpu_state.regs + 8, sizeof before) != 0 || before_null != cpu_state.fpu.null_state;
+    return ok;
+}
+
+static int instruction_table_read(void* opaque, uint32 physical, uint32* value)
+{
+    InstructionBus* bus = opaque;
+    M68kReg before[8];
+    unsigned before_null = cpu_state.fpu.null_state;
+    memcpy(before, cpu_state.regs + 8, sizeof before);
+    int ok = bus->original->tables.read32(bus->original->tables.opaque, physical, value);
+    bus->callback_state_changed |=
+        memcmp(before, cpu_state.regs + 8, sizeof before) != 0 || before_null != cpu_state.fpu.null_state;
+    return ok;
+}
+
+static int instruction_table_write(void* opaque, uint32 physical, uint32 value, int locked)
+{
+    InstructionBus* bus = opaque;
+    M68kReg before[8];
+    unsigned before_null = cpu_state.fpu.null_state;
+    memcpy(before, cpu_state.regs + 8, sizeof before);
+    int ok = bus->original->tables.update32(bus->original->tables.opaque, physical, value, locked);
+    bus->callback_state_changed |=
+        memcmp(before, cpu_state.regs + 8, sizeof before) != 0 || before_null != cpu_state.fpu.null_state;
+    return ok;
 }
 
 static int instruction_write(void* opaque, uint32 physical, const unsigned char* bytes, unsigned size,
@@ -240,6 +272,9 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         memory.opaque = &bus;
         memory.read = cpu->memory->read ? instruction_read : NULL;
         memory.write = cpu->memory->write ? instruction_write : NULL;
+        memory.tables.opaque = &bus;
+        memory.tables.read32 = cpu->memory->tables.read32 ? instruction_table_read : NULL;
+        memory.tables.update32 = cpu->memory->tables.update32 ? instruction_table_write : NULL;
         Syn68kMMU040Native native;
 #ifdef GENERATE_X64_CODE
         if (cpu->native && !memory.native)
@@ -399,14 +434,16 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 result->step.next = result->step.exception_pc = result->step.store_next;
             }
             /* Abort pre-execute reads: restore speculative EA register updates,
-             preserving completed physical reads and descriptor history. No
+             preserving completed physical reads and descriptor history. Callback
+             An/null changes must remain live, including descriptor effects.
+             RTE's separate live-SP certificate does not request this rollback. No
              data/CCR/status/FPU result or attempted store may be discarded. */
             uint16 read_ssw;
             if (result->step.vector == 2 && result->step.format == 7 && !result->step.access.writing &&
                 (!result->step.access.rmw || result->step.access.fc == 1 || result->step.access.fc == 5) &&
                 syn68k_mmu040_access_ssw(&result->step.access, &read_ssw) && (opcode & 0xFFC0) != 0xF600 &&
                 !((opcode & 0xFB80) == 0x4880 && (opcode & 0x38) >= 0x10) && !bus.write_attempted &&
-                unchanged_results(&before, opcode, opcode == 0x4e73 ? 16 : 8)) {
+                !bus.callback_state_changed && unchanged_results(&before, opcode, opcode == 0x4e73 ? 16 : 8)) {
                 for (unsigned i = 8; i < 16; ++i)
                     cpu_state.regs[i] = before.regs[i];
                 result->step.restartable_read = 1;

@@ -85,7 +85,9 @@ typedef struct {
    before executing another instruction. Format 7 accepts opcode-fetch faults
    and reads certified by the stream runner to have unchanged data/CCR/SR/FPU
    results apart from FPU non-null entry, restored speculative EA updates and
-   no attempted stores, or a
+   no attempted stores. External operand/descriptor callback changes to An or
+   FPU null state deny this rollback without discarding their effects. RTE's
+   explicit restart at the live privileged SP is retained separately. Also accept a
    retired scalar final store with one WB1/WB2 slot. The guest handler
    must complete that slot before RTE; it is never silently replayed by the CPU.
    RTE frame reads restart at the current privileged SP without repeating

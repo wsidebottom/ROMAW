@@ -145,6 +145,9 @@ The mapped stream runner constructs supported CPU exception frames and handles
 the read-restart and writeback cases described in [the MMU integration notes](mmu040.md).
 Mapped FPU/MMU trace uses instruction-entry T1/T0, including deferred CT after
 retired FPU stores and trace after complete reexecution of unchanged aborts.
+Read restart distinguishes owned EA/null-entry changes from external operand
+and descriptor callback effects; callback changes to An or FPU null state deny
+rollback. RTE retains its separate live privileged-SP restart protocol.
 Physical bus prefixes and certified early stores are described in the
 [writeback recovery contract](68040-writeback-recovery.md).
 This is distinct from enabling paging in ROMAW: its Toolbox and host-pointer
