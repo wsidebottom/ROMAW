@@ -86,5 +86,5 @@ through the separate disk-image library. Fixtures and the executable hash are
 recorded in `build/archive-ui-report.json`; the user's desktop and clipboard
 remain separate from the test station.
 The same suite checks automatic MacBinary copy/move packaging from OSX,
-Netatalk, BasiliskII and Executor layouts, same-volume conversion, unchanged
+Netatalk, BasiliskII and ROMAW layouts, same-volume conversion, unchanged
 ordinary Windows files, and retained sources after a failed MacBinary move.

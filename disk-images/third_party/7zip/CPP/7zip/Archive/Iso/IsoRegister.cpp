@@ -20,4 +20,4 @@ REGISTER_ARC_I(
 
 }}
 
-extern "C" void executor_link_iso () {}
+extern "C" void romaw_link_iso () {}

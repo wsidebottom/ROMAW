@@ -2642,4 +2642,4 @@ REGISTER_ARC_I(
 
 }}
 
-extern "C" void executor_link_hfs () {}
+extern "C" void romaw_link_hfs () {}

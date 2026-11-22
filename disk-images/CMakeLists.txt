@@ -65,16 +65,6 @@ set(sources
   ${sevenzip}/C/Sort.c
 )
 add_library(romaw-images STATIC src/images.cpp src/diskcopy.c ${sources})
-# These project registration hooks are local additions to the vendored readers.
-# Keep vendor sources intact while matching the maintained ROMAW interface.
-set_source_files_properties(${sevenzip}/CPP/7zip/Archive/HfsHandler.cpp
-  PROPERTIES COMPILE_DEFINITIONS executor_link_hfs=romaw_link_hfs)
-set_source_files_properties(${sevenzip}/CPP/7zip/Archive/DmgHandler.cpp
-  PROPERTIES COMPILE_DEFINITIONS executor_link_dmg=romaw_link_dmg)
-set_source_files_properties(${sevenzip}/CPP/7zip/Archive/ApmHandler.cpp
-  PROPERTIES COMPILE_DEFINITIONS executor_link_apm=romaw_link_apm)
-set_source_files_properties(${sevenzip}/CPP/7zip/Archive/Iso/IsoRegister.cpp
-  PROPERTIES COMPILE_DEFINITIONS executor_link_iso=romaw_link_iso)
 file(GLOB hfsutils_sources CONFIGURE_DEPENDS third_party/hfsutils/*.c)
 target_sources(romaw-images PRIVATE ${hfsutils_sources} src/hfs_io.cpp src/hfs_metadata.c)
 target_compile_definitions(romaw-images PRIVATE HAVE_MKTIME=1)

@@ -136,7 +136,7 @@ def main():
         (folder / "._Test").write_bytes(ad)
     (desktop_path / "PackageFailedMove/._Test").write_bytes(b"bad")
     binary_cases = []
-    for storage in ("OSX", "Netatalk", "BasiliskII", "Executor"):
+    for storage in ("OSX", "Netatalk", "BasiliskII", "ROMAW"):
         for moving in (False, True):
             name = "MB" + storage + ("Move" if moving else "Copy")
             path = desktop_path / name
@@ -145,7 +145,7 @@ def main():
                 companion = path.with_name("._" + name)
             elif storage == "Netatalk":
                 companion = desktop_path / ".AppleDouble" / name
-            elif storage == "Executor":
+            elif storage == "ROMAW":
                 companion = path.with_name("%" + name)
             else:
                 companion = desktop_path / ".finf" / name

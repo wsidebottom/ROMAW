@@ -419,4 +419,4 @@ REGISTER_ARC_I(
 
 }}
 
-extern "C" void executor_link_apm () {}
+extern "C" void romaw_link_apm () {}

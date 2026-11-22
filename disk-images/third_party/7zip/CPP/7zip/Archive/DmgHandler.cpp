@@ -2335,4 +2335,4 @@ REGISTER_ARC_I(
 
 }}
 
-extern "C" void executor_link_dmg () {}
+extern "C" void romaw_link_dmg () {}
