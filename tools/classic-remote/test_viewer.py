@@ -15,7 +15,7 @@
 
 """Loopback viewer failure isolation; no Mac, keys or AFP share are accessed."""
 
-from concurrent.futures import ThreadPoolROMAW
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from http.client import HTTPConnection
 import json
@@ -85,7 +85,7 @@ class ViewerTests(unittest.TestCase):
         with self.server() as (controller, port):
             self.assertEqual(self.request(port, "/connect", {})[0], 200)
             controller.fail = True
-            with ThreadPoolROMAW(5) as pool:
+            with ThreadPoolExecutor(5) as pool:
                 results = list(pool.map(lambda _: self.request(port, "/screen"), range(10)))
             self.assertTrue(all(status == 503 for status, _ in results))
             self.assertEqual(controller.calls, ["screen"])
