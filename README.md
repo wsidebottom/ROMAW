@@ -12,6 +12,10 @@ in [the documentation index](docs/README.md).
 
 AI tools were used to create some of this project's contents.
 
+ROMAW is provided for educational purposes. No copyright infringement is intended.
+All third-party copyrights and trademarks belong to their respective owners.
+Third-party software and assets remain subject to their applicable licenses.
+
 ## Download
 
 [Download ROMAW 1.0 for Windows x64](https://github.com/wsidebottom/ROMAW/releases/download/v1.0/ROMAW-1.0-windows-x64.zip).
