@@ -38,6 +38,30 @@ The generated font resource beside the executable is `ROMAW.rsrc`.
 The user profile is always `.romaw`. A new profile is created directly there;
 startup does not discover or import other profile directories.
 
+## Loading disk images
+
+Open a disk image in ROMAW's Finder by double-clicking it or choosing File > Open.
+The mounted volume appears on the desktop; double-click it to browse its files.
+Use Put Away, Eject or drag the volume to Trash to unmount it. Mounted images and
+their access settings are remembered for subsequent launches.
+
+You can also mount an image from PowerShell:
+
+```powershell
+.\windows-binaries\bin\ROMAW.exe -mount-ro "D:\Mac Images\Macintosh.img"
+```
+
+ROMAW reads MFS, classic HFS, HFS+/HFSX, ISO 9660 and supported DMG images
+directly, without extracting their contents. Common image extensions include
+`.image`, `.iso`, `.cdr`, `.toast`, `.dmg`, `.img`, `.dsk`, `.hfv` and `.hda`.
+The image's actual format determines support.
+
+Use `-mount-ro` for read-only access or `-mount-rw` to request in-place writes
+to supported classic HFS images. MFS, HFS+/HFSX, ISO 9660 and compressed images
+remain read-only. The Windows image picker defaults to read-only access.
+See [direct disk image access](disk-images/README.md) for supported containers,
+compression formats and write limitations.
+
 ## Macintosh sidecar files
 
 ROMAW supports Macintosh resource forks and Finder metadata stored in OS X,
