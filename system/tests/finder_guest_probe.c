@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: main, finder_hlock_hook, finder_gestalt_hook (assembly trap hooks).
+  Functions: main, finder_hlock_hook, finder_gestalt_hook,
+             finder_newhandle_failure (assembly trap hooks).
 
   Origin:    ROMAW Finder guest integration regression fixture using Retro68.
 
@@ -31,10 +32,11 @@ static Rect patched_frame_rect;
 static ProcPtr original_frame;
 static volatile long hlock_calls __asm__("finder_hlock_calls");
 static volatile long gestalt_calls __asm__("finder_gestalt_calls");
-static ProcPtr original_hlock __asm__("finder_original_hlock");
-static ProcPtr original_gestalt __asm__("finder_original_gestalt");
+static ProcPtr volatile original_hlock __asm__("finder_original_hlock");
+static ProcPtr volatile original_gestalt __asm__("finder_original_gestalt");
 extern void finder_hlock_hook(void) __asm__("finder_hlock_hook");
 extern void finder_gestalt_hook(void) __asm__("finder_gestalt_hook");
+extern void finder_newhandle_failure(void) __asm__("finder_newhandle_failure");
 
 /* Register-ABI OS trap patches tail-chain without disturbing A0 or D1. */
 __asm__(".globl finder_hlock_hook\n"
@@ -46,6 +48,11 @@ __asm__(".globl finder_hlock_hook\n"
         "finder_gestalt_hook:\n\t"
         "addq.l #1,finder_gestalt_calls\n\t"
         "move.l finder_original_gestalt,-(%sp)\n\t"
+        "rts\n"
+        ".globl finder_newhandle_failure\n"
+        "finder_newhandle_failure:\n\t"
+        "moveq #-108,%d0\n\t"
+        "suba.l %a0,%a0\n\t"
         "rts\n");
 
 static pascal void frame_patch(Rect* rect)
@@ -210,6 +217,13 @@ static void test_gestalt(void)
         HLock(second);
         memcpy(*second, *code, 132);
         *(long*)(*second + 128) = 0;
+        ProcPtr original_newhandle = GetOSTrapAddress(0xa122);
+        SetOSTrapAddress((ProcPtr)finder_newhandle_failure, 0xa122);
+        response = 0x12344321;
+        short error = query(*second, 0x666e64f6, &response);
+        SetOSTrapAddress(original_newhandle, 0xa122);
+        check(error == -108 && response == 0x12344321 && *(long*)(*second + 128) == 0,
+              "failed system Handle allocation leaves state and response unchanged");
         query(*second, 0x666e64f6, &response);
         check((Handle)response != table && (Handle)response != 0, "resource instances have independent cached state");
         DisposeHandle((Handle)response);

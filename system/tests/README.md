@@ -44,6 +44,14 @@ described in [synppc](../../synppc/README.md#romaw-integration). Hardware checks
 require their documented physical machine and explicit arguments; listing a
 suite never runs them.
 
+For the C-backed Finder resource procedures, `bash system/tests/check-ui.sh
+finder-code` runs the portable Windows fixture. After building ROMAW, run
+`bash system/tests/check-ui.sh finder-guest /absolute/path/to/ROMAW.exe` to
+compile a Retro68 probe and exercise real guest calls on Windows. It checks
+resource reloads, Pascal stack/result conventions, QuickDraw and trap patches,
+Gestalt registration, allocation failure/retry and malformed selector tables.
+Reports and trace logs stay under `build/finder-guest/`.
+
 Validate suite dispatch independently with:
 
 ```bash

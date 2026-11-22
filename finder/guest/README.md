@@ -89,5 +89,7 @@ It exercises resource loading/reloading, real QuickDraw drawing and regions,
 guest Pascal calls, selector tables, malformed table boundaries, independent
 resource-instance state and actual Gestalt registration/failure paths.
 Guest-installed HLock, FrameRect and NewGestalt trap hooks verify patch dispatch.
+An injected NewHandle failure verifies error propagation, unchanged instance
+state and response, and successful retry through the real allocator.
 Reports and trace logs stay in build/finder-guest/. This focused suite does
 not establish complete classic Finder application compatibility.

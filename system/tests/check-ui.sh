@@ -46,6 +46,7 @@ case "$check" in
         -I"$retro68/m68k-apple-macos/RIncludes" \
         --copy "$out/FinderGuestProbe.code.bin" -o "$out/FinderGuestProbe.bin" -t APPL -c FGPr \
         --cc "$out/%FinderGuestProbe"
+      rm -f "$out/._FinderGuestProbe"
       python3 "$root/tools/normalize-appledouble.py" "$out/%FinderGuestProbe" "$out/._FinderGuestProbe"
       touch "$out/FinderGuestProbe"
       rm -f "$out/guest-results.txt"
