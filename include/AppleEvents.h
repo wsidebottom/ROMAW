@@ -401,6 +401,8 @@ extern pascal trap OSErr C_AEInteractWithUser(int32 timeout, NMRecPtr nm_req, Id
 
 extern void AE_init(void);
 extern void AE_reinit(void);
+extern OSErr ROMlib_ae_object_init(void);
+extern void ROMlib_ae_object_reinit(void);
 
 extern pascal trap OSErr C_AEManagerInfo(LONGINT* resultp);
 
@@ -416,8 +418,9 @@ extern pascal trap OSErr C_AERemoveObjectAccessor(DescType desiredClass, DescTyp
                                                   BOOLEAN isSysHandler);
 extern pascal trap OSErr C_AEInstallObjectAccessor(DescType desiredClass, DescType containerType, ProcPtr theAccessor,
                                                    LONGINT refcon, BOOLEAN isSysHandler);
-extern pascal trap OSErr C_AEGetObjectAccessor(DescType desiredClass, DescType containerType, ProcPtr* theAccessor,
-                                               LONGINT* accessorRefcon, BOOLEAN isSysHandler);
+extern pascal trap OSErr C_AEGetObjectAccessor(DescType desiredClass, DescType containerType,
+                                               HIDDEN_ProcPtr* theAccessor, LONGINT* accessorRefcon,
+                                               BOOLEAN isSysHandler);
 extern pascal trap OSErr C_AECallObjectAccessor(DescType desiredClass, AEDesc* containerToken, DescType containerClass,
                                                 DescType keyForm, AEDesc* keyData, AEDesc* theToken);
 extern pascal trap OSErr C_AESetObjectCallbacks(ProcPtr myCompareProc, ProcPtr myCountProc, ProcPtr myDisposeTokenProc,

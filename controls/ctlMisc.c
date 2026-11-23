@@ -34,6 +34,7 @@
 #include "ControlMgr.h"
 #include "DialogMgr.h"
 #include "EventMgr.h"
+#include "ToolboxEvent.h"
 #include "MemoryMgr.h"
 #include "TextEdit.h"
 #include "Iconutil.h"
@@ -402,6 +403,9 @@ PUBLIC OSErr ROMlib_get_control_features(ControlHandle control, uint32* features
         return noErr;
     case ROMlib_user_pane_proc:
         *features = CL((kind == ROMlib_root_control_proc ? 2U : (unsigned)CTL_VALUE(control) & 0x1eU) | (1U << 6));
+        return noErr;
+    case ROMlib_chasing_arrows_proc:
+        *features = CLC((1U << 3) | (1U << 6)); /* Idle and Boolean animation data. */
         return noErr;
     case ROMlib_slider_proc:
     case ROMlib_tabs_proc:
@@ -795,6 +799,20 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
             return noErr;
         }
         const int kind = ROMlib_native_control_kind(control) & ~15;
+        if (tag == TICK("anim") && kind == ROMlib_chasing_arrows_proc) {
+            if (actual)
+                *actual = CLC(1);
+            if (operation == ROMLIB_CONTROL_MEASURE)
+                return noErr;
+            if (size < 1 || (operation == ROMLIB_CONTROL_WRITE && size != 1))
+                return -30591;
+            BOOLEAN* animating = &ROMlib_aux_control_extra(aux)->chasing_animating;
+            if (operation == ROMLIB_CONTROL_WRITE)
+                *animating = *data != 0;
+            else
+                *data = *animating;
+            return noErr;
+        }
         if (tag == TICK("tran") && (kind == ROMlib_image_well_proc || kind == ROMlib_bevel_button_proc)) {
             const Size required = sizeof(INTEGER);
             if (actual)
@@ -1385,6 +1403,35 @@ PRIVATE void draw_native_image_well(ControlHandle control)
     draw_state_restore(&saved);
 }
 
+PRIVATE void draw_native_chasing_arrows(ControlHandle control, unsigned phase)
+{
+    Rect bounds = CTL_RECT(control);
+    int radius = MIN(RECT_WIDTH(&bounds), RECT_HEIGHT(&bounds)) / 2 - 2;
+    if (radius < 2)
+        return;
+    const int center_x = (CW(bounds.left) + CW(bounds.right)) / 2;
+    const int center_y = (CW(bounds.top) + CW(bounds.bottom)) / 2;
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    EraseRect(&bounds);
+    RGBForeColor(CTL_HILITE(control) == INACTIVE ? &ROMlib_gray_rgb_color : &ROMlib_black_rgb_color);
+    SetRect(&bounds, center_x - radius, center_y - radius, center_x + radius, center_y + radius);
+    static const int sine[] = {0, 707, 1000, 707, 0, -707, -1000, -707};
+    static const int cosine[] = {1000, 707, 0, -707, -1000, -707, 0, 707};
+    for (unsigned arrow = 0; arrow < 2; ++arrow) {
+        unsigned start = (phase + arrow * 4) & 7;
+        FrameArc(&bounds, start * 45, 135);
+        unsigned end = (start + 3) & 7;
+        int x = center_x + sine[end] * radius / 1000;
+        int y = center_y - cosine[end] * radius / 1000;
+        MoveTo(x - (3 * cosine[end] + 2 * sine[end]) / 1000, y - (3 * sine[end] - 2 * cosine[end]) / 1000);
+        LineTo(x, y);
+        LineTo(x - (3 * cosine[end] - 2 * sine[end]) / 1000, y - (3 * sine[end] + 2 * cosine[end]) / 1000);
+    }
+    draw_state_restore(&saved);
+}
+
 PRIVATE void draw_native_value_control(ControlHandle control, int kind)
 {
     Rect bounds = CTL_RECT(control);
@@ -1626,7 +1673,7 @@ int32 ROMlib_ctlcall(ControlHandle c, int16 i, intptr_t native_param)
     }
     if (i == drawCntl && !CTL_VIS(c))
         return 0;
-    if (i == drawCntl || i == testCntl) {
+    if (i == drawCntl || i == testCntl || i == 18) {
         AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(c));
         while (aux && ROMlib_aux_control_extra(aux)->parent) {
             ControlHandle parent = MR(ROMlib_aux_control_extra(aux)->parent);
@@ -1643,6 +1690,24 @@ int32 ROMlib_ctlcall(ControlHandle c, int16 i, intptr_t native_param)
             return CToPascalCall(SYN68K_TO_US(definition), CTOP_cdef0, VAR(c), c, i, l);
         }
         int kind = aux ? Hx(aux, acReserved) : 0;
+        if ((kind & ~15) == ROMlib_chasing_arrows_proc && aux) {
+            ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+            unsigned animation_step = ((uint32)TickCount() / 6) & 7;
+            if (i == initCntl) {
+                extra->chasing_frame = CL(animation_step);
+                extra->chasing_animating = TRUE;
+            }
+            if (i == calcCntlRgn || i == calcCRgns)
+                RectRgn((RgnHandle)native_param, &CTL_RECT(c));
+            if ((i == drawCntl ||
+                 (i == 18 && extra->chasing_animating && CL(extra->chasing_frame) != animation_step)) &&
+                CTL_VIS(c) && WINDOW_VISIBLE(CTL_OWNER(c))) {
+                if (extra->chasing_animating)
+                    extra->chasing_frame = CL(animation_step);
+                draw_native_chasing_arrows(c, CL(extra->chasing_frame));
+            }
+            return 0;
+        }
         if ((kind & ~15) == ROMlib_group_box_proc || (kind & ~15) == ROMlib_separator_proc) {
             if (i == drawCntl && CTL_VIS(c) && WINDOW_VISIBLE(CTL_OWNER(c)))
                 draw_native_decoration(c, kind & ~15);

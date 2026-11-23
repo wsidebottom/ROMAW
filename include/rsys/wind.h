@@ -113,6 +113,8 @@ typedef struct {
     Byte drop_threshold;
     uint16 dialog_options;
     uint32 owned_content_colors;
+    uint16 modal_event_mask;
+    boolean_t modal_event_mask_set;
 } ROMlib_window_metadata;
 
 enum { ROMLIB_DIALOG_TRACKS_CURSOR = 0x8000, ROMLIB_DIALOG_CANCEL_ITEM = 0x7fff };

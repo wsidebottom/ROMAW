@@ -793,5 +793,52 @@ function Invoke-Check-system-request {
     }
 }
 
+function Invoke-Check-finder-services {
+    param(
+        [string]$ROMAW,
+        [ValidateSet('Both', 'Jit', 'Interpreter')]
+        [string]$Engine = 'Both'
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $ROMAW) { $ROMAW = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
+    $fixture = Join-Path $root ('build/finder-services.' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Force (Join-Path $fixture '.romaw/Apps/System Folder') | Out-Null
+    & python (Join-Path $PSScriptRoot 'make_ppc_finder_services_probe.py') $fixture
+    [IO.File]::WriteAllText((Join-Path $fixture '.romaw/ROMAW.prefs'), "[HostDrives]`nSidecarDrives=none`n")
+    if ($LASTEXITCODE) { throw 'Cannot generate Finder services probe' }
+    $modes = if ($Engine -eq 'Both') { @('-no-ppc-jit', '-ppc-jit') }
+    elseif ($Engine -eq 'Jit') { @('-ppc-jit') }
+    else { @('-no-ppc-jit') }
+    foreach ($mode in $modes) {
+        & python (Join-Path $PSScriptRoot 'make_ppc_finder_services_probe.py') $fixture
+        if ($LASTEXITCODE) { throw 'Cannot reset Finder services fixture' }
+        $savedProfile = $env:USERPROFILE
+        try {
+            $env:USERPROFILE = $fixture
+            $arguments = $mode + ' -system 8.6 -syszone 16m -applzone 64m -sdlaudio test -debug trace "' + (Join-Path $fixture 'PPC Finder Services Probe') + '"'
+            $process = Start-Process -FilePath $ROMAW -ArgumentList $arguments -WorkingDirectory $fixture -WindowStyle Hidden -PassThru
+        }
+        finally { $env:USERPROFILE = $savedProfile }
+        try {
+            if (-not $process.WaitForExit(15000)) { throw "Finder services timed out: $fixture" }
+            if ($process.ExitCode) { throw "Finder services exited $($process.ExitCode): $fixture" }
+            $log = Get-Content (Join-Path $fixture 'stderr.txt') -Raw
+            [IO.File]::WriteAllText((Join-Path $fixture ($mode + '.log')), $log)
+            if ($log -notmatch 'debugstr: PPC Finder services: passed' -or
+                $log -notmatch 'PowerPC fragment completed' -or
+                $log -match 'win_exception|PowerPC launch failed|Illegal instruction') {
+                throw "Finder services failed: $fixture"
+            }
+            Write-Output ("${mode}: Finder services, object callbacks and resource-fork icon refresh passed")
+        }
+        finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+            $process.Dispose()
+        }
+    }
+}
+
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('system750', 'system750-isolated', 'aot', 'carbon-bundle-copy', 'carbon-cf-real', 'cfm68k', 'fileplay-capture', 'startup-profile', 'system-request') -CheckArguments $args
+Invoke-RegressionCheck -Names @('system750', 'system750-isolated', 'aot', 'carbon-bundle-copy', 'carbon-cf-real', 'cfm68k', 'fileplay-capture', 'startup-profile', 'system-request', 'finder-services') -CheckArguments $args

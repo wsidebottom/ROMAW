@@ -75,6 +75,7 @@ void AE_init(void)
 
 void AE_reinit(void)
 {
+    ROMlib_ae_object_reinit();
     AE_info_t* info;
     OSErr err;
 

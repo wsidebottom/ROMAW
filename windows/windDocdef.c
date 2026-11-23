@@ -1006,6 +1006,17 @@ P4(PUBLIC pascal, LONGINT, wdef0, INTEGER, varcode, WindowPtr, window, INTEGER, 
     }
 
     switch (message) {
+    case 7: { /* kWindowMsgGetFeatures: report only supported WDEF capabilities. */
+        uint32 features = (varcode == documentProc ? 1U : 0U) | (zoom_bit ? 2U : 0U);
+        if (varcode == documentProc || varcode == noGrowDocProc || varcode == movableDBoxProc)
+            features |= 1U << 6; /* kWindowHasTitleBar. */
+        if (varcode == dBoxProc || varcode == plainDBox || varcode == altDBoxProc || varcode == movableDBoxProc)
+            features |= 1U << 3; /* kWindowIsModal. */
+        if (!parm)
+            return 0;
+        WRITEUL((uint32)parm, features);
+        return 1;
+    }
     case wDraw:
         if (!WINDOW_VISIBLE_X(w))
             return 0;
@@ -1283,6 +1294,11 @@ P4(PUBLIC pascal, LONGINT, wdef16, INTEGER, varcode, WindowPtr, wp, INTEGER, mes
     }
 
     switch (message) {
+    case 7: /* kWindowMsgGetFeatures: rounded windows have a title, without resizing or WindowShade. */
+        if (!param)
+            return 0;
+        WRITEUL((uint32)param, 1U << 6);
+        return 1;
     case wDraw:
         if (!WINDOW_VISIBLE_X(w))
             break;

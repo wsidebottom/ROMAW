@@ -4095,6 +4095,7 @@ void romaw_ppc_jit_switch(void (*switch_host)(void*), void* target)
 {
 #if ROMAW_PPC_NATIVE_JIT
     native_context* saved = active_context;
+    active_context = nullptr;
     try {
         switch_host(target);
     }

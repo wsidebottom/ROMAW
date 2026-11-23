@@ -1,12 +1,14 @@
 /*+===================================================================
   File:      AE.c
 
-  Summary:   Implements ae support for Macintosh AppleEvent handling.
+  Summary:   Deliver AppleEvents, coerce descriptors and dispatch native object accessors and token callbacks.
 
   Classes:   None.
 
   Functions: C_AEGetTheCurrentEvent, ROMlib_decode_launch_parameters, ROMlib_send_application_open_event,
-             ROMlib_send_document_open_event
+             ROMlib_send_document_open_event, ROMlib_ae_object_init, ROMlib_ae_object_reinit,
+             C_AEDisposeToken, C_AEREesolve, C_AERemoveObjectAccessor, C_AEInstallObjectAccessor,
+             C_AEGetObjectAccessor, C_AECallObjectAccessor, C_AESetObjectCallbacks
 
   Origin:    Existing repository source in executor/src/appleevents; original attribution and provenance comments are
              preserved below.
@@ -808,52 +810,247 @@ P1(PUBLIC pascal trap, OSErr, AEManagerInfo, LONGINT*, resultp)
     return retval;
 }
 
-/* stubs added by Cliff after reading documentation on Apple's web site */
+/* Object accessor records are host-owned; their procedures remain guest UPPs.
+   Application records are reset with the application's AppleEvent tables. */
+typedef struct AE_object_accessor {
+    struct AE_object_accessor* next;
+    DescType desired_class;
+    DescType container_type;
+    ProcPtr procedure;
+    LONGINT refcon;
+} AE_object_accessor;
 
-P1(PUBLIC pascal trap, OSErr, AEDisposeToken, AEDesc*, theToken)
+typedef struct {
+    AE_object_accessor* application;
+    AE_object_accessor* system;
+    ProcPtr callbacks[7];
+    BOOLEAN initialized;
+} AE_object_state;
+
+static AE_object_state* object_state;
+
+OSErr ROMlib_ae_object_init(void)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!object_state)
+        object_state = calloc(1, sizeof *object_state);
+    if (!object_state)
+        return memFullErr;
+    object_state->initialized = TRUE;
     return noErr;
 }
 
-P3(PUBLIC pascal trap, OSErr, AEREesolve, AEDesc*, objectSpecifier, INTEGER, callbackFlags, AEDesc*, theToken)
+void ROMlib_ae_object_reinit(void)
 {
-    warning_unimplemented(NULL_STRING);
-    return noErr;
+    if (object_state) {
+        while (object_state->application) {
+            AE_object_accessor* record = object_state->application;
+            object_state->application = record->next;
+            free(record);
+        }
+        memset(object_state->callbacks, 0, sizeof object_state->callbacks);
+        object_state->initialized = FALSE;
+    }
+}
+
+static AE_object_accessor** object_accessor_slot(DescType desired_class, DescType container_type, BOOLEAN system)
+{
+    AE_object_accessor** slot = system ? &object_state->system : &object_state->application;
+    while (*slot && ((*slot)->desired_class != desired_class || (*slot)->container_type != container_type))
+        slot = &(*slot)->next;
+    return slot;
+}
+
+P1(PUBLIC pascal trap, OSErr, AEDisposeToken, AEDesc*, theToken)
+{
+    if (!theToken)
+        return paramErr;
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    if (object_state->callbacks[2] && CL(theToken->descriptorType) != typeNull) {
+        OSErr err = CToPascalCall(object_state->callbacks[2], PTOC_AEDisposeToken, theToken);
+        if (err != errAEEventNotHandled)
+            return err;
+    }
+    return C_AEDisposeDesc(theToken);
 }
 
 P4(PUBLIC pascal trap, OSErr, AERemoveObjectAccessor, DescType, desiredClass, DescType, containerType, ProcPtr,
    theAccessor, BOOLEAN, isSysHandler)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    AE_object_accessor** slot = object_accessor_slot(desiredClass, containerType, isSysHandler);
+    AE_object_accessor* record = *slot;
+    if (!record || (theAccessor && record->procedure != theAccessor))
+        return -1723; /* errAEAccessorNotFound. */
+    *slot = record->next;
+    free(record);
     return noErr;
 }
 
 P5(PUBLIC pascal trap, OSErr, AEInstallObjectAccessor, DescType, desiredClass, DescType, containerType, ProcPtr,
    theAccessor, LONGINT, refcon, BOOLEAN, isSysHandler)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!theAccessor)
+        return paramErr;
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    AE_object_accessor** slot = object_accessor_slot(desiredClass, containerType, isSysHandler);
+    if (!*slot) {
+        *slot = calloc(1, sizeof **slot);
+        if (!*slot)
+            return memFullErr;
+        (*slot)->desired_class = desiredClass;
+        (*slot)->container_type = containerType;
+    }
+    (*slot)->procedure = theAccessor;
+    (*slot)->refcon = refcon;
     return noErr;
 }
 
-P5(PUBLIC pascal trap, OSErr, AEGetObjectAccessor, DescType, desiredClass, DescType, containerType, ProcPtr*,
+P5(PUBLIC pascal trap, OSErr, AEGetObjectAccessor, DescType, desiredClass, DescType, containerType, HIDDEN_ProcPtr*,
    theAccessor, LONGINT*, accessorRefcon, BOOLEAN, isSysHandler)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!theAccessor || !accessorRefcon)
+        return paramErr;
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    AE_object_accessor* record = *object_accessor_slot(desiredClass, containerType, isSysHandler);
+    if (!record)
+        return -1723; /* errAEAccessorNotFound. */
+    HIDDEN_RAW_SET(*theAccessor, RM(record->procedure));
+    *accessorRefcon = CL(record->refcon);
     return noErr;
+}
+
+static OSErr call_object_accessor(DescType desired_class, AEDesc* container, DescType container_class, DescType form,
+                                  AEDesc* key, AEDesc* token, BOOLEAN wildcards)
+{
+    if (!container || !key || !token)
+        return paramErr;
+    token->descriptorType = CLC(typeNull);
+    PP_RAW(token->dataHandle) = 0;
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    DescType container_type = CL(container->descriptorType);
+    for (int system = 0; system < 2; ++system) {
+        const DescType classes[] = {desired_class, desired_class, typeWildCard, typeWildCard};
+        const DescType containers[] = {container_type, typeWildCard, container_type, typeWildCard};
+        for (unsigned i = 0; i < (wildcards ? 4 : 1); ++i) {
+            AE_object_accessor* record = *object_accessor_slot(classes[i], containers[i], system);
+            if (record) {
+                /* A callback may replace or remove its own registration. */
+                ProcPtr procedure = record->procedure;
+                LONGINT refcon = record->refcon;
+                OSErr err = CToPascalCall(procedure, 0x0096C962, desired_class, container, container_class, form, key,
+                                          token, refcon);
+                if (err != errAEEventNotHandled)
+                    return err;
+            }
+        }
+    }
+    return -1723; /* errAEAccessorNotFound. */
 }
 
 P6(PUBLIC pascal trap, OSErr, AECallObjectAccessor, DescType, desiredClass, AEDesc*, containerToken, DescType,
    containerClass, DescType, keyForm, AEDesc*, keyData, AEDesc*, theToken)
 {
-    warning_unimplemented(NULL_STRING);
-    return noErr;
+    return call_object_accessor(desiredClass, containerToken, containerClass, keyForm, keyData, theToken, FALSE);
 }
 
 P7(PUBLIC pascal trap, OSErr, AESetObjectCallbacks, ProcPtr, myCompareProc, ProcPtr, myCountProc, ProcPtr,
    myDisposeTokenProc, ProcPtr, myGetMarkTokenProc, ProcPtr, myMarkProc, ProcPtr, myAdjustMarksProc, ProcPtr,
    myGetErrDescProc)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!object_state || !object_state->initialized)
+        return paramErr;
+    ProcPtr callbacks[] = {myCompareProc, myCountProc,       myDisposeTokenProc, myGetMarkTokenProc,
+                           myMarkProc,    myAdjustMarksProc, myGetErrDescProc};
+    for (unsigned i = 0; i < 7; ++i)
+        if (callbacks[i])
+            object_state->callbacks[i] = callbacks[i];
     return noErr;
+}
+
+static OSErr object_type_key(AEDesc* record, AEKeyword keyword, DescType* value)
+{
+    AEDesc field = {CLC(typeNull), {0}};
+    OSErr err = C_AEGetKeyDesc(record, keyword, typeWildCard, &field);
+    if (!err) {
+        Handle data = DESC_DATA(&field);
+        if (CL(field.descriptorType) != typeType || !data || GetHandleSize(data) != sizeof *value)
+            err = errAEWrongDataType;
+        else {
+            memcpy(value, STARH(data), sizeof *value);
+            *value = CL(*value);
+        }
+    }
+    C_AEDisposeDesc(&field);
+    return err;
+}
+
+static OSErr resolve_object(AEDesc* specifier, AEDesc* token, unsigned depth)
+{
+    if (depth == 64)
+        return errAEEventNotHandled;
+    if (CL(specifier->descriptorType) != TICK("obj "))
+        return C_AEDuplicateDesc(specifier, token);
+    /* Callback arguments must be guest-addressable, including intermediate
+       descriptors. Host C stack addresses cannot be passed through a UPP. */
+    AEDesc* scratch = (AEDesc*)NewPtrClear(3 * sizeof *scratch);
+    if (!scratch)
+        return memFullErr;
+    AEDesc* container = scratch;
+    AEDesc* key = scratch + 1;
+    AEDesc* container_token = scratch + 2;
+    for (unsigned i = 0; i < 3; ++i)
+        scratch[i].descriptorType = CLC(typeNull);
+    /* An object specifier contains an AERecord payload with a distinct type.
+       Normalize only a borrowed descriptor, leaving the caller's type intact. */
+    AEDesc record = *specifier;
+    record.descriptorType = CLC(typeAERecord);
+    DescType desired_class, form;
+    OSErr err = object_type_key(&record, TICK("want"), &desired_class);
+    if (!err)
+        err = object_type_key(&record, TICK("form"), &form);
+    if (!err)
+        err = C_AEGetKeyDesc(&record, TICK("from"), typeWildCard, container);
+    if (!err)
+        err = C_AEGetKeyDesc(&record, TICK("seld"), typeWildCard, key);
+    if (!err)
+        err = resolve_object(container, container_token, depth + 1);
+    /* Whose tests and range expansion require the comparison/count/mark
+       protocols. Report them as unsupported rather than return a bogus token. */
+    if (!err && (form == TICK("test") || form == TICK("rang")))
+        err = errAEEventNotHandled;
+    DescType container_class = CL(container->descriptorType);
+    if (!err && container_class == TICK("obj ")) {
+        AEDesc container_record = *container;
+        container_record.descriptorType = CLC(typeAERecord);
+        err = object_type_key(&container_record, TICK("want"), &container_class);
+    }
+    if (!err)
+        err = call_object_accessor(desired_class, container_token, container_class, form, key, token, TRUE);
+    C_AEDisposeToken(container_token);
+    C_AEDisposeDesc(container);
+    C_AEDisposeDesc(key);
+    DisposPtr((Ptr)scratch);
+    return err;
+}
+
+P3(PUBLIC pascal trap, OSErr, AEREesolve, AEDesc*, objectSpecifier, INTEGER, callbackFlags, AEDesc*, theToken)
+{
+    if (!object_state || !object_state->initialized || !objectSpecifier || !theToken || objectSpecifier == theToken)
+        return paramErr;
+    theToken->descriptorType = CLC(typeNull);
+    PP_RAW(theToken->dataHandle) = 0;
+    if (CL(objectSpecifier->descriptorType) != TICK("obj "))
+        return -1727; /* errAENotAnObjectSpec. */
+    OSErr err = resolve_object(objectSpecifier, theToken, 0);
+    if (err) {
+        C_AEDisposeToken(theToken);
+        theToken->descriptorType = CLC(typeNull);
+        PP_RAW(theToken->dataHandle) = 0;
+    }
+    return err;
 }

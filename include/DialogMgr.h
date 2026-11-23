@@ -161,6 +161,9 @@ extern pascal trap void C_CloseDialog(DialogPtr dp);
 extern pascal trap void C_DisposDialog(DialogPtr dp);
 extern pascal BOOLEAN C_ROMlib_myfilt(DialogPeek dp, EventRecord* evt, INTEGER* ith);
 
+extern int32 ROMlib_SetModalDialogEventMask(DialogPtr dialog, uint16 mask);
+extern int32 ROMlib_GetModalDialogEventMask(DialogPtr dialog, uint16* mask);
+
 extern pascal trap void C_ModalDialog(ProcPtr fp, INTEGER* item);
 extern pascal trap BOOLEAN C_IsDialogEvent(EventRecord* evt);
 extern pascal trap void C_DrawDialog(DialogPtr dp);

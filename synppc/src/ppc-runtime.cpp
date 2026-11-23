@@ -750,6 +750,13 @@ extern "C" void ROMlib_ppc_switch_host(void (*switch_host)(void*), void* target)
         *reservation = 0;
     if (environment && environment->system)
         environment->system->reservation_valid = 0;
+    /* A newly entered fiber has no suspended CPU scope of its own. Existing
+       fibers restore their saved scope when their switch call returns. Do not
+       let a new worker retain pointers into the launching fiber's CPU/stack. */
+    romaw_ppc_environment = nullptr;
+    active_reservation = nullptr;
+    host_floating_environment = nullptr;
+    host_callback_depth = 0;
     try {
         romaw_ppc_jit_switch(switch_host, target);
     }

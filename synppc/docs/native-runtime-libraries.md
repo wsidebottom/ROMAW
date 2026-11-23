@@ -167,3 +167,49 @@ only when its actual dispatch prerequisites are installed. Without one it
 returns `unimpErr`; it does not manufacture a composite IconRef. The fixture
 checks unavailable composition and invalid inputs without changing the source
 icons' ownership. This gateway is not a native compositor.
+
+## Finder service and object support contracts
+
+The PPC Gestalt adapter supplies `thds` capability bits for the implemented native
+cooperative manager, exact stack matching and ThreadsLib. Guest-registered
+responses take precedence. This enables clients to obtain an actual task
+reference before using completion callbacks; it does not accept null task refs.
+
+The grouped `finder-services` Windows check covers InterfaceLib timer callbacks,
+event peeking/consumption, shared event queues, desktop layers, icon devices,
+folder and Trash icon ownership, window feature reporting, native headers and
+zoom/show/hide transitions. The chasing-arrows control requests idle time,
+draws its indicator, and supports the one-byte Boolean `anim` data property.
+Private Display Manager `DMDeskClick` leaves events to Finder when no desktop
+animation component is installed; guest trap patches still run.
+
+`VM_GetHoldableBytes` queries the live MemoryDispatch vector. Its native answer
+is the fixed guest RAM extent, matching the existing HoldMemory bounds check;
+it does not enable guest paging or describe host page-locking guarantees.
+Optional volume registration, extended private process memory accounting,
+WindowShade, native draggable title proxies and unavailable theme sound assets
+return their documented/explicit error paths. Genuine supplied window/proxy/sound
+providers retain precedence over these fallbacks.
+
+Native Object Support replaces success stubs with initialized accessor tables,
+exact application/system lookup, refcon replacement/removal and actual mixed-mode
+callbacks. Four-byte UPP output storage is independent of host pointer width.
+`AESetObjectCallbacks` preserves callbacks passed as null on subsequent calls.
+Token disposal invokes the application's disposer and falls back to descriptor
+disposal when unhandled. `AEResolve` parses nested object records with a bounded
+recursion depth and guest-addressable intermediate descriptors. Whose tests and
+range expansion report unsupported status; this is not a complete OSL.
+
+The modern private `FragRelease(context, connection, normalTerm)` releases the
+same real closure as CloseConnection, without treating its by-value connection
+as a pointer. Unknown contexts and stale connections fail. Normal release invokes
+actual terminators; abnormal release omits them while retaining detach, release
+and ownership work. The native-library probe observes a real terminating
+fragment's counter in both cases.
+
+Finder file icons use the shared resource-fork reader and retain owned family
+bytes after the resource map closes. Custom references retain their source
+FSSpec; `UpdateIconRef` reloads real artwork while preserving reference identity.
+File labels use a separate two-byte output. Generic system references reload
+from their actual resource provider. Modal dialog masks are per-window state;
+`ModalDialog` uses the selected mask when retrieving events for guest filters.

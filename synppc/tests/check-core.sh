@@ -543,6 +543,13 @@ case "$check" in
         "$root/../carbonlib/src/threads.cpp" "$root/tests/thread_scheduler_test.cpp" \
         -static -static-libgcc -static-libstdc++ -o "$obj/thread-scheduler-test.exe"
       "$obj/thread-scheduler-test.exe"
+      if [[ ${SYN_PPC_SKIP_BUILD:-0} != 1 ]]; then
+        make -C "$root" OBJ="$obj"
+      fi
+      "${CXX:-x86_64-w64-mingw32-g++}" -std=c++17 -g -O1 -Wall -Wextra -Werror \
+        -I"$root/include" "$root/tests/ppc_fiber_context_test.cpp" "$obj/libsynppc.a" \
+        -static -static-libgcc -static-libstdc++ -o "$obj/ppc-fiber-context-test.exe"
+      "$obj/ppc-fiber-context-test.exe"
     )
     ;;
   *)

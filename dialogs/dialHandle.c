@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext, dialog_draw_item, get_item_style_info
+  Functions: ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask; BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext, dialog_draw_item, get_item_style_info
 
   Origin:    Existing repository source in executor/src/dialogs; original attribution and provenance comments are
              preserved below.
@@ -170,6 +170,25 @@ static inline void ROMlib_CALLUSERITEM(DialogPtr dp, INTEGER inum, useritemp tem
         retval;                         \
     })
 
+int32 ROMlib_SetModalDialogEventMask(DialogPtr dialog, uint16 mask)
+{
+    ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
+    if (!metadata || WINDOW_KIND(dialog) != dialogKind)
+        return paramErr;
+    metadata->modal_event_mask = mask;
+    metadata->modal_event_mask_set = TRUE;
+    return noErr;
+}
+
+int32 ROMlib_GetModalDialogEventMask(DialogPtr dialog, uint16* mask)
+{
+    ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
+    if (!metadata || WINDOW_KIND(dialog) != dialogKind || !mask)
+        return paramErr;
+    *mask = CW(metadata->modal_event_mask_set ? metadata->modal_event_mask : DIALOGEVTS);
+    return noErr;
+}
+
 P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
    INTEGER*, item)
 {
@@ -205,7 +224,9 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
 
                 if (idle)
                     TEIdle(idle);
-                GetNextEvent(DIALOGEVTS, &evt);
+                ROMlib_window_metadata* metadata = ROMlib_window_get_metadata((DialogPtr)dp);
+                GetNextEvent(metadata && metadata->modal_event_mask_set ? metadata->modal_event_mask : DIALOGEVTS,
+                             &evt);
                 whereunswapped.h = CW(evt.where.h);
                 whereunswapped.v = CW(evt.where.v);
 

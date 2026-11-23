@@ -101,3 +101,32 @@ Validate suite dispatch independently with:
 ```bash
 python3 -m unittest discover -s tools/tests -p test_regression_suites.py
 ```
+
+
+For Finder 8.6 native service integration, run the grouped Windows check in both
+PPC engines (the default):
+
+```powershell
+./synppc/tests/check-runtime.ps1 finder-services -ROMAW D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe
+```
+
+It checks actual callback/descriptor lifetimes and control/window operations,
+including unsupported optional-service returns. CFM release/termination and icon
+ownership are covered by `PPC Native Libraries Probe` through
+`synppc/tests/run-romaw-tests.ps1` with `-Interpreter` and `-Jit`.
+
+`bash synppc/tests/check-core.sh thread` also checks interpreter/JIT Windows-fiber
+scope lifetime after the launching CPU is destroyed. Set `SYN_PPC_SKIP_BUILD=1`
+with `OBJ` pointing at an already built archive to preserve its build profile.
+
+The private ScriptUtil Pascal ABI can be checked against the user's original
+Finder without redistributing it:
+
+```powershell
+python system/tests/create-script-enable-probe.py build/script-enable "C:/Users/William/.romaw/Apps/Desktop Folder/Finder 8.6"
+C:/msys64/mingw64/bin/gdb.exe -batch -x build/script-enable/probe.gdb windows-binaries/bin/ROMAW.exe
+```
+
+The probe checks argument consumption, guards, byte order, invalid input lists
+and per-process script restrictions. Exercise desktop interaction, disk/folder
+browsing and normal Windows window-close separately from these focused checks.

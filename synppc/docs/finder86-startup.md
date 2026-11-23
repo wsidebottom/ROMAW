@@ -39,10 +39,34 @@ adapter allows registry and system-icon lookups. The Classic composition gateway
 now reports invalid missing icons or an unavailable compositor, while retaining
 a genuine original implementation when its required dispatch is installed. It
 does not fabricate successful composition. Finder handles the missing badge
-errors and proceeds to a private ScriptUtil call (`0x8006ffae`, with a short and
-a pointer), which currently opens the fatal unknown-selector dialog. It has not
-entered a validated desktop event loop. Some failure-unwind runs also expose a host heap error during PEF cleanup;
-that failure-path issue remains unresolved.
+errors and continues through script setup, process discovery and desktop construction.
+The private `KeyScriptEnable` selector (`0x8006ffae`) now validates its actual
+short/pointer ABI and records the process's input-script restrictions, retaining
+Roman as a fallback. `OSEventAvail`, timer callbacks, desktop-layer creation,
+icon-device selection and system-heap queries use the existing Toolbox services.
+
+Native Object Support initializes actual application/system accessor tables,
+retains callback UPPs and refcons, and resolves nested object specifiers through
+application callbacks. Application tables reset with the AppleEvent manager.
+Whose/range expansion remains unsupported and returns an error. Optional volume
+notifications, extended private memory accounting, native WindowShade, draggable
+title proxies and missing theme sounds return explicit unavailable statuses.
+They do not become successful initializers or fabricated services.
+
+Fresh Windows fibers no longer inherit dynamic interpreter/JIT CPU scopes from
+the launching fiber. Each suspended fiber restores its own scopes on resumption.
+A deterministic Windows regression resumes a worker after the launching CPU has
+been destroyed; it checks both interpreted and precompiled native execution.
+
+Folder construction includes a native chasing-arrows control with real drawing,
+idle animation and the one-byte `anim` property. Native window definitions report
+their capabilities. Zoom transitions use the rectangle animator and actual
+Window Manager visibility. Header drawing uses native QuickDraw state.
+
+Windows validation reached the populated desktop, opened the ROMAW disk and
+browsed System Folder contents. Closing the host window completed the PPC
+fragment and exited with status zero. Normal launches also reached the desktop
+with default settings. These checks do not establish complete Finder compatibility.
 
 The launcher also reads Finder's own version resource and automatically applies
 its known minimum system version before guest execution. It does not infer an
@@ -80,30 +104,29 @@ on boot-resident state, including `NQDResidentCursor:gNotifyRectList`. Importing
 an entire System file therefore does not by itself supply a working runtime.
 
 No initializer was skipped and no private boot structures were fabricated.
-A working desktop, file browsing, copying and application launching have not
-been validated. Native service tests establish their listed contracts, not full
+Copying and application launching have not been validated. Native service tests establish their listed contracts, not full
 Finder compatibility.
 
 ## Validation
 
-The root Windows cross-build completed and staged the optimized executable and
-matching dependencies. The command-line help regression passed all three forms:
+Build from the repository root with the optimized Windows profile and matching
+CPU archives. After building, run:
 
 ```powershell
-powershell.exe -NoProfile -File system/tests/check-runtime.ps1 help -ROMAW D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe
+./synppc/tests/check-runtime.ps1 finder-services -ROMAW D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe
+./synppc/tests/run-romaw-tests.ps1 -Interpreter -Group "PPC Native Libraries Probe"
+./synppc/tests/run-romaw-tests.ps1 -Jit -Group "PPC Native Libraries Probe"
 ```
 
-The changed command-line table passed clang-format 18.1.8's read-only check.
-Actual Windows launches accepted `-ppc` and reproduced the failures above.
-The generated-file suite subsequently passed with the selected optimized object
-directory. Native Memory Manager and SOM/CFM reporting fixtures passed on Windows
-in both interpreter and JIT modes. Handle-copy checks, including locked
-`PtrToXHand` shrink/grow operations, also passed in both modes. The Appearance
-font fixture verifies default and explicit scripts, live font-size changes,
-big-endian unaligned output and missing-output guards in both modes.
+The focused ScriptUtil GDB fixture, process-client checks and Windows-fiber scope
+regression cover ABI, process isolation and CPU lifetime. The grouped Finder
+fixture exercises actual native callbacks, descriptors, timer/event state,
+chasing-arrows controls, window transitions, headers and optional errors in both
+engines. The generated-file and formatting checks cover build freshness and
+maintained source layout.
 
-The adapter validation build freezes System resource inputs and their matching
-generators at committed revision `22fbf3d9`. Concurrent resource conversions in the
-shared tree otherwise prevented generation or triggered the existing numeric
-compatibility-revision check before PPC execution. Those unrelated edits are
-preserved. These service checks do not establish a working Finder desktop.
+Manual Windows validation must separately exercise normal absolute-path and
+PATH launches, desktop interaction, disk/folder browsing and normal host-window
+close. Trace logs must be checked for `win_exception` and PPC launch failures.
+Focused probes do not establish complete Finder, Carbon, physical CPU or MMU
+compatibility.

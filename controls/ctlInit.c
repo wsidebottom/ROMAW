@@ -73,6 +73,7 @@ static ControlHandle new_control(WindowPtr wst, const Rect* r, StringPtr title, 
     }
     if (!temph)
         switch (procid & ~15) {
+        case ROMlib_chasing_arrows_proc:
         case ROMlib_image_well_proc:
         case ROMlib_bevel_button_proc:
         case ROMlib_slider_proc:

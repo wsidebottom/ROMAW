@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      process_client_test.c
 
-  Summary:   System-mode nesting must select the real process or the system process.
+  Summary:   Check process identity, system-mode nesting and per-process input script restrictions.
 
   Classes:   None.
 
@@ -54,6 +54,19 @@ int main(void)
     process.serial_number.lowLongOfPSN = CLC(34);
     current_process_info = &process;
     process_info_list = &process;
+    ROMlib_process_enable_scripts(1U << 7, TRUE);
+    assert(process.keyboard_scripts == ((1U << 7) | 1));
+    assert(process.keyboard_unicode);
+    {
+        process_info_t other = {0};
+        current_process_info = &other;
+        ROMlib_process_enable_scripts(0, FALSE);
+        assert(other.keyboard_scripts == 1);
+        assert(!other.keyboard_unicode);
+        assert(process.keyboard_scripts == ((1U << 7) | 1));
+        assert(process.keyboard_unicode);
+        current_process_info = &process;
+    }
     {
         PPCPortRec port;
         memset(&port, 0xa5, sizeof port);

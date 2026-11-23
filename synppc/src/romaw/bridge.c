@@ -1696,6 +1696,29 @@ PRIVATE int ppc_get_icon_ref_by_name(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+PRIVATE int ppc_get_icon_ref_from_folder(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference saved;
+    if (ROMlib_carbon_probe_reference("IconServicesLib", "GetIconRefFromFolder", &saved)) {
+        uint32* dispatch = ppc_memory(ppc_active_context, 0x17d4, 4, FALSE);
+        if (saved.code_size != 0x16fd0 || (dispatch && CL(*dispatch)))
+            return ROMlib_carbon_invoke_frame(saved.function, call);
+    }
+    /* This entry explicitly describes a folder without a custom icon. Use
+       the actual system family, retaining the normal IconRef ownership. */
+    const ROMlib_carbon_export* service = ROMlib_carbon_find_export("GetIconRef", 2);
+    if (!service || !(service->signature & ROMLIB_CARBON_PPC_FRAME))
+        return 0;
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[1] = TICK("macs");
+    arguments.words[2] = call->words[2] == 2 && call->words[1] == 1 ? TICK("hdsk") : TICK("fldr");
+    arguments.words[3] = call->words[5];
+    if (!((ROMlib_carbon_frame_entry)service->function)(&arguments))
+        return 0;
+    call->words[0] = arguments.words[0];
+    return 1;
+}
+
 PRIVATE MenuHandle ppc_classic_menu_handle(ppc_context* ctx, uint32 address)
 {
     uint32* master = address ? ppc_memory(ctx, address, 4, FALSE) : NULL;
@@ -2017,7 +2040,14 @@ PRIVATE OSErr ppc_gestalt(OSType selector, LONGINT* response)
         *response = CL(gestaltCPU750);
         return noErr;
     }
-    return Gestalt(selector, response);
+    OSErr error = Gestalt(selector, response);
+    if (selector == TICK("thds") && error == gestaltUndefSelectorErr && response) {
+        /* The native cooperative Thread Manager implements the library and
+           exact stack-pool matching. Keep a guest-registered selector intact. */
+        *response = CLC(7); /* Present, specific-match support, ThreadsLib present. */
+        return noErr;
+    }
+    return error;
 }
 
 PRIVATE OSErrRET ppc_sys_environs(INTEGER version, uint32 address)
@@ -2686,6 +2716,151 @@ PRIVATE LONGINT ppc_ot_interface_unavailable(void* info, LONGINT index)
     return -3201; /* kOTNotFoundErr */
 }
 
+static OSErr ppc_window_proxy_unavailable(uint32 window, const FSSpec* spec)
+{
+    if (!ppc_valid_window(window))
+        return -5600; /* errInvalidWindowPtr */
+    if (!spec)
+        return paramErr;
+    /* Native title bars have no draggable file proxy. Report that optional
+       service as unavailable so the application can retain its plain title. */
+    return -4; /* unimpErr */
+}
+
+static OSErr ppc_toolbox_sync(uint32 address, uint16 selector)
+{
+    ppc_context* ctx = ppc_active_context;
+    Byte* parameter_block = address ? ppc_memory(ctx, address, 18, TRUE) : NULL;
+    if (!parameter_block)
+        return paramErr;
+    M68kReg saved[16];
+    memcpy(saved, cpu_state.regs, sizeof saved);
+    EM_A0 = address;
+    EM_D0 = selector;
+    CALL_EMULATOR(CL(ctx->os_vectors[0xdd]));
+    const OSErr status = EM_D0;
+    memcpy(cpu_state.regs, saved, sizeof saved);
+    /* PPCParamBlockRec shares the IO header's ioResult field at offset 16.
+       The native unpatched PPC Toolbox reports paramErr; it never invents a
+       working interprocess port. A guest-installed provider remains callable. */
+    const uint16 encoded = CW(status);
+    memcpy(parameter_block + 16, &encoded, sizeof encoded);
+    return status;
+}
+
+static OSErr ppc_ppc_open_sync(uint32 address)
+{
+    return ppc_toolbox_sync(address, 1);
+}
+
+static OSErr ppc_ppc_close_sync(uint32 address)
+{
+    return ppc_toolbox_sync(address, 9);
+}
+
+static OSErr ppc_window_proxy_icon_absent(uint32 window, uint32* icon)
+{
+    if (!ppc_valid_window(window))
+        return -5600;
+    if (!icon)
+        return paramErr;
+    /* WindowsLib's no-proxy path returns -5600 without touching the output. */
+    return -5600;
+}
+
+static ULONGINT ppc_vm_get_holdable_bytes(void)
+{
+    M68kReg saved[16];
+    memcpy(saved, cpu_state.regs, sizeof saved);
+    EM_D0 = 0xfffffffd;
+    CALL_EMULATOR(CL(ppc_active_context->os_vectors[0x5c]));
+    const ULONGINT result = EM_D0;
+    memcpy(cpu_state.regs, saved, sizeof saved);
+    return result;
+}
+
+static LONGINT ppc_transition_window(uint32 window, uint32 effect, uint32 action, const Rect* origin)
+{
+    if (!ppc_valid_window(window))
+        return -5600;
+    if (origin && !ppc_memory(ppc_active_context, US_TO_SYN68K(origin), sizeof *origin, FALSE))
+        return paramErr;
+    if (effect != 1 || (action != 1 && action != 2))
+        return paramErr;
+    const ROMlib_carbon_export* zoom = ROMlib_carbon_find_export("ZoomRects", 2);
+    if (!zoom || !(zoom->signature & ROMLIB_CARBON_PPC_FRAME))
+        return -4;
+    Rect* rectangles = (Rect*)NewPtrSysClear(2 * sizeof *rectangles);
+    if (!rectangles)
+        return memFullErr;
+    WindowPtr native_window = SYN68K_TO_US(window);
+    if (!WINDOW_VISIBLE(native_window))
+        THEPORT_SAVE_EXCURSION(MR(wmgr_port), { WINDCALL(native_window, wCalcRgns, 0); });
+    Rect bounds = HxX(WINDOW_STRUCT_REGION(native_window), rgnBBox);
+    Rect center;
+    SetRect(&center, (CW(bounds.left) + CW(bounds.right)) / 2, (CW(bounds.top) + CW(bounds.bottom)) / 2,
+            (CW(bounds.left) + CW(bounds.right)) / 2, (CW(bounds.top) + CW(bounds.bottom)) / 2);
+    const Rect small = origin ? *origin : center;
+    rectangles[0] = action == 1 ? small : bounds;
+    rectangles[1] = action == 1 ? bounds : small;
+    ROMlib_carbon_ppc_frame animation = {.words = {US_TO_SYN68K(rectangles), US_TO_SYN68K(rectangles + 1), 6, 0}};
+    /* Reuse the actual rectangle animator and Window Manager, retaining all
+       update/visibility work. Theme sounds remain optional when no set exists. */
+    int handled = ((ROMlib_carbon_frame_entry)zoom->function)(&animation);
+    DisposPtr((Ptr)rectangles);
+    if (!handled)
+        return -4;
+    if ((int32)animation.words[0])
+        return animation.words[0];
+    if (action == 1)
+        ShowWindow(native_window);
+    else
+        HideWindow(native_window);
+    return noErr;
+}
+
+static LONGINT ppc_theme_sound_unavailable(uint32 kind)
+{
+    /* No theme sound set is installed by the native Appearance provider.
+       kThemeSoundNone requests silence; other requests are unavailable. */
+    return kind ? -4 : noErr;
+}
+
+static LONGINT ppc_get_window_features(uint32 window, uint32 output)
+{
+    if (!ppc_valid_window(window))
+        return -5600;
+    uint32* features = output ? ppc_memory(ppc_active_context, output, 4, TRUE) : NULL;
+    if (!features)
+        return paramErr;
+    *features = 0;
+    /* Let the live window definition report its capabilities, including a
+       guest WDEF. Legacy WDEFs leave the extended capability mask empty. */
+    ROMlib_windcall(SYN68K_TO_US(window), 7, output);
+    return noErr;
+}
+
+static BOOLEAN ppc_native_window_uncollapsed(uint32 window)
+{
+    /* Native classic windows have no WindowShade state. CollapseWindow below
+       reports that feature as unavailable, so their content remains expanded. */
+    (void)window;
+    return FALSE;
+}
+
+static OSErr ppc_native_collapse_unavailable(uint32 window, BOOLEAN collapse)
+{
+    (void)collapse;
+    return ppc_valid_window(window) ? -4 : -5600;
+}
+
+static OSErr ppc_set_window_proxy_icon_absent(uint32 window, uint32 icon)
+{
+    (void)window;
+    /* WindowsLib rejects null icons before looking up the proxy record. */
+    return icon ? -5600 : paramErr;
+}
+
 PRIVATE BOOLEAN ppc_wait_mouse_moved_without_drag(Point initial)
 {
     EventRecord event;
@@ -2914,6 +3089,27 @@ PRIVATE LONGINT ppc_draw_theme_placard(const Rect* rect, LONGINT state)
     }
     draw_state_restore(&saved);
     return result;
+}
+
+PRIVATE LONGINT ppc_draw_theme_window_header(const Rect* rect, LONGINT state)
+{
+    if (!rect || !ROMlib_win_accessible_span(rect, sizeof *rect, FALSE) || state < 0 || state > 2)
+        return paramErr;
+    if (EmptyRect(rect))
+        return noErr;
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    RGBForeColor(&ROMlib_theme_background_rgb);
+    PaintRect(rect);
+    RGBForeColor(&ROMlib_white_rgb_color);
+    MoveTo(CW(rect->left), CW(rect->top));
+    LineTo(CW(rect->right) - 1, CW(rect->top));
+    RGBForeColor(state ? &ROMlib_black_rgb_color : &ROMlib_gray_rgb_color);
+    MoveTo(CW(rect->left), CW(rect->bottom) - 1);
+    LineTo(CW(rect->right) - 1, CW(rect->bottom) - 1);
+    draw_state_restore(&saved);
+    return noErr;
 }
 
 PRIVATE QDErr ppc_new_gworld(HIDDEN_GWorldPtr* world, INTEGER depth, Rect* bounds, CTabHandle colors, GDHandle device,
@@ -3170,7 +3366,65 @@ static int ppc_script_char_byte(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+static OSErr ppc_osdispatch_two_words(uint32 first, uint32 second, uint32 selector)
+{
+    const ROMlib_carbon_ppc_frame args = {.words = {first, second}};
+    uint32 result;
+    /* Use the live OSDispatch vector, including guest patches. ROMAW's
+       unpatched dispatcher explicitly reports registration as unavailable,
+       allowing Finder to retain its volume polling fallback. */
+    if (!ROMlib_carbon_call_toolbox_vector(0x103c, 0xfae, selector, &args, &result))
+        return paramErr;
+    return (int16)result;
+}
+
+static OSErr ppc_request_volume_notification(uint32 procedure, uint32 refcon)
+{
+    return ppc_osdispatch_two_words(procedure, refcon, 0x42);
+}
+
+static OSErr ppc_decline_volume_notification(uint32 procedure, uint32 refcon)
+{
+    return ppc_osdispatch_two_words(procedure, refcon, 0x43);
+}
+
+static OSErr ppc_sys_zone_float_sizes(uint32 high, uint32 low)
+{
+    return ppc_osdispatch_two_words(high, low, 0x47);
+}
+
+static void ppc_set_icon_device(uint32 device)
+{
+    const ROMlib_carbon_ppc_frame args = {.words = {device}};
+    uint32 ignored;
+    ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x218, &args, &ignored);
+}
+
+static void ppc_get_icon_device(uint32 output)
+{
+    const ROMlib_carbon_ppc_frame args = {.words = {output}};
+    uint32 ignored;
+    ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x220, &args, &ignored);
+}
+
 PRIVATE const ppc_native_import native_imports[] = {
+    {"AEObjectInit", ROMlib_ae_object_init, M0(2)},
+    {"AESetObjectCallbacks", C_AESetObjectCallbacks, PTOC_AESetObjectCallbacks},
+    {"AEInstallObjectAccessor", C_AEInstallObjectAccessor, PTOC_AEInstallObjectAccessor},
+    {"AEGetObjectAccessor", C_AEGetObjectAccessor, PTOC_AEGetObjectAccessor},
+    {"AERemoveObjectAccessor", C_AERemoveObjectAccessor, PTOC_AERemoveObjectAccessor},
+    {"AECallObjectAccessor", C_AECallObjectAccessor, PTOC_AECallObjectAccessor},
+    {"AEResolve", C_AEREesolve, PTOC_AEREesolve},
+    {"AEDisposeToken", C_AEDisposeToken, PTOC_AEDisposeToken},
+    {"PPCOpenSync", ppc_ppc_open_sync, M1(2, 4)},
+    {"PPCCloseSync", ppc_ppc_close_sync, M1(2, 4)},
+    {"SetIconDevice", ppc_set_icon_device, M1(0, 4)},
+    {"GetIconDevice", ppc_get_icon_device, M1(0, 4)},
+    {"NewDesktopLayerOwner", ROMlib_new_desktop_layer_owner, M1(2, 5)},
+    {"RequestVolumeNotification", ppc_request_volume_notification, M2(2, 4, 4)},
+    {"DeclineVolumeNotification", ppc_decline_volume_notification, M2(2, 4, 4)},
+    {"SysZoneFloatSizes", ppc_sys_zone_float_sizes, M2(2, 4, 4)},
+    {"VM_GetHoldableBytes", ppc_vm_get_holdable_bytes, M0(4)},
     {"CharByte", ppc_script_char_byte, ROMLIB_CARBON_PPC_FRAME},
     /* Saved TextEdit dispatch code uses this InterfaceLib entry as its base. */
     {"TEFeatureFlag", C_TEFeatureFlag, PTOC_TEFeatureFlag},
@@ -3178,9 +3432,11 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetNextEvent", ppc_get_next_event, M2(1, 2, 5)},
     {"EventAvail", ppc_event_avail, M2(1, 2, 5)},
     {"GetOSEvent", GetOSEvent, M2(1, 2, 5)},
+    {"OSEventAvail", OSEventAvail, M2(1, 2, 5)},
     {"PostEvent", ppc_post_event, M2(2, 2, 4)},
     {"LMGetWindowList", ppc_window_list, M0(5)},
     {"GetEvQHdr", GetEvQHdr, M0(5)},
+    {"LMGetEventQueue", GetEvQHdr, M0(5)},
     {"InitCRM", InitCRM, M0(2)},
     {"CRMGetCRMVersion", CRMGetCRMVersion, M0(2)},
     {"CRMGetHeader", CRMGetHeader, M0(5)},
@@ -3264,6 +3520,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"InlineGetPtrSize", GetPtrSize, M1(4, 5)},
     {"HandleZone", HandleZone, M1(5, 5)},
     {"IUMagString", C_IUMagString, PTOC_IUMagString},
+    {"IUMagPString", C_IUMagPString, PTOC_IUMagPString},
+    {"IUMagIDPString", C_IUMagIDPString, PTOC_IUMagIDPString},
     {"CharacterType", C_CharacterType, PTOC_CharacterType},
     {"FindWord", ppc_find_word, PTOC_FindWord},
     {"UpperString", UprString, M2(0, 5, 1)},
@@ -3363,6 +3621,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"DrawThemeMenuItem", ppc_draw_theme_menu_item, M8(4, 5, 5, 2, 2, 2, 2, 5, 4)},
     {"DrawThemeMenuSeparator", ppc_draw_theme_menu_separator, M1(4, 5)},
     {"DrawThemePlacard", ppc_draw_theme_placard, M2(4, 5, 4)},
+    {"DrawThemeWindowHeader", ppc_draw_theme_window_header, M2(4, 5, 4)},
+    {"DrawThemeWindowListViewHeader", ppc_draw_theme_placard, M2(4, 5, 4)},
     {"SetThemeTextColor", ppc_set_theme_text_color, M3(4, 2, 2, 1)},
     {"DrawThemeEditTextFrame", ppc_draw_theme_edit_frame, M2(4, 5, 4)},
     {"DrawThemeListBoxFrame", ppc_draw_theme_edit_frame, M2(4, 5, 4)},
@@ -3535,6 +3795,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"AEDisposeDesc", C_AEDisposeDesc, PTOC_AEDisposeDesc},
     {"AECreateList", C_AECreateList, PTOC_AECreateList},
     {"AEPutKeyDesc", C_AEPutKeyDesc, PTOC_AEPutKeyDesc},
+    {"AEPutKeyPtr", C_AEPutKeyPtr, PTOC_AEPutKeyPtr},
     {"AEPutDesc", C_AEPutDesc, PTOC_AEPutDesc},
     {"AEPutPtr", C_AEPutPtr, PTOC_AEPutPtr},
     {"AESizeOfKeyDesc", C_AESizeOfKeyDesc, PTOC_AESizeOfKeyDesc},
@@ -3743,6 +4004,7 @@ PRIVATE int ppc_special_function(const char* library, const char* name, int ppc)
                                     "FragGetClosureInfo",
                                     "FragAddNotifyProc",
                                     "FragRemoveNotifyProc",
+                                    "FragRelease",
                                     "ROMAWGetImportInfo",
                                     "ROMAWGetImportLibrary"};
     unsigned i;
@@ -3780,6 +4042,61 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     unsigned i;
     int carbon_classic_reference = 1;
     memset(&binding, 0, sizeof binding);
+    if (!strcmp(library, "WindowsLib") && !strcmp(name, "TransitionWindow")) {
+        int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
+        if (found)
+            return found > 0;
+        binding.function = ppc_transition_window;
+        binding.magic = M4(4, 4, 4, 4, 5);
+    }
+    if (!strcmp(library, "AppearanceLib") && !strcmp(name, "PlayThemeSound")) {
+        int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
+        if (found)
+            return found > 0;
+        binding.function = ppc_theme_sound_unavailable;
+        binding.magic = M1(4, 4);
+    }
+    if ((!strcmp(library, "AppearanceLib") || !strcmp(library, "WindowsLib")) &&
+        (!strcmp(name, "IsWindowCollapsed") || !strcmp(name, "CollapseWindow") || !strcmp(name, "GetWindowFeatures"))) {
+        int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
+        if (found)
+            return found > 0;
+        if (!strcmp(name, "GetWindowFeatures")) {
+            binding.function = ppc_get_window_features;
+            binding.magic = M2(4, 4, 4);
+        }
+        else if (!strcmp(name, "IsWindowCollapsed")) {
+            binding.function = ppc_native_window_uncollapsed;
+            binding.magic = M1(1, 4);
+        }
+        else {
+            binding.function = ppc_native_collapse_unavailable;
+            binding.magic = M2(2, 4, 1);
+        }
+    }
+    if (!strcmp(library, "WindowsLib") &&
+        (!strcmp(name, "SetWindowProxyFSSpec") || !strcmp(name, "GetWindowProxyIcon") ||
+         !strcmp(name, "SetWindowProxyIcon"))) {
+        int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
+        if (found != 0)
+            return found > 0;
+        binding.function = !strcmp(name, "SetWindowProxyFSSpec") ? (void*)ppc_window_proxy_unavailable
+                                                                 : (void*)ppc_window_proxy_icon_absent;
+        binding.magic = M2(2, 4, 5);
+        if (!strcmp(name, "SetWindowProxyIcon")) {
+            binding.function = ppc_set_window_proxy_icon_absent;
+            binding.magic = M2(2, 4, 4);
+        }
+    }
+    if (!strcmp(library, "MacDialogsLib") &&
+        (!strcmp(name, "SetModalDialogEventMask") || !strcmp(name, "GetModalDialogEventMask"))) {
+        int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
+        if (found)
+            return found > 0;
+        binding.function = !strcmp(name, "SetModalDialogEventMask") ? (void*)ROMlib_SetModalDialogEventMask
+                                                                    : (void*)ROMlib_GetModalDialogEventMask;
+        binding.magic = !strcmp(name, "SetModalDialogEventMask") ? M2(4, 5, 2) : M2(4, 5, 5);
+    }
     if (!strcmp(library, "OTInetClientLib") && !strcmp(name, "OTInetGetInterfaceInfo")) {
         int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
         if (found != 0)
@@ -3854,7 +4171,11 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         }
     }
     if (!strcmp(library, "IconServicesLib") && cfm_architecture(ctx) == kPowerPCArch) {
-        if (!strcmp(name, "GetIconRefByName")) {
+        if (!strcmp(name, "GetIconRefFromFolder")) {
+            binding.function = ppc_get_icon_ref_from_folder;
+            binding.magic = ROMLIB_CARBON_PPC_FRAME;
+        }
+        else if (!strcmp(name, "GetIconRefByName")) {
             binding.function = ppc_get_icon_ref_by_name;
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
         }
@@ -3885,9 +4206,12 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                 break;
             }
     if (!strcmp(library, "InterfaceLib") || !strcmp(library, "CarbonLib") || !strcmp(library, "MathLib") ||
-        !strcmp(library, "StdCLib") || !strcmp(library, "AppearanceLib") ||
+        !strcmp(library, "StdCLib") || !strcmp(library, "AppearanceLib") || !strcmp(library, "ObjectSupportLib") ||
         (!strcmp(library, "PrivateInterfaceLib") &&
-         (!strcmp(name, "SndSoundManagerVersion") || !strcmp(name, "IsSystemMenu")))) {
+         (!strcmp(name, "SndSoundManagerVersion") || !strcmp(name, "IsSystemMenu") ||
+          !strcmp(name, "RequestVolumeNotification") || !strcmp(name, "DeclineVolumeNotification") ||
+          !strcmp(name, "NewDesktopLayerOwner") || !strcmp(name, "SetIconDevice") || !strcmp(name, "GetIconDevice") ||
+          !strcmp(name, "SysZoneFloatSizes") || !strcmp(name, "VM_GetHoldableBytes")))) {
         const ppc_native_import* service = ppc_find_native_import(name);
         if (service) {
             binding.function = service->function;
@@ -7458,6 +7782,18 @@ PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_reg
             return -1;
         ++n;
     }
+    if (convention == kD0DispatchedPascalStackBased && target == (uint32)tooltraptable[0x3eb] &&
+        (int8)dispatched_selector == -10) {
+        /* Display Manager's DMDeskClick offers the event to desktop-animation
+           components. This board installs none, so Finder must handle it.
+           Compare the native trap address so a guest patch still runs. */
+        if (info != 0x3d8 || n != 1)
+            return -1;
+        r->gpr[3] = FALSE;
+        EM_D0 = saved_d0;
+        EM_D1 = saved_d1;
+        return 1;
+    }
     if (stack_selector_size && target == (uint32)tooltraptable[0x8f] && !ROMlib_osdispatch_available(stack_selector)) {
         unsigned i;
         fprintf(stderr, "trace: unsupported OSDispatch selector=%04lx ProcInfo=%08lx caller=%08lx arguments=%u",
@@ -8252,7 +8588,7 @@ PRIVATE int ppc_finish_connection(ppc_context* ctx, ppc_fragment* fragment, uint
     return 1;
 }
 
-PRIVATE int ppc_close_closure(ppc_context* ctx, ppc_closure* closure)
+PRIVATE int ppc_close_closure(ppc_context* ctx, ppc_closure* closure, boolean_t normal_term)
 {
     /* A callback cannot remove the code to which its active invocation must
        return. Reject that close before changing any reference counts. */
@@ -8265,7 +8601,7 @@ PRIVATE int ppc_close_closure(ppc_context* ctx, ppc_closure* closure)
     uint32 stack_address = 0;
     void* stack = NULL;
     for (unsigned i = 0; i < closure->count; ++i)
-        if (closure->members[i]->references == 1 && ROMlib_pef_term(closure->members[i]->image)) {
+        if (normal_term && closure->members[i]->references == 1 && ROMlib_pef_term(closure->members[i]->image)) {
             stack = ppc_allocate(ctx, 256 * 1024, 16, &stack_address);
             if (!stack)
                 return 0;
@@ -8293,8 +8629,9 @@ PRIVATE int ppc_close_closure(ppc_context* ctx, ppc_closure* closure)
         if (!fragment)
             break;
         fragment->closed = 2;
-        if (ROMlib_pef_term(fragment->image) && !ppc_call_vector(ctx, fragment->image, ROMlib_pef_term(fragment->image),
-                                                                 stack_address + 256 * 1024 - 256, 0, NULL)) {
+        if (normal_term && ROMlib_pef_term(fragment->image) &&
+            !ppc_call_vector(ctx, fragment->image, ROMlib_pef_term(fragment->image), stack_address + 256 * 1024 - 256,
+                             0, NULL)) {
             ppc_release(ctx, stack);
             return 0;
         }
@@ -8725,21 +9062,27 @@ PRIVATE int ppc_cfm_service(ppc_context* ctx, const char* name, ROMlib_ppc_regis
         }
         return 1;
     }
-    if (!strcmp(name, "CloseConnection")) {
-        result = ppc_memory(ctx, r->gpr[3], 4, TRUE);
-        if (!result)
+    if (!strcmp(name, "CloseConnection") || !strcmp(name, "FragRelease")) {
+        const boolean_t private_release = !strcmp(name, "FragRelease");
+        if (private_release && r->gpr[3]) {
+            r->gpr[3] = -2800; /* Unknown context; zero selects this application. */
+            return 1;
+        }
+        result = private_release ? NULL : ppc_memory(ctx, r->gpr[3], 4, TRUE);
+        if (!private_release && !result)
             return -1;
-        ppc_closure* closure = ppc_find_closure(ctx, CL(*result));
+        ppc_closure* closure = ppc_find_closure(ctx, private_release ? r->gpr[4] : CL(*result));
         if (!closure || closure->state != 2 || closure->launch)
             r->gpr[3] = fragConnectionIDNotFound;
         else {
-            if (!ppc_close_closure(ctx, closure)) {
+            if (!ppc_close_closure(ctx, closure, !private_release || (uint8)r->gpr[5])) {
                 if (ctx->error[0])
                     return -1;
                 r->gpr[3] = memFullErr;
                 return 1;
             }
-            *result = 0;
+            if (result)
+                *result = 0;
             r->gpr[3] = noErr;
         }
         return 1;

@@ -26,6 +26,7 @@ def make_probe(destination):
     imports = [("SOM", name, 1) for name in ("SOMMalloc", "SOMCalloc", "SOMRealloc", "SOMFree")]
     imports += [("InterfaceLib", name, 2) for name in ("GetSharedLibrary", "CloseConnection", "DebugStr", "FindSymbol")]
     imports += [("PrivateInterfaceLib", name, 2) for name in ("FragAddNotifyProc", "FragRemoveNotifyProc")]
+    imports.append(("PrivateInterfaceLib", "FragRelease", 2))
     imports += [("InterfaceLib", name, 2) for name in ("PtrToHand", "DisposeHandle")]
     imports += [
         ("IconServicesLib", name, 2)
@@ -109,6 +110,24 @@ def make_probe(destination):
     for event in range(5):
         p.emit(0x807E0120 + 4 * event)
         p.expect(1, "removed notifier is not called during reload")
+
+    for normal_term in (0, 1):
+        load()
+        p.emit(0x807E0180, 0x389E03E0, 0x38BE01B0, 0x38DE01B4)
+        p.call("FindSymbol")
+        p.expect(0, "find the target's real termination-counter export")
+        p.emit(0x809E01B0, 0x381E03F0, 0x90040000, 0x38000000, 0x901E03F0)
+        p.emit(0x38600001, 0x809E0180, 0x38A00001)
+        p.call("FragRelease")
+        p.expect(-2800, "private release rejects an unknown context without closing the connection")
+        p.emit(0x38600000, 0x809E0180, 0x38A00000 | normal_term)
+        p.call("FragRelease")
+        p.expect(0, "private release closes the real connection by value")
+        p.emit(0x807E03F0)
+        p.expect(normal_term, "normal release invokes the actual terminator; abnormal release omits it")
+        p.emit(0x387E0180)
+        p.call("CloseConnection")
+        p.expect(-2801, "private release leaves a stale connection invalid")
 
     # Private copies share PIC text but own distinct data/TOCs. Register a
     # callback from the older copy after creating the newer one, then close
@@ -239,14 +258,26 @@ def make_probe(destination):
     p.data[0x360 : 0x361 + len(marker)] = bytes([len(marker)]) + marker
     for offset, text in ((0x3A0, b"NotifyOwner"), (0x3C0, b"Register"), (0x3D0, b"Callback")):
         p.data[offset : offset + 1 + len(text)] = bytes([len(text)]) + text
+    p.data[0x3E0:0x3E6] = b"\x05Token"
     p.finish(destination, "PPC Native Libraries Probe")
     library = pef(
-        [0x38600000, 0x4E800020],
-        struct.pack(">2I", 0, 0) + bytes(8),
-        exports=[("Token", 1, 8, 1)],
+        [
+            0x38600000,
+            0x4E800020,
+            0x80820010,
+            0x2C040000,
+            0x41820010,
+            0x80640000,
+            0x38630001,
+            0x90640000,
+            0x38600000,
+            0x4E800020,
+        ],
+        struct.pack(">4I", 0, 0, 8, 0) + bytes(8),
+        exports=[("Token", 1, 16, 1)],
         init=0,
-        term=0,
-        reloc=[0x4600],
+        term=8,
+        reloc=[0x4601],
     )
     write_fragment(destination, "NotifyTarget", library, 0)
     register = [

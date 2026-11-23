@@ -23,6 +23,8 @@
 #include "icon_rgb.h"
 #include "MemoryMgr.h"
 #include "rsys/cquick.h"
+#include "rsys/fileicon.h"
+#include "../../finder-metadata/include/finder_metadata/icons.h"
 #include "toolbox_vectors.h"
 #include <stdlib.h>
 
@@ -34,6 +36,8 @@ typedef struct IconReference {
     uint32 creator, type;
     uint16 owners;
     boolean_t registered;
+    boolean_t system_backed, file_backed;
+    FSSpec source_file;
     Byte* bytes;
     uint32 size;
 } IconReference;
@@ -190,6 +194,7 @@ static IconReference* icon_register(uint32 creator, uint32 type, const Byte* byt
     free(icon->bytes);
     icon->bytes = copy;
     icon->size = size;
+    icon->system_backed = FALSE;
     return icon;
 }
 
@@ -238,9 +243,9 @@ static int icon_resource_id(const Byte* map, uint32 length, uint32 type, int16* 
     static const struct {
         uint32 type;
         int16 id;
-    } defaults[] = {{TICK("asnd"), -20790}, {TICK("dsnd"), -20791}, {TICK("docu"), -4000},
-                    {TICK("fldr"), -3999},  {TICK("hdsk"), -3995},  {TICK("APPL"), -3996},
-                    {TICK("ofld"), -3997},  {TICK("trsh"), -3993},  {TICK("macs"), -3983}};
+    } defaults[] = {{TICK("asnd"), -20790}, {TICK("dsnd"), -20791}, {TICK("docu"), -4000}, {TICK("fldr"), -3999},
+                    {TICK("hdsk"), -3995},  {TICK("APPL"), -3996},  {TICK("ofld"), -3997}, {TICK("trsh"), -3993},
+                    {TICK("ftrh"), -3984},  {TICK("macs"), -3983}};
 
     for (unsigned i = 0; i < NELEM(defaults); ++i)
         if (defaults[i].type == type) {
@@ -250,13 +255,21 @@ static int icon_resource_id(const Byte* map, uint32 length, uint32 type, int16* 
     return 0;
 }
 
+static IconReference* icon_register_system(uint32 type, const Byte* bytes, uint32 size)
+{
+    IconReference* icon = icon_register(TICK("macs"), type, bytes, size);
+    if (icon)
+        icon->system_backed = TRUE;
+    return icon;
+}
+
 static IconReference* icon_load_system_family(uint32 type, int16 id)
 {
     Handle family = C_Get1Resource(TICK("icns"), id);
     const uint32 size = family ? GetHandleSize(family) : 0;
     const Byte* bytes = family ? (const Byte*)STARH(family) : NULL;
     if (icon_family_valid(bytes, size))
-        return icon_register(TICK("macs"), type, bytes, size);
+        return icon_register_system(type, bytes, size);
 
     Byte packed[classic_icon_family_capacity];
     uint32 used = icon_family_header_size;
@@ -275,7 +288,7 @@ static IconReference* icon_load_system_family(uint32 type, int16 id)
         return NULL;
     icon_write_word(packed, TICK("icns"));
     icon_write_word(packed + 4, used);
-    return icon_register(TICK("macs"), type, packed, used);
+    return icon_register_system(type, packed, used);
 }
 
 static IconReference* icon_load_system_companion(uint32 type, int16 id)
@@ -335,6 +348,168 @@ static int carbon_GetIconRef(ROMlib_carbon_ppc_frame* call)
     if (!icon && creator == TICK("macs"))
         icon = icon_get_system(type);
     return icon ? icon_return_reference(call, icon, output) : icon_status(call, no_such_icon);
+}
+
+/* File families retain their real source for UpdateIconRef. Labels are queried
+   separately and never participate in the reference identity. */
+static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* source)
+{
+    const Byte* planes[] = {source->mono,   source->small,  source->color4,
+                            source->color8, source->small4, source->small8};
+    Byte packed[classic_icon_family_capacity];
+    uint32 used = icon_family_header_size;
+    for (unsigned i = 0; i < 6; ++i)
+        if (source->present & (1U << i)) {
+            const uint32 length = finder_icon_sizes[i];
+            icon_write_word(packed + used, finder_icon_types[i]);
+            icon_write_word(packed + used + 4, length + icon_family_header_size);
+            memcpy(packed + used + icon_family_header_size, planes[i], length);
+            used += length + icon_family_header_size;
+        }
+    icon_write_word(packed, TICK("icns"));
+    icon_write_word(packed + 4, used);
+    for (IconReference* icon = icon_references; icon; icon = icon->next)
+        if (icon->file_backed && icon->source_file.vRefNum == spec->vRefNum && icon->source_file.parID == spec->parID &&
+            EqualString(icon->source_file.name, (StringPtr)spec->name, FALSE, TRUE)) {
+            if (icon->size != used || memcmp(icon->bytes, packed, used)) {
+                Byte* copy = malloc(used);
+                if (!copy)
+                    return NULL;
+                memcpy(copy, packed, used);
+                free(icon->bytes);
+                icon->bytes = copy;
+                icon->size = used;
+            }
+            return icon;
+        }
+    IconReference* icon = calloc(1, sizeof *icon);
+    Byte* copy = malloc(used);
+    Handle identity = NewHandleSys(0);
+    if (!icon || !copy || !identity) {
+        free(icon);
+        free(copy);
+        if (identity)
+            DisposHandle(identity);
+        return NULL;
+    }
+    memcpy(copy, packed, used);
+    icon->identity = identity;
+    icon->file_backed = TRUE;
+    icon->source_file = *spec;
+    icon->bytes = copy;
+    icon->size = used;
+    icon->next = icon_references;
+    icon_references = icon;
+    return icon;
+}
+
+static OSErr icon_file_catalog(const FSSpec* spec, CInfoPBRec* info)
+{
+    Str63 name;
+    memcpy(name, spec->name, spec->name[0] + 1);
+    memset(info, 0, sizeof *info);
+    PP_ASSIGN(info->hFileInfo.ioNamePtr, (Ptr)name);
+    info->hFileInfo.ioVRefNum = spec->vRefNum;
+    info->hFileInfo.ioDirID = spec->parID;
+    return PBGetCatInfo(info, FALSE);
+}
+
+static boolean_t icon_file_artwork(const FSSpec* spec, const CInfoPBRec* info, FinderIcon* family)
+{
+    const boolean_t folder = (info->hFileInfo.ioFlAttrib & 0x10) != 0;
+    const uint16 flags = CW(folder ? info->dirInfo.ioDrUsrWds.frFlags : info->hFileInfo.ioFlFndrInfo.fdFlags);
+    const boolean_t custom = (flags & 0x400) != 0;
+    if (folder && !custom)
+        return FALSE;
+    const uint32 creator = folder ? 0 : CL(info->hFileInfo.ioFlFndrInfo.fdCreator);
+    const uint32 type = folder ? TICK("fldr") : CL(info->hFileInfo.ioFlFndrInfo.fdType);
+    FSSpec artwork = *spec;
+    if (folder) {
+        artwork.parID = info->dirInfo.ioDrDirID;
+        memcpy(artwork.name, "\005Icon\r", 6);
+    }
+    return ROMlib_read_file_icon(&artwork, creator, type, custom, family) ||
+           (!folder && ROMlib_read_icon_data(&artwork, family, NULL));
+}
+
+static IconReference* icon_file_default(const CInfoPBRec* info)
+{
+    const boolean_t folder = (info->hFileInfo.ioFlAttrib & 0x10) != 0;
+    const uint32 type = CL(info->hFileInfo.ioFlFndrInfo.fdType);
+    const uint32 generic = folder                 ? (CL(info->dirInfo.ioDrDirID) == 2 ? TICK("hdsk") : TICK("fldr"))
+                           : type == TICK("APPL") ? TICK("APPL")
+                                                  : TICK("docu");
+    IconReference* icon = icon_find_key(TICK("macs"), generic);
+    return icon ? icon : icon_get_system(generic);
+}
+
+static int carbon_UpdateIconRef(ROMlib_carbon_ppc_frame* call)
+{
+    IconReference* icon = icon_find(call->words[0]);
+    if (!icon)
+        return icon_fallback(call, "UpdateIconRef", invalid_icon_ref);
+    if (icon->file_backed) {
+        CInfoPBRec info;
+        OSErr error = icon_file_catalog(&icon->source_file, &info);
+        if (error)
+            return icon_status(call, error);
+        FinderIcon family;
+        if (icon_file_artwork(&icon->source_file, &info, &family))
+            return icon_status(call, icon_file_family(&icon->source_file, &family) ? noErr : memFullErr);
+        IconReference* generic = icon_file_default(&info);
+        if (!generic)
+            return icon_status(call, no_such_icon);
+        Byte* copy = malloc(generic->size);
+        if (!copy)
+            return icon_status(call, memFullErr);
+        memcpy(copy, generic->bytes, generic->size);
+        free(icon->bytes);
+        icon->bytes = copy;
+        icon->size = generic->size;
+    }
+    else if (icon->system_backed)
+        return icon_status(call, icon_get_system(icon->type) ? noErr : no_such_icon);
+    /* Client-registered families already own their current in-memory bytes. */
+    return icon_status(call, noErr);
+}
+
+static int carbon_GetIconRefFromFile(ROMlib_carbon_ppc_frame* call)
+{
+    FSSpec* spec = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof *spec, 0) : NULL;
+    void* output = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], 4, 1) : NULL;
+    void* label = call->words[2] ? ROMlib_carbon_try_guest_memory(call->words[2], 2, 1) : NULL;
+    if (!spec || spec->name[0] > 63 || !output || !label)
+        return icon_status(call, paramErr);
+    icon_write_word(output, 0);
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("GetIconRefFromFile", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    const FSSpec file = *spec;
+    CInfoPBRec info;
+    OSErr error = icon_file_catalog(&file, &info);
+    if (error)
+        return icon_status(call, error);
+    const boolean_t folder = (info.hFileInfo.ioFlAttrib & 0x10) != 0;
+    const uint16 flags = CW(folder ? info.dirInfo.ioDrUsrWds.frFlags : info.hFileInfo.ioFlFndrInfo.fdFlags);
+    const boolean_t custom = (flags & 0x400) != 0;
+    const uint32 creator = folder ? 0 : CL(info.hFileInfo.ioFlFndrInfo.fdCreator);
+    const uint32 type = folder ? TICK("fldr") : CL(info.hFileInfo.ioFlFndrInfo.fdType);
+    IconReference* icon = custom ? NULL : icon_find_key(creator, type);
+    FinderIcon family;
+    if (!icon && icon_file_artwork(&file, &info, &family)) {
+        icon = icon_file_family(&file, &family);
+        if (!icon)
+            return icon_status(call, memFullErr);
+    }
+    if (!icon)
+        icon = icon_file_default(&info);
+    if (!icon)
+        return icon_status(call, no_such_icon);
+    if (icon->owners == UINT16_MAX)
+        return icon_status(call, memFullErr);
+    const uint16 value = CW((flags >> 1) & 7);
+    memcpy(label, &value, sizeof value);
+    return icon_return_reference(call, icon, output);
 }
 
 static int carbon_IsValidIconRef(ROMlib_carbon_ppc_frame* call)

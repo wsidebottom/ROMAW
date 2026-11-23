@@ -25,6 +25,7 @@ typedef struct PACKED size_resource {
 } size_resource_t;
 
 extern void* ROMlib_process_identity(void);
+extern void ROMlib_process_enable_scripts(uint32 mask, BOOLEAN unicode);
 extern OSErr ROMlib_tsm_registration(BOOLEAN registering);
 extern OSErr ROMlib_get_system_client_process(ProcessSerialNumber* serial);
 extern OSErr ROMlib_begin_system_mode(void);

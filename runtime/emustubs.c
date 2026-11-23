@@ -567,6 +567,28 @@ STUB(ScriptUtil)
 
     selector = POPUL();
 
+    /* Private KeyScriptEnable(count, scripts): System 9 ScriptUtils
+       __KeyScriptEnable always includes Roman. The list contains big-endian
+       ScriptCodes, not a terminating sentinel or an output record. */
+    if (selector == 0x8006ffae) {
+        const uint32 address = POPUL();
+        const int16 count = POPUW();
+        if (count > 0 && (!address || (uint64)address + (unsigned)count * 2 > ROMlib_guest_memory_size))
+            return retaddr;
+        const uint16* scripts = (const uint16*)SYN68K_TO_US(address);
+        uint32 mask = 1;
+        BOOLEAN unicode = FALSE;
+        for (int i = 0; i < count; ++i) {
+            const uint16 script = CW(scripts[i]);
+            if (script < 32)
+                mask |= (uint32)1 << script;
+            else if (script == 0x7e)
+                unicode = C_GetScript(script, smScriptEnabled) != 0;
+        }
+        ROMlib_process_enable_scripts(mask, unicode);
+        return retaddr;
+    }
+
     /* The original TruncString/TruncText selectors omit truncWhere. System 7 accepts
      both forms and supplies smTruncEnd for the older argument lists
      (SuperMario ScriptMgrTruncRepl.a). Normalize it before Pascal marshalling
@@ -1109,8 +1131,8 @@ PRIVATE selectorblock_t osdispatch_block[] = {
 PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
-    if (selector == 0x04 || (selector >= 0x3f && selector <= 0x41) || selector == 0x36 || selector == 0x5a ||
-        selector == 0x5b || selector == 0x7c)
+    if (selector == 0x04 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
+        selector == 0x5a || selector == 0x5b || selector == 0x75 || selector == 0x7c)
         return TRUE;
     for (block = osdispatch_block; block->descriptorp; ++block)
         if (selector >= block->first && selector <= block->last)
@@ -1211,6 +1233,16 @@ STUB(OSDispatch)
         POPUL();
         POPUL();
         WRITEUW(EM_A7, uw == 0x42 ? -4 /* unimpErr */ : noErr);
+        return retaddr;
+    }
+    if (uw == 0x75) {
+        /* Finder's private per-process memory query has three longword
+           pointer arguments. Extended accounting is unavailable; preserve
+           its output storage and return the genuine unsupported status. */
+        POPUL();
+        POPUL();
+        POPUL();
+        WRITEUW(EM_A7, -4 /* unimpErr */);
         return retaddr;
     }
     if (uw == 0x7c) {
@@ -3311,6 +3343,11 @@ STUB(IMVI_MemoryDispatch)
      exists. Unsupported VM requests return an error instead of a trap abort. */
     uint64 end = (uint64)EM_A0 + EM_A1;
     switch (EM_D0 & 0xffff) {
+    case 0xfffd: /* VM_GetHoldableBytes: VMCallsPriv.h, register result in D0. */
+        /* HoldMemory above accepts the entire fixed guest RAM span. Guest VM
+           never pages these bytes out, independently of host paging policy. */
+        EM_D0 = ROMlib_guest_memory_size;
+        break;
     case 0:
     case 1:
     case 2:

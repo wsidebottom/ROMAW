@@ -42,6 +42,7 @@ enum {
     ROMlib_bevel_button_proc = 32,
     ROMlib_slider_proc = 48,
     ROMlib_slider_thumb_length = 14,
+    ROMlib_chasing_arrows_proc = 112,
     ROMlib_tabs_proc = 128,
     ROMlib_separator_proc = 144,
     ROMlib_group_box_proc = 160,
@@ -76,6 +77,8 @@ typedef struct PACKED {
     uint32 color_proc;
     INTEGER image_transform;
     uint32 supervisor;
+    uint32 chasing_frame;
+    BOOLEAN chasing_animating;
 } ROMlib_aux_control_data;
 
 #define ROMlib_aux_control_extra(aux) ((ROMlib_aux_control_data*)(STARH(aux) + 1))

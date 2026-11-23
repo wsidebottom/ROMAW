@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: ROMlib_begin_system_mode, ROMlib_end_system_mode, ROMlib_get_system_client_process,
-             ROMlib_process_identity, ROMlib_process_take_wakeup, ROMlib_tsm_registration, ROMlib_tsm_use_input_window,
+             ROMlib_process_identity, ROMlib_process_enable_scripts, ROMlib_process_take_wakeup, ROMlib_tsm_registration, ROMlib_tsm_use_input_window,
              ROMlib_tsm_new_document, ROMlib_tsm_delete_document, ROMlib_tsm_set_active, ROMlib_tsm_active_document,
              ROMlib_tsm_fix_document, ROMlib_tsm_set_input_window, ROMlib_tsm_document_input_window,
              ROMlib_tsm_dispose_documents,
@@ -94,6 +94,8 @@ typedef struct process_info {
     Handle tsm_active;
     uint32 system_mode_level;
     BOOLEAN wake_pending;
+    uint32 keyboard_scripts;
+    BOOLEAN keyboard_unicode;
 } process_info_t;
 
 static process_info_t* process_info_list;
@@ -149,6 +151,8 @@ void process_create(boolean_t desk_accessory_p, uint32 type, uint32 signature)
         gui_fatal("unable to allocate process info record");
 
     memset(info, 0, sizeof *info);
+    info->keyboard_scripts = UINT32_MAX;
+    info->keyboard_unicode = TRUE;
     memset(&info->app_spec, 0, sizeof info->app_spec);
     info->spec_error = FSMakeFSSpec(ROMlib_exevrefnum, 0, CurApName, &info->app_spec);
     info->mode = ((size ? SIZE_FLAGS(size) : default_process_mode_flags) | (desk_accessory_p ? modeDeskAccessory : 0));
@@ -190,6 +194,14 @@ void process_create(boolean_t desk_accessory_p, uint32 type, uint32 signature)
      consistent with GetCurrentProcess/GetProcessInformation. */
     if (MR(AE_info))
         MR(AE_info)->process_manager_exists = CWC(1);
+}
+
+void ROMlib_process_enable_scripts(uint32 mask, BOOLEAN unicode)
+{
+    if (current_process_info) {
+        current_process_info->keyboard_scripts = mask | 1;
+        current_process_info->keyboard_unicode = unicode;
+    }
 }
 
 process_info_t* get_process_info(ProcessSerialNumber* serial_number)
