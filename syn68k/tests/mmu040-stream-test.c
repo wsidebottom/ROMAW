@@ -921,19 +921,24 @@ static void guest_operand_page_fault_handlers(void)
                         assert(EM_D0 == (kind == 0 ? 0xAABBCC11 : kind == 1 ? 0xAABB1122 : 0x11223344));
                         ++cases;
                     }
-    /* Nonindexed MOVEM read continuation remains a separate case. */
+    /* A nonindexed operand fault carries CM, rather than generic read replay. */
     fixture(0, 1);
     code_word(0x10000, 0x4CD0);
     code_word(0x10002, 1);
     EM_A0 = 0x28000;
     put32(pte(EM_A0), 0);
+    EM_A7 = cpu_state.isp = 0x20100;
+    cpu_state.vbr = 0x20000;
+    put32(physical(cpu_state.vbr + 8), 0x10040);
     Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
     Syn68kMappedRun run;
     Syn68kMappedDelivery delivery;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-    assert(run.reason == SYN68K_MAPPED_EXCEPTION && !run.step.restartable_read);
+    assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.restartable_read &&
+           run.step.movem_state == 1 && run.step.movem_ea == 0x28000);
     assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-    assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED);
+    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040 && EM_A7 == 0x20100 - 60);
+    assert(mapped_value(EM_A7 + 8, 4) == 0x28000 && (mapped_value(EM_A7 + 12, 2) & 0x1000));
     ++cases;
 }
 

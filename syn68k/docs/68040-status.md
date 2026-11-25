@@ -28,11 +28,29 @@ postincrement, base-register replacement, stack/frame overlap, guest repair/RTE,
 trace retirement and repeated opcode/mask/extension fetch faults on continuation.
 These checks do not constitute hardware capture validation.
 
-Full grouped MMU and cold/warm AOT reruns remain pending, as do the matching
-ROMAW rebuild, smoke checks and staging. The promoted bundle remains the STOP
-checkpoint described below; it does not contain this MOVEM change. MOVEM/MOVE16
-store recovery and the other remaining 68040 compatibility work remain open.
-Work is paused at this source checkpoint at the user's request.
+Full grouped MMU validation passes 7,600,300 stream/recovery cases and 101,224
+control-flow/RTE cases. The complete cold/warm AOT suite passes 3,365,486 guest
+recovery cases per run: 68 cold images, 1,262,181 warm hits and zero warm
+compilations. Stable cache identity and malformed-file fallback pass. An older
+operand-page fixture now verifies successful CM delivery rather than retaining
+its obsolete nonindexed-rejection expectation. Its focused rerun also passes.
+The unchanged native kernel image retains the prior Windows/SysV native and
+FPU-native validation; this increment changes the mapped recovery boundary.
+
+ROMAW was rebuilt with the exact tested CPU archive. All 175 CPU inputs and six
+fixtures match the tested and application snapshots; all 74 staged files were
+verified and promoted to `build/68040-current/bin`. The candidate remains at
+`build/68040-movem-stage/bin`; the preceding STOP bundle is preserved at
+`build/68040-pre-movem-bin-20261125`. The source/binary audit is recorded in
+`build/68040-movem-source-audit.json`. The coherent application base remains
+`e062e3db` with the current CPU overlay.
+
+Windows help passes (exit zero, 7,669 bytes). Isolated-profile Browser startup
+passes with 30,862 native entries; Speedometer's 68K startup passes with 76,934
+entries and one FPU query. Both reach WaitNextEvent with no live native
+checkpoint or win_exception entry. These are startup checks, not a full FPU
+application benchmark. MOVEM/MOVE16 store recovery and the other remaining
+68040 compatibility work remain open.
 
 ## Mapped STOP suspension and wakeup (2026-11-25)
 

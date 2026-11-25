@@ -25,9 +25,11 @@ extension or indirect-pointer faults before operand execution can instead earn
 ordinary restart only with unchanged general registers and the full state and
 callback guards. They carry no CM/saved-EA continuation.
 
-The 2026-11-25 focused checks pass; full grouped MMU/AOT validation and the
-matching ROMAW rebuild/staging are pending. See the current checkpoint in
-[68040-status.md](68040-status.md) for scope and validation counts.
+The 2026-11-25 grouped MMU suite passes 7,600,300 stream/recovery cases and
+101,224 control-flow/RTE cases. Complete cold/warm AOT passes 3,365,486 recovery
+cases per run, with zero warm compilations. The matching ROMAW bundle was
+rebuilt, smoke checked and promoted to `build/68040-current/bin`. See the current
+checkpoint in [68040-status.md](68040-status.md) for source/binary audit details.
 
 ## Read restart certification
 
@@ -182,8 +184,7 @@ entries with zero compilations. Native FPU helper-exclusion checks remain in
 
 ## Remaining work
 
-Integer stores without completed offers, nonindexed MOVEM read restart,
-MOVEM/MOVE16 store continuations and
+Integer stores without completed offers, MOVEM/MOVE16 store continuations and
 the constructed user-mode throwaway-RTE fault case also require further work.
 Locked-store restrictions remain unchanged. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
