@@ -5,6 +5,34 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVEM page-boundary and active-stack validation (2026-11-25)
+
+The maintained stream suite now includes 35,712 additional MOVEM store cases
+covering A0 through A7 as the EA register, indirect/predecrement addressing,
+word/long operands, both page sizes and privilege levels, trace, and both
+operand/aligned-transfer bus policies. Protected and missing second pages fault
+after zero, one, two or three completed scalar bytes. For descending transfers,
+a device callback invalidates/protects the page only after the preceding scalar's
+last successful subcycle, preserving earlier writes.
+
+Real guest WB2 cleanup and RTE verify CM/EA, MA, original scalar data, completed
+register effects and the full repeated list. Active user A7 returns through its
+separate supervisor stack; active supervisor A7 builds the access frame below
+the remaining operand. Odd supervisor SP cases are excluded and remain part of
+the double-fault audit. Handler scratch-register/source aliases remain visible
+on replay. These tests pass against the committed store implementation without
+CPU changes.
+
+Grouped MMU validation passes 7,716,940 stream/recovery cases and 101,224
+control-flow/RTE cases. Complete cold/warm AOT passes 3,423,806 guest recovery
+cases per run: 71 cold images, 1,262,187 warm hits and zero warm compilations.
+Stable identity and malformed-cache fallback pass. The tested CPU archive and
+promoted ROMAW bundle remain byte-identical to the store checkpoint below;
+all 74 promoted files were verified again. No binary rebuild is required for
+this test-only increment. All 175 CPU inputs and six current fixtures match
+the tested/application snapshots; the updated audit is recorded in
+`build/68040-movem-page-stack-source-audit.json`.
+
 ## MOVEM store CM and writeback recovery (2026-11-25)
 
 Mapped MOVEM store operand faults now carry CM and the original effective
@@ -30,8 +58,8 @@ faults before the first store, entry trace modes, base-register replacement,
 source-list aliases, guest WB1/WB2 cleanup and real RTE. A store overwrites its
 own indirect pointer; CM replay must not reread it. Repeated data and instruction
 fetch faults preserve the original EA. Interrupts remain deferred during CM.
-The EA register in this matrix is A0; active-A7 and partial page-boundary ATC
-store cases remain additional validation work.
+The EA register in this matrix is A0; the page-boundary/active-stack checkpoint
+above extends it across all address registers.
 
 Grouped MMU validation passes 7,681,228 stream/recovery cases and 101,224
 control-flow/RTE cases. Complete cold/warm AOT passes 3,405,950 guest recovery
@@ -378,8 +406,8 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error work: further active-stack/call effective-address
-  variants, partial page-boundary ATC and active-A7 MOVEM store validation,
-  MOVE16 store continuations, and the constructed user-mode throwaway-RTE case.
+  and double-fault variants, MOVE16 bus-order/store continuations, and the
+  constructed user-mode throwaway-RTE case.
   Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
   use CM/saved-EA continuation as described in the current checkpoints above.
 - Remaining trace audit, including forced exceptions, mapped cache

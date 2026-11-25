@@ -29,7 +29,9 @@ records require ordinary data FC, word/long size, consistent fault/progress
 addresses and valid physical/ATC metadata. Scalar retirement, FPU continuation,
 locked or tail-write metadata cannot be combined with CM. Invalid records leave
 CPU state and bus counters unchanged. See the current status checkpoint for
-focused/grouped coverage and the remaining active-stack/page-boundary checks.
+focused/grouped coverage. An additional 35,712-case matrix covers partial ATC
+faults and A0 through A7, including active user/supervisor stacks, with real
+guest WB2 cleanup and RTE. Odd supervisor SP/double-fault cases remain open.
 
 ## MOVEM read continuation checkpoint
 
@@ -200,7 +202,7 @@ entries with zero compilations. Native FPU helper-exclusion checks remain in
 
 ## Remaining work
 
-Additional active-stack/page-boundary MOVEM store checks, MOVE16 store
+Further active-stack/double-fault variants, MOVE16 bus-order/store
 continuations and the constructed user-mode throwaway-RTE fault case require
 further work.
 Locked-store restrictions remain unchanged. General busy-frame, encoding,
