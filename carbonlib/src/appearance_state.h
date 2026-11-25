@@ -18,6 +18,8 @@
 #include "MemoryMgr.h"
 #include "ResourceMgr.h"
 #include "cf_batch.h"
+#include "rsys/cquick.h"
+#include "rsys/stubify.h"
 #include <string.h>
 
 enum appearance_client_operation { appearance_client_register, appearance_client_unregister, appearance_client_query };
@@ -28,6 +30,61 @@ static int appearance_client_result(ROMlib_carbon_ppc_frame* call, int32_t resul
 {
     call->words[0] = result;
     return 1;
+}
+
+static int draw_theme_group(ROMlib_carbon_ppc_frame* call, bool primary)
+{
+    enum { appearance_vector = 0x17d0, appearance_slot = 0x274 };
+    const Rect* source = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof *source, 0) : NULL;
+    if (!source)
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_ppc_frame arguments = *call;
+    if (arguments.words[1] == 7 || arguments.words[1] == 8)
+        arguments.words[1] = 0;
+
+    uint32_t vector;
+    if (!cfp_get(appearance_vector, &vector))
+        return 0;
+    if (vector && vector != (uint32_t)(uintptr_t)toolstuff[appearance_slot].orig) {
+        uint32_t result;
+        return ROMlib_carbon_call_toolbox_vector(appearance_vector, 0xfb8, primary ? 0x0c : 0x0d, &arguments,
+                                               &result) &&
+               appearance_client_result(call, result);
+    }
+
+    Rect bounds = *source;
+    if (C_EmptyRect(&bounds))
+        return appearance_client_result(call, noErr);
+
+    /* Classic fallback draws an inset highlight and an outer frame. */
+    const bool inactive = arguments.words[1] == 0;
+    RGBColor shadow = {CWC(0x9999), CWC(0x9999), CWC(0x9999)};
+    RGBColor highlight = {CWC(0xeeee), CWC(0xeeee), CWC(0xeeee)};
+    if (primary && !inactive)
+        shadow = (RGBColor){CWC(0x7777), CWC(0x7777), CWC(0x7777)};
+
+    draw_state_t saved;
+    draw_state_save(&saved);
+    C_PenNormal();
+    C_RGBForeColor(&shadow);
+    C_FrameRect(&bounds);
+    if (primary && RECT_WIDTH(&bounds) > 2 && RECT_HEIGHT(&bounds) > 2) {
+        C_InsetRect(&bounds, 1, 1);
+        C_RGBForeColor(&highlight);
+        C_FrameRect(&bounds);
+    }
+    draw_state_restore(&saved);
+    return appearance_client_result(call, noErr);
+}
+
+static int carbon_DrawThemePrimaryGroup(ROMlib_carbon_ppc_frame* call)
+{
+    return draw_theme_group(call, true);
+}
+
+static int carbon_DrawThemeSecondaryGroup(ROMlib_carbon_ppc_frame* call)
+{
+    return draw_theme_group(call, false);
 }
 
 static int appearance_reference_layout(const ROMlib_carbon_reference* reference, uint32_t offset)

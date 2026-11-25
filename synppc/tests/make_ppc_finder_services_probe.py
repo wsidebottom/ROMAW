@@ -99,6 +99,8 @@ def make_probe(destination):
             "PlayThemeSound",
             "DrawThemeWindowHeader",
             "DrawThemeWindowListViewHeader",
+            "DrawThemePrimaryGroup",
+            "DrawThemeSecondaryGroup",
         )
     ]
     imports += [
@@ -292,6 +294,13 @@ def make_probe(destination):
     p.emit(0x38600000, 0x38800001)
     p.call("DrawThemeWindowHeader")
     p.expect(-50, "window header drawing rejects missing bounds")
+    for drawing in ("DrawThemePrimaryGroup", "DrawThemeSecondaryGroup"):
+        p.emit(0x387E0300, 0x38800001)
+        p.call(drawing)
+        p.expect(0, "the direct AppearanceLib import draws a group frame")
+        p.emit(0x38600000, 0x38800001)
+        p.call(drawing)
+        p.expect(-50, "group drawing rejects missing bounds")
     for action in (2, 1):
         p.emit(0x807E02C0, 0x38800001, 0x38A00000 | action, 0x38C00000)
         p.call("TransitionWindow")
