@@ -16,6 +16,7 @@
 #define ROMLIB_CARBON_DRAG_TRACKING_H
 
 #include "OSUtil.h"
+#include "rsys/layers.h"
 
 enum {
     drag_enter_handler = 1,
@@ -77,6 +78,12 @@ static int drag_window_at(Point point, uint32_t* window, bool* present)
     else if (!drag_trap(0x12b0, 0x3e0, &args, &part))
         return 0;
     *window = CL(found);
+    if (!*window && (int16_t)part == inDesk) {
+        const Point host_point = {CW(point.v), CW(point.h)};
+        WindowPtr desktop = ROMlib_desktop_layer_at(host_point);
+        if (desktop)
+            *window = US_TO_SYN68K(desktop);
+    }
     /* FindWindow reports the desktop as inDesk with a null WindowPtr.
        Application-wide handlers must still receive its tracking and drop. */
     *present = *window || (int16_t)part == inDesk;
@@ -259,6 +266,10 @@ static int track_drag(ROMlib_carbon_ppc_frame* call, carbon_drag* drag)
     bool entered_handler = false, sender_present = false, window_present = false;
     drag_feedback feedback = {0};
     int ok = drag_window_at(drag->origin, &sender, &sender_present) && drag_update_mouse(drag, &event, &cancelled);
+    /* Enter-handler callbacks already query whether this is their own drag.
+       Publish the origin before dispatching any tracking message. */
+    if (ok && sender_present)
+        drag->attributes = drag_inside_application | drag_inside_sender;
     if (ok && !cancelled)
         ok = drag_feedback_begin(drag, &feedback);
     if (ok && !cancelled && !feedback.error) {

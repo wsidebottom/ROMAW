@@ -7,7 +7,7 @@
 #   Classes:   Probe, imported fixture builder.
 #
 #   Functions: make_probe, check_object_accessors, check_file_icons, check_picture_controls, check_progress_controls;
-#              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting, check_label_icon, check_desktop_drag;
+#              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting, check_label_icon, check_desktop_drag, check_resource_overrides;
 #              script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
@@ -38,6 +38,8 @@ def make_probe(destination):
         "WriteResource",
         "CloseResFile",
         "ResError",
+        "GetResFileAttrs",
+        "SetResFileAttrs",
         "TempNewHandle",
         "NewHandle",
         "GetHandleSize",
@@ -123,6 +125,7 @@ def make_probe(destination):
         )
     ]
     imports += [("PrivateInterfaceLib", name, 2) for name in ("RequestVolumeNotification", "DeclineVolumeNotification")]
+    imports += [("PrivateInterfaceLib", name, 2) for name in ("GetMap", "GetOverrideAttributes")]
     imports.append(("PrivateInterfaceLib", "NewDesktopLayerOwner", 2))
     imports.append(("PrivateInterfaceLib", "SysZoneFloatSizes", 2))
     imports.append(("PrivateInterfaceLib", "VM_GetHoldableBytes", 2))
@@ -791,6 +794,7 @@ def make_probe(destination):
         p.expect(-855, "unavailable Balloon Help reports its actual initialization error")
         p.call("HMGetBalloons")
         p.expect(0, "unavailable Balloon Help remains disabled")
+    check_resource_overrides(p)
     check_date_formatting(p)
     check_desktop_drag(p)
     check_device_parameter_blocks(p)
@@ -853,7 +857,12 @@ def make_probe(destination):
 
 def check_desktop_drag(p):
     # Finish a desktop drag through the live event vector, without host input.
-    # Callbacks record the real messages, null WindowPtr and drag reference.
+    # Callbacks record the real messages, registered desktop owner and drag reference.
+    # Query attributes in every tracking callback, including enter-handler.
+    start = len(p.code)
+    p.call("GetDragAttributes")
+    attributes_call = p.code[start:]
+    del p.code[start:]
     p.routines.extend(
         [
             (
@@ -874,6 +883,11 @@ def check_desktop_drag(p):
             (
                 0xD08,
                 [
+                    0x7C0802A6,
+                    0x90010008,
+                    0x93C1FFFC,
+                    0x9421FFC0,
+                    0x7C5E1378,
                     0x80E50000,
                     0x39000001,
                     0x7D081830,
@@ -881,6 +895,17 @@ def check_desktop_drag(p):
                     0x90E50000,
                     0x90850004,
                     0x90C50008,
+                    0x7CC33378,
+                    0x389E0D98,
+                    *attributes_call,
+                    0x807E0D98,
+                    0x809E0DA0,
+                    0x7C632038,
+                    0x907E0DA0,
+                    0x38210040,
+                    0x83C1FFFC,
+                    0x80010008,
+                    0x7C0803A6,
                     0x38600000,
                     0x4E800020,
                 ],
@@ -889,6 +914,7 @@ def check_desktop_drag(p):
         ]
     )
     p.data[0xD60:0xD70] = struct.pack(">HIIhhH", 1, 0, 0, 300, 450, 0)
+    struct.pack_into(">I", p.data, 0xDA0, 6)
     p.emit(0x387E0D20)
     p.call("NewDrag")
     p.expect(0, "create a real desktop drag")
@@ -906,9 +932,12 @@ def check_desktop_drag(p):
     p.call("TrackDrag")
     p.expect(0, "a desktop drop is delivered to its real receive handler")
     p.emit(0x807E0D40, 0x90600F80)
-    for offset, value in ((0xD80, 0x3E), (0xD84, 0), (0xD8C, 1), (0xD90, 0)):
+    for offset, value in ((0xD80, 0x3E), (0xD8C, 1)):
         p.emit(0x807E0000 | offset)
-        p.expect(value, "desktop tracking preserves the callback lifecycle and null desktop WindowPtr")
+        p.expect(value, "desktop tracking preserves the complete callback lifecycle")
+    for offset in (0xD84, 0xD90):
+        p.emit(0x807E0000 | offset, 0x809E02A0)
+        p.equal("desktop callbacks receive the actual registered desktop layer owner")
     for offset in (0xD88, 0xD94):
         p.emit(0x807E0000 | offset, 0x809E0D20)
         p.equal("desktop callbacks receive the actual drag reference")
@@ -917,6 +946,8 @@ def check_desktop_drag(p):
     p.expect(0, "read completed desktop drag attributes")
     p.emit(0x807E0D98)
     p.expect(6, "the desktop remains inside the sender application and sender surface")
+    p.emit(0x807E0DA0)
+    p.expect(6, "every tracking callback sees the sender attributes, including enter-handler")
     p.emit(0x807E0D20, 0x389E0D98, 0x38BE0D9C)
     p.call("GetDragMouse")
     p.expect(0, "read the final desktop drop point")
@@ -932,6 +963,34 @@ def check_desktop_drag(p):
     for offset in (0xD44, 0xD48, 0xD4C):
         p.emit(0x807E0000 | offset)
         p.call("DisposeRoutineDescriptor")
+
+
+def check_resource_overrides(p):
+    p.call("CurResFile")
+    p.emit(0xB07E0B64)
+    p.call("GetResFileAttrs")
+    p.emit(0x907E0B68, 0xA87E0B64)
+    p.call("GetMap")
+    p.nonzero("resolve the real current resource map")
+    p.emit(0x907E0B6C, 0xA87E0B64, 0x809E0B68, 0x6084001E)
+    p.call("SetResFileAttrs")
+    p.emit(0x807E0B6C)
+    p.call("GetOverrideAttributes")
+    p.expect(0x1E, "read all four real in-memory resource-map override bits")
+    p.emit(0x3860FB2E)
+    p.call("GetResFileAttrs")
+    p.emit(0x807E0B6C)
+    p.call("GetOverrideAttributes")
+    p.expect(0x1E, "a valid map query still returns its override attributes after an error")
+    p.call("ResError")
+    p.expect(-193, "the private override query preserves existing ResErr on success")
+    p.emit(0x38600000)
+    p.call("GetOverrideAttributes")
+    p.expect(0, "a missing map publishes no override flags")
+    p.call("ResError")
+    p.expect(-109, "a missing map reports the actual nil-handle error")
+    p.emit(0xA87E0B64, 0x809E0B68)
+    p.call("SetResFileAttrs")
 
 
 def check_date_formatting(p):

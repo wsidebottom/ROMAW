@@ -6,7 +6,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_dispose_float_layer, ROMlib_get_window_state, ROMlib_layer_application, ROMlib_layer_children,
+  Functions: ROMlib_desktop_layer_at, ROMlib_dispose_float_layer, ROMlib_get_window_state,
+             ROMlib_layer_application, ROMlib_layer_children,
              ROMlib_layer_current, ROMlib_layer_find, ROMlib_layer_front, ROMlib_layer_p, ROMlib_layer_parent,
              ROMlib_layer_root, ROMlib_layer_set, ROMlib_layer_swap, ROMlib_layers_reset,
              ROMlib_new_desktop_layer_owner, ROMlib_new_float_layer, ROMlib_set_window_state, ROMlib_window_first_all,
@@ -38,6 +39,7 @@ typedef struct PACKED layer_record {
 
 _Static_assert(sizeof(layer_record) == sizeof(WindowRecord), "LayerRecord ABI");
 static layer_record *root_layer, *application_layer, *floating_layer, *current_layer;
+static BOOLEAN desktop_layer_owned;
 
 static void sync_current(void)
 {
@@ -211,8 +213,17 @@ PUBLIC OSErr ROMlib_new_desktop_layer_owner(HIDDEN_Ptr* output)
         return memFullErr;
     /* ROMAW runs one application at a time. When that application is Finder,
      its ordinary layer owns both desktop and folder windows. */
+    desktop_layer_owned = TRUE;
     HIDDEN_RAW_SET(*(output), RM((Ptr)application_layer));
     return noErr;
+}
+
+PUBLIC WindowPtr ROMlib_desktop_layer_at(Point point)
+{
+    if (!desktop_layer_owned || !application_layer || !application_layer->visible ||
+        !PtInRgn(point, MR(HIDDEN_RAW(application_layer->content))))
+        return NULL;
+    return (WindowPtr)application_layer;
 }
 
 PUBLIC OSErr ROMlib_new_float_layer(HIDDEN_Ptr* output)
@@ -283,6 +294,7 @@ PUBLIC WindowPeek ROMlib_window_next_all(WindowPeek window)
 
 PUBLIC void ROMlib_layers_reset(void)
 {
+    desktop_layer_owned = FALSE;
     if (!root_layer)
         return;
     sync_current();

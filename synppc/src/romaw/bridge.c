@@ -2426,6 +2426,13 @@ PRIVATE Handle ppc_get_override_map(Handle target)
     return override ? (Handle) override : target;
 }
 
+PRIVATE uint8 ppc_get_override_attributes(Handle map)
+{
+    uint8 attributes = 0;
+    ROMlib_get_override_attributes(map, &attributes);
+    return attributes;
+}
+
 PRIVATE void ppc_lock_high(Handle handle)
 {
     MoveHHi(handle);
@@ -3762,6 +3769,7 @@ PRIVATE const ppc_native_import private_imports[] = {
     {"GetAuxMenuItem", ppc_get_aux_menu_item, M4(2, 5, 5, 5, 1)},
     {"GetMap", ppc_get_resource_map, M1(5, 2)},
     {"GetOverrideMap", ppc_get_override_map, M1(5, 5)},
+    {"GetOverrideAttributes", ppc_get_override_attributes, M1(1, 5)},
     {"LMGetKeyMap", ppc_key_map, M0(5)},
     {"GetQDGlobals", ppc_get_qd_globals, M0(5)},
     {"GetSystemClientProcess", ROMlib_get_system_client_process, M1(2, 5)},
@@ -5718,6 +5726,22 @@ PRIVATE int ppc_execute(ppc_context* ctx, ROMlib_ppc_registers* r)
                 (unsigned long long)env.native_compilations, (unsigned long long)env.native_cache_hits);
     ppc_active_context = previous;
     if (!ok && !ctx->error[0]) {
+        fprintf(stderr, "trace: PPC first fault depth=%u pc=%08lx lr=%08lx\n", ctx->callback_depth,
+                (unsigned long)r->pc, (unsigned long)r->lr);
+        for (unsigned reg = 0; reg < 32; ++reg)
+            fprintf(stderr, "trace: first-fault r%u=%08lx\n", reg, (unsigned long)r->gpr[reg]);
+        uint32 frame_address = r->gpr[1];
+        for (unsigned depth = 0; depth < 16; ++depth) {
+            const uint32* guest_frame = ppc_memory(ctx, frame_address, 12, FALSE);
+            if (!guest_frame || (frame_address & 15))
+                break;
+            fprintf(stderr, "trace: first-fault frame=%08lx saved-lr=%08lx\n", (unsigned long)frame_address,
+                    (unsigned long)CL(guest_frame[2]));
+            const uint32 parent = CL(guest_frame[0]);
+            if (parent <= frame_address)
+                break;
+            frame_address = parent;
+        }
         const char* entry = NULL;
         for (unsigned i = 0; i < ctx->n_imports; ++i)
             if (ctx->imports[i].stub == r->pc) {

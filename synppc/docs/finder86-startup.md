@@ -151,10 +151,26 @@ state for both requested settings.
 Drag hit testing invokes the loaded WindowsLib's original `GlobalFindWindow`
 entry, matching DragLib's dependency and including the initialized saved window
 layer tree. Native-only hosts retain the live FindWindow Toolbox vector.
-A bare `inDesk` result with no WindowPtr remains a valid target for application-wide
-handlers. The grouped fixture verifies the complete desktop callback lifecycle,
-sender attributes and final mouse coordinates using a temporary event callback;
-it restores the live event vector afterward.
+For a bare `inDesk` result, Drag Manager resolves an existing desktop layer
+registered through `NewDesktopLayerOwner` when its content region contains the
+point. Finder receives that real layer pointer, which it uses to identify its
+desktop model. Unregistered hosts retain the null desktop target. Registration
+clears when the native layer tree resets. The grouped fixture verifies the
+registered owner pointer, complete callback lifecycle, sender attributes and
+final mouse coordinates using a temporary event callback; it restores the live
+event vector afterward.
+
+Sender attributes are initialized before the first enter-handler callback.
+Finder queries them during that callback to distinguish its own drag from an
+external drag; reporting zero can replace its live selection with a shared
+list that later cleanup frees. The fixture queries the attributes in every
+tracking callback, including enter-handler.
+
+Finder's private `GetOverrideAttributes` import uses the existing Resource
+Manager override query. It reads the four in-memory map bits (`0x1e`), preserves
+`ResErr` on success and reports `nilHandleErr` for a null map. The grouped fixture
+checks an actual open map, restores its original attributes and verifies both
+error contracts.
 
 ## Validation
 
