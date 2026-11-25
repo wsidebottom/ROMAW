@@ -3270,6 +3270,111 @@ static void guest_movem_page_stack_restarts(void)
     printf("%u MOVEM partial-ATC/all-An/active-stack/guest-RTE cases passed\n", cases - initial_cases);
 }
 
+static unsigned move16_source_physical, move16_destination_physical, move16_read_order[4], move16_write_order[4],
+    move16_reads, move16_writes;
+
+static int move16_bus_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size, uint32_t attributes,
+                           unsigned fc)
+{
+    if (address >= move16_source_physical && address < move16_source_physical + 16) {
+        assert(move16_reads < 4 && size == 4);
+        move16_read_order[move16_reads++] = address - move16_source_physical;
+    }
+    return operand_read(opaque, address, bytes, size, attributes, fc);
+}
+
+static int move16_bus_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
+                            uint32_t attributes, unsigned fc)
+{
+    if (address >= move16_destination_physical && address < move16_destination_physical + 16) {
+        assert(move16_writes < 4 && size == 4);
+        move16_write_order[move16_writes++] = address - move16_destination_physical;
+    }
+    return operand_write(opaque, address, bytes, size, attributes, fc);
+}
+
+static void move16_burst_orders(void)
+{
+    unsigned initial_cases = cases;
+    memory.read = move16_bus_read;
+    memory.write = move16_bus_write;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned form = 0; form < 5; ++form)
+                for (unsigned source_lane = 0; source_lane < 16; ++source_lane)
+                    for (unsigned destination_lane = 0; destination_lane < 16; ++destination_lane)
+                        for (unsigned fault = 0; fault < 9; ++fault) {
+                            fixture(page8k, privileged);
+                            syn68k_fpu_reset();
+                            unsigned source = 0x28040 + source_lane, destination = 0x28080 + destination_lane;
+                            put32(pte(0x28000), 0x10001);
+                            move16_source_physical = 0x10040;
+                            move16_destination_physical = 0x10080;
+                            move16_reads = move16_writes = 0;
+                            for (unsigned i = 0; i < 16; ++i) {
+                                ram[move16_source_physical + i] = i + 1;
+                                ram[move16_destination_physical + i] = 0xaa;
+                            }
+                            code_word(0x10000, 0xf600 | form << 3);
+                            if (form == 4)
+                                code_word(0x10002, 0x9000);
+                            else {
+                                unsigned absolute = form & 1 ? source : destination;
+                                code_word(0x10002, absolute >> 16);
+                                code_word(0x10004, absolute);
+                            }
+                            unsigned a0 = form & 1 ? destination : source, a1 = destination;
+                            EM_A0 = a0;
+                            EM_A1 = a1;
+                            EM_A7 = privileged ? 0x20100 : 0xdeadbe00;
+                            unsigned sr = (privileged ? 0x2000 : 0) | 0x15;
+                            set_status(sr);
+                            Syn68kFPUState expected_fpu = cpu_state.fpu;
+                            unsigned read_fault = fault && fault < 5, write_fault = fault >= 5;
+                            unsigned index = read_fault ? fault - 1 : write_fault ? fault - 5 : 4;
+                            unsigned fault_address =
+                                read_fault ? (source & ~15u) + (((source & 12) + index * 4) & 15)
+                                           : (destination & ~15u) + (((destination & 12) + index * 4) & 15);
+                            if (read_fault)
+                                fail_physical = move16_source_physical + (fault_address & 15);
+                            if (write_fault)
+                                fail_write_physical = move16_destination_physical + (fault_address & 15);
+                            Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                            Syn68kMappedRun run;
+                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                            unsigned expected_reads = read_fault ? index + 1 : 4;
+                            unsigned expected_writes = read_fault ? 0 : write_fault ? index + 1 : 4;
+                            assert(move16_reads == expected_reads && move16_writes == expected_writes &&
+                                   status() == sr && !memcmp(&expected_fpu, &cpu_state.fpu, sizeof expected_fpu));
+                            for (unsigned i = 0; i < move16_reads; ++i)
+                                assert(move16_read_order[i] == (((source_lane & 12) + i * 4) & 15));
+                            for (unsigned i = 0; i < move16_writes; ++i)
+                                assert(move16_write_order[i] == (((destination_lane & 12) + i * 4) & 15));
+                            if (fault) {
+                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                       run.step.format == 7 && cpu.pc == 0x10000 && !run.completed &&
+                                       run.step.access.bus_error && run.step.access.size == 4 &&
+                                       run.step.access.writing == write_fault &&
+                                       run.step.access.request == fault_address &&
+                                       run.step.fault_address == fault_address && !run.step.access.completed &&
+                                       EM_A0 == a0 && EM_A1 == a1);
+                            }
+                            else
+                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 + (form == 4 ? 4 : 6) &&
+                                       EM_A0 == a0 + (form < 2 || form == 4 ? 16 : 0) &&
+                                       EM_A1 == a1 + (form == 4 ? 16 : 0));
+                            for (unsigned i = 0; i < 16; ++i) {
+                                unsigned order = ((i / 4) + 4 - (destination_lane / 4)) & 3;
+                                assert(ram[move16_destination_physical + i] ==
+                                       (!fault || (write_fault && order < index) ? i + 1 : 0xaa));
+                            }
+                            ++cases;
+                        }
+    memory.read = operand_read;
+    memory.write = operand_write;
+    printf("%u MOVE16 effective-address burst-order/partial-fault cases passed\n", cases - initial_cases);
+}
+
 static void guest_movem_read_continuations(void)
 {
     for (unsigned page8k = 0; page8k < 2; ++page8k)
@@ -6548,6 +6653,7 @@ int main(int argc, char** argv)
             guest_movem_store_restarts();
             movem_store_record_guards();
             guest_movem_page_stack_restarts();
+            move16_burst_orders();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -6614,6 +6720,7 @@ int main(int argc, char** argv)
             guest_movem_store_restarts();
             movem_store_record_guards();
             guest_movem_page_stack_restarts();
+            move16_burst_orders();
             guest_movem_read_continuations();
             movem_fetch_record_guards();
             guest_fpu_read_restarts();

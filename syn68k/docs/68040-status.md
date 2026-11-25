@@ -5,6 +5,51 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVE16 effective-address burst order (2026-11-25)
+
+MOVE16 now starts each source and destination burst at the longword selected
+by that operand's effective address, wrapping within the 16-byte line. Holding
+registers remain indexed by memory address, so differing source/destination
+start words preserve the complete line layout. All reads still precede writes;
+normal register updates and CCR behavior are unchanged.
+
+The previous implementation always visited word zero first. A diagnostic found
+incorrect callback order in 1,920 of 2,048 normal cases despite correct final RAM.
+An isolated correction passes 184,320 maintained-regression cases: all five
+forms, all source/destination low-address bits, both page sizes and privileges,
+and every physical read/write fault position across dispatch/bus bindings.
+Checks observe actual callback order, the committed write prefix, failing scalar,
+CPU/FPU state and normal postincrement. The older mapped-flow fixture now expects
+no earlier write when destination EA +7 faults on its first selected word +4.
+
+The reference is the MOVE16 description in the
+[M68000 Programmer's Reference Manual](https://www.nxp.com/docs/en/reference-manual/M68000PRM.pdf).
+This corrects ordering within the existing word-transfer boundary. MOVE16 block
+transfer attributes and captured-line format-7 writeback/restart remain work;
+this increment does not introduce a physical cache or burst-bus model.
+
+The fresh private CPU build passes grouped MMU validation: 7,901,260
+stream/recovery and 101,224 control-flow/RTE cases. Flat MOVE16 passes 100,906
+interpreter/native line, register, CCR, user-mode and bounded-fault cases.
+Complete cold/warm AOT passes 3,515,966 guest recovery cases per run: 71 cold
+images, 1,262,187 warm hits and zero warm compilations. Stable identity and
+malformed-cache fallback pass. The normal native kernel image remains
+byte-identical to the previously validated Windows/SysV and FPU-native image.
+
+ROMAW was rebuilt with the exact tested CPU archive. All 175 CPU inputs, eight
+fixtures and 74 staged files match the maintained/tested/application snapshots.
+`build/68040-move16-order-stage/bin` is promoted to `build/68040-current/bin`;
+the preceding store bundle is preserved at
+`build/68040-pre-move16-order-bin-20261125`. The audit is recorded in
+`build/68040-move16-order-source-audit.json`. The coherent application base
+remains `e062e3db` with the current CPU overlay.
+
+Windows help passes (exit zero, 7,669 bytes). Isolated-profile Browser startup
+passes with 30,864 native entries; Speedometer's 68K startup passes with 76,933
+entries and one FPU query. Both reach WaitNextEvent without a live native
+checkpoint or win_exception entry. These remain startup checks, not a full FPU
+application benchmark.
+
 ## MOVEM page-boundary and active-stack validation (2026-11-25)
 
 The maintained stream suite now includes 35,712 additional MOVEM store cases
@@ -406,7 +451,7 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error work: further active-stack/call effective-address
-  and double-fault variants, MOVE16 bus-order/store continuations, and the
+  and double-fault variants, MOVE16 block transfer/writeback continuations, and the
   constructed user-mode throwaway-RTE case.
   Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
   use CM/saved-EA continuation as described in the current checkpoints above.

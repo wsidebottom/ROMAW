@@ -519,8 +519,10 @@ static void move_lines(void)
             assert(result.vector == 2 && result.fault_address == fault && result.access.bus_error &&
                    result.access.size == 4 && result.access.writing == fail_write);
             assert(status() == 31 && EM_A0 == source + 3 && EM_A1 == dest + 7);
+            /* Destination EA +7 selects word +4 first, which is the failed
+               write. No earlier destination word may have been committed. */
             for (unsigned i = 0; i < 16; ++i)
-                assert(ram[physical(dest + i)] == (fail_write && i < 4 ? i : 0xAA));
+                assert(ram[physical(dest + i)] == 0xAA);
             ++cases;
         }
 }

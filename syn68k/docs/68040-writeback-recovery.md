@@ -202,7 +202,7 @@ entries with zero compilations. Native FPU helper-exclusion checks remain in
 
 ## Remaining work
 
-Further active-stack/double-fault variants, MOVE16 bus-order/store
+Further active-stack/double-fault variants, MOVE16 block transfer/writeback
 continuations and the constructed user-mode throwaway-RTE fault case require
 further work.
 Locked-store restrictions remain unchanged. General busy-frame, encoding,

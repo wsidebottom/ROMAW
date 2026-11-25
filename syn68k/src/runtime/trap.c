@@ -314,14 +314,18 @@ static uint32 move16(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68
         if (!syn68k_memory_span(destination_line, 16))
             return integer_exception(step, context, 2, pc, destination_line, 7);
     }
+    /* Each burst starts at the longword selected by its own EA and wraps
+       within the line. Keep holding-register slots in memory-address order. */
     uint32 line[4];
     for (unsigned i = 0; i < 4; ++i) {
-        line[i] = syn68k_ea_read_memory(context, source_line + i * 4, 4);
+        unsigned word = ((source >> 2) + i) & 3;
+        line[word] = syn68k_ea_read_memory(context, source_line + word * 4, 4);
         if (context->error)
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
     }
     for (unsigned i = 0; i < 4; ++i) {
-        syn68k_ea_write_memory(context, destination_line + i * 4, 4, line[i]);
+        unsigned word = ((destination >> 2) + i) & 3;
+        syn68k_ea_write_memory(context, destination_line + word * 4, 4, line[word]);
         if (context->error)
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
     }
