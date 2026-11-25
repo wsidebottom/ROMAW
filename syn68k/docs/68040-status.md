@@ -5,6 +5,49 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Cache traffic classes: CPU routing pending (2026-11-25)
+
+The physical cache component now distinguishes ordinary, exception, descriptor
+and locked traffic. One-to-four-byte chunks include MMU three-byte page tails.
+Preferred typed bus callbacks retain traffic class, operand/push identity and
+LOCK/LOCKE intent; legacy callbacks remain supported. Bus faults capture their
+cycle metadata by value. Native permanent RAM uses the same classification,
+including the distinction between TM=0 pushes and alternate-space FC=0 writes.
+
+Exception traffic does not allocate on misses. Descriptor traffic uses
+write-through/no-allocation and reports the documented disabled-cache-hit
+lockup without issuing a physical cycle. Locked accesses push/invalidate cache
+hits even with DE clear, and the next enabled nonlocked data miss bypasses
+allocation once after such a hit. Nonfinal write chunks suppress LOCKE.
+Locked line maintenance prepares descriptor atomic updates; caller/bus
+ownership still supplies complete RMW atomicity.
+
+The ordinary Windows and Linux ASan/UBSan traffic matrix passes 8,560 cases.
+Both ABIs pass all fourteen emitted kernel groups, including that matrix,
+the existing 2,166 cache cases and 395 native RAM/chunk/bounds cases per ABI.
+Link guards reject original C transfer and maintenance helpers. Cache storage,
+bus/result and native cache packets grew; callers must rebuild. Other native
+packet layouts are unchanged.
+
+CPU operand/instruction routing, cache-aware descriptor/exception bindings,
+cache-push frame delivery, MOVE16 and snoop integration remain work. Full
+FPU-native validation passes 1,153,398 reported cases, with 8,107,168 MMU
+stream/recovery cases, 101,224 flow/RTE cases and 100,906 flat MOVE16 cases.
+Cold/warm AOT passes 3,618,920 recovery cases per run: 73 cold images,
+1,262,191 warm hits and zero warm compilations. Stable identity and
+malformed-cache fallback pass. These AOT checks cover the existing CPU paths;
+they do not establish guest cache-instruction execution.
+
+ROMAW was rebuilt from committed application base `201f97bf` with this CPU
+overlay at `build/68040-cache-traffic-stage/bin`. The complete audit at
+`build/68040-cache-traffic-source-audit.json` verifies 179 CPU inputs, thirteen
+fixtures and all 74 staged files. The bundle is promoted to
+`build/68040-current/bin`, with its predecessor preserved at
+`build/68040-pre-cache-traffic-bin-20261125`. Help exits zero with 7,669 output bytes.
+Isolated Browser/Speedometer startups reach WaitNextEvent with 30,873/76,937
+native entries, no live checkpoint and no win_exception; Speedometer makes
+one FPU query. These checks establish startup, not application workflows.
+
 ## Native physical cache kernels: CPU binding pending (2026-11-25)
 
 The closed native image now includes cache-access and cache-maintenance roots

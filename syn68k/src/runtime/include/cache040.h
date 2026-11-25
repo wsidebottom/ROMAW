@@ -4,6 +4,24 @@
 
 #include <stdint.h>
 
+enum Syn68kCache040Traffic {
+    CACHE040_NORMAL,
+    CACHE040_EXCEPTION,
+    CACHE040_DESCRIPTOR,
+    CACHE040_LOCKED,
+    CACHE040_LOCKED_CONTINUE /* A write chunk that does not end the RMW pair. */
+};
+
+enum Syn68kCache040CycleKind { CACHE040_OPERAND, CACHE040_PUSH };
+
+typedef struct {
+    uint32_t attributes;
+    unsigned fc, burst, beat, way;
+    enum Syn68kCache040CycleKind kind;
+    enum Syn68kCache040Traffic traffic;
+    unsigned locked, lock_end;
+} Syn68kCache040Cycle;
+
 /* Functional physical L1 storage, MC68040UM chapter 4. Banks are data (0)
    and instruction (1). Initialization is a board operation, not CPU reset:
    reset disables caches without changing their contents. */
@@ -16,7 +34,9 @@ typedef struct {
 typedef struct {
     Syn68kCache040Line lines[2][64][4];
     unsigned replacement[2];
-    unsigned active; /* A physical transaction owns this bank pair. */
+    unsigned active;                    /* A physical transaction owns this bank pair. */
+    enum Syn68kCache040Traffic traffic; /* Active invocation, cleared on return. */
+    unsigned bypass_data_miss;          /* Disabled-cache locked-hit rule, UM 4.3.3. */
 } Syn68kCache040;
 
 /* Whole-beat callbacks. burst is zero for scalar transfers, 16 for a line;
@@ -28,6 +48,10 @@ typedef struct {
     void* opaque;
     int (*read)(void*, uint32_t, unsigned char*, unsigned, uint32_t, unsigned, unsigned, unsigned, unsigned, unsigned*);
     int (*write)(void*, uint32_t, const unsigned char*, unsigned, uint32_t, unsigned, unsigned, unsigned, unsigned);
+    /* Preferred callbacks preserve traffic, push and lock intent. A legacy
+       callback is used only when the corresponding cycle callback is NULL. */
+    int (*read_cycle)(void*, uint32_t, unsigned char*, unsigned, const Syn68kCache040Cycle*, unsigned*);
+    int (*write_cycle)(void*, uint32_t, const unsigned char*, unsigned, const Syn68kCache040Cycle*);
 } Syn68kCache040Bus;
 
 enum Syn68kCache040Fault {
@@ -35,7 +59,8 @@ enum Syn68kCache040Fault {
     CACHE040_BAD_REQUEST,
     CACHE040_OPERAND_FAULT,
     CACHE040_FILL_FAULT,
-    CACHE040_PUSH_FAULT
+    CACHE040_PUSH_FAULT,
+    CACHE040_DESCRIPTOR_LOCKUP
 };
 
 typedef struct {
@@ -50,21 +75,38 @@ typedef struct {
     uint32_t push_address;
     unsigned char push_data[16];
     unsigned push_size, push_word;
+    Syn68kCache040Cycle cycle; /* Valid for operand/fill/push bus faults. */
 } Syn68kCache040Access;
 
 void syn68k_cache040_init(Syn68kCache040* cache);
-/* Scalar physical accesses. CM is taken from attributes bits 6:5; CACR bit
+/* One-to-four-byte physical chunks, including three-byte MMU page tails.
+   CM is taken from attributes bits 6:5; CACR bit
    31 enables data and bit 15 instruction caching. no_allocate retains normal
    hit behavior but prevents allocation on a miss (exception/table traffic).
-   This component does not yet bind locked/MOVE16/snoop bus transactions. */
+   MOVE16 and snoop transactions are not yet bound. */
 Syn68kCache040Access syn68k_cache040_access(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
                                             unsigned size, int writing, uint32_t value, uint32_t attributes,
                                             uint32_t cacr, int no_allocate);
+/* Exception traffic never allocates on a miss. Descriptors use WT/no-allocate
+   and must be aligned longwords. A cached descriptor with DE clear reports the
+   documented lockup without issuing a bus cycle. Locked operands force CI/
+   serialized transfers and push/invalidate a matching line even with DE clear.
+   LOCKED_CONTINUE suppresses LOCKE for a nonfinal physical write chunk.
+   Caller/bus ownership still supplies atomicity across a complete RMW pair. */
+Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
+                                              unsigned size, int writing, uint32_t value, uint32_t attributes,
+                                              uint32_t cacr, int no_allocate, enum Syn68kCache040Traffic traffic);
 /* Physical CINV/CPUSH selection: caches 0=neither, 1=data, 2=instruction, 3=both;
    scope 1=line, 2=page, 3=all. page_shift is 12 or 13. Operations also affect
    disabled caches. A failed push retains captured data in the result; earlier
    successful pushes/invalidations are not rolled back. */
 Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040*, const Syn68kCache040Bus*, unsigned caches,
                                               unsigned scope, uint32_t address, unsigned page_shift, int push);
+/* LOCKED maintenance is preparation for an atomic descriptor update: data
+   cache, line scope and push only. Its push cycles carry LOCK without LOCKE;
+   the caller performs and completes the following atomic descriptor update. */
+Syn68kCache040Access syn68k_cache040_maintain_traffic(Syn68kCache040*, const Syn68kCache040Bus*, unsigned caches,
+                                                      unsigned scope, uint32_t address, unsigned page_shift, int push,
+                                                      uint32_t cacr, enum Syn68kCache040Traffic traffic);
 
 #endif

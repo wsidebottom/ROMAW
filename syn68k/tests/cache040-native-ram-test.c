@@ -10,7 +10,7 @@ int main(void)
     Syn68kNative040Entry maintain = syn68k_native040_entry(NATIVE040_CACHE_MAINTAIN);
     assert(access && maintain);
     for (unsigned mode = 0; mode < 3; ++mode)
-        for (unsigned size = 1; size <= 4; size *= 2)
+        for (unsigned size = 1; size <= 4; ++size)
             for (unsigned offset = 0; offset < 32; ++offset) {
                 fixture();
                 unsigned address = 0x10040 + offset, old = value_at(address, size);

@@ -29,9 +29,15 @@ case "$check" in
       flags=(-std=gnu17 -g -Wall -Wextra -Werror -I"$root/syn68k/src/runtime/include")
       "${CC:-x86_64-w64-mingw32-gcc}" "${flags[@]}" -O2 "${sources[@]}" -o "$output/cache040-test.exe"
       "$output/cache040-test.exe"
+      "${CC:-x86_64-w64-mingw32-gcc}" "${flags[@]}" -O2 "$root/syn68k/src/runtime/cache040.c" \
+        "$root/syn68k/tests/cache040-traffic-test.c" -o "$output/traffic.exe"
+      "$output/traffic.exe"
       gcc "${flags[@]}" -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
         "${sources[@]}" -o "$output/cache040-test"
       ASAN_OPTIONS=detect_leaks=1 "$output/cache040-test"
+      gcc "${flags[@]}" -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
+        "$root/syn68k/src/runtime/cache040.c" "$root/syn68k/tests/cache040-traffic-test.c" -o "$output/traffic"
+      ASAN_OPTIONS=detect_leaks=1 "$output/traffic"
     )
     ;;
   configured-header)
@@ -788,7 +794,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic; do
           fixture=native040-test
           extra=()
           case $group in
@@ -804,6 +810,7 @@ EOF
             flat) fixture=native040-flat-test ;;
             cache) fixture=cache040-test; extra=(-DCACHE040_NATIVE_TEST) ;;
             cache_ram) fixture=cache040-native-ram-test ;;
+            cache_traffic) fixture=cache040-traffic-test; extra=(-DCACHE040_NATIVE_TEST) ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -812,7 +819,7 @@ EOF
           objects+=("$obj/tests/$group.o")
         done
         "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" syn68k/tests/native040-runner.c \
-          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain -o "$obj/tests/$executable"
+          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic -o "$obj/tests/$executable"
         "$obj/tests/$executable"
       done
     )

@@ -22,7 +22,39 @@ static unsigned width(uint32_t address, unsigned remaining)
     return (address & 1) || remaining < 2 ? 1 : (address & 2) || remaining < 4 ? 2 : 4;
 }
 
-static int push_line(Syn68kCache040Line* line, const Syn68kCache040Bus* bus, unsigned way, Syn68kCache040Access* result)
+static Syn68kCache040Cycle cycle_for(const Syn68kCache040* cache, uint32_t attributes, unsigned fc, unsigned burst,
+                                     unsigned beat, unsigned way, enum Syn68kCache040CycleKind kind, unsigned lock_end)
+{
+    unsigned locked = cache->traffic == CACHE040_LOCKED || cache->traffic == CACHE040_LOCKED_CONTINUE;
+    return (Syn68kCache040Cycle){.attributes = attributes,
+                                 .fc = fc,
+                                 .burst = burst,
+                                 .beat = beat,
+                                 .way = way,
+                                 .kind = kind,
+                                 .traffic = cache->traffic,
+                                 .locked = locked,
+                                 .lock_end = cache->traffic == CACHE040_LOCKED && lock_end};
+}
+
+static int read_bus(const Syn68kCache040Bus* bus, uint32_t address, unsigned char* bytes, unsigned size,
+                    const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    return bus->read_cycle ? bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit)
+                           : bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                                       cycle->beat, cycle->way, inhibit);
+}
+
+static int write_bus(const Syn68kCache040Bus* bus, uint32_t address, const unsigned char* bytes, unsigned size,
+                     const Syn68kCache040Cycle* cycle)
+{
+    return bus->write_cycle ? bus->write_cycle(bus->opaque, address, bytes, size, cycle)
+                            : bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                                         cycle->beat, cycle->way);
+}
+
+static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn68kCache040Bus* bus, unsigned way,
+                     Syn68kCache040Access* result)
 {
     unsigned dirty = line->dirty & 15;
     if (!line->valid || !dirty)
@@ -35,12 +67,14 @@ static int push_line(Syn68kCache040Line* line, const Syn68kCache040Bus* bus, uns
     for (unsigned i = 0; i < size / 4; ++i) {
         unsigned word = first + i;
         uint32_t address = line->address + word * 4;
-        if (!bus->write(bus->opaque, address, line->bytes + word * 4, 4, 0, 0, size == 16 ? 16 : 0, i, way)) {
+        Syn68kCache040Cycle cycle = cycle_for(cache, 0, 0, size == 16 ? 16 : 0, i, way, CACHE040_PUSH, 0);
+        if (!write_bus(bus, address, line->bytes + word * 4, 4, &cycle)) {
             result->fault = CACHE040_PUSH_FAULT;
             result->bus_address = address;
             result->push_address = line->address + first * 4;
             result->push_size = size;
             result->push_word = word;
+            result->cycle = cycle;
             for (unsigned j = 0; j < 16; ++j)
                 result->push_data[j] = line->bytes[j];
             return 0;
@@ -73,7 +107,8 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
         unsigned word = (((address >> 2) & 3) + i) & 3;
         unsigned beat_inhibit = 0;
         uint32_t physical = fresh.address + word * 4;
-        if (!bus->read(bus->opaque, physical, fresh.bytes + word * 4, 4, attributes, fc, 16, i, way, &beat_inhibit)) {
+        Syn68kCache040Cycle cycle = cycle_for(cache, attributes, fc, 16, i, way, CACHE040_OPERAND, 0);
+        if (!read_bus(bus, physical, fresh.bytes + word * 4, 4, &cycle, &beat_inhibit)) {
             /* An unrequested trailing fill fault aborts allocation but not an
                already satisfied operand. Dirty victims return from the buffer;
                clean victims stay invalid even when allocation fails. */
@@ -82,6 +117,7 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
             if ((received & needed) != needed) {
                 result->fault = CACHE040_FILL_FAULT;
                 result->bus_address = physical;
+                result->cycle = cycle;
             }
             for (unsigned j = 0; j < size; ++j)
                 requested[j] = fresh.bytes[(address & 15) + j];
@@ -105,7 +141,7 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
     *line = fresh;
     /* The requested fill precedes the victim push. The fresh line remains
        installed if the old push faults; the result owns the captured victim. */
-    if (!push_line(&old, bus, way, result))
+    if (!push_line(cache, &old, bus, way, result))
         return 0;
     return line;
 }
@@ -122,6 +158,14 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         bytes[i] = value >> ((size - i - 1) * 8);
     unsigned bank = !writing && (fc == 2 || fc == 6);
     unsigned enabled = !!(cacr & (bank ? 0x8000u : 0x80000000u));
+    unsigned locked = cache->traffic == CACHE040_LOCKED || cache->traffic == CACHE040_LOCKED_CONTINUE;
+    unsigned descriptor = cache->traffic == CACHE040_DESCRIPTOR;
+    if (cache->traffic != CACHE040_NORMAL)
+        no_allocate = 1;
+    if (descriptor)
+        attributes &= ~0x60u;
+    if (locked)
+        attributes = (attributes & ~0x60u) | 0x40;
     unsigned mode = (attributes >> 5) & 3;
     unsigned ordinary = fc == 1 || fc == 2 || fc == 5 || fc == 6;
     while (result.completed < size) {
@@ -129,10 +173,22 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         unsigned chunk = 16 - (physical & 15);
         if (chunk > size - result.completed)
             chunk = size - result.completed;
-        Syn68kCache040Line* line = enabled && ordinary ? lookup(cache, bank, physical) : 0;
+        Syn68kCache040Line* line = ordinary && (enabled || locked || descriptor) ? lookup(cache, bank, physical) : 0;
+        unsigned allocate = !no_allocate;
+        if (descriptor && !enabled && line) {
+            result.fault = CACHE040_DESCRIPTOR_LOCKUP;
+            result.bus_address = physical;
+            return result;
+        }
+        if (locked && !enabled && line)
+            cache->bypass_data_miss = 1;
+        if (enabled && ordinary && !bank && !locked && !line && cache->bypass_data_miss) {
+            cache->bypass_data_miss = 0;
+            allocate = 0;
+        }
         unsigned way = line ? (unsigned)(line - cache->lines[bank][(physical >> 4) & 63]) : 0;
-        if (enabled && ordinary && mode >= 2 && line && !bank) {
-            if (!push_line(line, bus, way, &result)) {
+        if (ordinary && mode >= 2 && line && !bank) {
+            if (!push_line(cache, line, bus, way, &result)) {
                 line->valid = 0;
                 return result;
             }
@@ -141,7 +197,7 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         }
         if (enabled && ordinary && mode < 2) {
             unsigned count = writing ? 1 : 1 + (((physical & 7) + chunk - 1) >> 3);
-            if (!line && !no_allocate && (!writing || mode == 1)) {
+            if (!line && allocate && (!writing || mode == 1)) {
                 Syn68kCache040Line* set = cache->lines[bank][(physical >> 4) & 63];
                 for (way = 0; way < 4 && set[way].valid; ++way) {
                 }
@@ -184,15 +240,16 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
             unsigned done = 0;
             while (done < chunk) {
                 unsigned beat = width(physical + done, chunk - done), ignored = 0;
-                int ok = writing ? bus->write(bus->opaque, physical + done, bytes + result.completed, beat, attributes,
-                                              fc, 0, 0, way)
-                                 : bus->read(bus->opaque, physical + done, bytes + result.completed, beat, attributes,
-                                             fc, 0, 0, way, &ignored);
+                Syn68kCache040Cycle cycle = cycle_for(cache, attributes, fc, 0, 0, way, CACHE040_OPERAND,
+                                                      writing && result.completed + beat == size);
+                int ok = writing ? write_bus(bus, physical + done, bytes + result.completed, beat, &cycle)
+                                 : read_bus(bus, physical + done, bytes + result.completed, beat, &cycle, &ignored);
                 if (enabled && ordinary && mode == 0 && writing)
                     cache->replacement[bank] = (cache->replacement[bank] + 1) & 3;
                 if (!ok) {
                     result.fault = CACHE040_OPERAND_FAULT;
                     result.bus_address = physical + done;
+                    result.cycle = cycle;
                     return result;
                 }
                 done += beat;
@@ -212,13 +269,25 @@ Syn68kCache040Access syn68k_cache040_access(Syn68kCache040* cache, const Syn68kC
                                             unsigned fc, unsigned size, int writing, uint32_t value,
                                             uint32_t attributes, uint32_t cacr, int no_allocate)
 {
-    if (!cache || !bus || !bus->read || !bus->write || cache->active || fc > 7 ||
-        (size != 1 && size != 2 && size != 4) || (writing != 0 && writing != 1) ||
-        (no_allocate != 0 && no_allocate != 1))
+    return syn68k_cache040_transfer(cache, bus, address, fc, size, writing, value, attributes, cacr, no_allocate,
+                                    CACHE040_NORMAL);
+}
+
+Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040* cache, const Syn68kCache040Bus* bus, uint32_t address,
+                                              unsigned fc, unsigned size, int writing, uint32_t value,
+                                              uint32_t attributes, uint32_t cacr, int no_allocate,
+                                              enum Syn68kCache040Traffic traffic)
+{
+    if (!cache || !bus || (!bus->read && !bus->read_cycle) || (!bus->write && !bus->write_cycle) || cache->active ||
+        fc > 7 || !size || size > 4 || (writing != 0 && writing != 1) || (no_allocate != 0 && no_allocate != 1) ||
+        (unsigned)traffic > CACHE040_LOCKED_CONTINUE || (traffic != CACHE040_NORMAL && fc != 1 && fc != 5) ||
+        (traffic == CACHE040_DESCRIPTOR && (size != 4 || (address & 3))))
         return (Syn68kCache040Access){.fault = CACHE040_BAD_REQUEST};
     cache->active = 1;
+    cache->traffic = traffic;
     Syn68kCache040Access result =
         access_inner(cache, bus, address, fc, size, writing, value, attributes, cacr, no_allocate);
+    cache->traffic = CACHE040_NORMAL;
     cache->active = 0;
     return result;
 }
@@ -226,11 +295,24 @@ Syn68kCache040Access syn68k_cache040_access(Syn68kCache040* cache, const Syn68kC
 Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040* cache, const Syn68kCache040Bus* bus, unsigned caches,
                                               unsigned scope, uint32_t address, unsigned page_shift, int push)
 {
+    return syn68k_cache040_maintain_traffic(cache, bus, caches, scope, address, page_shift, push, 0, CACHE040_NORMAL);
+}
+
+Syn68kCache040Access syn68k_cache040_maintain_traffic(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                      unsigned caches, unsigned scope, uint32_t address,
+                                                      unsigned page_shift, int push, uint32_t cacr,
+                                                      enum Syn68kCache040Traffic traffic)
+{
     Syn68kCache040Access result = {0};
-    if (!cache || !bus || !bus->write || cache->active || caches > 3 || !scope || scope > 3 ||
-        (page_shift != 12 && page_shift != 13) || (push != 0 && push != 1))
+    if (!cache || !bus || (!bus->write && !bus->write_cycle) || cache->active || caches > 3 || !scope || scope > 3 ||
+        (page_shift != 12 && page_shift != 13) || (push != 0 && push != 1) ||
+        (traffic != CACHE040_NORMAL && traffic != CACHE040_LOCKED) ||
+        (traffic == CACHE040_LOCKED && (caches != 1 || scope != 1 || !push)))
         return (Syn68kCache040Access){.fault = CACHE040_BAD_REQUEST};
     cache->active = 1;
+    cache->traffic = traffic;
+    if (traffic == CACHE040_LOCKED && !(cacr & 0x80000000u) && lookup(cache, 0, address))
+        cache->bypass_data_miss = 1;
     uint32_t mask = scope == 1 ? ~15u : scope == 2 ? UINT32_MAX << page_shift : 0;
     for (unsigned bank = 0; bank < 2; ++bank)
         if (caches & (1u << bank))
@@ -239,14 +321,16 @@ Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040* cache, const Syn68
                     Syn68kCache040Line* line = &cache->lines[bank][set][way];
                     if (!line->valid || (line->address & mask) != (address & mask))
                         continue;
-                    if (push && !bank && !push_line(line, bus, way, &result)) {
+                    if (push && !bank && !push_line(cache, line, bus, way, &result)) {
                         /* Fault data belongs to the exception recipient. */
                         line->valid = 0;
+                        cache->traffic = CACHE040_NORMAL;
                         cache->active = 0;
                         return result;
                     }
                     line->valid = 0;
                 }
+    cache->traffic = CACHE040_NORMAL;
     cache->active = 0;
     return result;
 }

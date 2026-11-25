@@ -104,6 +104,7 @@ typedef struct {
     unsigned fc, size, writing, no_allocate;
     unsigned caches, scope, page_shift, push;
     Syn68kCache040Access access;
+    enum Syn68kCache040Traffic traffic;
 } Syn68kNative040Cache;
 
 typedef void (*Syn68kNative040Entry)(void*);

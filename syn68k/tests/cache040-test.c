@@ -44,6 +44,49 @@ static Syn68kCache040Access emitted_maintain(Syn68kCache040* c, const Syn68kCach
     return packet.access;
 }
 
+static Syn68kCache040Access emitted_transfer(Syn68kCache040* c, const Syn68kCache040Bus* b, uint32_t address,
+                                             unsigned fc, unsigned size, int writing, uint32_t value,
+                                             uint32_t attributes, uint32_t cacr, int no_allocate,
+                                             enum Syn68kCache040Traffic traffic)
+{
+    Syn68kNative040Cache packet = {.cache = c,
+                                   .bus = b,
+                                   .address = address,
+                                   .fc = fc,
+                                   .size = size,
+                                   .writing = writing,
+                                   .value = value,
+                                   .attributes = attributes,
+                                   .cacr = cacr,
+                                   .no_allocate = no_allocate,
+                                   .traffic = traffic};
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_CACHE_ACCESS);
+    assert(entry);
+    entry(&packet);
+    return packet.access;
+}
+
+static Syn68kCache040Access emitted_maintain_traffic(Syn68kCache040* c, const Syn68kCache040Bus* b, unsigned caches,
+                                                     unsigned scope, uint32_t address, unsigned shift, int push,
+                                                     uint32_t cacr, enum Syn68kCache040Traffic traffic)
+{
+    Syn68kNative040Cache packet = {.cache = c,
+                                   .bus = b,
+                                   .address = address,
+                                   .caches = caches,
+                                   .scope = scope,
+                                   .page_shift = shift,
+                                   .push = push,
+                                   .cacr = cacr,
+                                   .traffic = traffic};
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_CACHE_MAINTAIN);
+    assert(entry);
+    entry(&packet);
+    return packet.access;
+}
+
+#define syn68k_cache040_transfer emitted_transfer
+#define syn68k_cache040_maintain_traffic emitted_maintain_traffic
 #define syn68k_cache040_access emitted_access
 #define syn68k_cache040_maintain emitted_maintain
 #endif
@@ -115,7 +158,7 @@ static int physical_write(void* opaque, uint32_t address, const unsigned char* d
     return 1;
 }
 
-static Syn68kCache040Bus bus = {ram, physical_read, physical_write};
+static Syn68kCache040Bus bus = {.opaque = ram, .read = physical_read, .write = physical_write};
 
 static void fixture(void)
 {
