@@ -384,15 +384,29 @@ int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
         return 0;
     if (access->cache.fault && access->cache.fault != CACHE040_OPERAND_FAULT) {
         const Syn68kCache040Cycle* cycle = &access->cache.cycle;
-        /* UM 8.4.6.2: a read-miss fill reports the original operand size,
-           not SIZE=line. Write allocation needs its own pending-store frame. */
+        /* UM 2.2/8.4.6: preserve the execution unit's original request.
+           A copyback allocation retains its logical store in WB2 until the
+           line can accept it; an internal line read is not a WB1 write. */
         if (access->cache.fault != CACHE040_FILL_FAULT || access->cache_table || !access->cache_exception ||
-            access->writing || access->rmw || !access->bus_error || access->translation.fault != MMU040_OK ||
+            access->rmw || !access->bus_error || access->translation.fault != MMU040_OK ||
             cycle->kind != CACHE040_OPERAND || cycle->fc != access->fc || cycle->burst != 16 || cycle->beat > 3 ||
             cycle->way > 3 || cycle->locked || cycle->lock_end || access->cache.interrupt_level ||
             (access->cache.bus_address & 3) ||
             (access->fc != 1 && access->fc != 2 && access->fc != 5 && access->fc != 6))
             return 0;
+        if (access->writing) {
+            uint32_t physical = access->translation.physical + access->cache.completed;
+            uint32_t beat = (physical & ~15u) + ((((physical >> 2) & 3) + cycle->beat) & 3) * 4;
+            unsigned chunk = access->size - access->completed;
+            if (chunk > 16 - (physical & 15))
+                chunk = 16 - (physical & 15);
+            if (access->writing != 1 || (access->fc != 1 && access->fc != 5) || cycle->traffic != CACHE040_NORMAL ||
+                (cycle->attributes & 0x60) != 0x20 || cycle->attributes != access->translation.attributes ||
+                access->cache.completed > access->completed ||
+                access->logical != (uint32_t)(access->request + access->completed) ||
+                access->cache.bus_address != beat || cycle->beat > ((physical & 3) + chunk > 4))
+                return 0;
+        }
     }
     int atc;
     switch (access->translation.fault) {

@@ -233,10 +233,10 @@ static int move16_write_fault(const Syn68kIntegerStep* record, int candidate)
         record->store_link_displacement || record->fpu_vector || record->fpu_ea || record->movem_state ||
         record->restartable_read || record->stopped || (record->exception_pc & 1) || (line->next & 1) ||
         (line->address & 3) || !access->writing || access->rmw || access->size != 4 || access->completed ||
-        (access->request & 3) || access->logical != access->request || record->fault_address != access->logical ||
-        (access->fc != 1 && access->fc != 5) || (access->request & ~15u) != (line->address & ~15u) ||
-        access->value != line->data[(access->request >> 2) & 3] || !syn68k_mmu040_access_ssw(access, &ssw) ||
-        (access->bus_error && (ssw & 0x400)))
+        access->cache.fault == CACHE040_FILL_FAULT || (access->request & 3) || access->logical != access->request ||
+        record->fault_address != access->logical || (access->fc != 1 && access->fc != 5) ||
+        (access->request & ~15u) != (line->address & ~15u) || access->value != line->data[(access->request >> 2) & 3] ||
+        !syn68k_mmu040_access_ssw(access, &ssw) || (access->bus_error && (ssw & 0x400)))
         return 0;
     if (candidate) {
         unsigned mode = (line->command >> 3) & 7;
@@ -845,7 +845,9 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
         else if (record->move16.state)
             ssw = 0x68 | record->access.fc | (record->move16.state == 4 ? 0x400 : 0) |
                   (record->move16.state == 3 ? 0x2000 : 0);
-        int wb1 = pending && record->access.bus_error;
+        /* Allocation fills have not issued the pending logical store on the
+           write bus. Keep its full register-aligned operand in WB2. */
+        int wb1 = pending && record->access.bus_error && record->access.cache.fault != CACHE040_FILL_FAULT;
         int tail = pending && record->store_tail_valid;
         unsigned wb_status = 0x80 | (ssw & 0x7F);
         unsigned tail_status = 0x80 | (ssw & 0x78) | record->store_tail_fc;

@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -542,6 +542,11 @@ EOF
         -o "$fixture/halt-test.exe"
       "$fixture/halt-test.exe" "$(wslpath -m "$fixture/halt")"
       "$fixture/halt-test.exe" "$(wslpath -m "$fixture/halt")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-cache-allocate-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$fixture/allocate-test.exe"
+      "$fixture/allocate-test.exe" "$(wslpath -m "$fixture/allocate")"
+      "$fixture/allocate-test.exe" "$(wslpath -m "$fixture/allocate")"
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -984,6 +989,11 @@ EOF
         syn68k/tests/mapped-halt-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/halt-test.exe"
       "$output/halt-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-cache-allocate-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$output/allocate-test.exe"
+      "$output/allocate-test.exe"
     )
     ;;
   threaded-dispatch)

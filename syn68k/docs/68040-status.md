@@ -5,6 +5,75 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Copyback allocation-fault recovery (2026-11-26)
+
+A failed copyback write allocation now retains its original logical store in
+format-7 WB2, with a captured following operand in WB3. WB1 is invalid: no
+physical operand write has been issued while the DMU is waiting for the refill.
+The SSW describes the execution unit's original write/size/FC, FA is the original
+logical request and WB2/3 data remains register aligned. The refill bus address
+and read beat remain separate cycle diagnostics. Frame routing is derived from
+the writeback-stage ownership in MC68040UM 2.2/8.4.6.5 and table 8-6 note a;
+these regressions
+establish guest recovery through the model, not silicon timing.
+
+The shared status validator now admits only valid ordinary-copyback data fill
+snapshots, checking original logical progress and the physical wrapped beat.
+It rejects unneeded trailing beats as fault metadata. The cache already ignores
+such trailing fill failures after supplying the requested bytes, aborts allocation
+and preserves normal store fallback; requested-byte failures preserve dirty
+victims and leave clean victims invalid. Normal MMU/cache execution stays in the
+unchanged closed emitted image. Checked frame helpers remain fault-only paths.
+
+The 45,753-case matrix covers byte/word/long scalars at every line offset,
+requested and unneeded beats, empty/clean/dirty victims, user/supervisor FCs,
+T0/T1, logical aliases, noncontiguous page crossings and 32-bit address wrap.
+Real guest MOVES drains WB2/WB3 before RTE, retaining completed scalar CCR/EA and
+input reads. MOVEM, FPU S/D/X moves, register/control lists, null and captured
+52/100-byte FSAVE exercise early replay, CM, final retirement and captured tails.
+Enabled INEX2 conversion retains its saved state and reaches vector 49 before
+trace after cleanup. Twenty-five malformed metadata variants per mode fail
+before effects. Link guards prove that native modes bypass the original C MMU
+translator/cache transfer functions during initial execution; checked mode
+confirms the guards are active. The pre-fix CPU archive fails this fixture. MOVE16 writeback admission explicitly
+rejects ordinary allocation fills: MOVE16's actual nonallocating transaction
+model remains unfinished, and an allocation read must not masquerade as a
+physical MOVE16 write.
+
+The final fixture passes against the fresh CPU archive in ordinary, cold AOT
+and fresh-process warm AOT runs. Cold AOT emits seven images with 373 hits;
+warm replay reports 380 hits and zero compilations. A separate pre-guard build
+fails the MOVE16 allocation-admission check. The final emitted native memory/cache
+image remains byte-identical to the previously validated sixteen-group
+Windows/Linux x64 image.
+
+The final grouped cache/reference, FPU, MMU, flat MOVE16 and full AOT gates
+pass. Validation includes 1,153,398 reported native FPU cases, 8,107,168 mapped
+stream/recovery cases, 101,224 control-flow cases and both 50,453-case flat
+MOVE16 runs. Full cold/warm AOT passes 3,618,920 recovery cases per process;
+warm replay reports 1,262,191 hits and zero compilations. Existing cache-op,
+push/fill, store-push and halt matrices pass cold/warm replay alongside the new
+allocation matrix. Stable identity, malformed-cache fallback and publication
+checks also pass.
+
+ROMAW was rebuilt from application base `dc2e152e` with the exact tested CPU
+archive, staged at `build/68040-allocate-stage/bin`, and promoted to
+`build/68040-current/bin`. The previous bundle is retained at
+`build/68040-pre-allocate-bin-20261126`. The full audit at
+`build/68040-allocate-output/68040-allocate-source-audit.json` verifies 179 CPU
+inputs, 22 fixtures, four identical CPU archives and all 74 staged files.
+CPU build ID is
+`be67b0f8f9a85c95c782419b6ef7e701b6e5e068d3ec3b74ee13dffc9e4820b4`;
+archive SHA256 is
+`9e97115b92abc227a43b265910083070fb9779e52337fb1949f8f6c9660a6210`.
+Help returns zero with 7,669 bytes. Browser reaches WaitNextEvent after 30,874
+native entries; 68K Speedometer reaches its startup loop after 77,157 with one
+FPU capability query. Both have null native checkpoints and no Windows
+exception. These remain startup checks rather than complete interactive workflows.
+
+MOVE16/snoop transactions, additional compound/bus continuations, full CAS/CAS2
+sequencing and the remaining FPU saved-state/restart work still need completion.
+
 ## Descriptor-lockup and double-fault halts (2026-11-26)
 
 Mapped instruction execution now latches a distinct descriptor-lockup halt

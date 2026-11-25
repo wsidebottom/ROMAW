@@ -124,8 +124,24 @@ new rollback certificates while remaining live. The regression guest drains
 PD0-3 through physical MOVES and executes RTE; the CPU never silently performs
 those cleanup writes.
 
-Write-allocate fill faults, additional compound continuations, MOVE16/snoop
-transactions remain work. Capturing a physical push
+Copyback write-allocation fill faults now retain the execution unit's original
+logical write status and full operand in WB2, with an optional captured tail in
+WB3. The refill's bus read remains in the cycle diagnostic snapshot; it is not
+a physical WB1 write. FA stays at the original logical request, including page
+prefixes, line splits and 32-bit wrap. WB2 data is register aligned, WB1/PD are
+invalid/empty, and the existing CT/CP/CM EAs remain live. WB2 routing follows the
+DMU holding-register ownership described in MC68040UM 2.2 and 8.4.6.5.
+
+Write-fill admission checks copyback/ordinary data traffic, original FC/size,
+logical progress, physical wrapped beat address, replacement way and whether
+the failed beat still contains requested bytes. Unneeded trailing refill
+failures retain the cache model's normal fallback and do not create CPU faults.
+Dirty victims are restored after aborted allocation; clean victims stay invalid.
+Guest logical MOVES drains WB2/WB3 before RTE; accepted final stores retain their
+CCR/EA/FPU work, while MOVEM and early pure FPU stores keep their existing replay
+certificates. Numeric FPU exceptions still precede trace.
+
+Additional compound continuations and MOVE16/snoop transactions remain work. Capturing a physical push
 alone does not certify retirement of its triggering instruction.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a

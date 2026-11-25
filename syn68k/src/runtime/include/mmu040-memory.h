@@ -131,7 +131,9 @@ Syn68kMMU040Access syn68k_mmu040_cache_maintain(Syn68kMMU040Memory*, unsigned ca
 int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access*, uint16_t* ssw);
 /* Basic format-7 transfer fields: MA, ATC, LK, RW, SIZE and TT/TM. A read-miss
    fill retains its original operand size and logical FA. Alternate-space ATC
-   records, write-allocate fills, pushes and lockups require a distinct path.
+   records, pushes and lockups require a distinct path. A copyback allocation
+   fill preserves the original write status; its pending operand uses WB2,
+   not WB1, independently of the internal read beat that failed.
    Returns zero without changing *ssw for success or unsupported metadata.
    CPU retirement and continuation/writeback certification remain separate. */
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw);
