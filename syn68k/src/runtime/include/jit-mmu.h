@@ -66,6 +66,10 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
         if ((opcode & 0xffd8) == 0xf548) {
             fpu_constant(out, offsetof(FPUInvocation, memory.writing), !(opcode & 0x20), 0);
             fpu_call_packet(out, NATIVE040_PTEST, offsetof(FPUInvocation, memory), failures, &count);
+            fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_ACCESS, 0);
+            fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, memory.access.cache_exception), 0);
+            byte(out, 0);
+            failures[count++] = jump(out, 0x85);
         }
         else {
             fpu_constant(out, offsetof(FPUInvocation, memory.all), !!(opcode & 16), 0);

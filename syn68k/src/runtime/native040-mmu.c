@@ -36,7 +36,7 @@ static int read_descriptor(void* opaque, uint32_t address, uint32_t* value)
         return 1;
     }
     const Syn68kMMU040Bus* bus = &memory->original->tables;
-    return bus->read32 && bus->read32(bus->opaque, address, value);
+    return bus->read32 ? bus->read32(bus->opaque, address, value) : 0;
 }
 
 static int write_descriptor(void* opaque, uint32_t address, uint32_t value, int locked)
@@ -52,7 +52,7 @@ static int write_descriptor(void* opaque, uint32_t address, uint32_t value, int 
         return 1;
     }
     const Syn68kMMU040Bus* bus = &memory->original->tables;
-    return bus->update32 && bus->update32(bus->opaque, address, value, locked);
+    return bus->update32 ? bus->update32(bus->opaque, address, value, locked) : 0;
 }
 
 static int read_operand(void* opaque, uint32_t address, unsigned char* value, unsigned size, uint32_t attributes,
@@ -83,6 +83,54 @@ static int write_operand(void* opaque, uint32_t address, const unsigned char* va
            memory->original->write(memory->original->opaque, address, value, size, attributes, fc);
 }
 
+static int read_cache_cycle(void* opaque, uint32_t address, unsigned char* value, unsigned size,
+                            const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    NativeMemory* memory = opaque;
+    unsigned fc = cycle->fc;
+    const unsigned char* bytes = fc == 1 || fc == 2 || fc == 5 || fc == 6 ? ordinary_ram(memory, address, size) : 0;
+    if (bytes) {
+        for (unsigned i = 0; i < size; ++i)
+            value[i] = bytes[i];
+        *inhibit = 0;
+        return 1;
+    }
+    const Syn68kCache040Bus* bus = memory->original->cache->bus;
+    if (bus) {
+        if (bus->read_cycle)
+            return bus->read_cycle(bus->opaque, address, value, size, cycle, inhibit);
+        return bus->read && bus->read(bus->opaque, address, value, size, cycle->attributes, fc, cycle->burst,
+                                      cycle->beat, cycle->way, inhibit);
+    }
+    *inhibit = 0;
+    return memory->original->read &&
+           memory->original->read(memory->original->opaque, address, value, size, cycle->attributes, fc);
+}
+
+static int write_cache_cycle(void* opaque, uint32_t address, const unsigned char* value, unsigned size,
+                             const Syn68kCache040Cycle* cycle)
+{
+    NativeMemory* memory = opaque;
+    unsigned fc = cycle->fc;
+    unsigned char* bytes = fc == 1 || fc == 2 || fc == 5 || fc == 6 || cycle->kind == CACHE040_PUSH
+                               ? ordinary_ram(memory, address, size)
+                               : 0;
+    if (bytes) {
+        for (unsigned i = 0; i < size; ++i)
+            bytes[i] = value[i];
+        return 1;
+    }
+    const Syn68kCache040Bus* bus = memory->original->cache->bus;
+    if (bus) {
+        if (bus->write_cycle)
+            return bus->write_cycle(bus->opaque, address, value, size, cycle);
+        return bus->write && bus->write(bus->opaque, address, value, size, cycle->attributes, fc, cycle->burst,
+                                        cycle->beat, cycle->way);
+    }
+    return memory->original->write &&
+           memory->original->write(memory->original->opaque, address, value, size, cycle->attributes, fc);
+}
+
 Syn68kMMU040Memory* native040_bind_memory(Syn68kNative040MMU* frame, NativeMemory* memory)
 {
     if (!frame->memory || !frame->ram.bytes || !frame->ram.size ||
@@ -95,6 +143,13 @@ Syn68kMMU040Memory* native040_bind_memory(Syn68kNative040MMU* frame, NativeMemor
     memory->memory.opaque = memory;
     memory->memory.read = read_operand;
     memory->memory.write = write_operand;
+    if (frame->memory->cache) {
+        memory->cache = *frame->memory->cache;
+        memory->cache_bus =
+            (Syn68kCache040Bus){.opaque = memory, .read_cycle = read_cache_cycle, .write_cycle = write_cache_cycle};
+        memory->cache.bus = &memory->cache_bus;
+        memory->memory.cache = &memory->cache;
+    }
     return &memory->memory;
 }
 
@@ -154,14 +209,16 @@ ROOT(translate)
 {
     NativeMemory bound;
     Syn68kMMU040Memory* memory = native040_bind_memory(f, &bound);
-    f->translation = syn68k_mmu040_translate(memory->mmu, &memory->tables, f->address, f->fc, f->writing);
+    f->access = syn68k_mmu040_memory_translate(memory, f->address, f->fc, f->writing, 0);
+    f->translation = f->access.translation;
 }
 
 ROOT(ptest)
 {
     NativeMemory bound;
     Syn68kMMU040Memory* memory = native040_bind_memory(f, &bound);
-    f->translation = syn68k_mmu040_ptest(memory->mmu, &memory->tables, f->address, f->fc, f->writing);
+    f->access = syn68k_mmu040_memory_translate(memory, f->address, f->fc, f->writing, 1);
+    f->translation = f->access.translation;
 }
 
 ROOT(flush)

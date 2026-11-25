@@ -21,6 +21,8 @@ typedef struct {
     Syn68kMMU040Memory memory;
     Syn68kMMU040Memory* original;
     const Syn68kNative040RAM* ram;
+    Syn68kMMU040Cache cache;
+    Syn68kCache040Bus cache_bus;
 } NativeMemory;
 
 Syn68kMMU040Memory* native040_bind_memory(Syn68kNative040MMU* frame, NativeMemory* memory);

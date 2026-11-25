@@ -69,9 +69,11 @@ The failed victim's captured data remains separate from the new cached operand.
 The caller must serialize concurrent use of a cache object. Its active guard
 rejects recursive execution of that same object from a physical callback.
 Multimaster snooping and MOVE16 transactions are not yet bound by this component.
-The new traffic classes and cache-push results still need routing through the
-mapped CPU operand/instruction and exception-delivery paths. That integration remains
-work; a successful component test does not establish working CPU CINV/CPUSH.
+An optional MMU memory binding now routes normal operands, instruction fetch,
+table traffic and exception entry through these policies. Physical cache-fault
+metadata remains separate from the logical operand. CPU cache-op decoding,
+cache-push/fill frame delivery and descriptor-lockup halt handling remain work;
+a successful component test does not establish working CPU CINV/CPUSH.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a
 `Syn68kNative040Cache` packet. These roots and their reachable routines are

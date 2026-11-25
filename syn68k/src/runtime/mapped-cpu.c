@@ -77,6 +77,55 @@ static int instruction_write(void* opaque, uint32 physical, const unsigned char*
     return bus->original->write && bus->original->write(bus->original->opaque, physical, bytes, size, attributes, fc);
 }
 
+/* Cache fills and pushes can bypass the scalar operand callbacks. Observe
+   host state changes at their physical callback boundary too, without
+   confusing a victim push with an attempted logical operand store. */
+static int instruction_cache_read(void* opaque, uint32 physical, unsigned char* bytes, unsigned size,
+                                  const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    InstructionBus* bus = opaque;
+    M68kReg before[8];
+    unsigned before_null = cpu_state.fpu.null_state;
+    memcpy(before, cpu_state.regs + 8, sizeof before);
+    const Syn68kCache040Bus* physical_bus = bus->original->cache->bus;
+    int ok;
+    if (physical_bus && physical_bus->read_cycle)
+        ok = physical_bus->read_cycle(physical_bus->opaque, physical, bytes, size, cycle, inhibit);
+    else if (physical_bus)
+        ok = physical_bus->read && physical_bus->read(physical_bus->opaque, physical, bytes, size, cycle->attributes,
+                                                      cycle->fc, cycle->burst, cycle->beat, cycle->way, inhibit);
+    else {
+        *inhibit = 0;
+        ok = bus->original->read &&
+             bus->original->read(bus->original->opaque, physical, bytes, size, cycle->attributes, cycle->fc);
+    }
+    bus->callback_state_changed |=
+        memcmp(before, cpu_state.regs + 8, sizeof before) != 0 || before_null != cpu_state.fpu.null_state;
+    return ok;
+}
+
+static int instruction_cache_write(void* opaque, uint32 physical, const unsigned char* bytes, unsigned size,
+                                   const Syn68kCache040Cycle* cycle)
+{
+    InstructionBus* bus = opaque;
+    M68kReg before[8];
+    unsigned before_null = cpu_state.fpu.null_state;
+    memcpy(before, cpu_state.regs + 8, sizeof before);
+    const Syn68kCache040Bus* physical_bus = bus->original->cache->bus;
+    int ok;
+    if (physical_bus && physical_bus->write_cycle)
+        ok = physical_bus->write_cycle(physical_bus->opaque, physical, bytes, size, cycle);
+    else if (physical_bus)
+        ok = physical_bus->write && physical_bus->write(physical_bus->opaque, physical, bytes, size, cycle->attributes,
+                                                        cycle->fc, cycle->burst, cycle->beat, cycle->way);
+    else
+        ok = bus->original->write &&
+             bus->original->write(bus->original->opaque, physical, bytes, size, cycle->attributes, cycle->fc);
+    bus->callback_state_changed |=
+        memcmp(before, cpu_state.regs + 8, sizeof before) != 0 || before_null != cpu_state.fpu.null_state;
+    return ok;
+}
+
 typedef struct {
     M68kReg regs[16];
     CCRElement ccr[5];
@@ -378,11 +427,22 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         memory.tables.opaque = &bus;
         memory.tables.read32 = cpu->memory->tables.read32 ? instruction_table_read : NULL;
         memory.tables.update32 = cpu->memory->tables.update32 ? instruction_table_write : NULL;
-        Syn68kMMU040Native native;
+        Syn68kMMU040Cache cache;
+        Syn68kCache040Bus cache_bus;
+        if (memory.cache) {
+            cache = *memory.cache;
+            cache_bus = (Syn68kCache040Bus){
+                .opaque = &bus, .read_cycle = instruction_cache_read, .write_cycle = instruction_cache_write};
+            cache.bus = &cache_bus;
+            memory.cache = &cache;
+        }
+        Syn68kMMU040Native native = {0};
 #ifdef GENERATE_X64_CODE
         if (cpu->native && !memory.native)
             (void)syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0});
 #endif
+        if (!memory.native && memory.cache)
+            memory.native = &native;
         if (memory.native) {
             native = *memory.native;
             native.write_attempted = &bus.write_attempted;
@@ -662,6 +722,20 @@ static int delivery_fault(const Syn68kIntegerStep* record, Syn68kMappedDelivery*
     return 0;
 }
 
+static Syn68kMMU040Access exception_access(Syn68kMappedCPU* cpu, uint32 address, unsigned size, int writing,
+                                           uint32* value)
+{
+    Syn68kMMU040Memory memory = *cpu->memory;
+    Syn68kMMU040Cache cache;
+    if (memory.cache) {
+        cache = *memory.cache;
+        cache.traffic = CACHE040_EXCEPTION;
+        memory.cache = &cache;
+    }
+    return writing ? syn68k_mmu040_write(&memory, address, 5, size, *value)
+                   : syn68k_mmu040_read(&memory, address, 5, size, 0, value);
+}
+
 static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uint16 sr, unsigned format,
                       Syn68kMappedDelivery* result)
 {
@@ -670,7 +744,8 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
     const uint32 values[] = {sr, record->exception_pc, format << 12 | record->vector * 4, record->fault_address};
     const unsigned sizes[] = {2, 4, 2, 4}, offsets[] = {0, 2, 6, 8};
     for (unsigned i = 0; i < (length == 8 || format == 7 ? 3U : 4U); ++i) {
-        Syn68kMMU040Access access = syn68k_mmu040_write(cpu->memory, EM_A7 + offsets[i], 5, sizes[i], values[i]);
+        uint32 value = values[i];
+        Syn68kMMU040Access access = exception_access(cpu, EM_A7 + offsets[i], sizes[i], 1, &value);
         if (access.translation.fault != MMU040_OK || access.bus_error)
             return delivery_fault(record, result, access, 1);
     }
@@ -742,7 +817,7 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
                         : offset >= 44                                     ? record->move16.data[(offset - 44) / 4]
                                                                            : 0;
             }
-            Syn68kMMU040Access access = syn68k_mmu040_write(cpu->memory, EM_A7 + offset, 5, 4, value);
+            Syn68kMMU040Access access = exception_access(cpu, EM_A7 + offset, 4, 1, &value);
             if (access.translation.fault != MMU040_OK || access.bus_error)
                 return delivery_fault(record, result, access, 1);
         }
@@ -811,7 +886,7 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     if (!push_frame(cpu, record, old_sr, format, result))
         return 1;
     uint32 target = 0;
-    Syn68kMMU040Access access = syn68k_mmu040_read(cpu->memory, cpu_state.vbr + record->vector * 4, 5, 4, 0, &target);
+    Syn68kMMU040Access access = exception_access(cpu, cpu_state.vbr + record->vector * 4, 4, 0, &target);
     if (access.translation.fault != MMU040_OK || access.bus_error) {
         delivery_fault(record, result, access, 0);
         return 1;

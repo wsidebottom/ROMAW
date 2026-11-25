@@ -39,16 +39,22 @@ enum Syn68kMMU040Fault {
     MMU040_TABLE_BUS_ERROR,
     MMU040_WRITE_PROTECTED,
     MMU040_SUPERVISOR_ONLY,
-    MMU040_BAD_REQUEST
+    MMU040_BAD_REQUEST,
+    /* A physical cache/embedding abort is not a logical table-bus diagnostic
+       and must not publish an ATC entry or a PTEST MMUSR result. */
+    MMU040_PHYSICAL_ABORT
 };
 
 typedef struct {
     void* opaque;
-    /* Host-order longwords at physical bus addresses. Return zero on failure. */
+    /* Host-order longwords at physical bus addresses. Positive is success,
+       zero is a table-bus error; negative aborts physical execution without
+       publishing a logical ATC/MMUSR result (used by the cache binding). */
     int (*read32)(void* opaque, uint32_t address, uint32_t* value);
     /* locked != 0 requests an indivisible read/OR/write of the U bit; value
      is the OR mask. Otherwise value is a complete descriptor write. The
-     embedding bus owns synchronization and must preserve failed writes. */
+     embedding bus owns synchronization and must preserve failed writes.
+     Return codes match read32, including physical aborts. */
     int (*update32)(void* opaque, uint32_t address, uint32_t value, int locked);
 } Syn68kMMU040Bus;
 

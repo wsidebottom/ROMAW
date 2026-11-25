@@ -21,6 +21,156 @@
 #include "native040-flat.h"
 #endif
 
+typedef struct {
+    Syn68kMMU040Memory* memory;
+    Syn68kCache040Access fault;
+    unsigned physical_abort, raw_abort;
+} CacheMemory;
+
+static int cache_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size,
+                      const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    CacheMemory* binding = opaque;
+    Syn68kMMU040Memory* memory = binding->memory;
+    if (cycle->kind == CACHE040_OPERAND && cycle->traffic == CACHE040_DESCRIPTOR) {
+        uint32_t value;
+        int status =
+            size == 4 && memory->tables.read32 ? memory->tables.read32(memory->tables.opaque, address, &value) : 0;
+        if (status <= 0) {
+            binding->raw_abort |= status < 0;
+            return 0;
+        }
+        for (unsigned i = 0; i < 4; ++i)
+            bytes[i] = value >> (24 - i * 8);
+        *inhibit = 0;
+        return 1;
+    }
+    const Syn68kCache040Bus* bus = memory->cache->bus;
+    if (bus) {
+        if (bus->read_cycle)
+            return bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit);
+        return bus->read && bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                                      cycle->beat, cycle->way, inhibit);
+    }
+    *inhibit = 0;
+    return memory->read && memory->read(memory->opaque, address, bytes, size, cycle->attributes, cycle->fc);
+}
+
+static int cache_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
+                       const Syn68kCache040Cycle* cycle)
+{
+    CacheMemory* binding = opaque;
+    Syn68kMMU040Memory* memory = binding->memory;
+    if (cycle->kind == CACHE040_OPERAND && cycle->traffic == CACHE040_DESCRIPTOR) {
+        uint32_t value = 0;
+        for (unsigned i = 0; i < size; ++i)
+            value = (value << 8) | bytes[i];
+        int status = size == 4 && memory->tables.update32
+                         ? memory->tables.update32(memory->tables.opaque, address, value, 0)
+                         : 0;
+        binding->raw_abort |= status < 0;
+        return status > 0;
+    }
+    const Syn68kCache040Bus* bus = memory->cache->bus;
+    if (bus) {
+        if (bus->write_cycle)
+            return bus->write_cycle(bus->opaque, address, bytes, size, cycle);
+        return bus->write && bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                                        cycle->beat, cycle->way);
+    }
+    return memory->write && memory->write(memory->opaque, address, bytes, size, cycle->attributes, cycle->fc);
+}
+
+static Syn68kCache040Bus cache_bus(CacheMemory* binding)
+{
+    return (Syn68kCache040Bus){.opaque = binding, .read_cycle = cache_read, .write_cycle = cache_write};
+}
+
+static int table_failure(CacheMemory* binding, Syn68kCache040Access access)
+{
+    unsigned physical = binding->raw_abort || access.fault != CACHE040_OPERAND_FAULT;
+    /* A later physical push cannot be hidden by an earlier table diagnostic.
+       Preserve its captured dirty data instead of publishing a negative ATC. */
+    if (!binding->fault.fault || (physical && !binding->physical_abort))
+        binding->fault = access;
+    binding->physical_abort |= physical;
+    return physical ? -1 : 0;
+}
+
+static int cache_table_read(void* opaque, uint32_t address, uint32_t* value)
+{
+    CacheMemory* binding = opaque;
+    binding->raw_abort = 0;
+    const Syn68kMMU040Cache* cache = binding->memory->cache;
+    Syn68kCache040Bus bus = cache_bus(binding);
+    Syn68kCache040Access access =
+        syn68k_cache040_transfer(cache->state, &bus, address, 5, 4, 0, 0, 0, *cache->cacr, 1, CACHE040_DESCRIPTOR);
+    if (access.fault)
+        return table_failure(binding, access);
+    *value = access.value;
+    return 1;
+}
+
+static int cache_table_write(void* opaque, uint32_t address, uint32_t value, int locked)
+{
+    CacheMemory* binding = opaque;
+    if (binding->physical_abort)
+        return -1;
+    binding->raw_abort = 0;
+    Syn68kMMU040Memory* memory = binding->memory;
+    const Syn68kMMU040Cache* cache = memory->cache;
+    Syn68kCache040Bus bus = cache_bus(binding);
+    if (!locked) {
+        Syn68kCache040Access access = syn68k_cache040_transfer(cache->state, &bus, address, 5, 4, 1, value, 0,
+                                                               *cache->cacr, 1, CACHE040_DESCRIPTOR);
+        return access.fault ? table_failure(binding, access) : 1;
+    }
+    /* U-bit updates retain the embedding's indivisible read/OR/write after
+       any cached line has been pushed/invalidated. A push must never be
+       mistaken for a descriptor update merely because a walk triggered it. */
+    Syn68kCache040Access access =
+        syn68k_cache040_maintain_traffic(cache->state, &bus, 1, 1, address, 12, 1, *cache->cacr, CACHE040_LOCKED);
+    if (access.fault)
+        return table_failure(binding, access);
+    int status = memory->tables.update32 ? memory->tables.update32(memory->tables.opaque, address, value, 1) : 0;
+    if (status > 0)
+        return 1;
+    binding->raw_abort = status < 0;
+    return table_failure(binding, (Syn68kCache040Access){.fault = CACHE040_OPERAND_FAULT,
+                                                         .bus_address = address,
+                                                         .cycle = {.attributes = 0x40,
+                                                                   .fc = 5,
+                                                                   .kind = CACHE040_OPERAND,
+                                                                   .traffic = CACHE040_LOCKED,
+                                                                   .locked = 1,
+                                                                   .lock_end = 1}});
+}
+
+static int valid_cache(const Syn68kMMU040Memory* memory)
+{
+    const Syn68kMMU040Cache* cache = memory->cache;
+    return !cache || (cache->state && cache->cacr && (unsigned)cache->traffic <= CACHE040_LOCKED_CONTINUE &&
+                      cache->traffic != CACHE040_DESCRIPTOR && !(memory->native && memory->native->flat));
+}
+
+Syn68kMMU040Access syn68k_mmu040_memory_translate(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc,
+                                                  int writing, int ptest)
+{
+    Syn68kMMU040Access result = {.logical = logical, .request = logical, .fc = fc, .writing = !!writing};
+    result.translation.fault = MMU040_BAD_REQUEST;
+    if (!memory || !memory->mmu || !valid_cache(memory) || (ptest != 0 && ptest != 1))
+        return result;
+    CacheMemory binding = {.memory = memory};
+    Syn68kMMU040Bus tables =
+        memory->cache ? (Syn68kMMU040Bus){&binding, cache_table_read, cache_table_write} : memory->tables;
+    result.translation = ptest ? syn68k_mmu040_ptest(memory->mmu, &tables, logical, fc, writing)
+                               : syn68k_mmu040_translate(memory->mmu, &tables, logical, fc, writing);
+    result.cache = binding.fault;
+    result.cache_table = !!binding.fault.fault;
+    result.cache_exception = binding.physical_abort || result.translation.fault == MMU040_PHYSICAL_ABORT;
+    return result;
+}
+
 static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, unsigned size,
                                    int writing, int rmw, uint32_t* value)
 {
@@ -33,7 +183,7 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
     result.rmw = !!rmw;
     result.translation.fault = MMU040_BAD_REQUEST;
     if (!memory || !memory->mmu || !value || memory->aligned_transfers > 1 || fc > 7 ||
-        (size != 1 && size != 2 && size != 4))
+        (size != 1 && size != 2 && size != 4) || !valid_cache(memory))
         return result;
 #if defined(SYN68K_NATIVE040_TEMPLATE)
     if (memory->native && memory->native->flat) {
@@ -68,8 +218,10 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
         return result;
     }
 #endif
-    if (writing ? !memory->write : !memory->read)
+    if (!memory->cache && (writing ? !memory->write : !memory->read))
         return result;
+    if (writing && memory->native && memory->native->write_attempted)
+        *memory->native->write_attempted = 1;
 
     unsigned char bytes[4];
     if (writing) {
@@ -79,7 +231,11 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
     }
     while (result.completed < size) {
         result.logical = logical + result.completed;
-        result.translation = syn68k_mmu040_translate(memory->mmu, &memory->tables, result.logical, fc, writing || rmw);
+        Syn68kMMU040Access translated = syn68k_mmu040_memory_translate(memory, result.logical, fc, writing || rmw, 0);
+        result.translation = translated.translation;
+        result.cache = translated.cache;
+        result.cache_table = translated.cache_table;
+        result.cache_exception = translated.cache_exception;
         if (result.translation.fault != MMU040_OK)
             return result;
         /* TTR boundaries are coarser than either page size. This also splits
@@ -91,12 +247,43 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
         /* The uncached data memory unit issues only naturally aligned bus
            transfers (MC68040UM 7.3), including byte/word/byte for odd longs.
            Cache/device operand bindings may instead own this decomposition. */
-        if (memory->aligned_transfers) {
+        if (memory->aligned_transfers && !memory->cache) {
             unsigned aligned = (result.translation.physical & 1) || chunk < 2   ? 1
                                : (result.translation.physical & 2) || chunk < 4 ? 2
                                                                                 : 4;
             if (chunk > aligned)
                 chunk = aligned;
+        }
+        if (memory->cache) {
+            const Syn68kMMU040Cache* cache = memory->cache;
+            CacheMemory binding = {.memory = memory};
+            Syn68kCache040Bus bus = cache_bus(&binding);
+            uint32_t operand = 0;
+            if (writing)
+                for (unsigned i = 0; i < chunk; ++i)
+                    operand = (operand << 8) | bytes[result.completed + i];
+            enum Syn68kCache040Traffic traffic =
+                rmw && cache->traffic != CACHE040_LOCKED_CONTINUE ? CACHE040_LOCKED : cache->traffic;
+            if (writing && traffic == CACHE040_LOCKED && result.completed + chunk < size)
+                traffic = CACHE040_LOCKED_CONTINUE;
+            Syn68kCache040Access access =
+                syn68k_cache040_transfer(cache->state, &bus, result.translation.physical, fc, chunk, writing, operand,
+                                         result.translation.attributes, *cache->cacr, 0, traffic);
+            if (access.fault) {
+                result.cache = access;
+                result.cache_exception = 1;
+                result.completed += access.completed;
+                result.logical = logical + result.completed;
+                result.bus_error = access.fault != CACHE040_BAD_REQUEST;
+                if (!result.bus_error)
+                    result.translation.fault = MMU040_BAD_REQUEST;
+                return result;
+            }
+            if (!writing)
+                for (unsigned i = 0; i < chunk; ++i)
+                    result.value = (result.value << 8) | ((access.value >> ((chunk - i - 1) * 8)) & 255);
+            result.completed += chunk;
+            continue;
         }
         int ok = writing ? memory->write(memory->opaque, result.translation.physical, bytes + result.completed, chunk,
                                          result.translation.attributes, fc)
@@ -149,7 +336,7 @@ Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t 
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
 {
     if (!access || !ssw || access->fc > 7 || (access->size != 1 && access->size != 2 && access->size != 4) ||
-        access->completed >= access->size)
+        access->completed >= access->size || (access->cache.fault && access->cache.fault != CACHE040_OPERAND_FAULT))
         return 0;
     int atc;
     switch (access->translation.fault) {

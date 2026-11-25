@@ -17,7 +17,7 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' 'aot-x64' 'cache040' 'configured-header' 'control-register' 'fpsp' 'fpu' 'fpu-native' 'generator-dependency' 'jit-x64-benchmark' 'jit-x64' 'mmu040' 'native040' 'rte' 'threaded-dispatch'
+    printf '%s\n' 'aot-x64' 'cache040' 'configured-header' 'control-register' 'fpsp' 'fpu' 'fpu-native' 'generator-dependency' 'jit-x64-benchmark' 'jit-x64' 'mmu040' 'mmu040-cache' 'native040' 'rte' 'threaded-dispatch'
     ;;
   cache040)
     (
@@ -316,6 +316,11 @@ EOF
       "$output/rte-test.exe" 1
       "$output/mmu040-flow-test.exe"
       "$output/mmu040-stream-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-cache040-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$output/cached-cpu-test.exe"
+      "$output/cached-cpu-test.exe"
     )
     ;;
   fpsp)
@@ -428,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -512,6 +517,11 @@ EOF
         -o "$fixture/control-replay-test.exe"
       "$fixture/control-replay-test.exe" "$(wslpath -m "$fixture/control-replay")" 0
       "$fixture/control-replay-test.exe" "$(wslpath -m "$fixture/control-replay")" 1
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-cache040-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/cached-cpu-test.exe"
+      "$fixture/cached-cpu-test.exe" "$(wslpath -m "$fixture/cached-cpu")"
+      "$fixture/cached-cpu-test.exe" "$(wslpath -m "$fixture/cached-cpu")"
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -794,7 +804,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache; do
           fixture=native040-test
           extra=()
           case $group in
@@ -811,6 +821,7 @@ EOF
             cache) fixture=cache040-test; extra=(-DCACHE040_NATIVE_TEST) ;;
             cache_ram) fixture=cache040-native-ram-test ;;
             cache_traffic) fixture=cache040-traffic-test; extra=(-DCACHE040_NATIVE_TEST) ;;
+            mmu_cache) fixture=mmu040-cache-test; extra=(-DMMU040_CACHE_NATIVE) ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -819,9 +830,27 @@ EOF
           objects+=("$obj/tests/$group.o")
         done
         "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" syn68k/tests/native040-runner.c \
-          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic -o "$obj/tests/$executable"
+          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_mmu040_memory_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic -o "$obj/tests/$executable"
         "$obj/tests/$executable"
       done
+    )
+    ;;
+  mmu040-cache)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      cd "$root"
+      output=${MMU040_CACHE_OBJ:-syn68k/obj/tests/mmu040-cache}
+      mkdir -p "$output"
+      sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
+               syn68k/src/runtime/cache040.c syn68k/tests/mmu040-cache-test.c)
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \
+        -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test.exe"
+      "$output/cache-test.exe"
+      "${NATIVE_CC:-gcc}" -std=gnu17 -O1 -g -Wall -Wextra -Werror \
+        -fsanitize=address,undefined -fno-omit-frame-pointer \
+        -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test"
+      "$output/cache-test"
     )
     ;;
   mmu040)
@@ -844,7 +873,7 @@ EOF
       "$output/mmu040-test.exe"
       "${NATIVE_CC:-gcc}" "${warnings[@]}" -g -O1 \
         -fsanitize=address,undefined -fno-omit-frame-pointer "${includes[@]}" \
-        syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c \
+        syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c syn68k/src/runtime/cache040.c \
         syn68k/tests/mmu040-memory-test.c -o "$output/sanitized-memory-test"
       "$output/sanitized-memory-test"
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" "${warnings[@]}" -g -O2 "${includes[@]}" \
@@ -873,7 +902,7 @@ EOF
       "$output/mmu040-movem-test.exe"
       "${NATIVE_CC:-gcc}" "${warnings[@]}" -g -O1 \
         -fsanitize=address,undefined -fno-omit-frame-pointer "${includes[@]}" \
-        syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c \
+        syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c syn68k/src/runtime/cache040.c \
         syn68k/tests/mmu040-fc-bus-test.c -o "$output/sanitized-fc-bus-test"
       "$output/sanitized-fc-bus-test"
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" "${warnings[@]}" -g -O2 "${includes[@]}" \

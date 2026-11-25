@@ -19,9 +19,20 @@
 #define SYN68K_MMU040_MEMORY_H
 
 #include "mmu040.h"
+#include "cache040.h"
 
-/* Operand boundary with optional aligned uncached transfers, not a cache or
-   bus-timing implementation. Callbacks
+/* Optional physical cache binding. The owner retains all pointers. NULL bus
+   uses the ordinary operand callbacks for fills/pushes; descriptor operands
+   always retain the separate table callbacks and their atomic U-bit update.
+   CACR is sampled live for each cache operation. */
+typedef struct {
+    Syn68kCache040* state;
+    const Syn68kCache040Bus* bus;
+    const uint32_t* cacr;
+    enum Syn68kCache040Traffic traffic;
+} Syn68kMMU040Cache;
+
+/* Operand boundary with an optional physical cache binding. Raw callbacks
    transfer big-endian bytes and receive translation attributes and the request's
    function code, including bypass spaces. They must
    either complete a whole chunk or fail without publishing any of that chunk.
@@ -36,8 +47,10 @@ typedef struct {
     const struct Syn68kMMU040Native* native;
     /* Opt-in uncached bus boundary: naturally aligned byte/word/longword
        transfers, including multiple transfers within a page. Zero retains
-       the operand callback boundary for cache/device implementations. */
+       the operand callback boundary for cache/device implementations. The
+       cache binding owns physical decomposition when present. */
     unsigned aligned_transfers;
+    const Syn68kMMU040Cache* cache;
 } Syn68kMMU040Memory;
 
 typedef struct {
@@ -51,6 +64,14 @@ typedef struct {
      successfully read byte prefix (in the low bits, in big-endian order). */
     uint32_t request, value;
     unsigned size, fc, writing, rmw;
+    /* Physical cache failure, independent of the logical operand/translation.
+       cache_table distinguishes table-search traffic. A copyback operand can
+       already be complete when its old-victim push fails. */
+    Syn68kCache040Access cache;
+    unsigned cache_table;
+    /* Unlike an ordinary failed table callback, this cannot be swallowed by
+       diagnostic PTEST. Operand bus failures also set this flag. */
+    unsigned cache_exception;
 } Syn68kMMU040Access;
 
 /* Optional permanent, nonwrapping ordinary physical RAM. The owner retains
@@ -81,7 +102,8 @@ typedef struct Syn68kMMU040Native {
 /* Byte, word and longword operands; addresses wrap modulo 2^32. Chunks stop at
    page boundaries, including when adjacent pages map to disjoint host ranges.
    aligned_transfers == 1 additionally splits at naturally aligned physical
-   bus widths; only zero and one are valid. This does not model cache fills.
+   bus widths when cache is NULL; only zero and one are valid. A cache binding
+   instead owns fills, physical beats and precise cache-fault metadata.
    A later failure preserves previous writes and descriptor U/M updates.
    Read output is published only on complete success. rmw != 0 checks write
    permission and updates M during the read portion; atomicity across the read
@@ -93,10 +115,16 @@ Syn68kMMU040Access syn68k_mmu040_write(Syn68kMMU040Memory* memory, uint32_t logi
                                        uint32_t value);
 Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, unsigned size,
                                            uint32_t value);
+/* Cache-aware translation/PTEST without an operand transfer. Ordinary PTEST
+   diagnostic failures update MMUSR; physical cache failures preserve it and
+   remain visible in the returned cache result. */
+Syn68kMMU040Access syn68k_mmu040_memory_translate(Syn68kMMU040Memory*, uint32_t logical, unsigned fc, int writing,
+                                                  int ptest);
 /* Basic format-7 SSW transfer fields from MC68040UM 8.4.6.2. Supplies MA, ATC,
    LK, RW, SIZE and TT/TM, including alternate spaces; leaves continuation/trace/cache-push
    state to the CPU. Alternate-space ATC records are inconsistent and rejected.
-   Returns zero (preserving *ssw) for success/bad requests.
+   Returns zero (preserving *ssw) for success/bad requests, physical aborts and
+   cache fill/push/lockup results that require a distinct frame or halt path.
    This is not a complete exception frame or restart/writeback protocol. */
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw);
 

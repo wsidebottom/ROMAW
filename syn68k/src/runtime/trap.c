@@ -699,9 +699,14 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         if (!context->memory || !context->memory->mmu)
             return integer_exception(step, context, 11, pc, 0, 0);
         unsigned fc = cpu_state.dfc & 7;
-        if ((opcode & 0xFFD8) == 0xF548)
-            syn68k_mmu040_ptest(context->memory->mmu, &context->memory->tables, EM_AREG(opcode & 7), fc,
-                                !(opcode & 0x20));
+        if ((opcode & 0xFFD8) == 0xF548) {
+            Syn68kMMU040Access access =
+                syn68k_mmu040_memory_translate(context->memory, EM_AREG(opcode & 7), fc, !(opcode & 0x20), 1);
+            if (access.cache_exception) {
+                context->access = access;
+                return integer_exception(step, context, 2, pc, access.logical, 7);
+            }
+        }
         else {
             int all = !!(opcode & 16);
             /* Per-address flushing with a nonordinary DFC is undefined.

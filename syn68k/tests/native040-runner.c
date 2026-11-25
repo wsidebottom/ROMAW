@@ -29,6 +29,7 @@ int native040_flat_check(void);
 int native040_cache_check(void);
 int native040_cache_ram_check(void);
 int native040_cache_traffic_check(void);
+int native040_mmu_cache_check(void);
 
 int main(void)
 {
@@ -38,8 +39,9 @@ int main(void)
         (status = native040_convert_check()) || (status = native040_bus_check()) ||
         (status = native040_control_check()) || (status = native040_registers_check()) ||
         (status = native040_flat_check()) || (status = native040_cache_check()) ||
-        (status = native040_cache_ram_check()) || (status = native040_cache_traffic_check()))
+        (status = native040_cache_ram_check()) || (status = native040_cache_traffic_check()) ||
+        (status = native040_mmu_cache_check()))
         return status;
-    puts("All fourteen emitted 68040 kernel groups passed");
+    puts("All fifteen emitted 68040 kernel groups passed");
     return 0;
 }

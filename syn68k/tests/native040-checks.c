@@ -88,6 +88,17 @@ Syn68kCache040Access __wrap_syn68k_cache040_maintain_traffic(Syn68kCache040* cac
     abort();
 }
 
+Syn68kMMU040Access __wrap_syn68k_mmu040_memory_translate(Syn68kMMU040Memory* memory, uint32_t address, unsigned fc,
+                                                         int writing, int ptest)
+{
+    (void)memory;
+    (void)address;
+    (void)fc;
+    (void)writing;
+    (void)ptest;
+    abort();
+}
+
 static void invoke(enum Syn68kNative040Operation op, Syn68kNative040MMU* frame)
 {
     Syn68kNative040Entry entry = syn68k_native040_entry(op);

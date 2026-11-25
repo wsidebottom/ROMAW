@@ -120,13 +120,19 @@ static int transparent(uint32_t ttr, uint32_t logical, int supervisor)
 static int fetch(const Syn68kMMU040Bus* bus, uint32_t address, uint32_t* descriptor, uint32_t pending_address,
                  uint32_t pending_value, int pending, Syn68kMMU040Result* result)
 {
-    int read_ok = bus && bus->read32 && bus->read32(bus->opaque, address, descriptor);
-    int write_ok =
-        !pending || (bus && bus->update32 && bus->update32(bus->opaque, pending_address, pending_value | USED, 0));
-    if (!read_ok || !write_ok) {
-        result->fault = MMU040_TABLE_BUS_ERROR;
-        result->status = BUS_ERROR;
-        result->descriptor_address = read_ok ? pending_address : address;
+    int read_ok = bus && bus->read32 ? bus->read32(bus->opaque, address, descriptor) : 0;
+    int write_ok = read_ok < 0            ? -1
+                   : !pending             ? 1
+                   : bus && bus->update32 ? bus->update32(bus->opaque, pending_address, pending_value | USED, 0)
+                                          : 0;
+    if (read_ok <= 0 || write_ok <= 0) {
+        int physical = read_ok < 0 || write_ok < 0;
+        result->fault = physical ? MMU040_PHYSICAL_ABORT : MMU040_TABLE_BUS_ERROR;
+        result->status = physical ? 0 : BUS_ERROR;
+        result->descriptor_address = read_ok < 0    ? address
+                                     : write_ok < 0 ? pending_address
+                                     : read_ok      ? pending_address
+                                                    : address;
         return 0;
     }
     result->descriptor_address = address;
@@ -175,9 +181,10 @@ static Syn68kMMU040Result walk(const Syn68kMMU040* mmu, const Syn68kMMU040Bus* b
          U-only transitions use locked RMW, preserving unrelated bits. */
         int locked = !(bits & MODIFIED) || (descriptor & MODIFIED);
         uint32_t value = locked ? USED : descriptor | bits;
-        if (!bus || !bus->update32 || !bus->update32(bus->opaque, address, value, locked)) {
-            result.fault = MMU040_TABLE_BUS_ERROR;
-            result.status = BUS_ERROR;
+        int updated = bus && bus->update32 ? bus->update32(bus->opaque, address, value, locked) : 0;
+        if (updated <= 0) {
+            result.fault = updated < 0 ? MMU040_PHYSICAL_ABORT : MMU040_TABLE_BUS_ERROR;
+            result.status = updated < 0 ? 0 : BUS_ERROR;
             return result;
         }
         descriptor |= bits;
@@ -262,6 +269,8 @@ Syn68kMMU040Result syn68k_mmu040_translate(Syn68kMMU040* mmu, const Syn68kMMU040
     if (!chosen)
         chosen = &mmu->atc[bank][set][replacement];
     result = walk(mmu, bus, logical, supervisor, writing);
+    if (result.fault == MMU040_PHYSICAL_ABORT)
+        return result;
     *chosen = (Syn68kMMU040Entry){page,          result.physical & ~((1u << shift) - 1),
                                   result.status, result.descriptor_address,
                                   result.fault,  1,
@@ -275,7 +284,7 @@ Syn68kMMU040Result syn68k_mmu040_ptest(Syn68kMMU040* mmu, const Syn68kMMU040Bus*
     if (fc <= 7 && ordinary_fc(fc))
         flush_bank(mmu, (fc & 3) == 2, 0, logical, !!(fc & 4), 1);
     Syn68kMMU040Result result = syn68k_mmu040_translate(mmu, bus, logical, fc, writing);
-    if (result.fault != MMU040_BAD_REQUEST)
+    if (result.fault != MMU040_BAD_REQUEST && result.fault != MMU040_PHYSICAL_ABORT)
         mmu->mmusr = result.status;
     return result;
 }

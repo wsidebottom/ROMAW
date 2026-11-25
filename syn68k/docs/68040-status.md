@@ -5,6 +5,60 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Cache-aware mapped memory: CPU cache/fault integration ongoing (2026-11-25)
+
+An optional `Syn68kMMU040Cache` binding now routes normal operands and table
+searches through the physical cache in checked and closed native execution.
+Descriptor reads/writes retain the separate table callbacks; locked U updates
+push/invalidate first, then retain the embedding's atomic read/OR/write.
+Permanent native RAM handles these operations inside the emitted image.
+Cross-page locked writes assert LOCKE only on the final physical chunk.
+
+Access results retain the physical cache failure separately from the logical
+operand and translation. Ordinary failed table callbacks remain diagnostic
+PTEST results; cache-push/lockup failures preserve MMUSR and remain visible to
+the CPU, retaining live MMUSR changes made by physical callbacks on those
+failure paths. A physical abort does not publish a negative logical ATC entry;
+captured-push cleanup can retry the walk without a PFLUSH. The scalar SSW helper
+rejects fill/push/lockup results that need their own frame or halt handling.
+Cache-aware copyback stores can report all operand
+bytes completed even when a subsequent victim push fails.
+
+The mapped runner observes physical cache callbacks for host register/null
+changes and tracks logical stores even when a cache hit avoids the bus.
+Exception entry uses no-allocation traffic while retaining normal hit policy.
+The memory/access/native invocation layouts grew and require a full rebuild.
+
+The reference matrix passes 6,183 cases on Windows and Linux ASan/UBSan. All
+fifteen emitted kernel groups pass on both ABIs, including 12,359 cache-aware
+MMU cases per ABI with callback and permanent-RAM configurations. A separate
+nine-case mapped CPU probe covers cached instruction/data views, native
+PTEST/FPU execution and exception-stack hit/miss policy. Cold AOT emits two
+records; fresh-process warm replay loads both with zero new compilations.
+
+The corrected image passes 1,153,398 reported FPU-native cases, 8,107,168 MMU
+stream/recovery cases, 101,224 flow/RTE cases and 100,906 flat MOVE16 cases.
+Cold/warm AOT passes 3,618,920 recovery cases per run: 73 cold images,
+1,262,191 warm hits and zero warm compilations. The cached CPU probe also
+passes within the grouped AOT run, emitting two cold records and loading both
+in a fresh warm process without compilation. Stable identity and malformed
+cache fallback pass.
+
+ROMAW is rebuilt from committed application base `dc2e152e` with this CPU
+overlay at `build/68040-cache-binding-abort-stage/bin`. The complete audit at
+`build/68040-cache-binding-abort-output/68040-cache-binding-abort-source-audit.json`
+verifies 179 CPU inputs, fifteen fixtures and all 74 staged files. The bundle
+is promoted to `build/68040-current/bin`, preserving its predecessor at
+`build/68040-pre-cache-binding-abort-bin-20261125`. Help exits
+zero with 7,669 output bytes. Isolated Browser/Speedometer startups reach
+WaitNextEvent with 30,868/76,939 native entries, no live checkpoint and no
+win_exception; Speedometer makes one FPU query. These are startup checks.
+
+CPU cache-op decoding, cache-push/fill frame delivery, descriptor-lockup halt,
+MOVE16/snoop integration, RTE stack policy and full CAS/CAS2 bus sequencing
+remain work. ROMAW-wide guest paging and FPU capability reporting remain at
+the existing boundary.
+
 ## Cache traffic classes: CPU routing pending (2026-11-25)
 
 The physical cache component now distinguishes ordinary, exception, descriptor
