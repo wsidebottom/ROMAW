@@ -71,9 +71,22 @@ rejects recursive execution of that same object from a physical callback.
 Multimaster snooping and MOVE16 transactions are not yet bound by this component.
 An optional MMU memory binding now routes normal operands, instruction fetch,
 table traffic and exception entry through these policies. Physical cache-fault
-metadata remains separate from the logical operand. CPU cache-op decoding,
-cache-push/fill frame delivery and descriptor-lockup halt handling remain work;
-a successful component test does not establish working CPU CINV/CPUSH.
+metadata remains separate from the logical operand. Mapped CINV/CPUSH now
+uses physical An selection in checked and native execution. Scope zero is
+illegal before privilege checking; a valid supervisor operation without a board
+cache binding reports unsupported execution. T0/T1 trace follows retirement.
+
+`syn68k_cache040_maintain_interruptible` accepts live pending-interrupt and SR
+inputs. It checks before maintenance and after each completed selected line.
+An eligible interrupt retains completed pushes/invalidations, leaves the
+instruction PC unchanged and defers trace until replay completes. A failed
+push takes priority over an interrupt raised during its failed write beat.
+Normal maintenance, including interrupt sampling, executes in the closed native
+image; physical callbacks remain checked boundaries.
+
+Cache-push/fill frame delivery and descriptor-lockup halt handling remain work.
+Captured push data is retained separately, and the scalar SSW constructor
+rejects these physical faults rather than fabricating a scalar writeback.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a
 `Syn68kNative040Cache` packet. These roots and their reachable routines are

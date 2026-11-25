@@ -70,6 +70,7 @@ ROOTS = (
     "stop",
     "cache_access",
     "cache_maintain",
+    "memory_cache_maintain",
 )
 
 

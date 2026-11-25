@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -522,6 +522,11 @@ EOF
         -o "$fixture/cached-cpu-test.exe"
       "$fixture/cached-cpu-test.exe" "$(wslpath -m "$fixture/cached-cpu")"
       "$fixture/cached-cpu-test.exe" "$(wslpath -m "$fixture/cached-cpu")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-cache-op-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/cache-op-test.exe"
+      "$fixture/cache-op-test.exe" "$(wslpath -m "$fixture/cache-op")"
+      "$fixture/cache-op-test.exe" "$(wslpath -m "$fixture/cache-op")"
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -804,7 +809,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op; do
           fixture=native040-test
           extra=()
           case $group in
@@ -822,6 +827,7 @@ EOF
             cache_ram) fixture=cache040-native-ram-test ;;
             cache_traffic) fixture=cache040-traffic-test; extra=(-DCACHE040_NATIVE_TEST) ;;
             mmu_cache) fixture=mmu040-cache-test; extra=(-DMMU040_CACHE_NATIVE) ;;
+            mmu_cache_op) fixture=mmu040-cache-op-test; extra=(-DMMU040_CACHE_NATIVE) ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -830,7 +836,7 @@ EOF
           objects+=("$obj/tests/$group.o")
         done
         "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" syn68k/tests/native040-runner.c \
-          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_mmu040_memory_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic -o "$obj/tests/$executable"
+          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_mmu040_memory_translate,--wrap=syn68k_mmu040_cache_maintain,--wrap=syn68k_cache040_maintain_interruptible,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic -o "$obj/tests/$executable"
         "$obj/tests/$executable"
       done
     )
@@ -842,15 +848,17 @@ EOF
       cd "$root"
       output=${MMU040_CACHE_OBJ:-syn68k/obj/tests/mmu040-cache}
       mkdir -p "$output"
-      sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
-               syn68k/src/runtime/cache040.c syn68k/tests/mmu040-cache-test.c)
-      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \
-        -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test.exe"
-      "$output/cache-test.exe"
-      "${NATIVE_CC:-gcc}" -std=gnu17 -O1 -g -Wall -Wextra -Werror \
-        -fsanitize=address,undefined -fno-omit-frame-pointer \
-        -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test"
-      "$output/cache-test"
+      for fixture in mmu040-cache-test mmu040-cache-op-test; do
+        sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
+                 syn68k/src/runtime/cache040.c "syn68k/tests/$fixture.c")
+        "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \
+          -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test.exe"
+        "$output/cache-test.exe"
+        "${NATIVE_CC:-gcc}" -std=gnu17 -O1 -g -Wall -Wextra -Werror \
+          -fsanitize=address,undefined -fno-omit-frame-pointer \
+          -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test"
+        "$output/cache-test"
+      done
     )
     ;;
   mmu040)
@@ -941,6 +949,11 @@ EOF
         syn68k/tests/mmu040-stream-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/mmu040-stream-test.exe"
       "$output/mmu040-stream-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-cache-op-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$output/cache-op-test.exe"
+      "$output/cache-op-test.exe"
     )
     ;;
   threaded-dispatch)

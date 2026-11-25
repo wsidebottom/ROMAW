@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      jit-mmu.h
 
-  Summary:   Emit mapped PTEST, PFLUSH, MOVEC and STOP bodies using closed native roots.
+  Summary:   Emit mapped cache, PTEST, PFLUSH, MOVEC and STOP bodies using closed native roots.
 
   Classes:   None.
 
@@ -22,8 +22,9 @@
 
 static int mapped_mmu_opcode(unsigned opcode)
 {
-    return opcode <= 65535 && ((opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 ||
-                               (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a || opcode == 0x4e72);
+    return opcode <= 65535 &&
+           ((opcode & 0xff00) == 0xf400 || (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 ||
+            (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a || opcode == 0x4e72);
 }
 
 static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
@@ -35,6 +36,14 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
     unsigned failures[8], count = 0;
     out->managed = out->dynamic = 1;
     ++out->guards;
+    int cache = (opcode & 0xff00) == 0xf400;
+    if (cache && !(opcode & 0x18)) {
+        pointer_r8(out, RELOC_FPU_FRAME);
+        fpu_constant(out, offsetof(FPUInvocation, exit), NATIVE_EXIT_ILLEGAL, 0);
+        instruction_end(out, pc, 0);
+        byte(out, 0xc3);
+        return 1;
+    }
     fpu_cpu(out, 0x0fb7, 0, offsetof(CPUState, sr));
     byte(out, 0xa9);
     word32(out, SR_SUPERVISOR_BIT);
@@ -53,6 +62,25 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
         fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, control.ok), 0);
         byte(out, 0);
         illegal = jump(out, 0x84);
+    }
+    else if (cache) {
+        pointer_r8(out, RELOC_FPU_FRAME);
+        fpu_cpu(out, 0x8b, 2, reg_offset(8 + (opcode & 7)));
+        fpu_packet(out, 0x89, 2, offsetof(FPUInvocation, memory.address), 0);
+        fpu_constant(out, offsetof(FPUInvocation, memory.all), (opcode >> 6) & 3, 0);
+        fpu_constant(out, offsetof(FPUInvocation, memory.size), (opcode >> 3) & 3, 0);
+        fpu_constant(out, offsetof(FPUInvocation, memory.writing), !!(opcode & 0x20), 0);
+        fpu_call_packet(out, NATIVE040_MEMORY_CACHE_MAINTAIN, offsetof(FPUInvocation, memory), failures, &count);
+        fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_ACCESS, 0);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, memory.access.cache.interrupt_level), 0);
+        byte(out, 0);
+        failures[count++] = jump(out, 0x85);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, memory.access.translation.fault), 0);
+        byte(out, 0);
+        failures[count++] = jump(out, 0x85);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, memory.access.bus_error), 0);
+        byte(out, 0);
+        failures[count++] = jump(out, 0x85);
     }
     else {
         pointer_r8(out, RELOC_FPU_FRAME);

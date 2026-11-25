@@ -221,6 +221,14 @@ ROOT(ptest)
     f->translation = f->access.translation;
 }
 
+/* Reuse all/size/writing as cache selector/scope/push in this packet. */
+ROOT(memory_cache_maintain)
+{
+    NativeMemory bound;
+    Syn68kMMU040Memory* memory = native040_bind_memory(f, &bound);
+    f->access = syn68k_mmu040_cache_maintain(memory, f->all, f->size, f->address, f->writing);
+}
+
 ROOT(flush)
 {
     syn68k_mmu040_flush(f->memory->mmu, f->all, f->address, f->supervisor, f->global);

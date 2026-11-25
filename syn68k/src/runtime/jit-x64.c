@@ -3165,6 +3165,8 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
 {
     if ((pc & 1) || !mapped_mmu_opcode(opcode) || !memory || !memory->mmu || !result)
         return 0;
+    if ((opcode & 0xff00) == 0xf400 && (opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory->cache)
+        return 0;
     void* code = mapped_code(pc, opcode);
     if (!code)
         return 0;
@@ -3175,6 +3177,11 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     uint32 next = execute_managed_packet(code, &packet);
     if (packet.exit == FPU_EXIT_UNFETCHED)
         return syn68k_integer_step_decoded(pc, opcode, memory, result) ? 1 : -1;
+    if ((opcode & 0xff00) == 0xf400 && packet.memory.access.cache.interrupt_level) {
+        *result = (Syn68kIntegerStep){
+            .next = pc, .interrupt_level = packet.memory.access.cache.interrupt_level, .access = packet.memory.access};
+        return 1;
+    }
     if (packet.exit == FPU_EXIT_ACCESS) {
         *result = (Syn68kIntegerStep){.next = pc,
                                       .exception_pc = pc,

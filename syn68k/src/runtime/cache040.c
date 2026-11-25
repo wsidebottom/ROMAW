@@ -298,21 +298,38 @@ Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040* cache, const Syn68
     return syn68k_cache040_maintain_traffic(cache, bus, caches, scope, address, page_shift, push, 0, CACHE040_NORMAL);
 }
 
-Syn68kCache040Access syn68k_cache040_maintain_traffic(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
-                                                      unsigned caches, unsigned scope, uint32_t address,
-                                                      unsigned page_shift, int push, uint32_t cacr,
-                                                      enum Syn68kCache040Traffic traffic)
+static unsigned interrupt_level(const Syn68kCache040Interrupt* interrupt)
+{
+    if (!interrupt || !interrupt->pending || !interrupt->sr)
+        return 0;
+    if (interrupt->pending[7])
+        return 7;
+    unsigned mask = (*interrupt->sr >> 8) & 7;
+    for (unsigned level = 6; level > mask; --level)
+        if (interrupt->pending[level])
+            return level;
+    return 0;
+}
+
+static Syn68kCache040Access maintain_inner(Syn68kCache040* cache, const Syn68kCache040Bus* bus, unsigned caches,
+                                           unsigned scope, uint32_t address, unsigned page_shift, int push,
+                                           uint32_t cacr, enum Syn68kCache040Traffic traffic,
+                                           const Syn68kCache040Interrupt* interrupt)
 {
     Syn68kCache040Access result = {0};
     if (!cache || !bus || (!bus->write && !bus->write_cycle) || cache->active || caches > 3 || !scope || scope > 3 ||
         (page_shift != 12 && page_shift != 13) || (push != 0 && push != 1) ||
         (traffic != CACHE040_NORMAL && traffic != CACHE040_LOCKED) ||
-        (traffic == CACHE040_LOCKED && (caches != 1 || scope != 1 || !push)))
+        (traffic == CACHE040_LOCKED && (caches != 1 || scope != 1 || !push)) ||
+        (interrupt && (!!interrupt->pending != !!interrupt->sr)))
         return (Syn68kCache040Access){.fault = CACHE040_BAD_REQUEST};
     cache->active = 1;
     cache->traffic = traffic;
     if (traffic == CACHE040_LOCKED && !(cacr & 0x80000000u) && lookup(cache, 0, address))
         cache->bypass_data_miss = 1;
+    result.interrupt_level = interrupt_level(interrupt);
+    if (result.interrupt_level)
+        goto maintenance_done;
     uint32_t mask = scope == 1 ? ~15u : scope == 2 ? UINT32_MAX << page_shift : 0;
     for (unsigned bank = 0; bank < 2; ++bank)
         if (caches & (1u << bank))
@@ -329,8 +346,28 @@ Syn68kCache040Access syn68k_cache040_maintain_traffic(Syn68kCache040* cache, con
                         return result;
                     }
                     line->valid = 0;
+                    result.interrupt_level = interrupt_level(interrupt);
+                    if (result.interrupt_level)
+                        goto maintenance_done;
                 }
+maintenance_done:
     cache->traffic = CACHE040_NORMAL;
     cache->active = 0;
     return result;
+}
+
+Syn68kCache040Access syn68k_cache040_maintain_traffic(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                      unsigned caches, unsigned scope, uint32_t address,
+                                                      unsigned page_shift, int push, uint32_t cacr,
+                                                      enum Syn68kCache040Traffic traffic)
+{
+    return maintain_inner(cache, bus, caches, scope, address, page_shift, push, cacr, traffic, 0);
+}
+
+Syn68kCache040Access syn68k_cache040_maintain_interruptible(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                            unsigned caches, unsigned scope, uint32_t address,
+                                                            unsigned page_shift, int push,
+                                                            const Syn68kCache040Interrupt* interrupt)
+{
+    return maintain_inner(cache, bus, caches, scope, address, page_shift, push, 0, CACHE040_NORMAL, interrupt);
 }

@@ -14,6 +14,13 @@ enum Syn68kCache040Traffic {
 
 enum Syn68kCache040CycleKind { CACHE040_OPERAND, CACHE040_PUSH };
 
+/* Optional live interrupt inputs for interruptible cache maintenance. Level
+   seven follows the CPU's pending-edge latch; other levels obey the SR mask. */
+typedef struct {
+    const volatile uint8_t* pending;
+    const volatile uint16_t* sr;
+} Syn68kCache040Interrupt;
+
 typedef struct {
     uint32_t attributes;
     unsigned fc, burst, beat, way;
@@ -76,6 +83,7 @@ typedef struct {
     unsigned char push_data[16];
     unsigned push_size, push_word;
     Syn68kCache040Cycle cycle; /* Valid for operand/fill/push bus faults. */
+    unsigned interrupt_level;  /* Maintenance stopped before instruction retirement. */
 } Syn68kCache040Access;
 
 void syn68k_cache040_init(Syn68kCache040* cache);
@@ -102,6 +110,9 @@ Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040*, const Syn68kCache
    successful pushes/invalidations are not rolled back. */
 Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040*, const Syn68kCache040Bus*, unsigned caches,
                                               unsigned scope, uint32_t address, unsigned page_shift, int push);
+Syn68kCache040Access syn68k_cache040_maintain_interruptible(Syn68kCache040*, const Syn68kCache040Bus*, unsigned caches,
+                                                            unsigned scope, uint32_t address, unsigned page_shift,
+                                                            int push, const Syn68kCache040Interrupt*);
 /* LOCKED maintenance is preparation for an atomic descriptor update: data
    cache, line scope and push only. Its push cycles carry LOCK without LOCKE;
    the caller performs and completes the following atomic descriptor update. */

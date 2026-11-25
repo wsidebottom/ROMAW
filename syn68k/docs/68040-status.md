@@ -5,6 +5,56 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Mapped CINV/CPUSH and interruptible native maintenance (2026-11-25)
+
+Mapped CINV/CPUSH now decodes all cache selections and line/page/all scopes.
+An is a physical address even with translation enabled, and TC selects 4K/8K
+pages. Disabled cache banks still participate. Scope zero is illegal before
+privilege checking; valid user operations take privilege violation. A valid
+supervisor operation with no board cache binding reports unsupported execution.
+General registers and CCRs are preserved. Both T0 and T1 trace follow completion.
+The flat application's existing cache-op compatibility path is unchanged.
+
+The closed native image adds a memory-bound maintenance root. Normal selection,
+push/invalidation and live IRQ sampling run inside that image. Interrupts are
+sampled before maintenance and after each selected line completes. Completed
+pushes/invalidations survive interruption, while the PC remains at the original
+instruction and trace waits for replay. The pending interrupt is consumed only
+by accepted CPU exception entry. A failed push wins over an IRQ raised by the
+failed physical callback and retains the complete captured line independently
+of its invalidated cache tag.
+
+The maintenance reference matrix passes 1,648 cases on Windows and Linux
+ASan/UBSan. All sixteen emitted kernel groups pass on both ABIs, including
+3,240 maintenance cases per ABI with original host maintenance helpers rejected
+by link-time guards. The mapped CPU matrix passes 37,404 opcode, physical-scope,
+privilege, trace, interruption/replay and push-fault cases across checked,
+native callback and native permanent-RAM configurations. Its cold AOT run emits
+256 records with 258 hits; fresh-process replay loads 514 with zero compilation.
+
+Grouped validation also passes 1,153,398 reported FPU-native cases,
+8,107,168 MMU stream/recovery cases, 101,224 flow/RTE cases and 100,906 flat
+MOVE16 cases. Cold/warm AOT passes 3,618,920 recovery cases per run, with 73
+cold emissions, 1,262,191 warm hits and zero warm compilations. The grouped
+cache-op replay independently repeats all 37,404 cases per process and reports
+zero warm compilation. Stable build identity and malformed-cache fallback pass.
+The full audit at
+`build/68040-cache-op-output/68040-cache-op-source-audit.json` matches 179 CPU
+inputs, seventeen fixtures and all 74 staged files. The verified bundle is
+promoted to `build/68040-current/bin`, preserving its predecessor at
+`build/68040-pre-cache-op-bin-20261125`.
+
+ROMAW is rebuilt from the pinned application base `dc2e152e` with this CPU
+overlay at `build/68040-cache-op-stage/bin`. Help exits zero with 7,669 bytes.
+Isolated Browser/Speedometer startups reach WaitNextEvent with 30,943/76,933
+native entries, no live checkpoint or win_exception, and one Speedometer FPU
+query. Speedometer's private profile explicitly selects its 68K executable;
+these are startup checks, not a completed interactive FPU workflow.
+
+This step does not supply cache-push/fill format-7 delivery, descriptor-lockup
+halt, MOVE16/snoop transactions, the remaining CAS/CAS2 bus sequencing or RTE
+stack-policy integration. Those remain required for full FPU/MMU completion.
+
 ## Cache-aware mapped memory: CPU cache/fault integration ongoing (2026-11-25)
 
 An optional `Syn68kMMU040Cache` binding now routes normal operands and table

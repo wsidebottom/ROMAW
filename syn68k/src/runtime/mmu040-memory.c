@@ -171,6 +171,25 @@ Syn68kMMU040Access syn68k_mmu040_memory_translate(Syn68kMMU040Memory* memory, ui
     return result;
 }
 
+Syn68kMMU040Access syn68k_mmu040_cache_maintain(Syn68kMMU040Memory* memory, unsigned caches, unsigned scope,
+                                                uint32_t physical, int push)
+{
+    Syn68kMMU040Access result = {.logical = physical, .request = physical, .writing = !!push};
+    result.translation.fault = MMU040_BAD_REQUEST;
+    if (!memory || !memory->mmu || !memory->cache || !valid_cache(memory))
+        return result;
+    CacheMemory binding = {.memory = memory};
+    Syn68kCache040Bus bus = cache_bus(&binding);
+    result.cache =
+        syn68k_cache040_maintain_interruptible(memory->cache->state, &bus, caches, scope, physical,
+                                               memory->mmu->tc & 0x4000 ? 13 : 12, push, &memory->cache->interrupt);
+    if (result.cache.fault == CACHE040_BAD_REQUEST)
+        return result;
+    result.translation.fault = result.cache.fault ? MMU040_PHYSICAL_ABORT : MMU040_OK;
+    result.bus_error = result.cache_exception = !!result.cache.fault;
+    return result;
+}
+
 static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, unsigned size,
                                    int writing, int rmw, uint32_t* value)
 {

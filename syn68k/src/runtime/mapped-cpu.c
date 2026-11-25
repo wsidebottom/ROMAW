@@ -334,11 +334,11 @@ static int instruction_traced(uint16 entry_sr, unsigned flow)
 
 static int serializing_trace_opcode(unsigned opcode)
 {
-    return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
-           (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0) ||
-           opcode == 0x4e71 || opcode == 0x4e72 || (opcode & 0xfff0) == 0x4e60 || (opcode & 0xffc0) == 0x46c0 ||
-           opcode == 0x007c || opcode == 0x027c || opcode == 0x0a7c ||
-           ((opcode & 0xf9c0) == 0x08c0 && (opcode & 0x0600));
+    return (opcode & 0xff00) == 0xf400 || (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 ||
+           (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a ||
+           ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0) || opcode == 0x4e71 || opcode == 0x4e72 ||
+           (opcode & 0xfff0) == 0x4e60 || (opcode & 0xffc0) == 0x46c0 || opcode == 0x007c || opcode == 0x027c ||
+           opcode == 0x0a7c || ((opcode & 0xf9c0) == 0x08c0 && (opcode & 0x0600));
 }
 
 static int unconditional_flow_opcode(unsigned opcode)
@@ -431,6 +431,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         Syn68kCache040Bus cache_bus;
         if (memory.cache) {
             cache = *memory.cache;
+            cache.interrupt = (Syn68kCache040Interrupt){cpu_state.interrupt_pending, &cpu_state.sr};
             cache_bus = (Syn68kCache040Bus){
                 .opaque = &bus, .read_cycle = instruction_cache_read, .write_cycle = instruction_cache_write};
             cache.bus = &cache_bus;
@@ -490,10 +491,20 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (!handled)
                 handled = syn68k_integer_step_decoded(cpu->pc, opcode, &memory, &result->step);
         }
+        if (handled && result->step.interrupt_level) {
+            result->reason = SYN68K_MAPPED_INTERRUPT;
+            result->interrupt_level = result->step.interrupt_level;
+            return 1;
+        }
         unsigned trace_flow = handled && (serializing_trace_opcode(opcode) || unconditional_flow_opcode(opcode) ||
                                           result->step.flow_changed);
         unsigned trace_scope = handled;
         if (!handled) {
+            if ((opcode & 0xff00) == 0xf400 && (opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory.cache) {
+                result->reason = SYN68K_MAPPED_UNSUPPORTED;
+                result->step.next = cpu->pc;
+                return 1;
+            }
             Syn68kFPUStep fp;
             int fpu_handled = 0;
             if ((opcode & 0xFE00) == 0xF200) {

@@ -99,6 +99,33 @@ Syn68kMMU040Access __wrap_syn68k_mmu040_memory_translate(Syn68kMMU040Memory* mem
     abort();
 }
 
+Syn68kMMU040Access __wrap_syn68k_mmu040_cache_maintain(Syn68kMMU040Memory* memory, unsigned caches, unsigned scope,
+                                                       uint32_t address, int push)
+{
+    (void)memory;
+    (void)caches;
+    (void)scope;
+    (void)address;
+    (void)push;
+    abort();
+}
+
+Syn68kCache040Access __wrap_syn68k_cache040_maintain_interruptible(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                                   unsigned caches, unsigned scope, uint32_t address,
+                                                                   unsigned page_shift, int push,
+                                                                   const Syn68kCache040Interrupt* interrupt)
+{
+    (void)cache;
+    (void)bus;
+    (void)caches;
+    (void)scope;
+    (void)address;
+    (void)page_shift;
+    (void)push;
+    (void)interrupt;
+    abort();
+}
+
 static void invoke(enum Syn68kNative040Operation op, Syn68kNative040MMU* frame)
 {
     Syn68kNative040Entry entry = syn68k_native040_entry(op);

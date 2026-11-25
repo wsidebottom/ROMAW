@@ -680,6 +680,23 @@ static uint32 integer_pc(const Syn68kEAContext* context, uint32 value)
     return context->memory ? value : CLEAN(value);
 }
 
+static uint32 execute_cache(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68kIntegerStep* step)
+{
+    if (!(opcode & 0x18))
+        return integer_exception(step, context, 4, pc, 0, 0);
+    if (!(cpu_state.sr & SR_SUPERVISOR_BIT))
+        return integer_exception(step, context, 8, pc, 0, 0);
+    context->access = syn68k_mmu040_cache_maintain(context->memory, (opcode >> 6) & 3, (opcode >> 3) & 3,
+                                                   EM_AREG(opcode & 7), !!(opcode & 0x20));
+    if (context->access.cache.interrupt_level) {
+        step->interrupt_level = context->access.cache.interrupt_level;
+        return pc;
+    }
+    if (context->access.translation.fault || context->access.bus_error)
+        return integer_exception(step, context, 2, pc, context->access.logical, 7);
+    return pc + 2;
+}
+
 static int control_opcode(unsigned opcode)
 {
     return (opcode & 0xFFF0) == 0xF500 || opcode == 0xF510 || opcode == 0xF518 || (opcode & 0xFFD8) == 0xF548 ||
@@ -1136,6 +1153,15 @@ int syn68k_integer_step_decoded(uint32 pc, unsigned opcode, Syn68kMMU040Memory* 
     if (!result)
         return 0;
     *result = (Syn68kIntegerStep){0};
+    if (memory && (opcode & 0xff00) == 0xf400) {
+        /* A missing board cache is unsupported, not an empty hardware cache.
+           Static illegal encodings and privilege still have their priority. */
+        if ((opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory->cache)
+            return 0;
+        Syn68kEAContext context = {.pc = pc + 2, .memory = memory};
+        result->next = execute_cache(pc, opcode, &context, result);
+        return 1;
+    }
     if (!integer_opcode(opcode) && !(opcode == 0x4e72 && memory))
         return syn68k_integer_operand_step(pc, opcode, memory, result);
     Syn68kEAContext context = {.pc = pc + 2, .memory = memory};

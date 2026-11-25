@@ -75,6 +75,7 @@ typedef struct {
     unsigned flow_changed;
     /* STOP requests suspension only after successful, untraced retirement. */
     unsigned stopped;
+    unsigned interrupt_level; /* Interruptible cache instruction remains at its original PC. */
     Syn68kMOVE16Writeback move16;
     /* Runner-owned T1 latch for a completed forced exception. Delivery enters
        that exception first, then trace, before its handler executes. */
