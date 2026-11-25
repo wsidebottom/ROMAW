@@ -15,6 +15,17 @@ non-null entry or changing other certified state denies replay without undoing
 its effects. Guest cleanup completes one WB1/WB2 scalar; RTE then reexecutes the
 whole instruction and repeats earlier writes. No continuation bit is introduced.
 
+## MOVE16 line cleanup
+
+Physical MOVE16 write faults retire normal address updates once and retain next
+PC, WB1/TT=1/SIZE=line and memory-aligned PD0-3. Guest cleanup writes the whole
+line without rereading source data. Entry T1 retains CT. Certified ATC aborts
+instead retain original PC/registers and WB2/PD0-3; software chooses retry or
+captured-line cleanup plus PC/register advance and trace emulation. Malformed
+records are rejected before CPU or bus effects. See the current status
+checkpoint for validation and exact-source/binary audit details. MOVE16 read
+faults and a true block/cache bus remain further work.
+
 ## MOVEM store continuation
 
 MOVEM store faults retain CM and their original EA, plus the full failed scalar

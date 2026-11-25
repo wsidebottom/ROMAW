@@ -35,6 +35,29 @@ PCM playback and callbacks, under interpreter and JIT execution. The Carbon
 service check uses the same structure-return convention. The rebuilt Windows
 Kid Pix opens its canvas without the Sound Manager warning.
 
+The Goodies menu also calls the installed MBarHook through a 68K JSR. Its
+valid routine descriptor uses the special `0xCF` ProcInfo from
+[Universal Interfaces Menus.h](https://www.ioi-xd.net/os9docs/Menus_8h_source.html).
+The Mixed Mode entry now handles that specific ABI: a stack Rect pointer,
+callee stack cleanup, and a signed short result in D0. Other unsupported
+special conventions continue to report an error.
+
+The menu regression executes an original 68K trampoline against a real PPC
+descriptor three times, checking the Rect pointer and contents, signed result,
+callback count and stack preservation. It reproduced the original rejection
+under Windows GDB, then passed with the fix under interpreter and JIT execution.
+The existing PPC callback probe passed in both modes too.
+Windows validation also opened Goodies successfully in the rebuilt GDB session.
+
+Cancelling the native job dialog opened implicitly by PrOpenDoc now sets
+`iPrAbort` when returning a null print port. Previously it left PrError at zero,
+so Kid Pix proceeded with a null graphics port and faulted in CopyBits. Explicit
+PrJobDialog cancellation still returns false without setting a printing error;
+actual host-dialog errors remain intact. The `print-cancel` Windows UI check
+exercises both PPC engines, repeated cancellation, host failure and graphics-port
+preservation, while forbidding raster output. The user's Windows retest returned
+to the canvas after Cancel, and the debug session subsequently exited normally.
+
 This records the native-dialog checkpoint below. Current Standard File behavior
 uses the classic picker described in [the runtime guide](runtime-guide.md#file-dialogs-and-printing);
 the observations below are historical test evidence.

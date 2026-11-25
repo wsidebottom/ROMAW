@@ -155,6 +155,12 @@ typedef struct {
    cleanup. Predecrement replay restores its original address sequence and the
    architecture's stored base-register value. Restart opcode/mask/extension
    fetch faults retain CM/EA, including split long fetches.
+   MOVE16 physical write faults retire captured postincrements and retain the
+   whole memory-aligned line in PD0-3 with WB1/TT=1/SIZE=line. Entry T1 retains
+   CT until guest cleanup/RTE. Certified ATC aborts retain original PC/registers,
+   WB2 and PD0-3; the guest can retry or drain the line, advance PC/postincrements
+   and emulate pending trace. Callback result changes deny ATC certification
+   without rollback. The operand bus remains an ordered scalar-transfer boundary.
    MOVES supports ordinary and alternate-space scalar writebacks, preserving
    converted TM and alternate TT=2. Alternate spaces permit physical faults,
    without translation or additional tail writes. MOVES normal/deferred trace

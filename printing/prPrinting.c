@@ -441,8 +441,13 @@ P3(PUBLIC pascal trap, TPPrPort, PrOpenDoc, THPrint, hPrint, TPPrPort, port, Ptr
         PrintErr = CWC(paramErr);
         return NULL;
     }
-    if (!call_job_dialog_if_needed(hPrint))
+    if (!call_job_dialog_if_needed(hPrint)) {
+        /* A caller of PrOpenDoc relies on PrError, unlike an explicit
+           PrJobDialog caller that can test its Boolean cancellation result. */
+        if (!PrintErr)
+            PrintErr = CWC(iPrAbort);
         return NULL;
+    }
     raster_paper = HxX(hPrint, rPaper);
     raster_page = HxX(hPrint, prInfo.rPage);
     raster_width = CW(raster_paper.right) - CW(raster_paper.left);

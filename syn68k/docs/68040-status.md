@@ -5,6 +5,41 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVE16 captured-line writebacks (2026-11-25)
+
+Mapped MOVE16 write faults now retain all four memory-aligned PD0-3 words.
+Physical failures complete normal postincrements once, including same-register
+aliases, and retain the following PC with WB1/TT=1/SIZE=line. Guest cleanup
+does not reread source RAM. Entry T1 retains CT and the original instruction PC
+until cleanup/RTE; callback changes to live trace bits do not change that latch.
+
+Certified ATC aborts retain original PC/registers and WB2/PD0-3. A guest handler
+can repair and retry, or drain the captured line, advance PC/postincrements and
+emulate pending trace. Callback result changes deny certification without
+rollback. The frame follows MC68040UM section 8.4.6.7/table 8-6 and the corrected
+hard-cleanup case in the [manual addendum](https://www.nxp.com/docs/en/reference-manual/MC68040UMAD.pdf).
+Host access metadata identifies the failed scalar; the line record separately
+retains the original burst request. The bus remains an ordered scalar-transfer
+boundary. MOVE16 read continuation and a physical block/cache bus remain work.
+Host step records grew; callers must rebuild. Native packet layouts are unchanged.
+
+Validation passes 107,772 focused cases, 8,009,032 grouped MMU stream/recovery
+cases, 101,224 control-flow/RTE cases and 100,906 flat MOVE16 cases. Complete
+cold/warm AOT passes 3,569,852 recovery cases per run: 72 cold images, 1,262,189
+warm hits and zero warm compilations. Stable identity and malformed-cache
+fallback pass. The native kernel image remains byte-identical to the validated
+Windows/SysV and FPU-native image.
+
+The rebuilt bundle is staged at `build/68040-move16-line-stage/bin` and promoted
+to `build/68040-current/bin`, with all 74 files verified. The preceding bundle
+is preserved at `build/68040-pre-move16-line-bin-20261125`. All 175
+CPU inputs, eight fixtures and 74 staged files match the maintained/tested/
+application snapshots; `build/68040-move16-line-source-audit.json` records them.
+The coherent application base remains `e062e3db` with this CPU overlay. Windows
+help passes (7,669 bytes, exit zero). Isolated Browser/Speedometer 68K startups
+reach WaitNextEvent with 30,872/76,933 native entries, no live checkpoint and no
+win_exception. Speedometer makes one FPU query. These are startup checks.
+
 ## MOVE16 effective-address burst order (2026-11-25)
 
 MOVE16 now starts each source and destination burst at the longword selected

@@ -13,6 +13,7 @@
 #   Copyright and Legal notices: See synppc/COPYING.
 # ===================================================================+
 
+import struct
 import sys
 from pathlib import Path
 
@@ -53,6 +54,9 @@ def make_probe(destination):
                 "LMGetCurApName",
                 "LMGetSdVolume",
                 "LaunchApplication",
+                "NewRoutineDescriptor",
+                "DisposeRoutineDescriptor",
+                "CallUniversalProc",
                 "DebugStr",
             )
         ]
@@ -90,6 +94,51 @@ def make_probe(destination):
     p.expect(0x1234, "the window manager sees the guest-endian PaintWhite word")
     p.emit(0x807E01D4)
     p.call("LMSetPaintWhite")
+    # The MBarHook special ABI takes a stack Rect pointer, returns a signed
+    # word in D0 and removes the pointer from the 68K stack. Use an actual
+    # 68K JSR to the installed descriptor, as the native Menu Manager does.
+    struct.pack_into(">4h", p.data, 0x340, 1, 2, 33, 44)
+    p.data[0x350:0x35C] = bytes.fromhex("2f2f000420780a2c4e904e75")
+    p.routines.append(
+        (
+            0x360,
+            [
+                0x80830000,  # Record both halves of the supplied Rect.
+                0x908201DC,
+                0x80830004,
+                0x908201E0,
+                0x906201E4,  # Record its pointer without translating it twice.
+                0x808201D8,
+                0x38840001,
+                0x908201D8,
+                0x3860FFFE,  # A negative short result must reach 68K D0.
+                0x4E800020,
+            ],
+        )
+    )
+    p.emit(0x387E0360, 0x388000CF, 0x38A00001)
+    p.call("NewRoutineDescriptor")
+    p.nonzero("create the real Menu Manager special-ABI descriptor")
+    p.emit(0x907E01E8)
+    p.call("LMSetMBarHook")
+    for _ in range(3):
+        p.emit(0x903E01EC, 0x387E0350, 0x388000F1, 0x38BE0340)
+        p.call("CallUniversalProc")
+        p.expect(-2, "the menu hook returns its signed short through D0")
+        p.emit(0x807E01EC, 0x38810000)
+        p.equal("repeated mixed menu hooks preserve the PPC stack")
+    p.emit(0x807E01D8)
+    p.expect(3, "each 68K menu-hook entry invokes the PPC procedure once")
+    p.emit(0x807E01DC)
+    p.expect(0x00010002, "the callback reads the actual Rect top and left")
+    p.emit(0x807E01E0)
+    p.expect(0x0021002C, "the callback reads the actual Rect bottom and right")
+    p.emit(0x807E01E4)
+    p.pointer(0x340, "the callback receives the original guest Rect pointer")
+    p.emit(0x807E01D0)
+    p.call("LMSetMBarHook")
+    p.emit(0x807E01E8)
+    p.call("DisposeRoutineDescriptor")
     p.emit(0x3860251C, 0x389E0280)  # Menu ID 9500.
     p.call("NewMenu")
     p.nonzero("create an actual Classic menu")

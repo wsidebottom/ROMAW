@@ -20,6 +20,15 @@
 
 #include "mmu040-memory.h"
 
+/* MOVE16 keeps memory-addressed push-data slots. This host-side offer does
+   not change a native invocation packet. The mapped runner finalizes state:
+   1 candidate, 2 physical write retired, 3 retired with CT, 4 ATC abort/retry. */
+typedef struct {
+    uint32_t data[4], address, next, trace_pc;
+    uint32_t source, destination;
+    unsigned command, state;
+} Syn68kMOVE16Writeback;
+
 typedef struct {
     uint32_t next, exception_pc, fault_address;
     unsigned vector, format;
@@ -64,6 +73,7 @@ typedef struct {
     unsigned flow_changed;
     /* STOP requests suspension only after successful, untraced retirement. */
     unsigned stopped;
+    Syn68kMOVE16Writeback move16;
 } Syn68kIntegerStep;
 
 /* Internal MULU/MULS/DIVU/DIVS, MOVEM/MOVES/MOVEP, JSR/JMP/LEA/PEA and

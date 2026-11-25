@@ -169,6 +169,41 @@ static int replay_store_fault(const Syn68kIntegerStep* record)
            (access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))));
 }
 
+/* MOVE16's bus callback boundary still reports the failing aligned scalar.
+   Its format-7 offer separately retains the original line request and PD0-3. */
+static int move16_write_fault(const Syn68kIntegerStep* record, int candidate)
+{
+    const Syn68kMMU040Access* access = &record->access;
+    const Syn68kMOVE16Writeback* line = &record->move16;
+    uint16 ssw;
+    if (record->vector != 2 || record->format != 7 || record->store_state || record->store_next ||
+        record->store_trace_pc || record->store_ccr || record->store_tail || record->store_tail_valid ||
+        record->store_tail_fc || record->store_tail_address || record->store_locked ||
+        record->store_link_displacement || record->fpu_vector || record->fpu_ea || record->movem_state ||
+        record->restartable_read || record->stopped || (record->exception_pc & 1) || (line->next & 1) ||
+        (line->address & 3) || !access->writing || access->rmw || access->size != 4 || access->completed ||
+        (access->request & 3) || access->logical != access->request || record->fault_address != access->logical ||
+        (access->fc != 1 && access->fc != 5) || (access->request & ~15u) != (line->address & ~15u) ||
+        access->value != line->data[(access->request >> 2) & 3] || !syn68k_mmu040_access_ssw(access, &ssw) ||
+        (access->bus_error && (ssw & 0x400)))
+        return 0;
+    if (candidate) {
+        unsigned mode = (line->command >> 3) & 7;
+        return line->state == 1 && !line->trace_pc && line->command < 512 && mode <= 4 &&
+               (mode == 4 || !(line->command >> 6)) && line->address == (line->destination & ~3u) &&
+               line->next - record->exception_pc == (mode == 4 ? 4u : 6u) && record->next == record->exception_pc;
+    }
+    if (line->source || line->destination || line->command || record->next != record->exception_pc)
+        return 0;
+    if (line->state == 4)
+        return !access->bus_error && (ssw & 0x400) && !line->trace_pc &&
+               (line->next - record->exception_pc == 4 || line->next - record->exception_pc == 6);
+    return access->bus_error && (line->state == 2 || line->state == 3) && line->next == record->exception_pc &&
+           (line->state == 3
+                ? !(line->trace_pc & 1) && (line->next - line->trace_pc == 4 || line->next - line->trace_pc == 6)
+                : !line->trace_pc);
+}
+
 static unsigned pending_interrupt(void)
 {
     if (cpu_state.interrupt_pending[7])
@@ -464,6 +499,30 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         }
         if (result->step.vector) {
             result->step.stopped = 0;
+            if (result->step.move16.state == 1) {
+                Syn68kMOVE16Writeback* line = &result->step.move16;
+                if (move16_write_fault(&result->step, 1) &&
+                    (result->step.access.bus_error ||
+                     (!bus.callback_state_changed && unchanged_results(&before, opcode, 16)))) {
+                    if (result->step.access.bus_error) {
+                        unsigned mode = (line->command >> 3) & 7, reg = line->command & 7;
+                        if (mode == 4) {
+                            EM_AREG(reg) = line->source + 16;
+                            EM_AREG(line->command >> 6) = line->destination + 16;
+                        }
+                        else if (mode < 2)
+                            EM_AREG(reg) += 16;
+                        line->state = instruction_traced(before.sr, 0) ? 3 : 2;
+                        line->trace_pc = line->state == 3 ? cpu->pc : 0;
+                        result->step.next = result->step.exception_pc = line->next;
+                    }
+                    else
+                        line->state = 4;
+                    line->source = line->destination = line->command = 0;
+                }
+                else
+                    *line = (Syn68kMOVE16Writeback){0};
+            }
             if (result->step.store_state == 1 && (result->step.store_next & 1) &&
                 ((opcode & 0xff00) == 0x6100 || (opcode & 0xffc0) == 0x4e80)) {
                 /* The data fault precedes an odd target's address error. Abort
@@ -580,6 +639,9 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
             ssw |= 0x2000; /* Trace the retired instruction after store cleanup. */
         if (record->movem_state == 1)
             ssw |= 0x1000;
+        if (record->move16.state)
+            ssw = 0x68 | record->access.fc | (record->move16.state == 4 ? 0x400 : 0) |
+                  (record->move16.state == 3 ? 0x2000 : 0);
         int wb1 = pending && record->access.bus_error;
         int tail = pending && record->store_tail_valid;
         unsigned wb_status = 0x80 | (ssw & 0x7F);
@@ -614,6 +676,15 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
                 else if (tail && offset == (wb1 ? 36U : 28U))
                     value = record->store_tail;
             }
+            if (record->move16.state) {
+                int physical = record->move16.state != 4;
+                value = offset == 8 && record->move16.state == 3 ? record->move16.trace_pc
+                        : offset == 12                           ? (uint32)ssw << 16
+                        : offset == 16                           ? (0xe8 | record->access.fc) << (physical ? 0 : 16)
+                        : offset == 20 || offset == (physical ? 40u : 32u) ? record->move16.address
+                        : offset >= 44                                     ? record->move16.data[(offset - 44) / 4]
+                                                                           : 0;
+            }
             Syn68kMMU040Access access = syn68k_mmu040_write(cpu->memory, EM_A7 + offset, 5, 4, value);
             if (access.translation.fault != MMU040_OK || access.bus_error)
                 return delivery_fault(record, result, access, 1);
@@ -642,12 +713,12 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     if (!cpu || !cpu->memory || !cpu->memory->mmu || !record || record->vector < 2 || record->vector > 255 ||
         interrupt_level > 7 || (interrupt_level && (record->vector != 24 + interrupt_level || record->format)))
         return 0;
-    if ((record->movem_state && !movem_fault(record)) ||
+    if ((record->move16.state && !move16_write_fault(record, 0)) || (record->movem_state && !movem_fault(record)) ||
         ((record->store_state || record->fpu_vector || record->store_tail_valid || record->store_locked) &&
          !scalar_store_fault(record) && !replay_store_fault(record)) ||
         (record->format != 0 && record->format != 2 && record->format != 3 && !restartable_read_fault(record) &&
          !((record->store_state == 2 || record->store_state == 3) && scalar_store_fault(record)) &&
-         !replay_store_fault(record) && !movem_fault(record))) {
+         !replay_store_fault(record) && !movem_fault(record) && !move16_write_fault(record, 0))) {
         result->reason = SYN68K_DELIVERY_UNSUPPORTED;
         return 1;
     }

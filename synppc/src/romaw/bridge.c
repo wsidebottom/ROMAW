@@ -7166,6 +7166,7 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     uint32 info, sizes, args[11], widths[11], vector, answer = 0, selector = 0;
     uint32 cursor = EM_A7 + 8, argument_base, ret;
     unsigned count, i, n = 0, bytes = 0, flags, convention, dispatch = 0, selector_width = 0, result_width;
+    boolean_t menu_bar_hook;
     int64 entry;
     if (!ctx || !return_address || EM_A7 > UINT32_MAX - 8)
         return 0;
@@ -7216,8 +7217,12 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     flags = CW(record->routineFlags);
     info = CL(record->procInfo);
     convention = info & 15;
+    /* Menus.h's uppMBarHookProcInfo is SPECIAL_CASE_PROCINFO(12): one
+       stack Rect pointer, callee cleanup, and a signed short in D0. */
+    menu_bar_hook = info == 0xcf;
     if ((flags & ~(1 | 2 | 4 | 8 | 16)) || (dispatch && !(flags & 8)) ||
-        (convention != kPascalStackBased && convention != kCStackBased && convention != kRegisterBased))
+        (convention != kPascalStackBased && convention != kCStackBased && convention != kRegisterBased &&
+         !menu_bar_hook))
         goto invalid;
     entry = CL((uint32)PP_RAW(record->procDescriptor));
     if (flags & 1)
@@ -7238,7 +7243,14 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     }
     result_width = (info >> 4) & 3;
     argument_base = cursor;
-    if (convention == kRegisterBased) {
+    if (menu_bar_hook) {
+        const uint32* rectangle = ppc_memory(ctx, cursor, sizeof *rectangle, FALSE);
+        if (!rectangle || !ppc_memory(ctx, CL(*rectangle), sizeof(Rect), FALSE))
+            goto invalid;
+        args[n++] = CL(*rectangle);
+        cursor += sizeof *rectangle;
+    }
+    else if (convention == kRegisterBased) {
         static const unsigned map[] = {0, 1, 2, 3, 8, 9, 10, 11};
         unsigned field, reg;
         if (((info >> 6) & 31) >= NELEM(map))
@@ -7291,7 +7303,11 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     if (!ppc_invoke_callback(ctx, vector, args, n, &answer))
         return 0;
     memcpy(cpu_state.regs, saved, sizeof saved);
-    if (convention == kPascalStackBased) {
+    if (menu_bar_hook) {
+        EM_A7 = cursor;
+        EM_D0 = (int16)answer;
+    }
+    else if (convention == kPascalStackBased) {
         EM_A7 = cursor;
         if (result_width == 1)
             WRITEUB(EM_A7, answer);

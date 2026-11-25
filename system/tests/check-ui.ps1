@@ -12,6 +12,99 @@
 #   Copyright and Legal notices: Applicable repository license: COPYING.
 # ===================================================================+
 
+function Invoke-Check-print-cancel {
+    param(
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
+        [string]$ROMAW
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $ROMAW) { $ROMAW = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
+    $fixture = Join-Path $root ('build/print-cancel.' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    & python (Join-Path $root 'synppc/tests/make_ppc_print_cancel_probe.py') $fixture
+    if ($LASTEXITCODE) { throw 'Cannot generate the print cancellation probe' }
+    $commands = @'
+set pagination off
+set confirm off
+set print thread-events off
+set substitute-path /mnt/d/Source/ROMAW D:/Source/ROMAW
+set $print_dialog_calls = 0
+break host_print_dialog
+commands
+silent
+set $print_dialog_calls = $print_dialog_calls + 1
+if $print_dialog_calls > 4
+printf "UNEXPECTED_PRINT_DIALOG\n"
+quit 1
+end
+if $print_dialog_calls == 4
+return (int)-1
+else
+return (int)0
+end
+continue
+end
+break host_dialog_error
+commands
+silent
+return
+continue
+end
+break host_raster_begin
+commands
+silent
+printf "CANCEL_STARTED_RASTER_OUTPUT\n"
+quit 1
+end
+break ROMlib_win_ppc_error
+commands
+silent
+bt 20
+quit 1
+end
+run
+if $print_dialog_calls != 4
+printf "PRINT_DIALOG_COUNT_MISMATCH\n"
+quit 1
+end
+printf "PRINT_CANCEL_HOST_OK\n"
+quit 0
+'@
+    $script = Join-Path $fixture 'cancel.gdb'
+    [IO.File]::WriteAllText($script, $commands)
+    foreach ($engine in @('-no-ppc-jit', '-ppc-jit')) {
+        $name = $engine.TrimStart('-')
+        $stdout = Join-Path $fixture "$name.gdb.log"
+        $stderr = Join-Path $fixture "$name.gdb-error.log"
+        $app = Join-Path $fixture 'PPC Print Cancel Probe'
+        $arguments = '-q -batch --return-child-result -x "' + $script + '" --args "' + $ROMAW + '" ' +
+        $engine + ' -syszone 8m -applzone 64m -sdlaudio test -debug trace "' + $app + '"'
+        $process = Start-Process -FilePath $Gdb -ArgumentList $arguments -WorkingDirectory $fixture `
+            -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+        try {
+            if (-not $process.WaitForExit(20000)) { throw "Print cancellation timed out: $fixture" }
+            $guest = Join-Path $fixture 'stderr.txt'
+            $log = [IO.File]::ReadAllText($stdout) + [IO.File]::ReadAllText($stderr)
+            if (Test-Path -LiteralPath $guest) {
+                $log += [IO.File]::ReadAllText($guest)
+                Copy-Item -LiteralPath $guest -Destination (Join-Path $fixture "$name.guest.log")
+            }
+            if ($process.ExitCode -ne 0 -or $log -notmatch 'PRINT_CANCEL_HOST_OK' -or
+                $log -notmatch 'debugstr: PRINT_CANCEL_OK' -or $log -notmatch 'PowerPC fragment completed' -or
+                $log -match 'PowerPC launch failed|win_exception|Illegal instruction|CANCEL_STARTED_RASTER_OUTPUT') {
+                throw "Print cancellation failed: $fixture ($engine)"
+            }
+        }
+        finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+            $process.Dispose()
+        }
+    }
+    Write-Output "PASS: print cancellation, retry, host errors and port preservation; $fixture"
+}
+
 function Invoke-Check-control-panel-host {
     param(
         [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
@@ -728,4 +821,4 @@ DisplayScale=100
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('control-panel-host', 'display-scale-options', 'display-scaling', 'document-open', 'document-transition', 'macwrite-quit', 'menu-banner', 'mouse-input', 'puzzle', 'startup-window', 'window-resize', 'window-size-options', 'window-startup') -CheckArguments $args
+Invoke-RegressionCheck -Names @('control-panel-host', 'display-scale-options', 'display-scaling', 'document-open', 'document-transition', 'macwrite-quit', 'menu-banner', 'mouse-input', 'print-cancel', 'puzzle', 'startup-window', 'window-resize', 'window-size-options', 'window-startup') -CheckArguments $args

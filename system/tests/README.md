@@ -68,6 +68,12 @@ matching-window check in `WindowMgr.a`'s `EndUpdate`.
 | 68K runtime and hardware comparison | `syn68k/tests/check-core.sh`, `syn68k/tests/check-hardware.ps1` |
 | PPC runtime and hardware comparison | `synppc/tests/check-core.sh`, `synppc/tests/check-runtime.ps1`, `synppc/tests/check-hardware.ps1` |
 
+`./system/tests/check-ui.ps1 print-cancel -ROMAW D:/Source/ROMAW/windows-binaries/bin/ROMAW.exe`
+checks explicit print-dialog cancellation and PrOpenDoc's implicit cancellation,
+retry, host errors and graphics-port preservation under PPC interpreter and JIT
+execution. Windows GDB intercepts every host dialog and forbids raster output;
+the check submits no print jobs.
+
 Root `make check-*` targets and `tools/run-checks.py` coordinate broader checks
 and retain logs in `build/checks/`. PPC application/diagnostic runners are
 described in [synppc](../../synppc/README.md#romaw-integration). Hardware checks
