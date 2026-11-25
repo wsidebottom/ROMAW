@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16" "$fixture/cas" "$fixture/unaligned-lock"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16" "$fixture/cas" "$fixture/unaligned-lock" "$fixture/rte-user"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -562,6 +562,11 @@ EOF
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$fixture/unaligned-lock-test.exe"
       "$fixture/unaligned-lock-test.exe" "$(wslpath -m "$fixture/unaligned-lock")"
       "$fixture/unaligned-lock-test.exe" "$(wslpath -m "$fixture/unaligned-lock")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/rte-user-test.exe"
+      "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 0
+      "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 1
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -1040,6 +1045,11 @@ EOF
         syn68k/tests/mapped-locked-unaligned-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$output/unaligned-lock-test.exe"
       "$output/unaligned-lock-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$output/rte-user-test.exe"
+      "$output/rte-user-test.exe"
     )
     ;;
   threaded-dispatch)

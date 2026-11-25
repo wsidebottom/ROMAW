@@ -5137,6 +5137,10 @@ static void rte_user_progress_guards(void)
             unsigned frame = 0x20080, next = 0x28000;
             EM_A7 = cpu_state.isp = frame;
             cpu_state.usp = next;
+            cpu_state.msp = 0x201c0;
+            cpu_state.vbr = 0x20000;
+            put32(physical(cpu_state.vbr + 8), 0x10040);
+            code_word(0x10040, 0x4e73);
             code_word(0x10000, 0x4e73);
             code_word(frame, master ? 0x1015 : 0x0015);
             put32(physical(frame + 2), 0x10080);
@@ -5145,13 +5149,17 @@ static void rte_user_progress_guards(void)
             Syn68kMappedRun run;
             Syn68kMappedDelivery delivery;
             assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && !run.step.restartable_read &&
+            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.restartable_read &&
                    EM_A7 == next && status() == (master ? 0x1015 : 0x0015));
-            CPUState before = cpu_state;
-            unsigned old_reads = reads, old_writes = writes;
+            unsigned expected_frame = (master ? 0x201c0 : frame + 8) - 60;
+            assert(cpu_state.isp == frame + 8);
             assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-            assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == old_reads && writes == old_writes &&
-                   !memcmp(&before, &cpu_state, sizeof before));
+            assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040 && EM_A7 == expected_frame);
+            assert(mapped_value(expected_frame, 2) == (master ? 0x1015 : 0x0015) &&
+                   mapped_value(expected_frame + 2, 4) == 0x10000 && mapped_value(expected_frame + 12, 2) == 0x541);
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 && EM_A7 == next &&
+                   status() == (master ? 0x1015 : 0x0015));
             ++cases;
         }
     fail_physical = UINT32_MAX;

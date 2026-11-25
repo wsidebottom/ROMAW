@@ -5,6 +5,51 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Latest validated bundle: RTE user-stack faults (2026-11-26)
+
+RTE now delivers an access fault after a format-1 frame has committed a user
+SR and selected USP. The completed prefix and callback effects remain live.
+Frame-read certificates require the function code to match the live S bit;
+RTE cache-push certificates accept the corresponding user-data access. Fault
+entry chooses ISP or MSP using the committed M bit. Returning to the RTE PC
+in user mode still takes privilege vector 8, without reading the user frame.
+
+The 7,232-case regression covers header fields and partially read longwords,
+both page sizes, every CCR value, stack banks, ATC/physical/cache-push faults,
+guest descriptor repair and PD cleanup. Checked/native CPU and memory
+combinations pass. Its grouped cold/warm AOT runs compile one body cold and
+restore it with zero compilations warm. The runner creates its dedicated
+cache directory, and the fixture asserts that warm replay compiles nothing.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. The nineteen emitted-kernel groups pass on Windows and Linux x64,
+with 45 verified roots and no runtime imports. The full stream fixture passes
+8,107,168 cases. Each mapped AOT recovery process passes 3,618,920 cases;
+warm recovery reports 1,262,191 hits and zero compilations.
+
+ROMAW is rebuilt and staged with the exact tested CPU archive. The 74-file
+bundle at `build/68040-rte-user-stage/bin` is promoted to
+`build/68040-current/bin`; the previous bundle is retained at
+`build/68040-pre-rte-user-bin-20261126`. The audit at
+`build/68040-rte-user-output/68040-rte-user-source-audit.json` verifies
+179 CPU inputs, 158 fixtures and four identical CPU archives. CPU build ID is
+`d433e25b599022826808741a12d3c2dcea025c5a5ead7f7dbdd6a37d42c49948`;
+archive SHA256 is
+`9d6bacc7ede7c1cb94a73d3ccf3e1a9466f20d49c3ae21f4899714a7299cbe61`.
+Help returns zero with 7,669 bytes. Browser and 68K Speedometer reach their
+startup loops after 30,952 and 77,157 native entries, respectively, with null
+native checkpoints and no Windows exception. Speedometer issues one FPU
+capability query. These checks cover startup rather than complete workflows.
+
+This checkpoint follows page-crossing data replay in `e85de5f0` and unaligned
+locked-store writeback in `e9e98a07`. The sections below retain earlier
+checkpoint details. Remaining work includes cached partial-read diagnostics,
+compound descriptor and locked cache-push continuations, further active-stack
+and double-fault cases, physical instruction-prefetch behavior, snoop
+integration, and FPU busy/FPSP saved-state, encoding and special-value audits.
+The overall FPU/MMU work remains active; ROMAW-wide paged pointers and full
+68040 compatibility are not established by these regressions.
+
 ## CAS/CAS2 termination and compare-register aliases (2026-11-26)
 
 Mapped compare/exchange now follows MC68040UM 7.4.5 on comparison failure:

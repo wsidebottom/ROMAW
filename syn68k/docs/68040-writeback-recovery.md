@@ -173,6 +173,26 @@ are checked, including live trace/CCR changes after operand capture. Normal
 cases also verify load sign extension and preserved Dn upper bytes. Additional
 active-stack EA cases remain part of the wider exception/addressing audit.
 
+## RTE after a user-mode throwaway prefix
+
+Format-1 processing commits its popped frame, SR and selected stack before
+reading the next frame (MC68040UM section 8.4.2). A later user-data frame-read
+fault now retains the live USP and receives an ordinary format-7 access frame.
+Its exception entry selects ISP or MSP from the committed M bit. Operand/ATC
+failures and dirty-victim or descriptor-history cache-push failures use the
+same checked or emitted memory path. The recovery marker certifies frame
+construction; it does not bypass the privilege check when RTE is executed
+again in user mode.
+
+The dedicated 7,232-case fixture covers both page sizes, every CCR value,
+ISP/MSP exception entry, each initial frame-header field, partially read longs,
+ATC and physical failures, and checked/native CPU and memory combinations.
+Guest code repairs missing descriptors and flushes translation, or drains PD
+writebacks with physical MOVES, before returning. Tests preserve the original
+user frame and verify the subsequent RTE takes privilege vector 8 without
+reading that frame. The existing stream fixture also exercises the previously
+unsupported user-prefix cases through exception entry and guest RTE.
+
 ## Page-crossing replay
 
 The shared checked/emitted operand path repeats the first-page portion of an
@@ -281,10 +301,10 @@ normal page-crossing bus behavior.
 
 ## Remaining work
 
-Further active-stack/double-fault variants, compound descriptor-push
-continuations after consumed MOVE16 source reads and the constructed user-mode
-throwaway-RTE fault case require further work. Ordinary MOVE16 line abort,
-PD cleanup, source-push recovery and retry now use the physical line bus.
+Further active-stack/double-fault variants and compound descriptor-push
+continuations after consumed MOVE16 source reads remain open. Ordinary MOVE16
+line abort, PD cleanup, source-push recovery and retry now use the physical line
+bus.
 Compound locked cache-push faults after a partial operand remain outside the
 certified continuation contract. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are

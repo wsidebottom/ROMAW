@@ -269,12 +269,12 @@ static uint32 call_store_exception(Syn68kIntegerStep* step, const Syn68kEAContex
 }
 
 /* A failed frame read has not popped the current frame. Resume at the live
-   privileged SP; earlier throwaway frames and callback effects stay committed. */
+   selected SP; earlier throwaway frames and callback effects stay committed. */
 static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step)
 {
     uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
     uint16 ssw;
-    if (step && context->memory && (cpu_state.sr & SR_SUPERVISOR_BIT) && context->access.fc == 5 &&
+    if (step && context->memory && context->access.fc == (cpu_state.sr & SR_SUPERVISOR_BIT ? 5u : 1u) &&
         !context->access.writing && !context->access.rmw) {
         if (syn68k_mmu040_access_ssw(&context->access, &ssw))
             step->restartable_read = 1;

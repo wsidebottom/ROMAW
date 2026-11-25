@@ -255,7 +255,7 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
     unsigned initial_mask = memory->mmu->tc & 0x4000 ? 8191 : 4095;
     unsigned repeat_prefix = initial_mask + 1 - (logical & initial_mask);
     /* Instruction-space reads belong to the aligned prefetch stream, not
-       the data unit's misaligned-operand replay (MC68040UM 7.3/7.4.3). */
+       the data unit's misaligned-operand replay (MC68040UM 7.3/7.4.2). */
     if (repeat_prefix >= size || (fc & 3) == 2)
         repeat_prefix = 0;
     while (result.completed < size) {

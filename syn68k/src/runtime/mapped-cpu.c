@@ -993,8 +993,8 @@ static int cache_push_restart(const Syn68kIntegerStep* record)
     uint16 ssw;
     return record->vector == 2 && record->format == 7 &&
            (record->cache_restart == 1 ||
-            (record->cache_restart == 2 && record->access.fc == 5 && !record->access.writing && !record->access.rmw &&
-             (record->access.size == 2 || record->access.size == 4) &&
+            (record->cache_restart == 2 && (record->access.fc == 1 || record->access.fc == 5) &&
+             !record->access.writing && !record->access.rmw && (record->access.size == 2 || record->access.size == 4) &&
              record->access.completed < record->access.size)) &&
            record->next == record->exception_pc && !(record->exception_pc & 1) &&
            record->fault_address == record->access.logical && !record->restartable_read && !record->store_state &&

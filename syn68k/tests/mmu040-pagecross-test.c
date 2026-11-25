@@ -233,7 +233,7 @@ static void matrix(unsigned native_mode)
 
 /* A logical long extension at the last word of a code page is two stream
    chunks, not a misaligned data-unit operand. Physical half-line prefetch
-   sequencing is a separate boundary (MC68040UM 7.3/7.4.3). */
+   sequencing is a separate boundary (MC68040UM 7.3/7.4.2). */
 static void instruction_stream(unsigned native_mode)
 {
 #if defined(MMU040_PAGECROSS_NATIVE) && !defined(MMU040_PAGECROSS_GROUPED)
