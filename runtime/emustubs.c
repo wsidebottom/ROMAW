@@ -3322,6 +3322,13 @@ STUB(CodeFragment)
 STUB(DisplayDispatch)
 {
     const uint16 selector = EM_D0;
+    if (selector == 0 || selector == 1) {
+        const syn68k_addr_t ret = POPADDR();
+        const BOOLEAN active_only = POPUB();
+        const uint32 previous = selector == 1 ? POPUL() : 0;
+        WRITEUL(EM_A7, ROMlib_ppc_display_device(selector, previous, active_only));
+        return ret;
+    }
     unsigned count;
     switch (selector) {
     case 0xffff:

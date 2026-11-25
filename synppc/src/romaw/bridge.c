@@ -2400,12 +2400,26 @@ static void ppc_lm_set_drag_pattern(const Pattern* input)
         memmove(DragPattern, input, sizeof *input);
 }
 
-PRIVATE GDHandle ppc_dm_first_screen_device(Boolean active_only)
+static GDHandle ppc_dm_screen_device(GDHandle start, Boolean active_only)
 {
     const uint16_t mask = (1 << screenDevice) | (active_only ? 1 << screenActive : 0);
-    for (GDHandle device = MR(DeviceList); device; device = GD_NEXT_GD(device))
+    for (GDHandle device = start; device; device = GD_NEXT_GD(device))
         if ((CW(GD_FLAGS_X(device)) & mask) == mask)
             return device;
+    return NULL;
+}
+
+PRIVATE GDHandle ppc_dm_first_screen_device(Boolean active_only)
+{
+    return ppc_dm_screen_device(MR(DeviceList), active_only);
+}
+
+static GDHandle ppc_dm_next_screen_device(GDHandle previous, Boolean active_only)
+{
+    if (previous)
+        for (GDHandle device = MR(DeviceList); device; device = GD_NEXT_GD(device))
+            if (device == previous)
+                return ppc_dm_screen_device(GD_NEXT_GD(device), active_only);
     return NULL;
 }
 
@@ -6255,6 +6269,13 @@ static OSErr ppc_display_draw_desktop(ppc_context* ctx, uint32 shape, boolean_t 
     if (rectangular)
         C_DisposeRgn(region);
     return result;
+}
+
+PUBLIC uint32 ROMlib_ppc_display_device(uint16 selector, uint32 previous, BOOLEAN active_only)
+{
+    const GDHandle device = selector == 1 ? ppc_dm_next_screen_device((GDHandle)SYN68K_TO_US_CHECK0(previous), active_only)
+                                          : ppc_dm_first_screen_device(active_only);
+    return device ? US_TO_SYN68K(device) : 0;
 }
 
 /* DisplayLib calls the live ABEB vector with the selector in D0. */

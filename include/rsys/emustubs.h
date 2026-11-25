@@ -228,6 +228,7 @@ extern syn68k_addr_t _ComponentDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _GestaltValueDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _DisplayDispatch(syn68k_addr_t, void**);
 extern OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4]);
+extern uint32 ROMlib_ppc_display_device(uint16 selector, uint32 previous, BOOLEAN active_only);
 extern syn68k_addr_t _ThreadDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _CodeFragment(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _MixedMode(syn68k_addr_t ignoreme, void** ignoreme2);
