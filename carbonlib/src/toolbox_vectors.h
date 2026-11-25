@@ -265,8 +265,6 @@ TOOLBOX_VECTOR(HCreateResFile, 0x0e6c, 0xf80, uint32_t)
 
 TOOLBOX_SELECTOR(AppendDialogItemList, 0x17a0, 0x2ba8, 0x412, int16_t)
 /* These Appearance exports are exercised through the live DialogDispatch trap. */
-TOOLBOX_WRAPPER(MoveDialogItem, 0x17a0, 0xaba8, 0x510, int16_t)
-TOOLBOX_WRAPPER(SizeDialogItem, 0x17a0, 0xaba8, 0x511, int16_t)
 TOOLBOX_SELECTOR(CheckWindowPosition, 0x0ea4, 0x17d8, 0xc, uint8_t)
 TOOLBOX_SELECTOR(NewTSMDocument, 0x1750, 0xfee8, 0x0, int16_t)
 TOOLBOX_SELECTOR(DeleteTSMDocument, 0x1750, 0x3e8, 0x1, int16_t)

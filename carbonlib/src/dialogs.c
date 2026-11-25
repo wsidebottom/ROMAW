@@ -19,6 +19,7 @@
 #include "cf_batch.h"
 #include "rsys/ctl.h"
 #include "rsys/itm.h"
+#include "rsys/wind.h"
 #include <string.h>
 
 WindowPtr ROMlib_carbon_dialog_window(DialogPtr dialog)
@@ -88,6 +89,32 @@ int ROMlib_carbon_std_filter_proc(ROMlib_carbon_ppc_frame* call)
         return 0;
     call->words[0] = (uint8_t)result;
     return 1;
+}
+
+static int carbon_dialog_item_geometry(ROMlib_carbon_ppc_frame* call, bool resize)
+{
+    const uint32_t* args = call->words;
+    DialogPtr dialog = args[0] ? ROMlib_carbon_try_guest_memory(args[0], sizeof(WindowRecord), 0) : NULL;
+    uint32_t result = paramErr;
+    if (dialog && ROMlib_valid_window(dialog)) {
+        result = resize ? ROMlib_size_dialog_item(dialog, args[1], args[2], args[3])
+                        : ROMlib_move_dialog_item(dialog, args[1], args[2], args[3]);
+    }
+    else if (dialog &&
+             !ROMlib_carbon_call_toolbox_vector(0x17a0, 0xaba8, resize ? 0x511 : 0x510, call, &result))
+        return 0;
+    call->words[0] = (int16_t)result;
+    return 1;
+}
+
+int ROMlib_carbon_move_dialog_item(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_dialog_item_geometry(call, false);
+}
+
+int ROMlib_carbon_size_dialog_item(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_dialog_item_geometry(call, true);
 }
 
 static int dialog_memory_call(uint16_t trap_word, uint32_t info, uint32_t first, uint32_t second, uint32_t* result)

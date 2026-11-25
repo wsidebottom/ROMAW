@@ -147,6 +147,8 @@ int ROMlib_carbon_get_param_text(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_insert_dialog_item(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_remove_dialog_items(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_std_filter_proc(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_move_dialog_item(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_size_dialog_item(ROMlib_carbon_ppc_frame* call);
 void ROMlib_carbon_set_port_dialog_port(DialogPtr dialog);
 Rect* ROMlib_carbon_control_bounds(ControlHandle control, Rect* output);
 
