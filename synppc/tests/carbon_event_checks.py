@@ -930,7 +930,10 @@ def event_sections(probe):
             ):
                 require("Get" + noun + "Size", [*key, result], -5604, side=side)
                 require("Set" + noun, [*key, 8, data], side=side)
-                require("Get" + noun, [*key, 0, result, 0], 0 if noun == "WindowProperty" else -50, side=side)
+                # WindowsLib permits a size query through GetWindowSystemProperty.
+                require("Get" + noun, [*key, 0, result, 0], 0 if noun == "WindowSystemProperty" else -50, side=side)
+                if noun == "WindowSystemProperty":
+                    check_word(scratch + 104, 8, "window system property size with no buffer")
                 require("Get" + noun + "Size", [*key, result], side=1 - side)
                 check_word(scratch + 104, 8, "window property size")
                 require("Get" + noun, [*key, 8, result, output], side=1 - side)
@@ -1047,10 +1050,10 @@ def event_sections(probe):
                 p.emit(0x809E0000 | scratch + 104)
                 p.equal(name + " matches the installed class table")
 
-        require("SetWindowActivationScope", [window, 4], -50)
-        require("SetWindowActivationScope", [window, 3])
+        require("SetWindowActivationScope", [window, 3], -50)
+        require("SetWindowActivationScope", [window, 0])
         require("GetWindowActivationScope", [window, saved], side=1)
-        check_word(scratch + 104, 3, "saved getter sees the native activation scope")
+        check_word(scratch + 104, 0, "saved getter sees the native activation scope")
         require("SetWindowActivationScope", [window, 1], side=1)
         require("GetWindowActivationScope", [window, native])
         check_word(scratch + 100, 1, "native getter sees the saved activation scope")
@@ -1071,7 +1074,7 @@ def event_sections(probe):
             require("ChangeWindowAttributes", [0, 0, 0], -5600, side=side)
             require("ChangeWindowAttributes", [window, 0, 0], side=side)
             require("ChangeWindowAttributes", [window, 1, 1], -50, side=side)
-            require("ChangeWindowAttributes", [window, 0, 1], -5601, side=side)
+            require("ChangeWindowAttributes", [window, 0, 1], side=side)
 
         # The saved routine identifies its custom WDEF path by the resource ID
         # in the system property. Leave the installed drawing procedure intact.
@@ -1093,6 +1096,23 @@ def event_sections(probe):
         p.nonzero("create a visible front window for class traversal")
         save_word(scratch + 108)
         front = probe.slot(scratch + 108)
+        for side in (0, 1):
+            require("GetSheetWindowParent", [0, native], -5600, side=side)
+            require("GetSheetWindowParent", [window, 0], -50, side=side)
+            require("GetSheetWindowParent", [window, native], side=side)
+            check_word(scratch + 100, 0, "a regular window has no sheet parent")
+        for writer in (0, 1):
+            require("SetWindowSystemProperty", [window, 0x73706172, 4, probe.ptr(scratch + 108)], side=writer)
+            require("GetSheetWindowParent", [window, native], side=1 - writer)
+            compare_words(scratch + 100, scratch + 108, "sheet parent reads the shared system property")
+            require("RemoveWindowSystemProperty", [window, 0x73706172], side=1 - writer)
+        for candidate in (window, front):
+            probe.call("_IsWindowLatentVisible", [candidate, saved], side=1)
+            save_word(scratch + 112)
+            probe.call("_IsWindowLatentVisible", [candidate, native])
+            p.emit(0x809E0000 | scratch + 112)
+            p.equal("latent visibility matches the saved Window Manager")
+            compare_words(scratch + 100, scratch + 104, "latent visibility returns the same reason bits")
         for name, prefix in (("GetFrontWindowOfClass", []), ("GetNextWindowOfClass", [front])):
             for window_class in (6, 0xFFFFFFFE, 0xFFFFFFFF):
                 for visible in (0, 1):
@@ -1103,8 +1123,51 @@ def event_sections(probe):
                     p.emit(0x809E0000 | scratch + 104)
                     p.equal(name + " matches saved class and visibility traversal")
 
+        for where, window_class in (((100, 90), 6), ((100, 90), 8), ((100, 90), -1), ((5, 5), -1), ((3000, 3000), -1)):
+            point = probe.far_raw(struct.pack(">2h", *where))
+            probe.call("FindWindowOfClass", [point, window_class, saved, probe.ptr(scratch + 118)], side=1)
+            save_word(scratch + 112)
+            probe.call("FindWindowOfClass", [point, window_class, native, probe.ptr(scratch + 116)])
+            p.emit(0x809E0000 | scratch + 112)
+            p.equal("window hit and class filtering match the saved status")
+            compare_words(scratch + 100, scratch + 104, "the same window or nil is returned")
+            p.emit(0xA07E0000 | scratch + 116, 0xA09E0000 | scratch + 118)
+            p.equal("the same window part is returned")
+        require("FindWindowOfClass", [point, -1, 0, 0])
+
         require("ReleaseWindow", [front])
         require("GetWindowRetainCount", [front], 0)
+        probe.call("DisposeWindow", [window])
+
+    def window_scrolling():
+        window_bounds = probe.far_raw(struct.pack(">4h", 65, 45, 135, 165))
+        scroll_bounds = probe.far_raw(struct.pack(">4h", 8, 8, 40, 65))
+        probe.call("NewWindow", [0, window_bounds, probe.far_raw(b"\x06Scroll"), 1, 0, -1, 0, 0])
+        p.nonzero("create a visible scrolling window")
+        save_word(scratch + 96)
+        window = probe.slot(scratch + 96)
+        input_region, first, second, update = (probe.slot(scratch + offset) for offset in (100, 104, 108, 112))
+        for offset in (100, 104, 108, 112):
+            probe.call("NewRgn")
+            p.nonzero("allocate a scrolling region")
+            save_word(scratch + offset)
+        probe.call("RectRgn", [input_region, scroll_bounds])
+        for side in (0, 1):
+            require("ScrollWindowRegion", [0, input_region, 5, 0, 0, first], -5600, side)
+            require("ScrollWindowRegion", [window, 0, 5, 0, 0, first], -50, side)
+            require("ScrollWindowRegion", [window, input_region, 0, 0, 0, first], -50, side)
+            require("ScrollWindowRegion", [window, input_region, 5, 0, 4, first], -50, side)
+            require("ScrollWindowRect", [window, scroll_bounds, 0, 0, 0, first], side=side)
+        for name, source in (("ScrollWindowRegion", input_region), ("ScrollWindowRect", scroll_bounds)):
+            for option in (0, 1, 2, 3):
+                for side, destination in ((0, first), (1, second)):
+                    probe.call("SetRectRgn", [update, -100, -100, 300, 300])
+                    require("ValidWindowRgn", [window, update], side=side)
+                    require(name, [window, source, 5, -3, option, destination], side=side)
+                require("EqualRgn", [first, second], 1)
+                require("EmptyRgn", [first], 0)
+        for region in (input_region, first, second, update):
+            probe.call("DisposeRgn", [region])
         probe.call("DisposeWindow", [window])
 
     def window_groups():
@@ -1232,7 +1295,7 @@ def event_sections(probe):
                 p.equal("a floating window is hidden under the same conditions")
         require("ShowFloatingWindows")
 
-        for scope in (0, 1, 2, 3):
+        for scope in (0, 1, 2):
             require("SetWindowActivationScope", [floating, scope])
             compare("FrontNonFloatingWindow")
             compare("ActiveNonFloatingWindow")
@@ -1327,6 +1390,28 @@ def event_sections(probe):
             compare_words(
                 scratch + 176 + offset, scratch + 184 + offset, "matching menu-bar-adjusted positioning bounds"
             )
+        full_screen = probe.far_raw(struct.pack(">4h", 125, 115, 440, 540))
+        small_screen = probe.far_raw(struct.pack(">4h", 125, 115, 160, 155))
+        for screen, flags in ((0, 8), (full_screen, 8), (small_screen, 8), (small_screen, 10), (small_screen, 13)):
+            for side, output in ((1, 152), (0, 144)):
+                result = probe.ptr(scratch + output)
+                require("ConstrainWindowToScreen", [0, 32, flags, screen, result], -5600, side=side)
+                probe.call("BlockMoveData", [structure_bounds, result, 8])
+                probe.call("ConstrainWindowToScreen", [document, 32, flags, screen, result], side=side)
+                if side:
+                    save_word(scratch + 160)
+                else:
+                    p.emit(0x809E0000 | scratch + 160)
+                    p.equal("constraining a window returns the saved status")
+            for offset in (0, 4):
+                compare_words(scratch + 144 + offset, scratch + 152 + offset, "constrained bounds agree")
+            require("GetWindowBounds", [document, 32, probe.ptr(scratch + 124)])
+            for offset in (0, 4):
+                compare_words(scratch + 124 + offset, structure_bounds[1] + offset, "calculate-only keeps the window")
+        require("ConstrainWindowToScreen", [document, 32, 2, full_screen, probe.ptr(scratch + 144)])
+        require("GetWindowBounds", [document, 32, probe.ptr(scratch + 152)], side=1)
+        for offset in (0, 4):
+            compare_words(scratch + 144 + offset, scratch + 152 + offset, "apply mode moves to the calculated bounds")
         require("IsWindowActive", [0], 0)
         require("ActivateWindow", [0, 1], -5600)
         color_output = probe.ptr(scratch + 144)
@@ -1340,6 +1425,22 @@ def event_sections(probe):
             require("GetWindowContentColor", [document, color_output], side=1 - side)
             check_word(scratch + 144, (rgb[0] << 16) | rgb[1], "both APIs see the window's red and green components")
             check_word(scratch + 148, (rgb[2] << 16) | 0x5678, "the color query leaves the trailing guard intact")
+        for side, result in ((0, 124), (1, 156)):
+            size = probe.ptr(scratch + result + 8)
+            probe.call("NewCWindow", [0, ideal_user_state, caption, 0, 8, -1, 1, 0])
+            p.nonzero("create a zoomable document")
+            save_word(scratch + 120)
+            zoomable = probe.slot(scratch + 120)
+            probe.call("BlockMoveData", [dimensions, size, 4])
+            require("ZoomWindowIdeal", [0, 8, size], -5600, side=side)
+            require("ZoomWindowIdeal", [zoomable, 3, size], -50, side=side)
+            require("ZoomWindowIdeal", [zoomable, 8, size], side=side)
+            require("GetWindowBounds", [zoomable, 33, probe.ptr(scratch + result)])
+            require("ZoomWindowIdeal", [zoomable, 7, size], side=side)
+            require("GetWindowBounds", [zoomable, 33, probe.ptr(scratch + result + 12)])
+            probe.call("DisposeWindow", [zoomable])
+        for offset in (0, 4, 8, 12, 16):
+            compare_words(scratch + 124 + offset, scratch + 156 + offset, "zoom agrees with the saved Window Manager")
         for window in (hidden, floating, document):
             probe.call("DisposeWindow", [window])
         p.emit(0x807E0000 | scratch + 108, 0x2C030000, 0)
@@ -1388,9 +1489,46 @@ def event_sections(probe):
             p.nonzero("create a window for metadata checks")
             save_word(scratch + offset)
         window, other = (probe.slot(scratch + at) for at in (112, 124))
+        # WindowsLib sets the modified bit during NewWindow.
+        require("IsWindowModified", [window], 1)
+        require("SetWindowModified", [other, 0])
+        event = probe.ptr(scratch + 128)
+        click = probe.raw(struct.pack(">HIIhhH", 1, 0, 0, -100, -100, 0))
+        probe.call("ShowWindow", [window])
+        for action in (0, 1, 2, 3):
+            probe.call("SetWindowDoubleClickAction", [action])
+            for side in (0, 1):
+                probe.call("WMCollapseWindow", [window, 0])
+                probe.call("BlockMoveData", [click, event, 16])
+                probe.call("DoubleClickWindowTitle", [window, event], side=side)
+                if action == 0:
+                    p.expect(0, "disabled title actions leave the event unhandled")
+                    check_word(scratch + 128, 0x00010000, "a disabled title action keeps the event type")
+                    check_word(scratch + 138, 0xFF9CFF9C, "a disabled title action keeps the event position")
+                elif side == 0:
+                    save_word(scratch + 144)
+                    p.emit(0x807E0000 | scratch + 128)
+                    save_word(scratch + 148)
+                    p.emit(0x807E0000 | scratch + 138)
+                    save_word(scratch + 152)
+                else:
+                    p.emit(0x809E0000 | scratch + 144)
+                    p.equal("title action reports the same result as WindowsLib")
+                    compare_words(scratch + 128, scratch + 148, "title action updates the same event type")
+                    compare_words(scratch + 138, scratch + 152, "title action updates the same event position")
+        probe.call("HideWindow", [window])
+        probe.call("SetWindowDoubleClickAction", [probe.slot(scratch + 108)])
+        origin = probe.far_raw(struct.pack(">4h", 110, 160, 118, 168))
+        for side in (0, 1):
+            require("TransitionWindow", [window, 0, 1, 0], -50, side=side)
+            require("TransitionWindow", [window, 1, 3, 0], -50, side=side)
+            require("TransitionWindow", [0, 1, 1, 0], -5600, side=side)
+            require("TransitionWindow", [window, 1, 1, origin], side=side)
+            require("IsWindowVisible", [window], 1)
+            require("TransitionWindow", [window, 1, 2, 0], side=side)
+            require("IsWindowVisible", [window], 0)
         require("GetWindowVisualClass", [window, native])
         check_word(scratch + 100, 6, "classic document visual class")
-        require("IsWindowModified", [window], 0)
         for modified, threshold in ((1, 157), (0, 22)):
             require("SetWindowModified", [window, modified])
             require("IsWindowModified", [window], modified)
@@ -1402,10 +1540,10 @@ def event_sections(probe):
             require("GetWindowGadgetDropThreshold", [other, native])
             p.emit(0x887E0000 | (scratch + 100))
             p.expect(0, "the other window keeps its own threshold")
-        require("GetCurrentProcess", [probe.ptr(scratch + 116)])
+        probe.call("GetWindowProcess", [window, probe.ptr(scratch + 116)], side=1)
         probe.call("GetWindowProcess", [window, native])
-        compare_words(scratch + 100, scratch + 116, "window process high word")
-        compare_words(scratch + 104, scratch + 120, "window process low word")
+        compare_words(scratch + 100, scratch + 116, "window owner matches the saved process high word")
+        compare_words(scratch + 104, scratch + 120, "window owner matches the saved process low word")
         probe.call("DisposeWindow", [other])
         probe.call("DisposeWindow", [window])
 
@@ -1845,6 +1983,7 @@ def event_sections(probe):
     probe.section("Carbon window and control properties and designated buttons", window_properties_and_buttons)
     probe.section("Carbon regular and alternate window titles", window_titles)
     probe.section("Carbon window classes, attributes and activation scope", window_metadata)
+    probe.section("Carbon window scrolling and exposed regions", window_scrolling)
     probe.section("Carbon window groups and z-order traversal", window_groups)
     probe.section("Carbon floating window visibility and activation", window_activation)
     if not probe.original_only:

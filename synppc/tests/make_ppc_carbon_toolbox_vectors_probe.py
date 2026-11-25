@@ -7,7 +7,7 @@
 #
 #   Functions: vector_cases, install_vector_targets, patched_vectors, region_operations, graphics_and_resources, selector_operations, selector_descriptors,
 #              upp_cases, routine_descriptors, upp_invocations, textedit_upp_invocations, direct_upp_cases, direct_upps,
-#              register_cases, register_vectors, installed_memory_traps, toolbox_sections, write_math_reference,
+#              register_cases, register_vectors, installed_memory_traps, toolbox_sections, write_toolbox_references,
 #              math_compare, math_scalars, math_classification, math_environment, math_decimals, math_extended, math_long,
 #              math_wide, file_cases, fsref_cases, file_parameter_blocks, file_operations, file_spec_operations,
 #              launch_services_operations,
@@ -19,7 +19,8 @@
 #              sound_converter_operations, power_activity_operations, code_fragment_operations, navigation_operations,
 #              fixmath_wide_operations, fixed_decimal_operations,
 #              classic_utility_accessors, font_script_queries, script_utility_operations,
-#              geometry_operations, application_operations,
+#              geometry_operations, application_operations, window_metadata_operations, window_queue_operations,
+#              window_proxy_operations,
 #              collection_manager_operations, component_operations, menu_manager_operations, help_manager_operations,
 #              control_manager_operations,
 #              atsui_operations, atsui_style_edits, atsui_layout_operations, atsui_render_operations, make_atsui_probe, make_probe.
@@ -203,9 +204,26 @@ APPEARANCE_STATE_APIS = (
     "SetThemeSoundPanningSpread",
     "SetThemeSoundMask",
     "SetThemeSoundsEnabled",
+    "PlayThemeSound",
+    "PlayThemeControlSound",
+    "BeginThemeDragSound",
+    "BeginThemeDragIndicatorSound",
+    "EndThemeDragSound",
     "GetThemePlaylist",
     "SetThemePlaylist",
     "IsValidAppearanceFileType",
+    "GetAppearance",
+    "SetAppearance",
+    "GetTheme",
+    "SetTheme",
+    "GetScenario",
+    "SetScenario",
+    "GetThemeTextColor",
+    "SetThemeTextColorForWindow",
+    "SetThemeBackgroundForWindow",
+    "CanThemeDrawOnAllMonitors",
+    "IsThemeCreditDialogAvailable",
+    "SetHighlightColor",
     "CountThemeVariants",
     "GetIndThemeVariant",
     "GetThemeVariantByName",
@@ -214,6 +232,8 @@ APPEARANCE_STATE_APIS = (
     "SetBevelButtonMenuValue",
     "GetBevelButtonMenuHandle",
     "GetTabContentRect",
+    "GetThemeMenuBarHeight",
+    "IsThemeInColor",
     "SetDisclosureTriangleLastValue",
     "SetTabEnabled",
 )
@@ -942,21 +962,34 @@ def toolbox_sections(probe, rows, registers, constructors, disposers, invocation
     probe.section("Borrowed PowerPC UPPs", lambda: direct_upps(probe, borrowed))
 
 
-def write_math_reference(destination, include_atsui=False):
+def write_toolbox_references(destination, include_atsui=False, include_object_packing=False):
     references = ROOT / "references/disasm/system9"
     manifest = json.loads((references / "System/manifest.json").read_text())
     data = (references / "input/System").read_bytes()
     if hashlib.sha256(data).hexdigest() != manifest["data_sha256"]:
-        raise ValueError("System data fork differs from the local MathLib disassembly reference")
-    image = next(row for row in manifest["fragments"] if "MathLib" in row["names"])
-    start = image["offset"]
-    layout = json.loads((references / image["directory"] / "pef.json").read_text())
-    size = max(row["offset"] + row["packed_size"] for row in layout["sections"])
+        raise ValueError("System data fork differs from the local disassembly reference")
+    fragments = {name: row for row in manifest["fragments"] if row["container"] == "data" for name in row["names"]}
+
+    def write_data_fragment(name, exported_name=None, resources=()):
+        fragment = fragments[name]
+        start = fragment["offset"]
+        layout = json.loads((references / fragment["directory"] / "pef.json").read_text())
+        size = max(row["offset"] + row["packed_size"] for row in layout["sections"])
+        write_fragment(destination, exported_name or name, data[start : start + size], 0, extra_resources=resources)
+
     table = next(row for row in manifest["resources"] if row["type"] == "nlib" and row["name"] == "MathLibGlobals")
     write_fragment(destination, "MathLibGlobals", (references / "System" / table["file"]).read_bytes(), 0)
     table = next(row for row in manifest["resources"] if row["type"] == "nlib" and row["name"] == "Math64Lib")
     write_fragment(destination, "Math64Oracle", (references / "System" / table["file"]).read_bytes(), 0)
-    write_fragment(destination, "MathOracle", data[start : start + size], 0)
+    write_data_fragment("MathLib", "MathOracle")
+    if include_object_packing:
+        resources = [
+            (b"osl ", row["id"], (references / "System" / row["file"]).read_bytes())
+            for row in manifest["resources"]
+            if row["type"] == "osl "
+        ]
+        write_data_fragment("OSLData")
+        write_data_fragment("ObjectSupportLib", "ObjectPackingOracle", resources)
     if include_atsui:
         required = (
             "FMSharedCaches",
@@ -968,13 +1001,8 @@ def write_math_reference(destination, include_atsui=False):
             "TTScaler3",
             "ATSStreaming",
         )
-        fragments = {name: row for row in manifest["fragments"] if row["container"] == "data" for name in row["names"]}
         for name in required:
-            fragment = fragments[name]
-            start = fragment["offset"]
-            layout = json.loads((references / fragment["directory"] / "pef.json").read_text())
-            size = max(row["offset"] + row["packed_size"] for row in layout["sections"])
-            write_fragment(destination, name, data[start : start + size], 0)
+            write_data_fragment(name)
 
 
 def math_compare(probe, name, values, expected):
@@ -2217,6 +2245,14 @@ AE_BUILD_NAMES = (
     "vAEBuildAppleEvent",
 )
 
+AE_OBJECT_PACKING = (
+    "CreateCompDescriptor",
+    "CreateLogicalDescriptor",
+    "CreateObjSpecifier",
+    "CreateOffsetDescriptor",
+    "CreateRangeDescriptor",
+)
+
 
 def apple_event_printer_operations(probe):
     p = probe.p
@@ -2378,6 +2414,120 @@ def apple_event_array_operations(probe):
     check(24, 0, "a zero-length replacement clears the record")
     call("AEDisposeDesc", [record])
     call("AEDisposeDesc", [listing])
+
+
+def apple_event_object_packing(probe):
+    p = probe.p
+    _, base = probe.raw(bytes(80))
+    ptr = lambda at: probe.ptr(base + at)
+    first, last, terms, output, field = (ptr(at) for at in (0, 8, 16, 24, 32))
+    keyword, dtype, value, size = (ptr(at) for at in (40, 44, 48, 52))
+    fourcc = lambda code: int.from_bytes(code, "big")
+    record_view = probe.far_raw(struct.pack(">4I", 0, 0, 24, fourcc(b"reco")) + bytes(256))
+    list_view = probe.far_raw(struct.pack(">4I", 0, 0, 24, fourcc(b"list")) + bytes(256))
+
+    def word(at, expected, label):
+        p.emit(0x807E0000 | (base + at))
+        p.expect(expected, label)
+
+    def call(name, args, side=0):
+        probe.call(name, args, side=side)
+        p.expect(0, name + " succeeds")
+
+    def expand_compact(at, kind, view):
+        # Add the classic manager header to the original stream's count,
+        # prefix size and entries so the same accessors can inspect them.
+        probe.call("GetHandleSize", [probe.slot(base + at + 4)])
+        p.emit(0x38830010, 0x909E0000 | (base + 76), 0x5463C23E)
+        p.expect(0, "the original packed data fits the comparison buffer")
+        descriptor = ptr(at)
+        call("AEGetDescData", [descriptor, probe.ptr(view[1] + 16), 256])
+        call("AEDisposeDesc", [descriptor])
+        call("AECreateDesc", [fourcc(kind), view, probe.slot(base + 76), descriptor])
+
+    def record(code, count, side):
+        word(24, fourcc(code), "object packing uses the expected outer descriptor type")
+        if side:
+            expand_compact(24, b"reco", record_view)
+        else:
+            probe.arguments([fourcc(b"reco")], 0)
+            p.emit(0x907E0000 | (base + 24))
+        call("AECountItems", [output, size])
+        word(52, count, "the object record contains every field")
+
+    def scalar(index, name, type, expected):
+        call("AEGetNthPtr", [output, index, fourcc(b"****"), keyword, dtype, value, 4, size])
+        word(40, fourcc(name), "the object field has the expected keyword")
+        word(44, fourcc(type), "the object field has the expected descriptor type")
+        word(48, expected, "the object field preserves its scalar payload")
+
+    def save_backing(at, saved):
+        p.emit(
+            0x807E0000 | (base + at + 4),
+            0x907E0000 | (base + saved),
+            0x80630000,
+            0x907E0000 | (base + saved + 4),
+        )
+
+    def backing_released(saved, label):
+        # AEDisposeDesc in ROMAW releases the handle and leaves the descriptor words in place.
+        p.emit(0x807E0000 | (base + saved), 0x80630000, 0x809E0000 | (base + saved + 4), 0x7C632278)
+        p.nonzero(label)
+
+    for side in (0, 1):
+        call("CreateOffsetDescriptor", [-70001, first], side=side)
+        call("CreateOffsetDescriptor", [7, last], side=side)
+        word(0, fourcc(b"long"), "offset descriptors use signed 32-bit integers")
+        call("CreateRangeDescriptor", [first, last, 0, output], side=side)
+        record(b"rang", 2, side)
+        scalar(1, b"star", b"long", -70001)
+        scalar(2, b"stop", b"long", 7)
+        word(0, fourcc(b"long"), "range creation can retain its inputs")
+        call("AEDisposeDesc", [output])
+
+        save_backing(0, 56)
+        save_backing(8, 64)
+        call("CreateCompDescriptor", [fourcc(b"=   "), first, last, 1, output], side=side)
+        for saved in (56, 64):
+            backing_released(saved, "comparison creation releases each input when requested")
+        record(b"cmpd", 3, side)
+        scalar(1, b"relo", b"enum", fourcc(b"=   "))
+        scalar(2, b"obj1", b"long", -70001)
+        scalar(3, b"obj2", b"long", 7)
+        call("AEDisposeDesc", [output])
+        call("CreateOffsetDescriptor", [7, last], side=side)
+        call("AECreateList", [0, 0, 0, terms])
+        call("AEPutDesc", [terms, 0, last])
+        call("AEDisposeDesc", [last])
+        save_backing(16, 56)
+        call("CreateLogicalDescriptor", [terms, fourcc(b"AND "), 1, output], side=side)
+        backing_released(56, "logical creation releases its original term list")
+        record(b"logi", 2, side)
+        scalar(2, b"logc", b"enum", fourcc(b"AND "))
+        call("AEGetNthDesc", [output, 1, fourcc(b"****"), keyword, field])
+        word(40, fourcc(b"term"), "the logical record contains its term list")
+        if side:
+            expand_compact(32, b"list", list_view)
+        call("AECountItems", [field, size])
+        word(52, 1, "the logical record retains the copied term")
+        call("AEGetNthPtr", [field, 1, fourcc(b"****"), keyword, dtype, value, 4, size])
+        word(48, 7, "the logical term retains its value")
+        call("AEDisposeDesc", [field])
+        call("AEDisposeDesc", [output])
+
+        call("AECreateDesc", [fourcc(b"null"), 0, 0, first])
+        call("CreateOffsetDescriptor", [9, last], side=side)
+        save_backing(8, 64)
+        call("CreateObjSpecifier", [fourcc(b"docu"), first, fourcc(b"indx"), last, 1, output], side=side)
+        backing_released(64, "object creation releases its input key descriptor")
+        record(b"obj ", 4, side)
+        scalar(1, b"want", b"type", fourcc(b"docu"))
+        call("AEGetNthDesc", [output, 2, fourcc(b"****"), keyword, field])
+        word(40, fourcc(b"from"), "the object preserves the container keyword")
+        word(32, fourcc(b"null"), "a null container is serialized")
+        scalar(3, b"form", b"enum", fourcc(b"indx"))
+        scalar(4, b"seld", b"long", 9)
+        call("AEDisposeDesc", [output])
 
 
 def apple_event_builder_operations(probe):
@@ -2720,14 +2870,21 @@ def apple_event_operations(probe):
     p.expect(0x1234ABCD, "AEGetEventHandler returns the registered reference value")
     for mode, status in ((0x10, -1713), (0x20, 0), (0, 0)):
         call("AESend", [event, 0, mode | 1, 0, -1, 0, 0])  # kAENoReply to self
-        # The queue can already hold a launch event.
+        # Earlier Appearance checks can leave preference-change broadcasts in
+        # the same queue as the launch event and the synthetic self-send.
         p.emit(0x38000001, 0x901E1EE0, 0x901E1EE4)
-        for _ in range(4):
-            probe.call("GetNextEvent", [1024, ptr(0x1EF0)])
-            p.emit(0x2C030000, 0)
-            branch = len(p.code) - 1
-            probe.call("AEProcessAppleEvent", [ptr(0x1EF0)])
-            p.code[branch] = 0x41820000 | (len(p.code) - branch) * 4
+        p.emit(0x38600020, 0x907E1EDC)
+        queue_loop = len(p.code)
+        probe.call("GetNextEvent", [1024, ptr(0x1EF0)])
+        p.emit(0x2C030000, 0)
+        queue_empty = len(p.code) - 1
+        probe.call("AEProcessAppleEvent", [ptr(0x1EF0)])
+        p.emit(0x807E1EE0, 0x2C030001, 0)
+        dispatched = len(p.code) - 1
+        p.emit(0x807E1EDC, 0x3863FFFF, 0x907E1EDC, 0x2C030000)
+        p.emit(0x40820000 | (((queue_loop - len(p.code)) * 4) & 0xFFFF))
+        p.code[queue_empty] = 0x41820000 | (len(p.code) - queue_empty) * 4
+        p.code[dispatched] = 0x40820000 | (len(p.code) - dispatched) * 4
         p.emit(0x807E1EE0)
         p.expect(0x1234ABCD, "AEProcessAppleEvent dispatches the event posted by AESend")
         p.emit(0x807E0000 | current)
@@ -7314,6 +7471,626 @@ def atsui_render_operations(probe, layout):
     probe.call("DisposeGWorld", [world])
 
 
+def window_queue_operations(probe, window, base):
+    p = probe.p
+    slot, ptr = probe.slot, probe.ptr
+    state, original, queue, output, event, active = (base + offset for offset in (0, 4, 8, 12, 16, 20))
+
+    def queue_record(offset, saved):
+        p.emit(0x809E0000 | state, 0x80640000 | offset, 0x907E0000 | saved)
+
+    def install_queue(offset, source):
+        p.emit(0x809E0000 | state, 0x807E0000 | source, 0x90640000 | offset)
+
+    # Each test temporarily owns a separate queue in the current saved process.
+    p.emit(0x806002B6, 0x806302A4, 0x80630008, 0x907E0000 | state)
+    p.nonzero("the saved Window Manager has per-process queue state")
+    queue_record(0x10, original)
+    for side in (0, 1):
+        probe.call("NewStackListSys", [8, 4, 0x77696E64, 0x61637476, ptr(queue)])
+        p.expect(0, "allocate an isolated activation event queue")
+        install_queue(0x10, queue)
+        probe.arguments([window], 0)
+        p.emit(0x907E0000 | event, 0x38600001, 0x987E0000 | active)
+        probe.call("EnqueueStackListElement", [slot(queue), ptr(event)])
+        p.expect(0, "enqueue an activation record in the original stack layout")
+        p.emit(0x38600000, 0x987E0000 | active)
+        probe.call("GetNextWindowActivateEvent", [ptr(output), ptr(active), 0], side=side)
+        p.expect(1, "a queued activation is returned even when the low-memory remove flag is clear")
+        p.emit(0x807E0000 | output, 0x809E0000 | event)
+        p.equal("the activation record preserves its window pointer")
+        p.emit(0x887E0000 | active)
+        p.expect(1, "the activation record preserves its Boolean")
+        probe.call("CountStackListElements", [slot(queue)])
+        p.expect(0, "the saved activation queue was consumed")
+        install_queue(0x10, original)
+        probe.call("DisposeStackList", [slot(queue)])
+        p.expect(0, "release the isolated activation queue")
+
+    queue_record(0x0C, original)
+    p.emit(0x809E0000 | state, 0x38600000, 0x9064000C)
+    for side in (0, 1):
+        probe.call("PostDelayedWindowReshape", [window], side=side)
+        queue_record(0x0C, queue)
+        p.nonzero("posting a delayed reshape creates or reuses the process queue")
+        probe.call("CountStackListElements", [slot(queue)])
+        p.expect(side + 1, "both reshape APIs append to the same saved queue")
+    for _ in range(2):
+        probe.call("PopStackListElement", [slot(queue), ptr(output)])
+        p.expect(0, "read a queued reshape using the original stack list")
+        probe.arguments([window], 0)
+        p.emit(0x809E0000 | output)
+        p.equal("the queued reshape contains the requested window")
+    install_queue(0x0C, original)
+    probe.call("DisposeStackList", [slot(queue)])
+    p.expect(0, "release the isolated reshape queue")
+
+    for side in (0, 1):
+        probe.call("PostWindowActivateEvent", [window, 1], side=side)
+        probe.arguments([window], 0)
+        p.emit(0x8863006F)
+        p.expect(1, "posting activation highlights the window")
+        probe.call("PostWindowActivateEvent", [window, 0], side=1 - side)
+        probe.arguments([window], 0)
+        p.emit(0x8863006F)
+        p.expect(0, "posting deactivation clears the highlight")
+
+
+def window_proxy_operations(probe, window, base):
+    p = probe.p
+    out = probe.ptr(base)
+    mouse = probe.far_raw(bytes(4))
+    unset_spec = probe.far_raw(b"\x5a" * 70)
+    for name, output, missing in (
+        ("GetWindowProxyAlias", out, -5602),
+        ("GetWindowProxyFSSpec", unset_spec, -5602),
+        ("GetWindowProxyIcon", out, -5604),
+    ):
+        probe.scalar(name, [0, output], -5600)
+        probe.scalar(name, [window, output], missing)
+    probe.arguments([unset_spec], 0)
+    p.emit(0x80630000)
+    p.expect(0x5A5A5A5A, "an unregistered proxy leaves the file specification untouched")
+
+    probe.call("NewRgn")
+    p.nonzero("allocate a caller-owned proxy drag outline")
+    p.emit(0x907E0000 | (base + 8))
+    outline = probe.slot(base + 8)
+    probe.scalar("BeginWindowProxyDrag", [0, out, outline], -5600)
+    probe.scalar("BeginWindowProxyDrag", [window, 0, outline], -50)
+    probe.scalar("BeginWindowProxyDrag", [window, out, 0], -50)
+    probe.scalar("BeginWindowProxyDrag", [window, out, outline], -5602)
+    p.emit(0x807E0000 | base)
+    p.expect(0, "a missing proxy leaves no allocated drag")
+    probe.scalar("EndWindowProxyDrag", [0, 0], -5600)
+    probe.scalar("EndWindowProxyDrag", [window, 0], -50)
+    probe.scalar("TrackWindowProxyDrag", [0, 0], -5600)
+    probe.scalar("TrackWindowProxyDrag", [window, 0], -5602)
+    probe.scalar("TrackWindowProxyFromExistingDrag", [0, 0, 0, outline], -5600)
+
+    file_name = b"URL buffer fixture"
+    name = probe.far_raw(bytes([len(file_name)]) + file_name)
+    file_spec = probe.far_raw(bytes(70))
+    probe.call("FSMakeFSSpec", [probe.slot(0x1FC0), probe.slot(0x1F42), name, file_spec])
+    p.expect(0, "find the file used by the window proxy")
+    probe.scalar("SetWindowProxyFSSpec", [window, 0], -50)
+    probe.scalar("SetWindowProxyAlias", [window, 0], -50)
+    probe.scalar("SetWindowProxyIcon", [window, 0], -50)
+    probe.scalar("SetWindowProxyCreatorAndType", [0, 0, 0, 0], -5600)
+    probe.scalar("RemoveWindowProxy", [0], -5600)
+    probe.scalar("SetWindowProxyFSSpec", [window, file_spec], 0)
+    result = probe.far_raw(bytes(70))
+    for side in (0, 1):
+        probe.call("GetWindowProxyAlias", [window, out], side=side)
+        p.expect(0, "copy the proxy AliasHandle")
+        p.emit(0x807E0000 | base)
+        p.nonzero("the copied alias has separate caller ownership")
+        probe.call("SetWindowProxyAlias", [window, probe.slot(base)], side=1 - side)
+        p.expect(0, "assign the alias through the other implementation")
+        probe.call("DisposeHandle", [probe.slot(base)])
+        probe.call("GetWindowProxyFSSpec", [window, result], side=side)
+        p.expect(0, "resolve the proxy after disposing its alias copy")
+        probe.arguments([result, file_spec], 0)
+        p.emit(0x80630006, 0x80840006)
+        p.equal("native and saved resolution return the proxy file name")
+    for side in (0, 1):
+        probe.call("GetWindowProxyIcon", [window, out], side=side)
+        p.expect(0, "return the cached icon for the file-backed proxy")
+        p.emit(0x807E0000 | base)
+        if side == 0:
+            p.nonzero("the window owns an icon")
+            p.emit(0x907E0000 | (base + 4))
+        else:
+            p.emit(0x809E0000 | (base + 4))
+            p.equal("both implementations borrow the same cached IconRef")
+            probe.call("SetWindowProxyIcon", [window, probe.slot(base)], side=side)
+            p.expect(0, "setting the borrowed icon retains ownership for the window")
+
+    for side in (0, 1):
+        probe.call("SetWindowProxyFSSpec", [window, file_spec], side=side)
+        p.expect(0, "install the file proxy in both implementations")
+        probe.call("SetWindowProxyCreatorAndType", [window, 0x6D616373, 0x646F6375, -32768], side=side)
+        p.expect(0, "select the generic document proxy icon by creator and type")
+        probe.call("GetWindowProxyIcon", [window, out], side=1 - side)
+        p.expect(0, "the other implementation sees the newly installed typed icon")
+        probe.call("SetWindowProxyIcon", [window, probe.slot(base)], side=side)
+        p.expect(0, "setting the current icon keeps the same shared reference")
+        probe.call("BeginWindowProxyDrag", [window, out, outline], side=side)
+        p.expect(0, "create a drag and its outline using the window proxy")
+        p.emit(0x807E0000 | base)
+        p.nonzero("successful proxy begin returns the drag reference")
+        probe.call("GetGlobalMouse", [mouse])
+        probe.arguments([mouse], 0)
+        p.emit(0x80630000, 0x907E0000 | (base + 12))
+        probe.call(
+            "TrackWindowProxyFromExistingDrag",
+            [window, probe.slot(base + 12), probe.slot(base), outline],
+            side=1 - side,
+        )
+        p.expect(-128, "no mouse motion cancels tracking of the existing drag")
+        probe.call("EndWindowProxyDrag", [window, probe.slot(base)], side=1 - side)
+        p.expect(0, "the other implementation disposes the shared drag image and reference")
+        probe.call("GetGlobalMouse", [mouse])
+        probe.arguments([mouse], 0)
+        p.emit(0x80630000, 0x907E0000 | (base + 12))
+        probe.call("TrackWindowProxyDrag", [window, probe.slot(base + 12)], side=side)
+        p.expect(-128, "the one-call tracker cancels and cleans up its temporary drag")
+        probe.call("RemoveWindowProxy", [window], side=side)
+        p.expect(0, "remove both the proxy alias and the owned icon")
+        probe.call("GetWindowProxyFSSpec", [window, result], side=1 - side)
+        p.expect(-5602, "the other implementation sees the removed alias")
+        probe.call("GetWindowProxyIcon", [window, out], side=1 - side)
+        p.expect(-5604, "the other implementation sees the removed icon")
+    probe.call("DisposeRgn", [outline])
+
+
+def desktop_pattern_fixture():
+    # Flattened PixPat, PixMap, four pixel bytes and two indexed colors.
+    pattern = bytearray(106)
+    struct.pack_into(">HII", pattern, 0, 1, 28, 78)
+    struct.pack_into(">H4h", pattern, 32, 0x8002, 0, 0, 2, 8)
+    struct.pack_into(">4h", pattern, 58, 0, 1, 1, 1)
+    struct.pack_into(">I", pattern, 70, 82)
+    pattern[78:82] = bytes.fromhex("11223344")
+    struct.pack_into(">IHH8H", pattern, 82, 0, 0, 1, 0, 0, 0, 0, 1, 0xFFFF, 0xFFFF, 0xFFFF)
+    return pattern
+
+
+def desktop_window_operations(probe, base):
+    p = probe.p
+    original, custom, output, data, saved_port, final_port = (base + offset for offset in range(0, 24, 4))
+    original_name = probe.far_raw(bytes(256))
+    read_name = probe.far_raw(bytes(256))
+    probe.call("GetDesktopPattern", [probe.ptr(original), original_name], side=1)
+    p.expect(0, "preserve the saved desktop pattern and its name")
+    p.emit(0x807E0000 | original)
+    p.nonzero("the saved desktop returns a caller-owned flattened pattern")
+    probe.scalar("SetDesktopPattern", [0, original_name], -50)
+    probe.scalar("SetDesktopPattern", [probe.slot(original), 0], -50)
+
+    pixel_bytes = desktop_pattern_fixture()
+    encoded = probe.far_raw(pixel_bytes)
+    probe.call("NewHandle", [len(pixel_bytes)])
+    p.nonzero("allocate a flattened replacement desktop pattern")
+    p.emit(0x907E0000 | custom, 0x80630000, 0x907E0000 | data)
+    probe.call("BlockMoveData", [encoded, probe.slot(data), len(pixel_bytes)])
+    probe.call("GetPort", [probe.ptr(saved_port)])
+    for side in (0, 1):
+        name = probe.far_raw(b"\x04" + (b"One!" if side == 0 else b"Two!"))
+        probe.call("SetDesktopPattern", [probe.slot(custom), name], side=side)
+        p.expect(0, "install and save a desktop pattern")
+        probe.call("GetDesktopPattern", [probe.ptr(output), read_name], side=1 - side)
+        p.expect(0, "the other window manager reads the persisted flattened pattern")
+        probe.arguments([read_name, name], 0)
+        p.emit(0x80630000, 0x80840000)
+        p.equal("the preference stores the original Pascal name")
+        p.emit(0x807E0000 | output)
+        p.nonzero("reading desktop preferences returns a flattened handle")
+        p.emit(0x80630000, 0x8063004E)
+        p.expect(0x11223344, "the caller owns a copy of the original pattern bytes")
+        probe.call("DisposeHandle", [probe.slot(output)])
+        probe.call("GetDesktopPixPat", [probe.ptr(output), 0], side=1 - side)
+        p.expect(0, "unflatten a decoded desktop PixPat")
+        p.emit(0x807E0000 | output)
+        p.nonzero("decoding desktop preferences returns a PixPat handle")
+        p.emit(0x813E0000 | output, 0x81290000, 0x81290006, 0x81290000, 0x80690000)
+        p.expect(0x11223344, "the decoded PixPat retains its source pixels")
+        probe.call("DisposePixPat", [probe.slot(output)])
+        probe.call("RebuildDesktopRegion", [], side=side)
+        p.expect(0, "recalculate the desktop across the active screen")
+        probe.call("DrawDesktop", [], side=1 - side)
+        probe.call("GetPort", [probe.ptr(final_port)])
+        p.emit(0x807E0000 | saved_port, 0x809E0000 | final_port)
+        p.equal("desktop pattern and drawing operations restore the caller's port")
+    probe.call("SetDesktopPattern", [probe.slot(original), original_name], side=1)
+    p.expect(0, "restore the original desktop preference")
+    probe.call("DisposeHandle", [probe.slot(original)])
+    probe.call("DisposeHandle", [probe.slot(custom)])
+
+
+def monitor_desktop_operations(probe, base):
+    p = probe.p
+    internal, original, working, refreshed, count, value = (base + offset for offset in range(0, 24, 4))
+    first = probe.far_raw(bytes(0x174))
+    last = probe.far_raw(bytes(0x174))
+    original_count = probe.far_raw(bytes(4))
+    file_name = probe.far_raw(b"\x12URL buffer fixture")
+    file_spec = probe.far_raw(bytes(70))
+    resolved_file = probe.far_raw(bytes(70))
+    picture_name = probe.far_raw(b"\x14Desktop PICT fixture")
+    picture_file = probe.far_raw(bytes(70))
+    picture_info = probe.far_raw(struct.pack(">II4h", 0x50494354, 0x524F4D41, 0, 0, 0, 0))
+    target_port = probe.raw(bytes(4))
+    bounds = probe.far_raw(struct.pack(">4h", 0, 0, 100, 100))
+    sentinel = probe.slot(internal)
+    current = probe.slot(original)
+    copy = probe.slot(working)
+    new_copy = probe.slot(refreshed)
+
+    probe.scalar("GetCurrentMonitorDesktopList", [0], -50)
+    probe.scalar("SetCurrentMonitorDesktopList", [0], -50)
+    probe.scalar("GetInternalMonitorDesktopList", [0], -50)
+    probe.scalar("DisposeMonitorDesktopList", [0], -50)
+    probe.scalar("RefreshMonitorDesktopList", [0, probe.ptr(refreshed)], -50)
+    probe.scalar("CountMonitorDesktopRecordsInList", [0, probe.ptr(count)], -50)
+    probe.scalar("SetMonitorDesktopToFile", [0, 1, 0, 5], -50)
+    probe.scalar("CopyMonitorDesktopFile", [0, 1, 0, 1], -50)
+    probe.scalar("SetDesktopPictureForDevice", [0, 0, 5], -50)
+    probe.scalar("GetDesktopPictureForDevice", [0, resolved_file, 0], -50)
+    probe.scalar("GetInternalMonitorDesktopList", [probe.ptr(internal)], 0)
+    p.emit(0x807E0000 | internal)
+    p.expect(-1, "the internal list is addressed through the original sentinel")
+    probe.scalar("DisposeMonitorDesktopList", [sentinel], -50)
+    probe.scalar("SetCurrentMonitorDesktopList", [sentinel], -50)
+    probe.scalar("RefreshMonitorDesktopList", [sentinel, probe.ptr(refreshed)], -50)
+    probe.call("CountMonitorDesktopRecordsInList", [sentinel, probe.ptr(count)], side=1)
+    p.expect(0, "count the saved internal list before publishing a new snapshot")
+    probe.call("CountMonitorDesktopRecordsInList", [sentinel, probe.ptr(value)])
+    p.expect(0, "count the internal list even when the desktop has not installed one")
+    p.emit(0x807E0000 | value, 0x809E0000 | count)
+    p.equal("native and saved counts agree before installing the snapshot")
+    probe.call("GetCurrentMonitorDesktopList", [probe.ptr(original)], side=1)
+    p.expect(0, "save an independent copy of the current monitor list")
+    p.emit(0x807E0000 | original)
+    p.nonzero("the current desktop list has a saved handle")
+    probe.call("CountMonitorDesktopRecordsInList", [current, original_count], side=1)
+    p.expect(0, "count the active display records in the rebuilt snapshot")
+    probe.arguments([original_count], 0)
+    p.emit(0x80630000)
+    p.nonzero("the current desktop has at least one monitor record")
+    probe.call("SetCurrentMonitorDesktopList", [current])
+    p.expect(0, "publish the active display snapshot before using the internal list")
+    probe.call("FSMakeFSSpec", [probe.slot(0x1FC0), probe.slot(0x1F42), file_name, file_spec])
+    p.expect(0, "resolve a local file for the monitor picture alias")
+    probe.call("FSMakeFSSpec", [probe.slot(0x1FC0), probe.slot(0x1F42), picture_name, picture_file])
+    p.expect(0, "resolve the local data-fork PICT fixture")
+    probe.call("FSpSetFInfo", [picture_file, picture_info])
+    p.expect(0, "mark the fixture as a classic PICT file")
+    probe.call("GetPort", [target_port])
+    p.emit(0x807E0000 | target_port[1])
+    p.nonzero("pass the live drawing port to the monitor timing query")
+
+    for side in (0, 1):
+        probe.call("GetCurrentMonitorDesktopList", [probe.ptr(working)], side=side)
+        p.expect(0, "create an editable monitor desktop list")
+        p.emit(0x807E0000 | working)
+        p.nonzero("the editable list has its own handle")
+        probe.call("CountMonitorDesktopRecordsInList", [copy, probe.ptr(count)], side=1 - side)
+        p.expect(0, "both managers understand the same monitor list layout")
+        probe.arguments([original_count], 0)
+        p.emit(0x80630000, 0x809E0000 | count)
+        p.equal("copying preserves the number of current displays")
+        probe.call("GetMonitorDesktopRecordFromList", [copy, 0, first], side=side)
+        p.expect(-50, "monitor record indices are one-based")
+        probe.call("GetMonitorDesktopRecordFromList", [copy, 0x7FFFFFFF, last], side=side)
+        p.expect(0, "the last-record index sentinel resolves")
+        probe.call("GetMonitorDesktopRecordFromList", [copy, probe.slot(count), first], side=1 - side)
+        p.expect(0, "the explicit last index resolves")
+        probe.arguments([first, last], 0)
+        p.emit(0x8063001C, 0x8084001C)
+        p.equal("last-record indexing exposes the same cache fields")
+        probe.call("SetMonitorDesktopRecordFromList", [copy, probe.slot(count), first], side=side)
+        p.expect(0, "a record can be written back to its existing slot")
+        probe.call("MonitorDesktopHasPicture", [copy, 1, probe.ptr(value)], side=side)
+        p.expect(0, "query the picture flag of a valid monitor record")
+        probe.call("SetMonitorDesktopAlignment", [copy, 1, 0], side=side)
+        p.expect(-50, "reject an invalid alignment")
+        for alignment in (5, 2):
+            probe.call("SetMonitorDesktopAlignment", [copy, 1, alignment], side=side)
+            p.expect(0, "change a private copy's alignment")
+            probe.call("GetMonitorDesktopAlignment", [copy, 1, probe.ptr(value)], side=1 - side)
+            p.expect(0, "read alignment through the other window manager")
+            p.emit(0x807E0000 | value)
+            p.expect(alignment, "tiling and ordinary alignment use the saved record flags")
+        probe.call("RefreshMonitorDesktopList", [copy, probe.ptr(refreshed)], side=side)
+        p.expect(0, "refresh the monitor list against the current displays")
+        p.emit(0x807E0000 | refreshed)
+        p.nonzero("refresh returns a new handle")
+
+        probe.call("SetMonitorDesktopToFile", [copy, 1, file_spec, 5], side=side)
+        p.expect(0, "set the monitor picture to a local file reference")
+        probe.call("CopyMonitorDesktopFile", [copy, 1, new_copy, 1], side=1 - side)
+        p.expect(0, "copy the file reference into a separate list")
+        probe.call("SetMonitorDesktopToFile", [copy, 1, 0, 2], side=1 - side)
+        p.expect(0, "clear the source image and release its alias")
+        timing = [copy, 1, probe.slot(target_port[1]), bounds, probe.ptr(value)]
+        probe.call("DrawMonitorDesktopFromListWillTakeTime", timing, side=side)
+        p.expect(0, "query draw timing without a desktop picture")
+        p.emit(0x887E0000 | value)
+        p.expect(0, "a background without a picture needs no picture load")
+        probe.call("FileContainsPossibleDesktopPicture", [picture_file, probe.ptr(value)], side=side)
+        p.expect(0, "read the PICT file's Finder metadata")
+        p.emit(0x887E0000 | value)
+        p.expect(1, "the file type identifies a possible desktop picture")
+        probe.call("GetPictureFromFile", [picture_file, probe.ptr(value)], side=side)
+        p.expect(0, "load a PICT from the data fork")
+        p.emit(0x807E0000 | value)
+        p.nonzero("the caller owns the loaded PICT handle")
+        p.emit(0x80630000, 0xA0630000)
+        p.expect(34, "the picture record begins after the 512-byte file header")
+        probe.call("DisposeHandle", [probe.slot(value)])
+        probe.call("SetMonitorDesktopToFile", [copy, 1, picture_file, 2], side=1 - side)
+        p.expect(0, "associate the PICT with the editable monitor list")
+        probe.call("DrawMonitorDesktopFromListWillTakeTime", timing, side=side)
+        p.expect(0, "query draw timing before a PICT has been cached")
+        p.emit(0x887E0000 | value)
+        p.expect(1, "the first picture draw requires loading its image")
+        probe.call("SetMonitorDesktopToFile", [copy, 1, 0, 2], side=1 - side)
+        p.expect(0, "clear the PICT before disposing the source list")
+        probe.call("MonitorDesktopHasPicture", [new_copy, 1, probe.ptr(value)], side=side)
+        p.expect(0, "the destination list still has its own alias")
+        p.emit(0x887E0000 | value)
+        p.expect(1, "releasing the source does not clear the copied picture")
+        probe.call("SetMonitorDesktopToFile", [new_copy, 1, 0, 2], side=side)
+        p.expect(0, "clear the private list before publishing")
+
+        probe.call("GetMonitorDesktopRecordFromList", [sentinel, 1, first], side=1 - side)
+        p.expect(0, "read the active display's device")
+        probe.arguments([first], 0)
+        p.emit(0x80630018, 0x907E0000 | count)
+        device = probe.slot(count)
+        probe.call("SetDesktopPictureForDevice", [device, file_spec, 5], side=side)
+        p.expect(0, "assign the picture by its display device")
+        probe.call("GetDesktopPictureForDevice", [device, resolved_file, probe.ptr(value)], side=1 - side)
+        p.expect(0, "resolve the aliased picture from the live display")
+        p.emit(0x807E0000 | value)
+        p.expect(5, "device lookup preserves the tile alignment")
+        probe.arguments([file_spec, resolved_file], 0)
+        p.emit(0x80630006, 0x80840006)
+        p.equal("device lookup returns the original file name")
+        probe.call("SetDesktopPictureForDevice", [device, 0, 2], side=1 - side)
+        p.expect(0, "clear the live desktop picture")
+        probe.call("GetDesktopPictureForDevice", [device, resolved_file, 0], side=side)
+        p.expect(-5605, "device lookup reports that the picture is absent")
+
+        probe.call("SetCurrentMonitorDesktopList", [new_copy], side=1 - side)
+        p.expect(0, "publish an independent copy as the current monitor list")
+        probe.call("DisposeMonitorDesktopList", [new_copy], side=side)
+        p.expect(0, "free the caller's refreshed copy after publishing")
+        probe.call("GetMonitorDesktopAlignment", [sentinel, 1, probe.ptr(value)], side=side)
+        p.expect(0, "the internal list is still available after freeing the copy")
+        probe.call("DisposeMonitorDesktopList", [copy], side=1 - side)
+        p.expect(0, "free the editable monitor list through the other implementation")
+        probe.call("InternalMonitorDesktopListChanged", [], side=side)
+    probe.call("SetCurrentMonitorDesktopList", [current], side=1)
+    p.expect(0, "restore the saved monitor desktop list")
+    probe.call("DisposeMonitorDesktopList", [current])
+    p.expect(0, "dispose the original snapshot after restoring it")
+
+
+def window_metadata_operations(probe, window, base):
+    p = probe.p
+    features, original_features, status, source, target, initial = (base + 4 * index for index in range(6))
+
+    def load(offset, register):
+        p.emit(0x801E0000 | register << 21 | offset)
+
+    def store(offset):
+        p.emit(0x907E0000 | offset)
+
+    probe.scalar("WMGetWindowFeatures", [0, probe.ptr(features)], -5600)
+    load(features, 3)
+    p.expect(0, "an invalid window clears the features output")
+    probe.call("WMGetWindowFeatures", [window, probe.ptr(initial)], side=1)
+    store(status)
+    probe.call("WMGetWindowFeatures", [window, probe.ptr(features)])
+    load(status, 4)
+    p.equal("native and saved WDEF feature query return the same status")
+    load(features, 3)
+    load(initial, 4)
+    p.equal("native and saved WDEF feature bits agree")
+
+    for setter in (0, 1):
+        probe.call("SetWindowFeatures", [window, 4 if setter == 0 else 0], side=setter)
+        probe.call("WMGetWindowFeatures", [window, probe.ptr(features)], side=setter)
+        store(status)
+        probe.call("WMGetWindowFeatures", [window, probe.ptr(original_features)], side=1 - setter)
+        load(status, 4)
+        p.equal("feature updates share the WDEF query status")
+        load(features, 3)
+        load(original_features, 4)
+        p.equal("feature updates are visible to both window managers")
+        probe.call("WMIsWindowCollapsable", [window], side=1 - setter)
+        load(features, 4)
+        p.emit(0x5484F7FE)  # move the collapse feature bit into the Boolean result position
+        p.equal("the collapse capability follows the shared WDEF feature bit")
+    probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
+    probe.scalar("WMIsWindowCollapsed", [window], 0)
+    probe.scalar("WMIsWindowCollapsed", [0], 0)
+    probe.scalar("WMCollapseWindow", [0, 1], -5600)
+    probe.call("SetWindowFeatures", [window, 0], side=1)
+    probe.scalar("WMCollapseWindow", [window, 1], -30580)
+    probe.call("SetWindowFeatures", [window, 4], side=1)
+    for side in (0, 1):
+        probe.call("WMCollapseAllWindows", [1], side=side)
+        p.expect(0, "collapse all visible windows")
+        probe.call("WMIsWindowCollapsed", [window], side=1 - side)
+        p.expect(0, "collapsing all leaves a hidden window untouched")
+        probe.call("WMCollapseAllWindows", [0], side=side)
+        p.expect(0, "expand the visible windows again")
+        probe.call("WMCollapseWindow", [window, 1], side=side)
+        p.expect(0, "collapse a hidden eligible window")
+        probe.call("WMIsWindowCollapsed", [window], side=1 - side)
+        p.expect(1, "the other manager reads the collapsed state")
+        probe.call("WMCollapseWindow", [window, 0], side=1 - side)
+        p.expect(0, "expand the hidden window through the other implementation")
+    probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
+
+    probe.scalar("HiliteWindowFrameForDrag", [0, 1], -5600)
+    probe.call("SetWindowFeatures", [window, 0x80], side=1)
+    for side in (0, 1):
+        probe.call("GetPort", [probe.ptr(source)])
+        probe.call("HiliteWindowFrameForDrag", [window, 1], side=side)
+        p.expect(0, "enable the drag highlight on an eligible frame")
+        probe.call("HiliteWindowFrameForDrag", [window, 0], side=1 - side)
+        p.expect(0, "clear the saved drag highlight through the other entry")
+        probe.call("GetPort", [probe.ptr(target)])
+        load(target, 3)
+        load(source, 4)
+        p.equal("drawing the drag highlight restores the caller's port")
+    probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
+
+    probe.call("NewRgn")
+    p.nonzero("allocate the window-region result")
+    store(source)
+    probe.scalar("WMGetWindowRegion", [0, 1, probe.slot(source)], -50)
+    probe.scalar("WMGetWindowRegion", [window, 1, 0], -50)
+    probe.call("SetWindowFeatures", [window, 0], side=1)
+    probe.scalar("WMGetWindowRegion", [window, 1, probe.slot(source)], -30580)
+    probe.call("SetWindowFeatures", [window, 0x10], side=1)
+    probe.scalar("WMGetWindowRegion", [window, 1, probe.slot(source)])
+    probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
+    probe.call("DisposeRgn", [probe.slot(source)])
+
+    probe.call("NewRgn")
+    p.nonzero("allocate a region to erase through the saved window painter")
+    store(source)
+    paint_region = probe.slot(source)
+    rect = probe.far_raw(struct.pack(">4h", 1, 1, 3, 4))
+    probe.call("RectRgn", [paint_region, rect])
+    probe.scalar("InstallWindowContentPaintProc", [0, 0, 0, 0], -5600)
+    probe.scalar("InstallWindowContentPaintProc", [window, 0, 1, 0], -50)
+    probe.scalar("EraseWindowRegion", [0, paint_region], -50)
+    probe.scalar("EraseWindowRegion", [window, 0], -50)
+    paint_results = probe.far_raw(bytes(8))
+    paint_callback = probe.far_raw(bytes(8))
+    p.routines.append(
+        (
+            paint_callback[1],
+            [0x90A80000, 0x81280004, 0x39290001, 0x91280004, 0x3860FD66, 0x4E800020],
+        )
+    )
+    probe.call("NewWindowPaintUPP", [paint_callback])
+    p.nonzero("build the window paint routine descriptor")
+    store(features)
+    probe.call("GetPort", [probe.ptr(target)])
+    probe.call("SetPort", [window])
+    for side in (0, 1):
+        probe.call("InstallWindowContentPaintProc", [window, probe.slot(features), 0, paint_results], side=side)
+        p.expect(0, "install the current window's client paint callback")
+        probe.call("EraseWindowRegion", [window, paint_region], side=1 - side)
+        p.expect(0, "either erase implementation uses the installed client")
+        probe.arguments([paint_results, window], 0)
+        p.emit(0x80630000)
+        p.equal("paint callback receives the window and the caller's refCon")
+        probe.call("InstallWindowContentPaintProc", [window, 0, 0, 0], side=1 - side)
+        p.expect(0, "remove the shared window paint callback")
+        probe.call("EraseWindowRegion", [window, paint_region], side=side)
+        p.expect(0, "erasing after removal uses the normal system paint path")
+        probe.arguments([paint_results], 0)
+        p.emit(0x80630004)
+        p.expect(side + 1, "removing the painter stops its callbacks")
+    probe.call("SetPort", [probe.slot(target)])
+    probe.call("DisposeWindowPaintUPP", [probe.slot(features)])
+    probe.call("DisposeRgn", [paint_region])
+
+    for point in (0x00060030, 0x00370046, 0x01F401F4):
+        probe.call("GetPort", [probe.ptr(source)])
+        probe.call("GlobalFindWindow", [point, probe.ptr(features)])
+        store(status)
+        probe.call("GlobalFindWindow", [point, probe.ptr(original_features)], side=1)
+        load(status, 4)
+        p.equal("both managers return the same part for a global point")
+        load(features, 3)
+        load(original_features, 4)
+        p.equal("both managers identify the same window at that point")
+        probe.call("GetPort", [probe.ptr(target)])
+        load(source, 3)
+        load(target, 4)
+        p.equal("global hit testing restores the caller's port")
+
+    original_bounds, native_position, saved_position = (probe.far_raw(bytes(8)) for _ in range(3))
+    probe.call("GetWindowBounds", [window, 33, original_bounds])
+    p.expect(0, "save the position before testing screen placement")
+    probe.scalar("RepositionWindow", [window, 0, 0], -50)
+    probe.scalar("RepositionWindow", [window, window, 1], -50)
+    probe.scalar("RepositionWindow", [window, 0, 2], -50)
+    for side, result in ((0, native_position), (1, saved_position)):
+        probe.call("RepositionWindow", [window, 0, 1], side=side)
+        p.expect(0, "center the window on the current main screen")
+        probe.call("GetWindowBounds", [window, 33, result])
+        p.expect(0, "read back the centered window bounds")
+        probe.call("SetWindowBounds", [window, 33, original_bounds])
+        p.expect(0, "restore the original window geometry")
+    probe.arguments([native_position, saved_position], 0)
+    p.emit(0x80630000, 0x80840000)
+    p.equal("the native and original centered positions match")
+
+    probe.call("GetPort", [probe.ptr(source)])
+    for side in (0, 1):
+        probe.call("RecalculateAllWindowTitleWidths", [], side=side)
+        probe.arguments([window], 0)
+        p.emit(0xA063008A)
+        if side == 0:
+            store(status)
+        else:
+            load(status, 4)
+            p.equal("both title walks leave the same cached width")
+        probe.call("SetPort", [probe.slot(source)])
+        probe.call("ReshapeWindows", [], side=side)
+        probe.call("GetGrayRgn")
+        p.nonzero("reshaping keeps the live desktop region")
+        store(target)
+        probe.call("EmptyRgn", [probe.slot(target)])
+        p.expect(0, "the reshaped desktop still contains the main display")
+
+    for kind, v, h, modifiers, expected in (
+        (0, 55, 70, 0x100, 0),
+        (1, 55, 70, 0, 0),
+        (1, 0, 0, 0x100, 0),
+        (1, 55, 70, 0x100, None),
+    ):
+        event = probe.far_raw(struct.pack(">HIIhhH", kind, 0, 0, v, h, modifiers))
+        probe.scalar("IsWindowPathSelectClick", [window, event], expected)
+
+    probe.call("NewPixPat")
+    p.nonzero("allocate a window pattern output PixPat")
+    store(target)
+    probe.scalar("GetWindowContentPattern", [window, probe.slot(target)], -5604)
+    for setter, marker in ((0, 0xA5A5), (1, 0x5A5A)):
+        probe.call("NewPixPat")
+        p.nonzero("allocate a window content PixPat")
+        store(source)
+        p.emit(0x80830000, 0x38600000 | marker, 0xB0640014)
+        probe.call("SetWindowContentPattern", [window, probe.slot(source)], side=setter)
+        p.expect(0, "window keeps a copy of the caller's pattern")
+        probe.call("DisposePixPat", [probe.slot(source)])
+        probe.call("GetWindowContentPattern", [window, probe.slot(target)], side=1 - setter)
+        p.expect(0, "the stored window pattern survives caller disposal")
+        load(target, 3)
+        p.emit(0x80630000, 0xA0630014)
+        p.expect(marker, "the saved pattern retains its original bytes")
+        probe.call("WindowManagerSetThemeWindowBackground", [window, 1, 0], side=1 - setter)
+        p.expect(0, "switch the window from a PixPat to a theme background brush")
+        probe.call("GetWindowContentPattern", [window, probe.slot(target)], side=setter)
+        p.expect(-5604, "a theme background removes the window's stored PixPat")
+    probe.call("DisposePixPat", [probe.slot(target)])
+    window_queue_operations(probe, window, base)
+    window_proxy_operations(probe, window, base)
+    desktop_window_operations(probe, base)
+    monitor_desktop_operations(probe, base)
+
+
 def control_manager_operations(probe):
     p = probe.p
     ptr, slot = probe.ptr, probe.slot
@@ -7347,10 +8124,37 @@ def control_manager_operations(probe):
     call("SetScreenBitSavingEnabled", [slot(base + 92)])
     call("GetSavedScreenBitsRepresentativePixMap", [0])
     probe.call("MoveSavedScreenBits", [0, 17, 29])
+    capture_bounds = probe.far_raw(struct.pack(">4h", 40, 40, 48, 48))
+    call("SetScreenBitSavingEnabled", [0])
+    probe.scalar("SaveScreenBits", [capture_bounds, 0, ptr(base + 96)], -108)
+    probe.scalar("RestoreScreenBits", [0, 0], 0)
+    for side in (0, 1):
+        probe.call("DisposeSavedScreenBits", [0], side=side)
+        call("SetScreenBitSavingEnabled", [1])
+        probe.call("SaveScreenBits", [capture_bounds, 0, ptr(base + 96)], side=side)
+        p.expect(0, "the saved manager captures an on-screen rectangle")
+        p.emit(0x807E0000 | (base + 96))
+        if side == 0:
+            save(100)
+        else:
+            p.emit(0x809E0000 | (base + 100))
+            p.equal("disposing screen bits releases the saved manager's reusable slot")
+        probe.call("GetSavedScreenBitsRepresentativePixMap", [slot(base + 96)])
+        p.nonzero("the captured screen pixels have an owned pixmap")
+        probe.call("GetGWorld", [ptr(base + 104), ptr(base + 108)])
+        probe.call("RestoreScreenBits", [slot(base + 96), 0], side=1 - side)
+        p.expect(0, "restore the other implementation's screen capture")
+        probe.call("GetGWorld", [ptr(base + 112), ptr(base + 116)])
+        for original, restored in ((104, 112), (108, 116)):
+            p.emit(0x807E0000 | (base + original), 0x809E0000 | (base + restored))
+            p.equal("restoring screen bits preserves the caller's port and device")
+        probe.call("DisposeSavedScreenBits", [slot(base + 96)], side=side)
+    call("SetScreenBitSavingEnabled", [slot(base + 92)])
 
     probe.call("NewWindow", [0, bounds, title, 0, 0, -1, 1, 0])
     p.nonzero("create a window for pane and bounds checks")
     save(0)
+    window_metadata_operations(probe, window, base + 96)
     call("GetWindowBounds", [window, 40, data])
     word(20, 0x00410028, "global port origin of a hidden window")
     word(24, 0x008700AA, "global port area of a hidden window")
@@ -8600,6 +9404,17 @@ def romaw_service_operations(probe):
     p.nonzero("MaxMem returns available contiguous memory")
     probe.call("GetMBarHeight")
     p.nonzero("the installed menu bar has a measurable height")
+    call("GetThemeMenuBarHeight", [output])
+    load(24, 2)
+    p.nonzero("Appearance reports the installed menu bar height")
+    call("GetThemeMenuBarHeight", [0], -50)
+    for depth, color_device in ((32, 1), (1, 1), (32, 0)):
+        probe.call("IsThemeInColor", [depth, color_device], side=1)
+        p.emit(0x7C630034, 0x5463D97E, 0x68630001)  # Convert the saved trap's packed Boolean to 0 or 1.
+        save(44)
+        probe.call("IsThemeInColor", [depth, color_device])
+        p.emit(0x809E0000 | (base + 44))
+        p.equal("Appearance color mode agrees with the saved implementation")
     for name, address in (("GetSysFont", 0xBA6), ("GetAppFont", 0x984)):
         probe.call(name)
         p.emit(0xA0800000 | address)
@@ -8722,6 +9537,23 @@ def romaw_service_operations(probe):
     p.nonzero("create a window for Appearance control hierarchy checks")
     save(4)
     probe.call("SetPort", [window])
+    for name in ("DrawThemePrimaryGroup", "DrawThemeSecondaryGroup", "DrawThemeSeparator"):
+        call(name, [0, 1], -50)
+        call(name, [control_rect, 7])
+    for name, extra in (("DrawThemeEditTextFrame", ()), ("DrawThemeGenericWell", (1,))):
+        call(name, [0, 1, *extra], -50)
+        call(name, [control_rect, 7, *extra])
+    menu_item_args = [0, 200, 7, 0, 0, 0]
+    call("DrawThemeMenuItem", [0, control_rect, *menu_item_args], -50)
+    call("DrawThemeMenuItem", [control_rect, control_rect, *menu_item_args])
+    foreground = probe.raw(bytes(6))
+    background = probe.raw(bytes(6))
+    probe.call("GetForeColor", [foreground])
+    probe.call("GetBackColor", [background])
+    call("SetThemePen", [49, 8, 1])
+    call("SetThemeBackground", [51, 8, 1])
+    probe.call("RGBForeColor", [foreground])
+    probe.call("RGBBackColor", [background])
     call("CreateRootControl", [window, ptr(base + 16)])
     _, constructor_output = probe.raw(bytes(16))
     for constructor, args in BUILTIN_CONTROL_CASES:
@@ -10095,7 +10927,7 @@ def component_operations(probe):
 
 
 def make_atsui_probe(destination):
-    write_math_reference(destination, include_atsui=True)
+    write_toolbox_references(destination, include_atsui=True)
     name = "ATSUITestFont"
     font_directory = destination / "ATSUI Fixtures"
     (font_directory / ".AppleDouble").mkdir(parents=True, exist_ok=True)
@@ -11050,6 +11882,13 @@ def appearance_state_operations(probe):
     p = probe.p
     _, base = probe.raw(bytes(24))
     psn, saved, output = (probe.ptr(base + offset) for offset in (0, 8, 12))
+    for side in (0, 1):
+        for metric, pixels in ((0, 16), (10, 21), (14, 0), (17, None), (19, 20), (20, None), (0xFFFFFFFF, None)):
+            p.emit(0x38607777, 0x907E0000 | (base + 12))
+            probe.call("GetThemeMetric", [metric, output], side=side)
+            p.expect(-50 if pixels is None else 0, f"theme metric {metric} returns its CarbonLib 1.4 status")
+            p.emit(0x807E0000 | (base + 12))
+            p.expect(pixels or 0, f"theme metric {metric} writes its pixel size or clears the output")
     probe.call("GetCurrentProcess", [psn])
     p.expect(0, "read the active Appearance client's process serial number")
     probe.call("IsAppearanceClient", [psn], side=1)
@@ -11132,6 +11971,21 @@ def appearance_state_operations(probe):
     p.expect(0, "read the native mask from saved Appearance")
     p.emit(0x807E0000 | (base + 16))
     p.expect(1, "saved Appearance sees the new event mask")
+    for mask in (1, 0):
+        probe.call("SetThemeSoundMask", [mask])
+        p.expect(0, "select the Appearance sound mask")
+        for name, args in (
+            ("PlayThemeSound", [0x776F706E]),
+            ("PlayThemeControlSound", [0x776F706E, 0]),
+            ("BeginThemeDragSound", [0x776F706E]),
+            ("BeginThemeDragIndicatorSound", [0x776F706E, 0]),
+            ("EndThemeDragSound", []),
+        ):
+            probe.call(name, args, side=1)
+            p.emit(0x907E0000 | (base + 16))
+            probe.call(name, args)
+            p.emit(0x809E0000 | (base + 16))
+            p.equal(name + " honors disabled playback and the saved mask")
     probe.call("SetThemeSoundMask", [probe.slot(base + 12)])
     p.expect(0, "restore the previous Appearance sound mask")
     probe.call("SetThemeSoundsEnabled", [probe.slot(base + 8)])
@@ -11156,6 +12010,107 @@ def appearance_state_operations(probe):
     probe.call("SetThemePlaylist", [missing_name])
     p.emit(0x809E0000 | (base + 20))
     p.equal("native Appearance reports the same missing playlist error")
+    for side in (0, 1):
+        probe.call("GetAppearance", [0, 0], side=side)
+        p.expect(-50, "appearance name queries need at least one output")
+    for theme in (True, False):
+        probe.call("GetAppearance", [original, 0] if theme else [0, original], side=1)
+        p.expect(0, "read the real Appearance engine name")
+        probe.call("GetAppearance", [playlist, 0] if theme else [0, playlist])
+        p.expect(0, "the native query reads the current engine name")
+        p.emit(0x887E0000 | playlist[1], 0x889E0000 | original[1])
+        p.equal("the returned Pascal names have the same lengths")
+        probe.call("EqualString", [playlist, original, 1, 1])
+        p.expect(1, "native and saved Appearance report the same name")
+    probe.call("SetAppearance", [missing_name, 0, 0], side=1)
+    p.nonzero("the saved manager rejects a missing theme")
+    p.emit(0x907E0000 | (base + 20))
+    probe.call("SetAppearance", [missing_name, 0, 0])
+    p.emit(0x809E0000 | (base + 20))
+    p.equal("native Appearance reports the same missing theme error")
+
+    snapshot, modified = probe.slot(base + 8), probe.slot(base + 16)
+    for offset in (8, 16):
+        probe.call("NewCollection")
+        p.nonzero("allocate a scenario collection")
+        p.emit(0x907E0000 | (base + offset))
+    for getter in ("GetTheme", "GetScenario"):
+        probe.call(getter, [snapshot], side=1)
+        p.expect(0, "capture the saved Appearance scenario")
+        probe.call(getter, [modified])
+        p.expect(0, "capture the same scenario in native code")
+        for tag, width in ((b"sbar", 2), (b"sbth", 2), (b"snds", 1), (b"hcol", 6)):
+            for collection, buffer in ((snapshot, original), (modified, playlist)):
+                probe.call("GetCollectionItem", [collection, int.from_bytes(tag, "big"), 0, 0, buffer])
+                p.expect(0, "scenario contains the requested setting")
+            for index in range(width):
+                p.emit(0x887E0000 | (playlist[1] + index), 0x889E0000 | (original[1] + index))
+                p.equal("the scenario setting matches the saved implementation")
+    arrow_style = probe.far_raw(b"\0\x02")
+    for setter in ("SetTheme", "SetScenario"):
+        probe.call("SetThemeScrollBarArrowStyle", [0, 0], side=1)
+        p.expect(0, "start with a different saved scrollbar arrow style")
+        probe.call("BlockMoveData", [arrow_style, output, 2])
+        probe.call("AddCollectionItem", [modified, 0x73626172, 0, 2, output])
+        p.expect(0, "replace the scenario's scrollbar arrow style")
+        probe.call(setter, [modified])
+        p.expect(0, "apply the scenario through the native entry")
+        probe.call("GetThemeScrollBarArrowStyle", [output], side=1)
+        p.expect(0, "read the resulting setting through the saved manager")
+        p.emit(0xA07E0000 | (base + 12))
+        p.expect(2, "the applied scenario updates the shared setting")
+        probe.call(setter, [snapshot])
+        p.expect(0, "restore the original Appearance scenario")
+    for collection in (modified, snapshot):
+        probe.call("DisposeCollection", [collection])
+
+    for query in ("CanThemeDrawOnAllMonitors", "IsThemeCreditDialogAvailable"):
+        probe.call(query, side=1)
+        p.emit(0x907E0000 | (base + 20))
+        probe.call(query)
+        p.emit(0x809E0000 | (base + 20))
+        p.equal("native and saved Appearance query the same engine capability")
+    for color in (-2, -1, 0, 1, 47, 48):
+        probe.call("GetThemeTextColor", [color, 32, 1, original], side=1)
+        p.emit(0x907E0000 | (base + 20))
+        probe.call("GetThemeTextColor", [color, 32, 1, playlist])
+        p.emit(0x809E0000 | (base + 20))
+        p.equal("text color lookup matches the real theme status")
+        if color not in (0, 48):
+            for offset in (0, 2, 4):
+                p.emit(0xA07E0000 | (playlist[1] + offset), 0xA09E0000 | (original[1] + offset))
+                p.equal("text color lookup returns the same RGB components")
+    for name, args in (
+        ("SetThemeBackgroundForWindow", [0, 32, 1]),
+        ("SetThemeTextColorForWindow", [0, 1, 32, 1]),
+    ):
+        probe.call(name, args, side=1)
+        p.emit(0x907E0000 | (base + 20))
+        probe.call(name, args)
+        p.emit(0x809E0000 | (base + 20))
+        p.equal("a missing window returns the same theme color status")
+    probe.call("LMGetHiliteRGB", [original])
+    color = probe.far_raw(struct.pack(">3H", 0x2222, 0x7777, 0xAAAA))
+    _, ports = probe.raw(bytes(8))
+    world = probe.slot(ports + 4)
+    bounds = probe.raw(struct.pack(">4h", 0, 0, 16, 16))
+    probe.call("GetPort", [probe.ptr(ports)])
+    probe.call("NewGWorld", [probe.ptr(ports + 4), 32, bounds, 0, 0, 0])
+    p.expect(0, "create a color port for highlight propagation")
+    probe.call("SetPort", [world])
+    probe.call("HiliteColor", [original])
+    probe.call("SetPort", [probe.slot(ports)])
+    probe.call("SetHighlightColor", [color, 0])
+    probe.call("LMGetHiliteRGB", [playlist])
+    for offset, component in ((0, 0x2222), (2, 0x7777), (4, 0xAAAA)):
+        p.emit(0xA07E0000 | (playlist[1] + offset))
+        p.expect(component, "highlight color updates the live QuickDraw global")
+    probe.call("GetPortHiliteColor", [world, playlist])
+    for offset, component in ((0, 0x2222), (2, 0x7777), (4, 0xAAAA)):
+        p.emit(0xA07E0000 | (playlist[1] + offset))
+        p.expect(component, "highlight color propagates to other ports using the previous color")
+    probe.call("SetHighlightColor", [original, 0])
+    probe.call("DisposeGWorld", [world])
 
     for file_type in (0x74686D65, 0x61707072, 0x7A7A7A7A):
         probe.call("IsValidAppearanceFileType", [file_type], side=1)
@@ -11269,14 +12224,7 @@ def nqd_native_operations(probe):
     call("NQDDisposeRgn", copy)
     call("NQDDisposeRgn", region)
 
-    # Flattened PixPat, PixMap, four pixel bytes and two indexed colors.
-    pattern = bytearray(106)
-    struct.pack_into(">HII", pattern, 0, 1, 28, 78)
-    struct.pack_into(">H4h", pattern, 32, 0x8002, 0, 0, 2, 8)
-    struct.pack_into(">4h", pattern, 58, 0, 1, 1, 1)
-    struct.pack_into(">I", pattern, 70, 82)
-    pattern[78:82] = bytes.fromhex("11223344")
-    struct.pack_into(">IHH8H", pattern, 82, 0, 0, 1, 0, 0, 0, 0, 1, 0xFFFF, 0xFFFF, 0xFFFF)
+    pattern = desktop_pattern_fixture()
     encoded = probe.raw(pattern)
     guest_pattern = probe.ptr(base + 8)
     call("QDUnflattenPixPat", encoded, 40, guest_pattern)
@@ -11362,7 +12310,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
             raise ValueError("The ATSUI group requires native entries and the original oracle")
         make_atsui_probe(destination)
         return
-    write_math_reference(destination)
+    write_toolbox_references(destination, include_object_packing=not (original_only or math_only or text_only))
     nqd_imports = ()
     if not (original_only or math_only or text_only):
         nqd_source = (ROOT / "carbonlib/src/nqd_entries.h").read_text()
@@ -11449,11 +12397,16 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "SetScreenBitSavingEnabled",
                 "GetSavedScreenBitsRepresentativePixMap",
                 "MoveSavedScreenBits",
+                "DisposeSavedScreenBits",
             )
         )
         native_names.update(("SetControlColorProc", "SetUpControlBackground", "SetUpControlTextColor"))
         icon_services = (ROOT / "carbonlib/src/icon_services.h").read_text()
-        native_names.update(re.findall(r"^static int carbon_([A-Z]\w+)\(", icon_services, re.M))
+        # The Finder Services fixture exercises file-backed IconRefs and their reload behavior.
+        finder_file_icons = {"GetIconRefFromFile", "UpdateIconRef"}
+        native_names.update(
+            set(re.findall(r"^static int carbon_([A-Z]\w+)\(", icon_services, re.M)) - finder_file_icons
+        )
         native_names.update(
             ("ClipRect", "EraseRect", "GetCPixel", "GetGWorld", "LockPixels", "RGBBackColor", "UnlockPixels")
         )
@@ -11776,6 +12729,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                     + window_property_names(ROOT)
                     + [
                         "CheckMenuItem",
+                        "EqualRgn",
+                        "GetWindowBounds",
+                        "LMGetHiliteRGB",
+                        "ValidWindowRgn",
                         "Gestalt",
                         "GetParamText",
                         "StdFilterProc",
@@ -11887,6 +12844,15 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         *AE_STREAM_NAMES,
                         *AE_BUILD_NAMES,
                         "CreateListBoxControl",
+                        "GetThemeMetric",
+                        "DrawThemePrimaryGroup",
+                        "DrawThemeSecondaryGroup",
+                        "DrawThemeSeparator",
+                        "DrawThemeEditTextFrame",
+                        "DrawThemeGenericWell",
+                        "DrawThemeMenuItem",
+                        "SetThemePen",
+                        "SetThemeBackground",
                     ]
                 ]
                 + [
@@ -11901,6 +12867,83 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                     {"name": name, "original_library": "AppearanceLib"}
                     for name in (*APPEARANCE_STATE_APIS, "GetThemeFont")
                 ]
+                + (
+                    [{"name": name, "original_library": "ObjectPackingOracle"} for name in AE_OBJECT_PACKING]
+                    if not text_only
+                    else []
+                )
+                + (
+                    [
+                        {"name": name, "original_library": "WindowsLib"}
+                        for name in (
+                            "BeginWindowProxyDrag",
+                            "RepositionWindow",
+                            "ReshapeWindows",
+                            "RecalculateAllWindowTitleWidths",
+                            "FileContainsPossibleDesktopPicture",
+                            "GetPictureFromFile",
+                            "DrawMonitorDesktopFromListWillTakeTime",
+                            "SetMonitorDesktopToFile",
+                            "CopyMonitorDesktopFile",
+                            "SetDesktopPictureForDevice",
+                            "GetDesktopPictureForDevice",
+                            "GetCurrentMonitorDesktopList",
+                            "SetCurrentMonitorDesktopList",
+                            "DisposeMonitorDesktopList",
+                            "RefreshMonitorDesktopList",
+                            "GetInternalMonitorDesktopList",
+                            "InternalMonitorDesktopListChanged",
+                            "CountMonitorDesktopRecordsInList",
+                            "GetMonitorDesktopRecordFromList",
+                            "SetMonitorDesktopRecordFromList",
+                            "MonitorDesktopHasPicture",
+                            "GetMonitorDesktopAlignment",
+                            "SetMonitorDesktopAlignment",
+                            "DisposeSavedScreenBits",
+                            "SaveScreenBits",
+                            "RestoreScreenBits",
+                            "DrawDesktop",
+                            "DoubleClickWindowTitle",
+                            "EndWindowProxyDrag",
+                            "EraseWindowRegion",
+                            "GetNextWindowActivateEvent",
+                            "GetDesktopPattern",
+                            "GetDesktopPixPat",
+                            "GetWindowContentPattern",
+                            "GetWindowProcess",
+                            "GetWindowProxyAlias",
+                            "GetWindowProxyFSSpec",
+                            "GetWindowProxyIcon",
+                            "GlobalFindWindow",
+                            "HiliteWindowFrameForDrag",
+                            "InstallWindowContentPaintProc",
+                            "IsWindowPathSelectClick",
+                            "PostDelayedWindowReshape",
+                            "PostWindowActivateEvent",
+                            "RemoveWindowProxy",
+                            "RebuildDesktopRegion",
+                            "SetDesktopPattern",
+                            "SetWindowContentPattern",
+                            "SetWindowFeatures",
+                            "SetWindowProxyAlias",
+                            "SetWindowProxyCreatorAndType",
+                            "SetWindowProxyFSSpec",
+                            "SetWindowProxyIcon",
+                            "TrackWindowProxyDrag",
+                            "TrackWindowProxyFromExistingDrag",
+                            "TransitionWindow",
+                            "WMGetWindowFeatures",
+                            "WMGetWindowRegion",
+                            "WMCollapseWindow",
+                            "WMCollapseAllWindows",
+                            "WMIsWindowCollapsable",
+                            "WMIsWindowCollapsed",
+                            "WindowManagerSetThemeWindowBackground",
+                        )
+                    ]
+                    if not text_only
+                    else []
+                )
                 + text_scrap_rows(ROOT)
                 if file_entries
                 else []
@@ -11913,10 +12956,25 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
     if not math_only:
         probe.p.imports.append(("NQD", "RSect", 2))
+    if file_entries and not text_only:
+        probe.p.imports.extend(
+            ("ToolboxUtils", name, 2)
+            for name in (
+                "CountStackListElements",
+                "DisposeStackList",
+                "EnqueueStackListElement",
+                "NewStackListSys",
+                "PopStackListElement",
+            )
+        )
     probe.p.reserve_parameter_words(9 if math_only else 15 if file_entries else 12)
     if file_entries:
         # Textension also reads the fixture when the URL Access checks are filtered out.
         (destination / "URL buffer fixture").write_bytes(b"HEAD" + bytes(16380) + b"TAIL")
+        picture = struct.pack(">H4h", 34, 0, 0, 16, 16) + bytes.fromhex(
+            "001102ff001affff000000000031000000000010001000ff"
+        )
+        (destination / "Desktop PICT fixture").write_bytes(bytes(512) + picture)
         probe.section("URL Access buffered local files", lambda: url_access_operations(probe, destination))
     probe.section("MathLib scalar values", lambda: math_scalars(probe, entries))
     probe.section("MathLib IEEE classification", lambda: math_classification(probe, entries))
@@ -11945,6 +13003,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         probe.section("InterfaceLib Toolbox re-exports", lambda: patched_vectors(probe, interface_rows, sides=(0,)))
         probe.section("Installed Apple Event descriptor and callback operations", lambda: apple_event_operations(probe))
         probe.section("Apple Event stream construction and ownership", lambda: apple_event_stream_operations(probe))
+        probe.section("Apple Event object specifier packing", lambda: apple_event_object_packing(probe))
         probe.section("Apple Event format builders and CFM varargs", lambda: apple_event_builder_operations(probe))
         probe.section("Apple Event descriptor printing and rebuild", lambda: apple_event_printer_operations(probe))
         probe.section("Apple Event array representations and ownership", lambda: apple_event_array_operations(probe))

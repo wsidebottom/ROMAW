@@ -2819,46 +2819,6 @@ static ULONGINT ppc_vm_get_holdable_bytes(void)
     return result;
 }
 
-static LONGINT ppc_transition_window(uint32 window, uint32 effect, uint32 action, const Rect* origin)
-{
-    if (!ppc_valid_window(window))
-        return -5600;
-    if (origin && !ppc_memory(ppc_active_context, US_TO_SYN68K(origin), sizeof *origin, FALSE))
-        return paramErr;
-    if (effect != 1 || (action != 1 && action != 2))
-        return paramErr;
-    const ROMlib_carbon_export* zoom = ROMlib_carbon_find_export("ZoomRects", 2);
-    if (!zoom || !(zoom->signature & ROMLIB_CARBON_PPC_FRAME))
-        return -4;
-    Rect* rectangles = (Rect*)NewPtrSysClear(2 * sizeof *rectangles);
-    if (!rectangles)
-        return memFullErr;
-    WindowPtr native_window = SYN68K_TO_US(window);
-    if (!WINDOW_VISIBLE(native_window))
-        THEPORT_SAVE_EXCURSION(MR(wmgr_port), { WINDCALL(native_window, wCalcRgns, 0); });
-    Rect bounds = HxX(WINDOW_STRUCT_REGION(native_window), rgnBBox);
-    Rect center;
-    SetRect(&center, (CW(bounds.left) + CW(bounds.right)) / 2, (CW(bounds.top) + CW(bounds.bottom)) / 2,
-            (CW(bounds.left) + CW(bounds.right)) / 2, (CW(bounds.top) + CW(bounds.bottom)) / 2);
-    const Rect small = origin ? *origin : center;
-    rectangles[0] = action == 1 ? small : bounds;
-    rectangles[1] = action == 1 ? bounds : small;
-    ROMlib_carbon_ppc_frame animation = {.words = {US_TO_SYN68K(rectangles), US_TO_SYN68K(rectangles + 1), 6, 0}};
-    /* Reuse the actual rectangle animator and Window Manager, retaining all
-       update/visibility work. Theme sounds remain optional when no set exists. */
-    int handled = ((ROMlib_carbon_frame_entry)zoom->function)(&animation);
-    DisposPtr((Ptr)rectangles);
-    if (!handled)
-        return -4;
-    if ((int32)animation.words[0])
-        return animation.words[0];
-    if (action == 1)
-        ShowWindow(native_window);
-    else
-        HideWindow(native_window);
-    return noErr;
-}
-
 static LONGINT ppc_theme_sound_unavailable(uint32 kind)
 {
     /* No theme sound set is installed by the native Appearance provider.
@@ -3792,6 +3752,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"ApplicationZone", ppc_application_zone, M0(5)},
     {"InitZone", ppc_init_zone, M4(0, 5, 2, 5, 5)},
     {"DMGetFirstScreenDevice", ppc_dm_first_screen_device, M1(5, 1)},
+    {"DMGetNextScreenDevice", ppc_dm_next_screen_device, M2(5, 5, 1)},
     {"DMGetDisplayIDByGDevice", ppc_dm_get_display_id, M3(2, 5, 5, 1)},
     {"LMGetDeskPattern", ppc_lm_get_desk_pattern, M1(0, 5)},
     {"LMSetDeskPattern", ppc_lm_set_desk_pattern, M1(0, 5)},
@@ -4088,7 +4049,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
         if (found)
             return found > 0;
-        binding.function = ppc_transition_window;
+        binding.function = ROMlib_carbon_transition_window;
         binding.magic = M4(4, 4, 4, 4, 5);
     }
     if (!strcmp(library, "AppearanceLib") && !strcmp(name, "PlayThemeSound")) {
@@ -7465,7 +7426,9 @@ invalid:
 PUBLIC void ROMlib_ppc_mixed_entry_error(void)
 {
     ppc_context* ctx = ppc_active_context;
-    ROMlib_win_ppc_error(ctx && ctx->error[0] ? ctx->error : "No active PowerPC context for a routine descriptor");
+    const char* error = ctx && ctx->error[0] ? ctx->error : "No active PowerPC context for a routine descriptor";
+    fprintf(stderr, "PowerPC launch failed: %s\n", error);
+    ROMlib_win_ppc_error(error);
 }
 
 PRIVATE uint32 ppc_new_routine_descriptor(ppc_context* ctx, uint32 procedure, uint32 info, uint32 isa)

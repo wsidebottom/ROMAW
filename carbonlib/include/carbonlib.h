@@ -56,6 +56,7 @@ const ROMlib_carbon_export* ROMlib_carbon_find_export(const char* name, unsigned
 const ROMlib_carbon_export* ROMlib_carbon_find_library_export(const char* library, const char* name,
                                                               unsigned symbol_class);
 const ROMlib_carbon_export* ROMlib_carbon_exports(size_t* count);
+int32_t ROMlib_carbon_transition_window(uint32_t window, uint32_t effect, uint32_t action, const void* origin);
 
 typedef enum ROMlib_carbon_data_kind {
     ROMLIB_CARBON_DATA_WORDS,

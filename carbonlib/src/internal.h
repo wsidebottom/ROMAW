@@ -38,6 +38,11 @@ enum carbon_property_operation {
     property_class_set,
     property_window_attributes_change,
     property_window_class_search,
+    property_sheet_parent,
+    property_latent_visibility,
+    property_scroll_region,
+    property_scroll_rect,
+    property_find_window_of_class,
     property_class_valid,
     property_available_attributes
 };
@@ -219,6 +224,11 @@ int ROMlib_carbon_AEUnflattenDesc(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AEPrintDescToHandle(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AEGetArray(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AEPutArray(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_CreateCompDescriptor(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_CreateLogicalDescriptor(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_CreateObjSpecifier(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_CreateOffsetDescriptor(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_CreateRangeDescriptor(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_ae_build(const char* name, int event_kind, Boolean indirect, ROMlib_carbon_ppc_frame* call);
 
 enum carbon_ae_stream_operation {

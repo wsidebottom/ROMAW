@@ -9,7 +9,8 @@
              ROMlib_carbon_AEUnflattenDesc, ROMlib_carbon_ae_stream, ROMlib_carbon_ae_build,
              ROMlib_carbon_AEPrintDescToHandle, ROMlib_carbon_AEGetArray, ROMlib_carbon_AEPutArray,
              ROMlib_carbon_get_desc_data, ROMlib_carbon_get_desc_data_size,
-             ROMlib_carbon_replace_desc_data
+             ROMlib_carbon_replace_desc_data, ROMlib_carbon_CreateCompDescriptor, ROMlib_carbon_CreateLogicalDescriptor,
+             ROMlib_carbon_CreateObjSpecifier, ROMlib_carbon_CreateOffsetDescriptor, ROMlib_carbon_CreateRangeDescriptor
 
   Origin:    Existing repository source in packages/carbonlib/src; original attribution and provenance comments are
              preserved below.
@@ -41,6 +42,106 @@ static int descriptor_result(ROMlib_carbon_ppc_frame* call, int32 result)
 {
     call->words[0] = result;
     return 1;
+}
+
+struct object_record_field {
+    AEKeyword key;
+    DescType scalar_type;
+    uint32 value;
+};
+
+static int create_object_record(ROMlib_carbon_ppc_frame* call, uint32 output, DescType type,
+                                const struct object_record_field* fields, size_t count, Boolean dispose_inputs)
+{
+    AEDesc* descriptor = output ? ROMlib_carbon_try_guest_memory(output, sizeof *descriptor, 1) : NULL;
+    if (!descriptor)
+        return descriptor_result(call, paramErr);
+
+    AEDesc* inputs[4] = {0};
+    for (size_t i = 0; i < count; ++i) {
+        if (fields[i].scalar_type)
+            continue;
+        const uint32 address = fields[i].value;
+        inputs[i] = address ? ROMlib_carbon_try_guest_memory(address, sizeof *descriptor, dispose_inputs) : NULL;
+        if (!inputs[i])
+            return descriptor_result(call, paramErr);
+    }
+
+    AERecord record = {CLC(typeNull), {0}};
+    OSErr result = C_AECreateList(NULL, 0, TRUE, &record);
+    for (size_t i = 0; i < count && !result; ++i) {
+        AEDesc scalar = {CLC(typeNull), {0}};
+        AEDesc* input = inputs[i];
+        if (!input) {
+            uint32 value = CL(fields[i].value);
+            result = C_AECreateDesc(fields[i].scalar_type, (Ptr)&value, sizeof value, &scalar);
+            input = &scalar;
+        }
+        if (!result)
+            result = C_AEPutKeyDesc(&record, fields[i].key, input);
+        C_AEDisposeDesc(&scalar);
+    }
+    if (result) {
+        C_AEDisposeDesc(&record);
+        return descriptor_result(call, result);
+    }
+    if (dispose_inputs) {
+        for (size_t i = 0; i < count; ++i) {
+            if (inputs[i])
+                C_AEDisposeDesc(inputs[i]);
+        }
+    }
+    DESC_TYPE_X(&record) = CL(type);
+    *descriptor = record;
+    return descriptor_result(call, noErr);
+}
+
+int ROMlib_carbon_CreateOffsetDescriptor(ROMlib_carbon_ppc_frame* call)
+{
+    AEDesc* output = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *output, 1) : NULL;
+    if (!output)
+        return descriptor_result(call, paramErr);
+    uint32 offset = CL(call->words[0]);
+    return descriptor_result(call, C_AECreateDesc(TICK("long"), (Ptr)&offset, sizeof offset, output));
+}
+
+int ROMlib_carbon_CreateCompDescriptor(ROMlib_carbon_ppc_frame* call)
+{
+    const struct object_record_field fields[] = {
+        {TICK("relo"), TICK("enum"), call->words[0]},
+        {TICK("obj1"), 0, call->words[1]},
+        {TICK("obj2"), 0, call->words[2]},
+    };
+    return create_object_record(call, call->words[4], TICK("cmpd"), fields, NELEM(fields), (Byte)call->words[3]);
+}
+
+int ROMlib_carbon_CreateLogicalDescriptor(ROMlib_carbon_ppc_frame* call)
+{
+    const struct object_record_field fields[] = {
+        {TICK("term"), 0, call->words[0]},
+        {TICK("logc"), TICK("enum"), call->words[1]},
+    };
+    return create_object_record(call, call->words[3], TICK("logi"), fields, NELEM(fields), (Byte)call->words[2]);
+}
+
+int ROMlib_carbon_CreateObjSpecifier(ROMlib_carbon_ppc_frame* call)
+{
+    const struct object_record_field fields[] = {
+        {TICK("want"), typeType, call->words[0]},
+        {TICK("from"), 0, call->words[1]},
+        {TICK("form"), TICK("enum"), call->words[2]},
+        {TICK("seld"), 0, call->words[3]},
+    };
+    return create_object_record(call, call->words[5], TICK("obj "), fields, NELEM(fields), (Byte)call->words[4]);
+}
+
+int ROMlib_carbon_CreateRangeDescriptor(ROMlib_carbon_ppc_frame* call)
+{
+    const struct object_record_field fields[] = {
+        {TICK("star"), 0, call->words[0]},
+        {TICK("stop"), 0, call->words[1]},
+    };
+    return create_object_record(call, call->words[3], TICK("rang"), fields, NELEM(fields), (Byte)call->words[2]);
 }
 
 /* Each entry has a keyword, a type and length, or a shared prefix supplying
