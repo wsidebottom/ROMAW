@@ -222,6 +222,8 @@ int ROMlib_carbon_native_ppc_callback(const char* name, int (*function)(ROMlib_c
 
 /* Validate a span for a Toolbox service that returns an error to the guest. */
 void* ROMlib_carbon_try_guest_memory(uint32_t address, size_t length, int write_access);
+const void* ROMlib_carbon_mp_context(void);
+void ROMlib_carbon_mp_memory_reset(const void* context);
 
 /* Preserve an existing failure; otherwise fail the active native PPC operation. */
 int ROMlib_carbon_report_failure(const char* message);

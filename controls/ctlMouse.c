@@ -206,6 +206,8 @@ P3(PUBLIC pascal trap, INTEGER, TrackControl, /* IMI-323 */
             a = CTL_ACTION(c);
 
         int kind = ROMlib_native_control_kind(c);
+        if (partstart == 6 && kind == ROMlib_picture_proc + 1)
+            goto done; /* Non-tracking picture controls return their part immediately. */
         if (partstart == inThumb && kind == ROMlib_live_scroll_proc) {
             track_live_scrollbar(c, p, a);
             goto done;

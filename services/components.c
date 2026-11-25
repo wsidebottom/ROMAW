@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_copy_name,
+  Functions: ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_copy_name, ROMlib_component_owns_token,
              ROMlib_component_reset, ROMlib_component_selector, ROMlib_component_service,
              ROMlib_component_signature, ROMlib_component_text_services
 
@@ -20,6 +20,7 @@
 #include "OSUtil.h"
 #include "rsys/everything.h"
 #include "rsys/component.h"
+#include "Iconutil.h"
 #include "rsys/mman.h"
 #include "rsys/resource.h"
 #include "rsys/system_resources.h"
@@ -37,10 +38,29 @@ typedef struct component_type_seed {
     uint32 seed;
 } component_type_seed;
 
+typedef struct PACKED {
+    uint32 type;
+    uint16 id;
+} component_resource_key;
+
+typedef struct PACKED {
+    component_resource_key public_key;
+    uint16 reserved;
+    component_resource_key file_key;
+    uint16 flags;
+} component_resource_mapping;
+
+typedef struct {
+    component_resource_key public_resources;
+    INTEGER icon_suite_id;
+} component_resource_metadata;
+
 typedef struct component_entry {
     struct component_entry* next;
-    uint32 id, refcon, registration_flags, version, instances;
+    const struct component_entry* captor;
+    uint32 id, capture_id, refcon, registration_flags, version, instances;
     component_description description;
+    component_resource_metadata resources;
     component_type_seed* type_seed;
     Handle code, name, info, icon;
     FSSpec spec;
@@ -83,7 +103,7 @@ static int shutting_down;
 OSErr ROMlib_component_copy_name(OSType type, OSType subtype, StringPtr name)
 {
     for (component_entry* component = components; component; component = component->next) {
-        if (component->description.type != CL(type) || component->description.subtype != CL(subtype) ||
+        if (component->capture_id || component->description.type != CL(type) || component->description.subtype != CL(subtype) ||
             !component->name)
             continue;
         const Byte* source = (const Byte*)STARH(component->name);
@@ -113,7 +133,7 @@ OSErr ROMlib_component_text_services(INTEGER count, const OSType* types, HIDDEN_
         if (type != CLC(T('t', 's', 'v', 'c')) && type != CLC(T('u', 't', 's', 'v')))
             return -2518; /* tsmUnsupInterfaceErr */
         for (const component_entry* component = components; component; component = component->next)
-            if (component->description.type == type && ++matches > INT16_MAX)
+            if (!component->capture_id && component->description.type == type && ++matches > INT16_MAX)
                 return memFullErr;
     }
 
@@ -129,7 +149,7 @@ OSErr ROMlib_component_text_services(INTEGER count, const OSType* types, HIDDEN_
     for (unsigned i = 0; i < (unsigned)count; ++i) {
         const OSType type = text_service_type(types, i);
         for (const component_entry* component = components; component; component = component->next) {
-            if (component->description.type != type)
+            if (component->capture_id || component->description.type != type)
                 continue;
             const uint32 token = CL(component->id);
             memcpy(entry, &token, sizeof token);
@@ -162,7 +182,7 @@ static component_entry* component_find(uint32 id)
 {
     component_entry* p;
     for (p = components; p; p = p->next)
-        if (p->id == id)
+        if ((p->capture_id ? p->capture_id : p->id) == id)
             return p;
     return NULL;
 }
@@ -174,6 +194,22 @@ static component_instance* instance_find(uint32 id)
         if (p->id == id)
             return p;
     return NULL;
+}
+
+PUBLIC int ROMlib_component_owns_token(uint32 id)
+{
+    if (!id)
+        return 0;
+    for (const component_entry* component = components; component; component = component->next)
+        if (component->id == id || component->capture_id == id)
+            return 1;
+    return instance_find(id) != NULL;
+}
+
+static component_entry* component_from_token(uint32 id)
+{
+    component_instance* instance = instance_find(id);
+    return instance ? instance->component : component_find(id);
 }
 
 static uint32 token(void)
@@ -241,20 +277,45 @@ static void component_modified(component_entry* component)
     component->type_seed->seed = ++modification_seed;
 }
 
+static void restore_captured_component(component_entry* component)
+{
+    component->capture_id = 0;
+    component->captor = NULL;
+    component_modified(component);
+}
+
+static uint32 capture_component(uint32 id, uint32 capturing_id)
+{
+    component_entry* captured = component_from_token(id);
+    const component_entry* captor = component_from_token(capturing_id);
+    if (!captured || captured->capture_id || !captor)
+        return 0;
+    for (const component_entry* ancestor = captor; ancestor; ancestor = ancestor->captor)
+        if (ancestor == captured)
+            return 0;
+    const uint32 capture = token();
+    if (capture) {
+        captured->capture_id = capture;
+        captured->captor = captor;
+        component_modified(captured);
+    }
+    return capture;
+}
+
 static int16 set_default_component(uint32 id, uint16 flags)
 {
     component_entry** current = &components;
     while (*current && (*current)->id != id)
         current = &(*current)->next;
     component_entry* selected = *current;
-    if (!selected)
+    if (!selected || selected->capture_id)
         return -3000;
     if (flags & ~(default_any_flags | default_any_manufacturer | default_any_subtype))
         return paramErr;
 
     const component_description* wanted = &selected->description;
     for (component_entry** first = &components; first != current; first = &(*first)->next) {
-        if (same_component_group(&(*first)->description, wanted, flags)) {
+        if (!(*first)->capture_id && same_component_group(&(*first)->description, wanted, flags)) {
             *current = selected->next;
             selected->next = *first;
             *first = selected;
@@ -382,6 +443,9 @@ static int32 component_unregister(uint32 id)
         return -3000;
     *link = p->next;
     component_modified(p);
+    for (component_entry* other = components; other; other = other->next)
+        if (other->captor == p)
+            restore_captured_component(other);
     if (p->code)
         DisposHandle(p->code);
     if (p->name)
@@ -396,7 +460,8 @@ static int32 component_unregister(uint32 id)
 
 static uint32 component_register(const component_description* description, ProcPtr entry, Handle code, Handle name,
                                  Handle info, Handle icon, const FSSpec* spec, INTEGER ref, unsigned platform,
-                                 unsigned options, uint32 registration_flags, uint32 version)
+                                 unsigned options, uint32 registration_flags, uint32 version,
+                                 component_resource_metadata resources)
 {
     component_entry* p;
     uint32 instance;
@@ -407,6 +472,7 @@ static uint32 component_register(const component_description* description, ProcP
     if (!p)
         return 0;
     p->description = *description;
+    p->resources = resources;
     p->description.mask = 0;
     p->id = token();
     p->code = copy_handle(code);
@@ -479,6 +545,7 @@ static uint32 register_resource(Handle resource, unsigned global)
     unsigned char* data;
     Size size;
     component_description description;
+    component_resource_metadata resources = {0};
     Handle code, name, info, icon;
     INTEGER saved = CurResFile(), ref;
     FCBPBRec pb;
@@ -500,15 +567,21 @@ static uint32 register_resource(Handle resource, unsigned global)
         version = CL(version);
         memcpy(&flags, bytes + 48, 4);
         flags = CL(flags);
+        memcpy(&resources.icon_suite_id, bytes + 52, 2);
+    }
+    if (size >= 58) {
+        memcpy(&count, bytes + 54, 4);
+        count = CL(count);
+        if (count <= ((uint32)size - 58) / 12) {
+            const uint32 map_offset = 58 + count * 12;
+            if ((uint32)size - map_offset >= sizeof resources.public_resources)
+                memcpy(&resources.public_resources, STARH(resource) + map_offset, sizeof resources.public_resources);
+        }
+        else if (flags & 8)
+            goto done;
     }
     if (flags & 8) {
         int found = 0;
-        if (size < 58)
-            goto done;
-        memcpy(&count, bytes + 54, 4);
-        count = CL(count);
-        if (count > ((uint32)size - 58) / 12)
-            goto done;
         for (i = 0; i < count; ++i) {
             uint16 arch;
             data = (unsigned char*)STARH(resource) + 58 + 12 * i;
@@ -541,7 +614,7 @@ static uint32 register_resource(Handle resource, unsigned global)
     icon = resource_spec(bytes + 38);
     if (code)
         result = component_register(&description, NULL, code, name, info, icon, &spec, ref, platform, global, flags,
-                                    version);
+                                    version, resources);
 done:
     UseResFile(saved);
     return result;
@@ -620,17 +693,10 @@ static OSErr component_close_resource_file(INTEGER reference)
     return status;
 }
 
-static OSErr component_get_resource(uint32 id, OSType type, INTEGER number, Handle* output)
+static OSErr copy_component_resource(OSType type, INTEGER number, Handle* output)
 {
-    const INTEGER saved = CurResFile();
-    INTEGER reference;
-    OSErr status = component_open_resource_file(id, &reference);
-    if (status)
-        return status;
-
-    UseResFile(reference);
     Handle resource = Get1Resource(type, number);
-    status = ResError();
+    OSErr status = ResError();
     Handle copy = NULL;
     if (!status && resource) {
         LoadResource(resource);
@@ -648,6 +714,21 @@ static OSErr component_get_resource(uint32 id, OSType type, INTEGER number, Hand
     if (!status && !copy)
         status = resNotFound;
 
+    *output = copy;
+    return status;
+}
+
+static OSErr component_get_resource(uint32 id, OSType type, INTEGER number, Handle* output)
+{
+    const INTEGER saved = CurResFile();
+    INTEGER reference;
+    OSErr status = component_open_resource_file(id, &reference);
+    if (status)
+        return status;
+
+    UseResFile(reference);
+    Handle copy = NULL;
+    status = copy_component_resource(type, number, &copy);
     const OSErr close_error = component_close_resource_file(reference);
     UseResFile(saved);
     if (!status && close_error) {
@@ -659,7 +740,140 @@ static OSErr component_get_resource(uint32 id, OSType type, INTEGER number, Hand
     return status;
 }
 
-static OSErr component_get_string(uint32 id, INTEGER list_id, INTEGER index, StringPtr output)
+static OSErr component_get_icon_suite(uint32 id, Handle* output)
+{
+    const component_entry* component = component_from_token(id);
+    if (!component)
+        return -3000;
+    const INTEGER suite_id = CW(component->resources.icon_suite_id);
+    Handle legacy = NULL;
+    const Size legacy_size = component->icon ? GetHandleSize(component->icon) : 0;
+    if (legacy_size == 32 || legacy_size == 64 || legacy_size == 128 || legacy_size == 256) {
+        legacy = copy_handle(component->icon);
+        if (!legacy)
+            return memFullErr;
+    }
+
+    static const OSType types[] = {large1BitMask, large4BitData, large8BitData,
+                                   small1BitMask, small4BitData, small8BitData};
+    Handle icons[NELEM(types)] = {0};
+    OSErr status = noErr;
+    if (suite_id) {
+        const INTEGER saved = CurResFile();
+        INTEGER reference;
+        status = component_open_resource_file(id, &reference);
+        if (!status) {
+            UseResFile(reference);
+            for (unsigned i = 0; i < NELEM(types); ++i) {
+                status = copy_component_resource(types[i], suite_id, &icons[i]);
+                if (status == resNotFound)
+                    status = noErr;
+                if (status)
+                    break;
+            }
+            const OSErr close_error = component_close_resource_file(reference);
+            UseResFile(saved);
+            if (!status)
+                status = close_error;
+        }
+    }
+
+    bool populated = false;
+    for (unsigned i = 0; i < NELEM(types); ++i)
+        populated |= icons[i] != NULL;
+    if (!status && !populated && legacy) {
+        const Size bitmap_size = legacy_size <= 64 ? 32 : 128;
+        if (legacy_size == bitmap_size) {
+            SetHandleSize(legacy, bitmap_size * 2);
+            status = MemError();
+            if (!status)
+                memset(STARH(legacy) + bitmap_size, 0xff, bitmap_size);
+        }
+        if (!status) {
+            icons[bitmap_size == 32 ? 3 : 0] = legacy;
+            legacy = NULL;
+            populated = true;
+        }
+    }
+    if (legacy)
+        DisposHandle(legacy);
+
+    Handle suite = NULL;
+    if (!status && populated) {
+        HIDDEN_Handle encoded = {0};
+        status = C_NewIconSuite((Handle*)&encoded);
+        if (!status)
+            suite = HIDDEN_NATIVE(encoded);
+        for (unsigned i = 0; !status && i < NELEM(types); ++i) {
+            if (!icons[i])
+                continue;
+            status = C_AddIconToSuite(icons[i], suite, types[i]);
+            if (!status)
+                icons[i] = NULL;
+        }
+    }
+    for (unsigned i = 0; i < NELEM(types); ++i)
+        if (icons[i])
+            DisposHandle(icons[i]);
+    if (status && suite) {
+        C_DisposeIconSuite(suite, TRUE);
+        suite = NULL;
+    }
+    *output = suite;
+    return status;
+}
+
+static OSErr component_get_public_resource(uint32 id, OSType type, INTEGER number, Handle* output)
+{
+    const component_entry* component = component_from_token(id);
+    if (!component)
+        return -3000;
+    const component_resource_key map_key = component->resources.public_resources;
+    if (!map_key.type)
+        return resNotFound;
+
+    Handle map = NULL;
+    OSErr status = component_get_resource(id, CL(map_key.type), CW(map_key.id), &map);
+    if (status)
+        return status;
+    const Size size = GetHandleSize(map);
+    component_resource_mapping match = {0};
+    const Byte* rows = (const Byte*)STARH(map);
+    if (rows && size > 0 && size % sizeof match == 0) {
+        for (size_t offset = 0; offset < (size_t)size; offset += sizeof match) {
+            memcpy(&match, rows + offset, sizeof match);
+            if (match.public_key.type == CL(type) && match.public_key.id == CW(number))
+                break;
+            match = (component_resource_mapping){0};
+        }
+    }
+    DisposHandle(map);
+    if (!match.public_key.type)
+        return resNotFound;
+
+    if (match.flags == CWC(1)) {
+        _Alignas(16) HIDDEN_Handle resource = {0};
+        _Alignas(16) struct PACKED {
+            Byte flags, size;
+            INTEGER selector;
+            uint32 destination;
+            INTEGER number;
+            uint32 type;
+        } parameters = {0, 10, CWC(-10), CL(US_TO_SYN68K(&resource)), CW(number), CL(type)};
+        status = ROMlib_component_call(id, &parameters);
+        if (!status) {
+            *output = HIDDEN_NATIVE(resource);
+            if (!*output)
+                status = resNotFound;
+        }
+        return status;
+    }
+    if (match.flags || !match.file_key.type)
+        return resNotFound;
+    return component_get_resource(id, CL(match.file_key.type), CW(match.file_key.id), output);
+}
+
+static OSErr component_get_string(uint32 id, INTEGER list_id, INTEGER index, StringPtr output, bool public)
 {
     if (!output)
         return paramErr;
@@ -668,7 +882,8 @@ static OSErr component_get_string(uint32 id, INTEGER list_id, INTEGER index, Str
         return paramErr;
 
     Handle copy = NULL;
-    OSErr status = component_get_resource(id, TICK("STR#"), list_id, &copy);
+    OSErr status = public ? component_get_public_resource(id, TICK("STR#"), list_id, &copy)
+                          : component_get_resource(id, TICK("STR#"), list_id, &copy);
     if (status)
         return status;
     const Size size = GetHandleSize(copy);
@@ -752,18 +967,20 @@ PUBLIC int ROMlib_component_service(unsigned selector, const uint32* a, uint32* 
     switch (selector) {
     case 1:
         *result = component_register(component_pointer(a[0]), component_pointer(a[1]), NULL, component_pointer(a[3]),
-                                     component_pointer(a[4]), component_pointer(a[5]), NULL, 0, 1, a[2], 0, 0);
+                                     component_pointer(a[4]), component_pointer(a[5]), NULL, 0, 1, a[2], 0, 0,
+                                     (component_resource_metadata){0});
         break;
     case 2:
-        *result = component_unregister(a[0]);
+        p = component_from_token(a[0]);
+        *result = p ? component_unregister(p->id) : -3000;
         break;
     case 3:
     case 4:
         p = selector == 4 && a[0] ? component_find(a[0]) : NULL;
-        if (selector == 4 && a[0] && !p)
+        if (selector == 4 && a[0] && (!p || p->capture_id))
             break;
         for (p = p ? p->next : components; p; p = p->next)
-            if (description_matches(&p->description, component_pointer(a[selector == 4 ? 1 : 0]))) {
+            if (!p->capture_id && description_matches(&p->description, component_pointer(a[selector == 4 ? 1 : 0]))) {
                 if (selector == 4) {
                     count = p->id;
                     break;
@@ -848,8 +1065,9 @@ PUBLIC int ROMlib_component_service(unsigned selector, const uint32* a, uint32* 
         *result = register_resource(component_pointer(a[0]), a[1]);
         break;
     case 19:
+        p = component_find(a[0]);
         for (instance = instances; instance; instance = instance->next)
-            if (!a[0] || instance->component->id == a[0])
+            if (!a[0] || instance->component == p)
                 ++count;
         *result = count;
         break;
@@ -882,22 +1100,48 @@ PUBLIC int ROMlib_component_service(unsigned selector, const uint32* a, uint32* 
     case 24:
         *result = component_close_resource_file((INTEGER)a[0]);
         break;
-    case 53: { /* GetComponentResource */
+    case 41: { /* GetComponentIconSuite */
+        HIDDEN_Handle* output = component_pointer(a[1]);
+        if (!output) {
+            *result = paramErr;
+            break;
+        }
+        Handle suite = NULL;
+        *result = component_get_icon_suite(a[0], &suite);
+        HIDDEN_RAW_SET(*output, suite ? RM(suite) : 0);
+        break;
+    }
+    case 53: /* GetComponentResource */
+    case 56: { /* GetComponentPublicResource */
         HIDDEN_Handle* output = component_pointer(a[3]);
         if (!output) {
             *result = paramErr;
             break;
         }
         Handle resource = NULL;
-        *result = component_get_resource(a[0], a[1], (INTEGER)a[2], &resource);
+        *result = selector == 56 ? component_get_public_resource(a[0], a[1], (INTEGER)a[2], &resource)
+                                 : component_get_resource(a[0], a[1], (INTEGER)a[2], &resource);
         HIDDEN_RAW_SET(*output, resource ? RM(resource) : 0);
         break;
     }
     case 54: /* GetComponentIndString */
-        *result = component_get_string(a[0], (INTEGER)a[2], (INTEGER)a[3], component_pointer(a[1]));
+    case 58: /* GetComponentPublicIndString */
+        *result = component_get_string(a[0], (INTEGER)a[2], (INTEGER)a[3], component_pointer(a[1]), selector == 58);
         break;
     case 25:
         *result = 3;
+        break;
+    case 28:
+        *result = capture_component(a[0], a[1]);
+        break;
+    case 29:
+        p = component_from_token(a[0]);
+        if (!p)
+            *result = -3000;
+        else if (!p->capture_id)
+            *result = -3002;
+        else
+            restore_captured_component(p);
         break;
     case 30:
         *result = set_default_component(a[0], a[1]);
@@ -930,7 +1174,7 @@ PUBLIC int ROMlib_component_service(unsigned selector, const uint32* a, uint32* 
         wanted.type = CL(a[0]);
         wanted.subtype = CL(a[1]);
         for (p = components; p; p = p->next)
-            if (description_matches(&p->description, &wanted) && (*result = component_open(p)))
+            if (!p->capture_id && description_matches(&p->description, &wanted) && (*result = component_open(p)))
                 break;
         if (output) {
             *output = CL(*result);
@@ -968,14 +1212,19 @@ static const struct {
                       {21, "OpenComponentResFile", "24"},
                       {24, "CloseComponentResFile", "22"},
                       {25, "ComponentManagerVersion", "4"},
+                      {28, "CaptureComponent", "444"},
+                      {29, "UncaptureComponent", "24"},
                       {30, "SetDefaultComponent", "242"},
                       {33, "OpenDefaultComponent", "444"},
+                      {41, "GetComponentIconSuite", "244"},
                       {44, "GetComponentTypeModSeed", "44"},
                       {45, "OpenAComponent", "244"},
                       {46, "OpenADefaultComponent", "2444"},
                       {47, "OpenAComponentResFile", "244"},
                       {53, "GetComponentResource", "24424"},
-                      {54, "GetComponentIndString", "24422"}};
+                      {54, "GetComponentIndString", "24422"},
+                      {56, "GetComponentPublicResource", "24424"},
+                      {58, "GetComponentPublicIndString", "24422"}};
 
 PUBLIC const char* ROMlib_component_signature(unsigned selector)
 {

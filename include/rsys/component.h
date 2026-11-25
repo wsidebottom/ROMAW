@@ -25,6 +25,7 @@ extern int ROMlib_component_service(unsigned selector, const uint32* args, uint3
 extern OSErr ROMlib_component_copy_name(OSType type, OSType subtype, StringPtr name);
 extern OSErr ROMlib_component_text_services(INTEGER count, const OSType* types, HIDDEN_Handle* output, LONGINT* seed);
 extern int ROMlib_component_can_dispatch(uint32 instance);
+extern int ROMlib_component_owns_token(uint32 id);
 extern int32 ROMlib_component_call(uint32 instance, const void* parameters);
 extern void ROMlib_component_reset(void);
 #if defined(CYGWIN32) && defined(SDL) && defined(SYN68K)

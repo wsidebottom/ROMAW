@@ -1149,7 +1149,8 @@ PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
     if (selector == 0x04 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
-        selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x75 || selector == 0x7c)
+        selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x74 || selector == 0x75 ||
+        selector == 0x7c)
         return TRUE;
     for (block = osdispatch_block; block->descriptorp; ++block)
         if (selector >= block->first && selector <= block->last)
@@ -1279,6 +1280,15 @@ STUB(OSDispatch)
         POPUL();
         POPUL();
         WRITEUW(EM_A7, uw == 0x42 ? -4 /* unimpErr */ : noErr);
+        return retaddr;
+    }
+    if (uw == 0x74) {
+        /* FinderLib's no-argument LONGINT query feeds Largest Unused Block,
+           after the caller subtracts DefltStack. Temporary allocations use
+           the system zone in ROMAW; report that allocator's actual maximum. */
+        Size growth = 0;
+        Size largest = C_TempMaxMem(&growth);
+        WRITEUL(EM_A7, largest > 0 ? largest : 0);
         return retaddr;
     }
     if (uw == 0x75) {
@@ -1896,9 +1906,9 @@ STUB(MenuDispatch)
         const uint32 value = POPUL();
         const INTEGER item = POPUW();
         MenuHandle menu = (MenuHandle)SYN68K_TO_US_CHECK0(POPUL());
-        const OSErr status = selector == 0x0502 ? ROMlib_set_menu_item_command(menu, item, value)
-                                               : ROMlib_get_menu_item_command(menu, item,
-                                                                              (uint32*)SYN68K_TO_US_CHECK0(value));
+        const OSErr status = selector == 0x0502
+                                 ? ROMlib_set_menu_item_command(menu, item, value)
+                                 : ROMlib_get_menu_item_command(menu, item, (uint32*)SYN68K_TO_US_CHECK0(value));
         WRITEUW(EM_A7, status);
         return return_address;
     }
@@ -3363,6 +3373,8 @@ PRIVATE selector_table_entry_t sound_table[] = {
     {0x063C0014, PTOCBLOCK(SPBSetDeviceInfo)},
     {0x063C0018, PTOCBLOCK(SndGetInfo)},
     {0x06400018, PTOCBLOCK(SndSetInfo)},
+    {0x06440018, PTOCBLOCK(GetSoundOutputInfo)},
+    {0x06480018, PTOCBLOCK(SetSoundOutputInfo)},
     {0x07080014, PTOCBLOCK(SndRecordToFile)},
     {0x07100018, PTOCBLOCK(GetCompressionInfo)},
     {0x07580014, {ROMlib_parse_aiff_header, 0x2b6a}},

@@ -952,6 +952,8 @@
 #define PTOC_GetSoundPreference 0x0000096A
 #define PTOC_SndGetInfo 0x00000B2A
 #define PTOC_SndSetInfo 0x00000B2A
+#define PTOC_GetSoundOutputInfo PTOC_SndGetInfo
+#define PTOC_SetSoundOutputInfo PTOC_SndSetInfo
 #define PTOC_ROMlib_stdftrack 0x00000150
 #define PTOC_unused_stdfile 0x00005B69
 #define PTOC_ROMlib_filebox 0x00000150

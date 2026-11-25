@@ -86,6 +86,7 @@ static ControlHandle new_control(WindowPtr wst, const Rect* r, StringPtr title, 
         case ROMlib_user_pane_proc:
         case ROMlib_edit_text_proc:
         case ROMlib_static_text_proc:
+        case ROMlib_picture_proc:
             pane = TRUE;
             break;
         }

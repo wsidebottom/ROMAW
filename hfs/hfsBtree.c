@@ -8,7 +8,9 @@
   Functions: ROMlib_addrtocachep, ROMlib_btcreateemptydir, ROMlib_btcreateemptyfile, ROMlib_btdelete, ROMlib_btnext,
              ROMlib_btpbindex, ROMlib_btrename, ROMlib_checkleaves, ROMlib_cleancache, ROMlib_dircreate,
              ROMlib_dirdelete, ROMlib_dirtyleaf, ROMlib_errortype, ROMlib_filecreate, ROMlib_filedelete,
-             ROMlib_flushcachevcbp, ROMlib_getcache, ROMlib_keyfind, ROMlib_makecatparam, ROMlib_newextentrecord,
+             ROMlib_flushcachevcbp, ROMlib_getcache, ROMlib_hfs_create_file_id, ROMlib_hfs_delete_file_thread,
+             ROMlib_hfs_resolve_file_id, ROMlib_hfs_update_file_thread, ROMlib_keyfind, ROMlib_makecatparam,
+             ROMlib_newextentrecord,
              ROMlib_putcache, ROMlib_searchnode
 
   Origin:    Existing repository source in executor/src/hfs; original attribution and provenance comments are preserved
@@ -197,6 +199,7 @@ PRIVATE void checkbtp(btnode* btp)
                     expected += sizeof(filerec);
                     break;
                 case THREADTYPE:
+                case FILETHREADTYPE:
                     expected += sizeof(threadrec);
                     break;
                 default:
@@ -2155,6 +2158,151 @@ PUBLIC xtntkey* ROMlib_newextentrecord(filecontrolblock* fcbp, uint16 newabn)
     return (xtntkey*)btparamrec.foundp;
 }
 
+enum { file_id_missing = -1300, file_id_exists = -1301, file_id_directory = -1302 };
+
+static OSErr find_file_thread(HVCB* volume, LONGINT id, btparam* lookup)
+{
+    OSErr error = ROMlib_makecatparam(lookup, volume, id, 0, NULL);
+    if (!error)
+        error = ROMlib_keyfind(lookup);
+    if (error)
+        return error;
+    if (!lookup->success || ((const threadrec*)DATAPFROMKEY(lookup->foundp))->cdrType != FILETHREADTYPE)
+        return file_id_missing;
+    return noErr;
+}
+
+OSErr ROMlib_hfs_delete_file_thread(HVCB* volume, LONGINT id)
+{
+    btparam lookup;
+    OSErr error = find_file_thread(volume, id, &lookup);
+    return error ? error : ROMlib_btdelete(&lookup);
+}
+
+OSErr ROMlib_hfs_update_file_thread(HVCB* volume, LONGINT id, LONGINT parent, const Byte* name)
+{
+    btparam lookup;
+    OSErr error = find_file_thread(volume, id, &lookup);
+    if (!error) {
+        threadrec* thread = (threadrec*)DATAPFROMKEY(lookup.foundp);
+        thread->thdParID = CL(parent);
+        str255assign(thread->thdCName, name);
+        lookup.trail[lookup.leafindex].cachep->flags |= CACHEDIRTY;
+    }
+    return error;
+}
+
+static OSErr lookup_file_id_target(HVCB* volume, LONGINT id, const threadrec* thread, btparam* file)
+{
+    const unsigned length = thread->thdCName[0];
+    if (!length || length >= sizeof thread->thdCName)
+        return file_id_missing;
+    OSErr error = ROMlib_makecatparam(file, volume, CL(thread->thdParID), length, (Ptr)thread->thdCName + 1);
+    if (!error)
+        error = ROMlib_keyfind(file);
+    if (error)
+        return error;
+    if (!file->success)
+        return file_id_missing;
+    const filerec* record = (const filerec*)DATAPFROMKEY(file->foundp);
+    return record->cdrType == FILETYPE && record->filFlNum == CL(id) ? noErr : file_id_missing;
+}
+
+static OSErr flush_file_id_change(HVCB* volume, OSErr status)
+{
+    OSErr error = ROMlib_cleancache(volume);
+    if (!error)
+        error = ROMlib_flushvcbp(volume);
+    return status ? status : error;
+}
+
+OSErr ROMlib_hfs_create_file_id(FIDParam* pb)
+{
+    if (!PP_RAW(pb->ioNamePtr))
+        return paramErr;
+    filekind kind = regular | directory;
+    btparam file;
+    OSErr error = ROMlib_findvcbandfile((ioParam*)pb, CL(pb->ioSrcDirID), &file, &kind, FALSE);
+    if (error)
+        return error;
+    if (kind != regular)
+        return file_id_directory;
+
+    const filerec* record = (const filerec*)DATAPFROMKEY(file.foundp);
+    const LONGINT id = CL(record->filFlNum);
+    const catkey key = file.foundp->catk;
+    HVCB* volume = file.vcbp;
+    btparam lookup;
+    error = find_file_thread(volume, id, &lookup);
+    if (!error) {
+        const threadrec thread = *(const threadrec*)DATAPFROMKEY(lookup.foundp);
+        error = lookup_file_id_target(volume, id, &thread, &file);
+        if (error)
+            return error;
+        pb->ioFileID = CL(id);
+        return file_id_exists;
+    }
+    if (error != file_id_missing)
+        return error;
+    error = ROMlib_writevcbp(volume);
+    if (error)
+        return error;
+
+    threadrec thread;
+    makethreadrec(&thread, key.ckrParID, (StringPtr)key.ckrCName);
+    thread.cdrType = FILETHREADTYPE;
+    error = btcreate(&lookup, &thread, sizeof thread);
+    if (!error) {
+        error = lookup_file_id_target(volume, id, &thread, &file);
+        if (error)
+            ROMlib_hfs_delete_file_thread(volume, id);
+        else {
+            filerec* target = (filerec*)DATAPFROMKEY(file.foundp);
+            target->filFlags |= FSFILETHREADBIT;
+            file.trail[file.leafindex].cachep->flags |= CACHEDIRTY;
+        }
+    }
+    error = flush_file_id_change(volume, error);
+    if (!error)
+        pb->ioFileID = CL(id);
+    return error;
+}
+
+OSErr ROMlib_hfs_resolve_file_id(HVCB* volume, FIDParam* pb, bool remove)
+{
+    const LONGINT id = CL(pb->ioFileID);
+    btparam lookup;
+    OSErr error = find_file_thread(volume, id, &lookup);
+    if (error)
+        return error;
+    const threadrec thread = *(const threadrec*)DATAPFROMKEY(lookup.foundp);
+    btparam file;
+    error = lookup_file_id_target(volume, id, &thread, &file);
+    if (error)
+        return error;
+
+    if (!remove) {
+        if (PP_RAW(pb->ioNamePtr))
+            str255assign(PPR(pb->ioNamePtr), thread.thdCName);
+        pb->ioSrcDirID = thread.thdParID;
+        return noErr;
+    }
+
+    error = ROMlib_writevcbp(volume);
+    if (error)
+        return error;
+    error = ROMlib_hfs_delete_file_thread(volume, id);
+    if (!error) {
+        error = lookup_file_id_target(volume, id, &thread, &file);
+        if (!error) {
+            filerec* target = (filerec*)DATAPFROMKEY(file.foundp);
+            target->filFlags &= ~FSFILETHREADBIT;
+            file.trail[file.leafindex].cachep->flags |= CACHEDIRTY;
+        }
+    }
+    return flush_file_id_change(volume, error);
+}
+
 PUBLIC OSErr ROMlib_btrename(btparam* btpb, StringPtr newnamep)
 {
     btparam newbtparam;
@@ -2211,9 +2359,17 @@ PUBLIC OSErr ROMlib_btrename(btparam* btpb, StringPtr newnamep)
         newbtparam.leafindex = -1;
         if (err == noErr)
             err = btlegitimize(&newbtparam);
-        datap = DATAPFROMKEY(newbtparam.foundp);
-        str255assign(((threadrec*)datap)->thdCName, newnamep);
-        newbtparam.trail[newbtparam.leafindex].cachep->flags |= CACHEDIRTY;
+        if (!err && newbtparam.success) {
+            datap = DATAPFROMKEY(newbtparam.foundp);
+            str255assign(((threadrec*)datap)->thdCName, newnamep);
+            newbtparam.trail[newbtparam.leafindex].cachep->flags |= CACHEDIRTY;
+        }
+        else if (!err)
+            err = fsDSIntErr;
+    }
+    else if (!err && (((filerec*)datap)->filFlags & FSFILETHREADBIT)) {
+        err = ROMlib_hfs_update_file_thread(btpb->vcbp, CL(((filerec*)datap)->filFlNum),
+                                           CL(btpb->tofind.catk.ckrParID), newnamep);
     }
     fs_err_hook(err);
     return err;

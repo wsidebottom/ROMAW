@@ -33,6 +33,10 @@ int cfx_double_result(ROMlib_carbon_ppc_frame* call_frame, double result);
 uint32 cfx_varargs(ROMlib_carbon_ppc_frame* call_frame, unsigned first);
 
 int ROMlib_cfx_CFTimeZoneCopyAbbreviation(ROMlib_carbon_ppc_frame* call_frame);
+int ROMlib_cfx_CFTimeZoneCopyAbbreviationDictionary(ROMlib_carbon_ppc_frame* call_frame);
+int ROMlib_cfx_CFTimeZoneCopyKnownNames(ROMlib_carbon_ppc_frame* call_frame);
+int ROMlib_cfx_CFTimeZoneCreateWithName(ROMlib_carbon_ppc_frame* call_frame);
+int ROMlib_cfx_CFTimeZoneSetAbbreviationDictionary(ROMlib_carbon_ppc_frame* call_frame);
 int ROMlib_cfx_CFTimeZoneCopyDefault(ROMlib_carbon_ppc_frame* call_frame);
 int ROMlib_cfx_CFTimeZoneCopySystem(ROMlib_carbon_ppc_frame* call_frame);
 int ROMlib_cfx_CFTimeZoneCreate(ROMlib_carbon_ppc_frame* call_frame);

@@ -173,6 +173,8 @@ typedef struct PACKED {
 } directoryrec;
 
 #define THREADTYPE 3
+#define FILETHREADTYPE 4
+#define FSFILETHREADBIT (1 << 1)
 
 typedef struct PACKED {
     char cdrType;
@@ -399,6 +401,10 @@ extern OSErr ROMlib_putcache(cacheentry* cachep);
 extern OSErr ROMlib_keyfind(btparam* btpb);
 extern OSErr ROMlib_btnext(anykey** nextpp, anykey* keyp, HVCB* vcbp);
 extern OSErr ROMlib_btdelete(btparam* btpb);
+extern OSErr ROMlib_hfs_create_file_id(FIDParam* pb);
+extern OSErr ROMlib_hfs_resolve_file_id(HVCB* volume, FIDParam* pb, bool remove);
+extern OSErr ROMlib_hfs_update_file_thread(HVCB* volume, LONGINT id, LONGINT parent, const Byte* name);
+extern OSErr ROMlib_hfs_delete_file_thread(HVCB* volume, LONGINT id);
 extern OSErr ROMlib_makecatparam(btparam* btpb, HVCB* vcbp, LONGINT dirid, INTEGER namelen, Ptr namep);
 extern OSErr ROMlib_errortype(btparam* btpb);
 extern OSErr ROMlib_filedelete(btparam* btpb, filekind kind);
@@ -553,6 +559,7 @@ extern OSErrRET hfsPBEject();
 extern OSErr hfsPBOpen(ParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBHOpen(HParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBOpenRF(ParmBlkPtr ufsPB, BOOLEAN a);
+extern OSErr ROMlib_hfs_open_deny(HParmBlkPtr pb, bool resource, int modes);
 extern OSErr hfsPBHOpenRF(HParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBLockRange(ParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBUnlockRange(ParmBlkPtr ufsPB, BOOLEAN a);
@@ -574,6 +581,7 @@ extern OSErr hfsPBHDelete(HParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBGetCatInfo(CInfoPBPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBSetCatInfo(CInfoPBPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBCatMove(CMovePBPtr ufsPB, BOOLEAN a);
+extern OSErr ROMlib_hfs_move_rename(CopyParam* pb);
 extern OSErr hfsPBOpenWD(WDPBPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBCloseWD(WDPBPtr ufsPB, BOOLEAN a);
 extern OSErr hfsPBGetWDInfo(WDPBPtr ufsPB, BOOLEAN a);

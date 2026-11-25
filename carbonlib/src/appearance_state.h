@@ -596,6 +596,147 @@ static bool appearance_custom_engine(const char* name, uint32_t offset, ROMlib_c
     return current && current != builtin;
 }
 
+typedef struct PACKED {
+    uint32_t state;
+    uint16_t value;
+    uint16_t adornment;
+} appearance_button_info;
+
+enum appearance_button_geometry { appearance_button_background, appearance_button_content, appearance_button_region };
+
+/* Platinum's per-kind button methods at AppearanceLib 0x1c9c8–0x20a70. */
+static Rect appearance_button_bounds(Rect bounds, uint16_t kind, uint16_t adornment,
+                                     enum appearance_button_geometry geometry)
+{
+    const bool rtl = (adornment & 0x10) != 0;
+    const int left = CW(bounds.left), right = CW(bounds.right);
+    const int top = CW(bounds.top), bottom = CW(bounds.bottom);
+    if (geometry == appearance_button_content) {
+        switch (kind) {
+        case 0:
+            InsetRect(&bounds, 2, 2);
+            break;
+        case 1:
+        case 2:
+        case 6:
+        case 7: {
+            const int spacing = kind == 7 ? 15 : 18;
+            if (rtl)
+                bounds.right = CW((int16_t)(right - spacing));
+            else
+                bounds.left = CW((int16_t)(left + spacing));
+            break;
+        }
+        case 4:
+        case 5: {
+            const int arrow = (uint16_t)(bottom - top) < 19 ? 19 : 22;
+            InsetRect(&bounds, 6, 2);
+            if (rtl)
+                bounds.left = CW((int16_t)(left + 6 + arrow));
+            else
+                bounds.right = CW((int16_t)(right - 6 - arrow));
+            break;
+        }
+        default: {
+            const int inset = kind == 8 ? 2 : kind == 9 ? 4 : 3;
+            InsetRect(&bounds, inset, inset);
+            break;
+        }
+        }
+        return bounds;
+    }
+
+    if (kind == 0) {
+        int margin = 0;
+        if (adornment & 1)
+            margin = 3;
+        else if (adornment & 4)
+            margin = geometry == appearance_button_region ? 3 : 2;
+        InsetRect(&bounds, -margin, -margin);
+    }
+    else if (geometry == appearance_button_region && kind == 4) {
+        if (rtl)
+            bounds.left = CW((int16_t)(right - 22));
+        else
+            bounds.right = CW((int16_t)(left + 22));
+    }
+    else if (geometry == appearance_button_background && kind == 7) {
+        bounds.bottom = CW((int16_t)(top + 23));
+        if (rtl)
+            bounds.left = CW((int16_t)(right - 13));
+        else
+            bounds.right = CW((int16_t)(left + 13));
+    }
+    else if ((kind == 1 || kind == 2) && (adornment & 0x20)) {
+        const int height_difference = bottom - top - 12;
+        const int half = (height_difference - (height_difference < 0 && height_difference % 2)) / 2;
+        bounds.top = CW((int16_t)(bottom - half - 12));
+        bounds.bottom = CW((int16_t)(bottom - half));
+        if (rtl)
+            bounds.left = CW((int16_t)(right - 16));
+        else
+            bounds.right = CW((int16_t)(left + 16));
+    }
+    return bounds;
+}
+
+static int appearance_button_geometry_query(ROMlib_carbon_ppc_frame* call, const char* name, uint32_t offset,
+                                            enum appearance_button_geometry geometry)
+{
+    const Rect* input = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    const appearance_button_info* info =
+        call->words[2] ? ROMlib_carbon_try_guest_memory(call->words[2], sizeof(*info), 0) : NULL;
+    const uint16_t kind = call->words[1];
+    const uint32_t output = call->words[3];
+    if (!input || !info || !output)
+        return appearance_client_result(call, paramErr);
+
+    ROMlib_carbon_reference reference;
+    if (appearance_custom_engine(name, offset, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if (kind > 9)
+        return appearance_client_result(call, paramErr);
+    Rect bounds = appearance_button_bounds(*input, kind, CW(info->adornment), geometry);
+    if (geometry != appearance_button_region) {
+        void* destination = ROMlib_carbon_try_guest_memory(output, sizeof bounds, 1);
+        if (!destination)
+            return appearance_client_result(call, paramErr);
+        memcpy(destination, &bounds, sizeof bounds);
+    }
+    else {
+        uint32_t extent;
+        if (!cfp_handle_data(output, &extent, 1) || extent < sizeof(Region))
+            return appearance_client_result(call, paramErr);
+        RgnHandle region = (RgnHandle)SYN68K_TO_US(output);
+        if (kind == 0 || kind == 4 || kind == 5) {
+            if (!thePort || !ROMlib_valid_qd_port(thePort))
+                return appearance_client_result(call, paramErr);
+            OpenRgn();
+            FrameRoundRect(&bounds, 8, 8);
+            CloseRgn(region);
+        }
+        else
+            RectRgn(region, &bounds);
+    }
+    return appearance_client_result(call, noErr);
+}
+
+static int carbon_GetThemeButtonBackgroundBounds(ROMlib_carbon_ppc_frame* call)
+{
+    return appearance_button_geometry_query(call, "GetThemeButtonBackgroundBounds", 0x31a4,
+                                            appearance_button_background);
+}
+
+static int carbon_GetThemeButtonContentBounds(ROMlib_carbon_ppc_frame* call)
+{
+    return appearance_button_geometry_query(call, "GetThemeButtonContentBounds", 0x30c4, appearance_button_content);
+}
+
+static int carbon_GetThemeButtonRegion(ROMlib_carbon_ppc_frame* call)
+{
+    return appearance_button_geometry_query(call, "GetThemeButtonRegion", 0x2fe4, appearance_button_region);
+}
+
 /* The Platinum engine keeps the active accent table in the Appearance
    state reached through the System globals pointer. */
 static const ColorTable* appearance_accent_table(uint32_t* address, uint32_t* extent)
@@ -948,6 +1089,453 @@ static int carbon_DrawThemeTabPane(ROMlib_carbon_ppc_frame* call)
 {
     call->words[1] = appearance_classic_draw_state(call->words[1]);
     return appearance_DrawThemeTabPane(call);
+}
+
+enum appearance_tab_direction { appearance_tab_north, appearance_tab_south, appearance_tab_east, appearance_tab_west };
+
+/* AppearanceLib 0x2211c combines a rectangular center with two independent
+   end masks. The masks include the pane overlap even when the center does not. */
+static OSErr appearance_tab_end_region(RgnHandle region, Rect bounds, enum appearance_tab_direction direction,
+                                       bool small, int depth, bool trailing)
+{
+    static const uint8_t horizontal_inset[2][24] = {
+        {10, 8, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0, 0},
+        {10, 8, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0, 0, 0, 0},
+    };
+    static const uint8_t vertical_width[2][12] = {
+        {4, 7, 10, 13, 16, 19, 21, 22, 23, 23, 24, 24},
+        {4, 6, 8, 10, 12, 14, 16, 17, 18, 18, 19, 19},
+    };
+    const bool horizontal = direction <= appearance_tab_south;
+    const int mask_depth = small ? 19 : 24, end_extent = 12;
+    const int width = horizontal ? end_extent : mask_depth;
+    const int height = horizontal ? mask_depth : end_extent;
+    _Alignas(128) Byte pixels[24][4] = {0};
+    for (int y = 0; y < height; ++y) {
+        int left = 0, right = width;
+        if (horizontal) {
+            const int row = direction == appearance_tab_south ? height - y - 1 : y;
+            if (trailing)
+                right -= horizontal_inset[small][row];
+            else
+                left = horizontal_inset[small][row];
+        }
+        else {
+            const int filled = vertical_width[small][trailing ? height - y - 1 : y];
+            if (direction == appearance_tab_west)
+                left = width - filled;
+            else
+                right = filled;
+        }
+        for (int x = left; x < right; ++x)
+            pixels[y][x / 8] |= (Byte)(0x80 >> (x % 8));
+    }
+
+    BitMap bitmap = {.rowBytes = CWC(4), .bounds = {.bottom = CW((int16_t)height), .right = CW((int16_t)width)}};
+    PP_ASSIGN(bitmap.baseAddr, (Ptr)pixels);
+    const OSErr error = BitMapToRegion(region, &bitmap);
+    if (error)
+        return error;
+    int x = CW(bounds.left), y = CW(bounds.top);
+    if (horizontal) {
+        if (trailing)
+            x = CW(bounds.right) - end_extent;
+        if (direction == appearance_tab_south)
+            y = CW(bounds.bottom) - depth;
+    }
+    else {
+        if (trailing)
+            y = CW(bounds.bottom) - end_extent;
+        if (direction == appearance_tab_east)
+            x = CW(bounds.right) - depth;
+    }
+    OffsetRgn(region, x, y);
+    return noErr;
+}
+
+static Rect appearance_tab_center(Rect bounds, enum appearance_tab_direction direction, int depth)
+{
+    if (direction <= appearance_tab_south) {
+        InsetRect(&bounds, 12, 0);
+        if (direction == appearance_tab_north)
+            bounds.bottom = CW((int16_t)(CW(bounds.top) + depth));
+        else
+            bounds.top = CW((int16_t)(CW(bounds.bottom) - depth));
+    }
+    else {
+        InsetRect(&bounds, 0, 12);
+        if (direction == appearance_tab_west)
+            bounds.right = CW((int16_t)(CW(bounds.left) + depth));
+        else
+            bounds.left = CW((int16_t)(CW(bounds.right) - depth));
+    }
+    return bounds;
+}
+
+static int carbon_GetThemeTabRegion(ROMlib_carbon_ppc_frame* call)
+{
+    Rect* input = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    const uint16_t style = call->words[1], direction = call->words[2];
+    uint32_t extent;
+    if (!input || EmptyRect(input) || !cfp_handle_data(call->words[3], &extent, 1) || extent < sizeof(Region))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference reference;
+    if (appearance_custom_engine("GetThemeTabRegion", 0x35a4, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if (style > 4 || direction > appearance_tab_west)
+        return appearance_client_result(call, paramErr);
+
+    const Rect bounds = *input;
+    const uint16_t cross =
+        direction <= appearance_tab_south ? CW(bounds.bottom) - CW(bounds.top) : CW(bounds.right) - CW(bounds.left);
+    const bool small = cross < 21;
+    const int depth = (small ? 16 : 21) + (style >= 3 ? 3 : 0);
+    RgnHandle output = (RgnHandle)SYN68K_TO_US(call->words[3]);
+    RgnHandle temporary = NewRgn();
+    if (!temporary)
+        return appearance_client_result(call, memFullErr);
+    OSErr error = appearance_tab_end_region(output, bounds, direction, small, depth, false);
+    if (!error) {
+        Rect center = appearance_tab_center(bounds, direction, depth);
+        RectRgn(temporary, &center);
+        UnionRgn(output, temporary, output);
+        error = appearance_tab_end_region(temporary, bounds, direction, small, depth, true);
+        if (!error)
+            UnionRgn(output, temporary, output);
+    }
+    DisposeRgn(temporary);
+    return appearance_client_result(call, error);
+}
+
+static int carbon_CopyThemeIdentifier(ROMlib_carbon_ppc_frame* call)
+{
+    void* output = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(uint32_t), 1) : NULL;
+    if (!output)
+        return appearance_client_result(call, paramErr);
+
+    /* CarbonLib 1.4 returns this identifier even when a custom theme is active. */
+    _Alignas(64) char identifier[64] = "com.apple.theme.appearance.platinum";
+    const uint32_t string = ROMlib_cfstring_cstring(0, US_TO_SYN68K(identifier), 0x0600);
+    if (!string) {
+        ROMlib_carbon_reference reference;
+        if (ROMlib_carbon_reference_function("CarbonLib", "CopyThemeIdentifier", &reference))
+            return ROMlib_carbon_invoke_frame(reference.function, call);
+    }
+    const uint32_t encoded = CL(string);
+    memcpy(output, &encoded, sizeof encoded);
+    return appearance_client_result(call, string ? noErr : memFullErr);
+}
+
+enum {
+    appearance_window_title = 0,
+    appearance_window_title_text = 1,
+    appearance_window_close = 2,
+    appearance_window_zoom = 3,
+    appearance_window_drag = 5,
+    appearance_window_grow = 6,
+    appearance_window_collapse = 7,
+    appearance_window_structure = 32,
+    appearance_window_content = 33,
+    appearance_window_has_grow = 1,
+    appearance_window_has_zoom = 0x18,
+    appearance_window_has_close = 0x20,
+    appearance_window_has_collapse = 0x40,
+    appearance_window_has_title = 0x80,
+    appearance_window_collapsed = 0x100,
+    appearance_window_dirty = 0x200,
+};
+
+typedef struct PACKED {
+    uint16_t size;
+    int16_t title_height;
+    int16_t title_width;
+    int16_t popup_offset;
+    int16_t popup_width;
+    uint16_t popup_position;
+} appearance_window_metrics;
+
+typedef struct {
+    Rect content, title, title_text, close, zoom, collapse, grow, grow_frame;
+    uint32_t attributes;
+    uint16_t flavor;
+    bool active, zoom_visible, collapse_visible;
+} appearance_window_geometry;
+
+/* Platinum's document window metrics and rectangular widget bounds. */
+static void appearance_document_geometry(appearance_window_geometry* layout, const appearance_window_metrics* metrics)
+{
+    const uint32_t attributes = layout->attributes;
+    const int left = CW(layout->content.left), right = CW(layout->content.right);
+    const int top = CW(layout->content.top), bottom = CW(layout->content.bottom);
+    const int requested_height = (attributes & appearance_window_has_title) ? CW(metrics->title_height) + 6 : 0;
+    const int height = requested_height > 22 ? requested_height : 22;
+    C_SetRect(&layout->title, left - 6, top - height, right + 6, top);
+
+    const int widget_top = top - height - 1 + (height - 12) / 2;
+    C_SetRect(&layout->close, left - 2, widget_top, left + 11, widget_top + 13);
+    C_SetRect(&layout->collapse, right - 11, widget_top, right + 2, widget_top + 13);
+    layout->zoom = layout->collapse;
+    if (attributes & appearance_window_has_collapse)
+        OffsetRect(&layout->zoom, -16, 0);
+    const int label_min = (attributes & appearance_window_has_close) ? left + 15 : left - 1;
+    const int widget_min = label_min + ((attributes & appearance_window_dirty) ? 0 : 12);
+    layout->collapse_visible = (attributes & appearance_window_has_collapse) != 0;
+    layout->zoom_visible = (attributes & appearance_window_has_zoom) != 0;
+    if (layout->zoom_visible && CW(layout->zoom.left) <= widget_min) {
+        layout->collapse_visible = false;
+        layout->zoom = layout->collapse;
+        layout->zoom_visible = CW(layout->zoom.left) > widget_min;
+    }
+    else if (!layout->zoom_visible && CW(layout->collapse.left) <= widget_min)
+        layout->collapse_visible = false;
+
+    int label_max = right + 1;
+    if (layout->zoom_visible)
+        label_max = CW(layout->zoom.left) - 4;
+    else if (layout->collapse_visible)
+        label_max = CW(layout->collapse.left) - 4;
+    int label_left = left - 6 + ((uint16_t)(right - left + 12) - CW(metrics->title_width)) / 2;
+    if (label_left < label_min)
+        label_left = label_min;
+    int label_right = label_left + CW(metrics->title_width);
+    if (label_right > label_max)
+        label_right = label_max;
+    C_SetRect(&layout->title_text, label_left, top - height + 2, label_right, top - 2);
+
+    C_SetRect(&layout->grow, right - 15, bottom - 15, right + 2, bottom + 2);
+    layout->grow_frame = layout->grow;
+    layout->grow_frame.right = CW((int16_t)(right + 7));
+    layout->grow_frame.bottom = CW((int16_t)(bottom + 7));
+}
+
+static OSErr appearance_window_shape(const appearance_window_geometry* layout, RgnHandle output, RgnHandle scratch)
+{
+    Rect bounds = layout->content;
+    switch (layout->flavor) {
+    case 0:
+        if (layout->attributes & appearance_window_collapsed)
+            bounds = layout->title;
+        else {
+            InsetRect(&bounds, -6, -6);
+            bounds.top = layout->title.top;
+        }
+        break;
+    case 1:
+    case 3:
+        InsetRect(&bounds, -3, -3);
+        break;
+    case 5:
+    case 6:
+        InsetRect(&bounds, -1, -1);
+        break;
+    }
+    RectRgn(output, &bounds);
+    if (layout->flavor != 5) {
+        if (!scratch)
+            return memFullErr;
+        if (layout->flavor != 6) {
+            bounds.right = CW((int16_t)(CW(bounds.right) - 1));
+            bounds.bottom = CW((int16_t)(CW(bounds.bottom) - 1));
+        }
+        OffsetRect(&bounds, 2, 2);
+        RectRgn(scratch, &bounds);
+        UnionRgn(scratch, output, output);
+    }
+    return noErr;
+}
+
+static Rect appearance_window_part(const appearance_window_geometry* layout, uint16_t code)
+{
+    const uint32_t attributes = layout->attributes;
+    const bool document = layout->flavor == 0;
+    Rect rect = {0};
+    switch (code) {
+    case appearance_window_title:
+        if (document)
+            rect = layout->title;
+        break;
+    case appearance_window_title_text:
+        if (document && (attributes & appearance_window_has_title))
+            rect = layout->title_text;
+        break;
+    case appearance_window_close:
+        if (document && layout->active && (attributes & appearance_window_has_close))
+            rect = layout->close;
+        break;
+    case appearance_window_zoom:
+        if (document && layout->active && layout->zoom_visible)
+            rect = layout->zoom;
+        break;
+    case appearance_window_collapse:
+        if (document && layout->active && layout->collapse_visible)
+            rect = layout->collapse;
+        break;
+    case appearance_window_grow:
+        if (document && layout->active && (attributes & appearance_window_has_grow))
+            rect = layout->grow_frame;
+        break;
+    }
+    if (code == appearance_window_close || code == appearance_window_zoom || code == appearance_window_collapse)
+        InsetRect(&rect, 1, 1);
+    return rect;
+}
+
+static OSErr appearance_window_region_query(const appearance_window_geometry* layout, uint16_t code, RgnHandle region)
+{
+    const bool document = layout->flavor == 0;
+    const bool collapsed = (layout->attributes & appearance_window_collapsed) != 0;
+    const bool grows = document && (layout->attributes & appearance_window_has_grow);
+    const bool drag = document && code == appearance_window_drag && !collapsed;
+    const bool needs_scratch =
+        code == appearance_window_structure || drag || (code == appearance_window_content && grows && !collapsed);
+    RgnHandle scratch = needs_scratch ? NewRgn() : NULL;
+    if (needs_scratch && !scratch)
+        return memFullErr;
+
+    OSErr error = noErr;
+    if (code == appearance_window_structure || drag) {
+        error = appearance_window_shape(layout, region, scratch);
+        if (!error && drag) {
+            RectRgn(scratch, &layout->content);
+            DiffRgn(region, scratch, region);
+            const uint16_t controls[] = {appearance_window_close, appearance_window_zoom, appearance_window_collapse,
+                                         appearance_window_grow};
+            for (size_t i = 0; i < NELEM(controls); ++i) {
+                Rect box = appearance_window_part(layout, controls[i]);
+                RectRgn(scratch, &box);
+                DiffRgn(region, scratch, region);
+            }
+        }
+    }
+    else if (code == appearance_window_content) {
+        if (document && collapsed)
+            SetEmptyRgn(region);
+        else {
+            RectRgn(region, &layout->content);
+            if (grows) {
+                RectRgn(scratch, &layout->grow);
+                DiffRgn(region, scratch, region);
+            }
+        }
+    }
+    else {
+        Rect box = appearance_window_part(layout, code);
+        RectRgn(region, &box);
+    }
+    if (scratch)
+        DisposeRgn(scratch);
+    if (!error && EmptyRgn(region) && !(collapsed && code == appearance_window_content))
+        error = -30593; /* errWindowRegionCodeInvalid */
+    return error;
+}
+
+static uint16_t appearance_window_hit(const appearance_window_geometry* layout, Point point)
+{
+    RgnHandle structure = NewRgn(), scratch = NewRgn();
+    const bool inside =
+        structure && scratch && !appearance_window_shape(layout, structure, scratch) && PtInRgn(point, structure);
+    if (structure)
+        DisposeRgn(structure);
+    if (scratch)
+        DisposeRgn(scratch);
+    if (!inside)
+        return 0;
+
+    static const uint16_t parts[] = {appearance_window_grow, appearance_window_title, appearance_window_close,
+                                     appearance_window_zoom, appearance_window_collapse};
+    static const uint16_t hits[] = {6, 1, 2, 3, 7};
+    const bool collapsed = (layout->attributes & appearance_window_collapsed) != 0;
+    if (layout->active) {
+        for (size_t i = collapsed ? 1 : 0; i < NELEM(parts); ++i) {
+            Rect box = appearance_window_part(layout, parts[i]);
+            if (C_PtInRect(point, &box))
+                return hits[i];
+        }
+    }
+    Rect content = layout->content, grow = layout->grow;
+    const bool in_content = C_PtInRect(point, &content);
+    if (!collapsed && in_content &&
+        !(layout->flavor == 0 && (layout->attributes & appearance_window_has_grow) && C_PtInRect(point, &grow)))
+        return appearance_window_content;
+    if (layout->flavor == 0 && !in_content)
+        return appearance_window_drag;
+    return appearance_window_structure;
+}
+
+static int appearance_window_query(ROMlib_carbon_ppc_frame* call, bool hit)
+{
+    const uint16_t flavor = call->words[0];
+    const uint32_t state = call->words[2], attributes = call->words[4];
+    const Rect* rect = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof(Rect), 0) : NULL;
+    const appearance_window_metrics* metrics =
+        call->words[3] ? ROMlib_carbon_try_guest_memory(call->words[3], sizeof(*metrics), 0) : NULL;
+    uint32_t extent;
+    uint16_t* code = hit && call->words[6] ? ROMlib_carbon_try_guest_memory(call->words[6], sizeof(*code), 1) : NULL;
+    RgnHandle region = !hit && cfp_handle_data(call->words[6], &extent, 1) && extent >= sizeof(Region)
+                           ? (RgnHandle)SYN68K_TO_US(call->words[6])
+                           : NULL;
+    if (hit && code) {
+        const uint16_t zero = 0;
+        memcpy(code, &zero, sizeof zero);
+    }
+    if ((!code && hit) || (!region && !hit))
+        return appearance_client_result(call, hit ? 0 : paramErr);
+
+    const char* name = hit ? "GetThemeWindowRegionHit" : "GetThemeWindowRegion";
+    ROMlib_carbon_reference reference = {0};
+    if (appearance_custom_engine(name, hit ? 0xa29c : 0x9d9c, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if (!rect || !metrics || CW(rect->right) < CW(rect->left) || CW(rect->bottom) < CW(rect->top) || state > 1 ||
+        (attributes & ~0x3fdu)) {
+        if (region)
+            SetEmptyRgn(region);
+        return appearance_client_result(call, hit ? 0 : paramErr);
+    }
+    switch (flavor) {
+    case 0:
+    case 1:
+    case 3:
+    case 5:
+    case 6:
+        break;
+    default:
+        if (reference.function)
+            return ROMlib_carbon_invoke_frame(reference.function, call);
+        if (region)
+            SetEmptyRgn(region);
+        return appearance_client_result(call, hit ? 0 : paramErr);
+    }
+    appearance_window_geometry layout = {
+        .content = *rect,
+        .attributes = attributes,
+        .flavor = flavor,
+        .active = state == 1,
+    };
+    if (!flavor)
+        appearance_document_geometry(&layout, metrics);
+    if (hit) {
+        const Point point = {.v = CW((int16_t)(call->words[5] >> 16)), .h = CW((int16_t)call->words[5])};
+        const uint16_t region_code = appearance_window_hit(&layout, point);
+        const uint16_t encoded = CW(region_code);
+        memcpy(code, &encoded, sizeof encoded);
+        return appearance_client_result(call, region_code != 0);
+    }
+    const OSErr error = appearance_window_region_query(&layout, (uint16_t)call->words[5], region);
+    if (error)
+        SetEmptyRgn(region);
+    return appearance_client_result(call, error);
+}
+
+static int carbon_GetThemeWindowRegion(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[2] = appearance_classic_draw_state(call->words[2]);
+    return appearance_window_query(call, false);
+}
+
+static int carbon_GetThemeWindowRegionHit(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[2] = appearance_classic_draw_state(call->words[2]);
+    return appearance_window_query(call, true);
 }
 
 static void appearance_popup_arrow_bits(uint16_t* rows, unsigned orientation, int size, bool inactive)

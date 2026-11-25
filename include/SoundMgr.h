@@ -310,6 +310,11 @@ extern trap OSErr C_GetSoundPreference(OSType theType, Str255 name, Handle setti
 extern trap OSErr C_SndGetInfo(SndChannelPtr chan, OSType selector, void* infoPtr);
 
 extern trap OSErr C_SndSetInfo(SndChannelPtr chan, OSType selector, void* infoPtr);
+extern trap OSErr C_GetSoundOutputInfo(void* device, OSType selector, void* infoPtr);
+extern trap OSErr C_SetSoundOutputInfo(void* device, OSType selector, void* infoPtr);
+
+#define ROMLIB_SOUND_UNKNOWN_INFO (-231)
+#define ROMLIB_SOUND_REFERENCE_REQUIRED (-4)
 
 /* DO NOT DELETE THIS LINE */
 #if !defined(__STDC__)

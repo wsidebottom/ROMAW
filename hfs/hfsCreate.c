@@ -90,9 +90,13 @@ PRIVATE OSErr createhelper(ioParam* pb, BOOLEAN async, createop op, LONGINT diri
                 if (err == noErr)
                     err = ROMlib_writevcbp(vcbp);
                 if (err == noErr) {
+                    const LONGINT file_id = CL(frp->filFlNum);
+                    const bool had_thread = (frp->filFlags & FSFILETHREADBIT) != 0;
                     err = freeallblocks(vcbp, frp);
-                    if (err == noErr)
+                    if (!err)
                         err = ROMlib_filedelete(&btparamrec, regular);
+                    if (!err && had_thread)
+                        err = ROMlib_hfs_delete_file_thread(vcbp, file_id);
                 }
             }
         }

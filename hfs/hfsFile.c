@@ -8,7 +8,7 @@
   Functions: ROMlib_allochelper, ROMlib_alreadyopen, ROMlib_catcompare, ROMlib_findvcbandfile, ROMlib_getfreefcbp,
              ROMlib_logtophys, ROMlib_makecatkey, ROMlib_makextntkey, ROMlib_makextntparam, ROMlib_refnumtofcbp,
              ROMlib_xtntcompare, hfsPBAllocContig, hfsPBAllocate, hfsPBClose, hfsPBFlushFile, hfsPBGetEOF, hfsPBGetFPos,
-             hfsPBHOpen, hfsPBHOpenRF, hfsPBLockRange, hfsPBOpen, hfsPBOpenRF, hfsPBRead, hfsPBSetEOF, hfsPBSetFPos,
+             ROMlib_hfs_open_deny, hfsPBHOpen, hfsPBHOpenRF, hfsPBLockRange, hfsPBOpen, hfsPBOpenRF, hfsPBRead, hfsPBSetEOF, hfsPBSetFPos,
              hfsPBUnlockRange, hfsPBWrite
 
   Origin:    Existing repository source in executor/src/hfs; original attribution and provenance comments are preserved
@@ -38,7 +38,10 @@ PUBLIC filecontrolblock* ROMlib_getfreefcbp(void)
     efcbp = (filecontrolblock*)((char*)MR(FCBSPtr) + length);
     for (; fcbp < efcbp && Cx(fcbp->fcbFlNum); fcbp = (filecontrolblock*)((char*)fcbp + CW(FSFCBLen)))
         ;
-    return fcbp < efcbp ? fcbp : 0;
+    if (fcbp >= efcbp)
+        return NULL;
+    ROMlib_record_fork_access((char*)fcbp - (char*)MR(FCBSPtr), file_open_regular, fsRdPerm, false);
+    return fcbp;
 }
 
 PUBLIC filecontrolblock* ROMlib_refnumtofcbp(uint16 refnum)
@@ -1327,7 +1330,7 @@ PUBLIC OSErr ROMlib_alreadyopen(HVCB* vcbp, LONGINT flnum, SignedByte* permp, IN
     return noErr;
 }
 
-PRIVATE OSErr PBOpenHelper(ioParam* pb, forktype ft, LONGINT dirid, BOOLEAN async)
+PRIVATE OSErr PBOpenHelper(ioParam* pb, forktype ft, LONGINT dirid, BOOLEAN async, int modes)
 {
     filecontrolblock* fcbp;
     OSErr err;
@@ -1359,6 +1362,17 @@ PRIVATE OSErr PBOpenHelper(ioParam* pb, forktype ft, LONGINT dirid, BOOLEAN asyn
             PBRETURN(pb, wPrErr);
     }
     frp = (filerec*)DATAPFROMKEY(btparamrec.foundp);
+    INTEGER existing = 0;
+    err = ROMlib_check_fork_sharing((VCB*)btparamrec.vcbp, frp->filFlNum, ft == resourcefork, modes, &permssn, &existing);
+    if (err) {
+        pb->ioRefNum = CW(existing);
+        PBRETURN(pb, err);
+    }
+    if (modes != file_open_regular && (modes & file_access_write)) {
+        if (frp->filFlags & FSOFTLOCKBIT)
+            PBRETURN(pb, fLckdErr);
+        permssn = fsRdWrShPerm;
+    }
     err = ROMlib_alreadyopen(btparamrec.vcbp, CL(frp->filFlNum), &permssn, &pb->ioRefNum,
                              ft == resourcefork ? resourcebusy : databusy);
     if (err != noErr) {
@@ -1448,7 +1462,9 @@ PRIVATE OSErr PBOpenHelper(ioParam* pb, forktype ft, LONGINT dirid, BOOLEAN asyn
     fcbp->fcbCatPos = cachep->logblk;
     fcbp->fcbDirID = catkeyp->ckrParID;
     str255assign(fcbp->fcbCName, catkeyp->ckrCName);
-    pb->ioRefNum = CW((char*)fcbp - (char*)MR(FCBSPtr));
+    const INTEGER reference = (char*)fcbp - (char*)MR(FCBSPtr);
+    pb->ioRefNum = CW(reference);
+    ROMlib_record_fork_access(reference, modes, permssn, (fcbp->fcbMdRByt & WRITEBIT) != 0);
     PBRETURN(pb, noErr);
 }
 
@@ -1457,7 +1473,7 @@ PRIVATE OSErr PBOpenHelper(ioParam* pb, forktype ft, LONGINT dirid, BOOLEAN asyn
 PUBLIC OSErr hfsPBOpen(ParmBlkPtr pb, BOOLEAN async)
 {
     OSErr err;
-    err = PBOpenHelper((ioParam*)pb, datafork, 0L, async);
+    err = PBOpenHelper((ioParam*)pb, datafork, 0L, async, file_open_regular);
     fs_err_hook(err);
     return err;
 }
@@ -1465,7 +1481,7 @@ PUBLIC OSErr hfsPBOpen(ParmBlkPtr pb, BOOLEAN async)
 PUBLIC OSErr hfsPBOpenRF(ParmBlkPtr pb, BOOLEAN async)
 {
     OSErr err;
-    err = PBOpenHelper((ioParam*)pb, resourcefork, 0L, async);
+    err = PBOpenHelper((ioParam*)pb, resourcefork, 0L, async, file_open_regular);
     fs_err_hook(err);
     return err;
 }
@@ -1474,16 +1490,21 @@ PUBLIC OSErr hfsPBHOpen(HParmBlkPtr pb, BOOLEAN async)
 {
     OSErr err;
 
-    err = PBOpenHelper((ioParam*)pb, datafork, CL(pb->fileParam.ioDirID), async);
+    err = PBOpenHelper((ioParam*)pb, datafork, CL(pb->fileParam.ioDirID), async, file_open_regular);
     fs_err_hook(err);
     return err;
+}
+
+OSErr ROMlib_hfs_open_deny(HParmBlkPtr pb, bool resource, int modes)
+{
+    return PBOpenHelper((ioParam*)pb, resource ? resourcefork : datafork, CL(pb->fileParam.ioDirID), FALSE, modes);
 }
 
 PUBLIC OSErr hfsPBHOpenRF(HParmBlkPtr pb, BOOLEAN async)
 {
     OSErr err;
 
-    err = PBOpenHelper((ioParam*)pb, resourcefork, CL(pb->fileParam.ioDirID), async);
+    err = PBOpenHelper((ioParam*)pb, resourcefork, CL(pb->fileParam.ioDirID), async, file_open_regular);
     fs_err_hook(err);
     return err;
 }

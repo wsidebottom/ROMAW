@@ -93,6 +93,139 @@ static int carbon_SetMenuBarHeight(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+enum menu_clock_action { clock_is_enabled, clock_enable, clock_disable, clock_get, clock_set, clock_refresh };
+
+enum {
+    menu_clock_state_offset = 0x1750,
+    menu_clock_state_size = 0x132,
+    menu_clock_config_size = 22,
+    menu_clock_flags = 4,
+    menu_clock_enabled = 0x40,
+    menu_clock_refresh_flags = 0x18,
+    menu_clock_font_cache = 0x1a,
+    menu_clock_text_cache = 0x1e,
+    menu_clock_width = 0x12a,
+    menu_clock_icon = 0x12e,
+    menu_clock_already_enabled = -5621,
+    menu_clock_already_disabled = -5620,
+};
+
+static void menu_clock_request_redraw(Byte* clock)
+{
+    clock[menu_clock_refresh_flags] &= ~3;
+}
+
+static int menu_result(ROMlib_carbon_ppc_frame* call, uint32 status)
+{
+    call->words[0] = status;
+    return 1;
+}
+
+static bool menu_live_reference(const char* name, uint32 offset, ROMlib_carbon_reference* original)
+{
+    return ROMlib_carbon_probe_reference("MenusLib", name, original) && original->code_offset == offset &&
+           original->code_size == 0x162a4 && original->toc && original->toc_offset == 0 && original->toc_size == 0x2104;
+}
+
+static int menu_clock_change(const ROMlib_carbon_reference* original, Byte* clock, enum menu_clock_action action,
+                             ROMlib_carbon_ppc_frame* call)
+{
+    const uint32 address = US_TO_SYN68K(clock);
+    const bool enabling = action == clock_enable;
+    if (enabling) {
+        if (clock[menu_clock_flags] & menu_clock_enabled)
+            return menu_result(call, menu_clock_already_enabled);
+        Handle font = NewHandleSys(32);
+        if (!font)
+            return menu_result(call, MemError());
+        Handle text = NewHandleSys(332);
+        if (!text) {
+            const OSErr status = MemError();
+            DisposHandle(font);
+            return menu_result(call, status);
+        }
+        const uint32 font_address = CL(US_TO_SYN68K(font)), text_address = CL(US_TO_SYN68K(text));
+        memcpy(clock + menu_clock_font_cache, &font_address, 4);
+        memcpy(clock + menu_clock_text_cache, &text_address, 4);
+        clock[menu_clock_flags] |= menu_clock_enabled;
+    }
+    else {
+        if (!(clock[menu_clock_flags] & menu_clock_enabled))
+            return menu_result(call, menu_clock_already_disabled);
+        uint32 icon;
+        if (!cfp_get(address + menu_clock_icon, &icon) || (icon && !cfp_private(original, 0x13e54, &icon, 1, NULL)))
+            return 0;
+        memset(clock + menu_clock_icon, 0, 4);
+        for (unsigned slot = menu_clock_font_cache; slot <= menu_clock_text_cache; slot += 4) {
+            uint32 cache;
+            if (!cfp_get(address + slot, &cache))
+                return 0;
+            memset(clock + slot, 0, 4);
+            if (cache)
+                DisposHandle((Handle)SYN68K_TO_US(cache));
+        }
+        clock[menu_clock_flags] &= ~menu_clock_enabled;
+    }
+    uint32 status;
+    if (!cfp_private(original, 0xb428, &address, 1, &status))
+        return 0;
+    if (enabling) {
+        menu_clock_request_redraw(clock);
+        memset(clock + menu_clock_width, 0, 2);
+    }
+    return carbon_vector_InvalMenuBar(call) && menu_result(call, (int16)status);
+}
+
+static int menu_clock(const char* name, uint32 offset, enum menu_clock_action action, ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference original;
+    if (!menu_live_reference(name, offset, &original))
+        return original.function ? ROMlib_carbon_invoke_frame(original.function, call) : 0;
+
+    const uint32 address = US_TO_SYN68K(original.toc) + menu_clock_state_offset;
+    Byte* clock = ROMlib_carbon_try_guest_memory(address, menu_clock_state_size,
+                                                 action != clock_is_enabled && action != clock_get);
+    if (!clock)
+        return ROMlib_carbon_invoke_frame(original.function, call);
+    if (action == clock_is_enabled)
+        return menu_result(call, (clock[menu_clock_flags] & menu_clock_enabled) != 0);
+    if (action == clock_enable || action == clock_disable)
+        return menu_clock_change(&original, clock, action, call);
+    if (action == clock_refresh) {
+        menu_clock_request_redraw(clock);
+        return menu_result(call, noErr);
+    }
+
+    Byte* config = call->words[0]
+                       ? ROMlib_carbon_try_guest_memory(call->words[0], menu_clock_config_size, action == clock_get)
+                       : NULL;
+    if (!config || config[0] || config[1])
+        return menu_result(call, paramErr);
+    if (action == clock_get) {
+        memmove(config + 2, clock + menu_clock_flags, menu_clock_config_size - 2);
+        return menu_result(call, noErr);
+    }
+    memmove(clock + menu_clock_flags, config + 2, menu_clock_config_size - 2);
+    menu_clock_request_redraw(clock);
+    uint32 status;
+    if (!cfp_private(&original, 0xb428, &address, 1, &status))
+        return 0;
+    return carbon_vector_DrawMenuBar(call) && menu_result(call, (int16)status);
+}
+
+#define CARBON_MENU_CLOCK(name, offset, action)                                                       \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                                            \
+    {                                                                                                 \
+        return menu_clock(#name, offset, action, call);                                                \
+    }
+CARBON_MENU_CLOCK(IsMenuBarClockEnabled, 0xa000, clock_is_enabled)
+CARBON_MENU_CLOCK(EnableMenuBarClock, 0xa01c, clock_enable)
+CARBON_MENU_CLOCK(DisableMenuBarClock, 0xa13c, clock_disable)
+CARBON_MENU_CLOCK(GetMenuBarClockConfig, 0xa200, clock_get)
+CARBON_MENU_CLOCK(SetMenuBarClockConfig, 0xa274, clock_set)
+CARBON_MENU_CLOCK(RefreshMenuBarClock, 0xa330, clock_refresh)
+#undef CARBON_MENU_CLOCK
+
 enum carbon_menu_enable_operation {
     menu_enable,
     menu_disable,
@@ -108,6 +241,74 @@ static MenuHandle carbon_menu_handle(uint32_t address)
     if (!master || !*master || !ROMlib_carbon_guest_memory(CL(*master), offsetof(MenuInfo, menuData) + 2, 0))
         return NULL;
     return (MenuHandle)master;
+}
+
+static int menu_forget_saved_pixels(const ROMlib_carbon_reference* reference, uint32 menu_record)
+{
+    uint32 cache, snapshot;
+    if (!cfp_get(menu_record + 0x10, &cache))
+        return 0;
+    if (!cache)
+        return 1;
+    _Alignas(16) uint32 owner = CL(cache);
+    const uint32 output = US_TO_SYN68K(&owner);
+    return cfp_get(cache, &snapshot) && cfp_write(menu_record + 0x10, 0) &&
+           cfp_private(reference, 0x13824, &snapshot, 1, NULL) &&
+           cfp_private(reference, 0x1383c, &output, 1, NULL);
+}
+
+static int carbon_InvalidateCachedMenuPixels(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (!menu_live_reference("InvalidateCachedMenuPixels", 0x1114, &reference))
+        return reference.function ? ROMlib_carbon_invoke_frame(reference.function, call) : 0;
+    if (!carbon_menu_handle(call->words[0]))
+        return menu_result(call, noErr);
+    uint32 record, list, cache;
+    if (!cfp_private(&reference, 0x500, call->words, 1, &record))
+        return 0;
+    if (!record)
+        return menu_result(call, noErr);
+    if (!cfp_get(record + 0x10, &cache) || !cfp_get(US_TO_SYN68K(reference.toc) + 0x608, &list))
+        return 0;
+    if (!cache || !list)
+        return menu_result(call, noErr);
+
+    _Alignas(16) uint32 index = CLC(1);
+    const uint32 search[] = {list, record, US_TO_SYN68K(&index)};
+    uint32 found;
+    if (!cfp_private(&reference, 0x137f4, search, NELEM(search), &found))
+        return 0;
+    if ((uint8)found) {
+        const uint32 remove[] = {list, CL(index)};
+        if (!cfp_private(&reference, 0x1380c, remove, NELEM(remove), NULL) ||
+            !menu_forget_saved_pixels(&reference, record))
+            return 0;
+    }
+    return menu_result(call, noErr);
+}
+
+static int carbon_InvalidateAllCachedMenuPixels(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (!menu_live_reference("InvalidateAllCachedMenuPixels", 0x11b8, &reference))
+        return reference.function ? ROMlib_carbon_invoke_frame(reference.function, call) : 0;
+    uint32 list;
+    if (!cfp_get(US_TO_SYN68K(reference.toc) + 0x608, &list))
+        return 0;
+    if (!list)
+        return 1;
+    uint32 count;
+    if (!cfp_private(&reference, 0x13944, &list, 1, &count) || count > 9)
+        return 0;
+    for (uint32 index = 1; index <= count; ++index) {
+        _Alignas(16) uint32 record = 0;
+        const uint32 element[] = {list, index, US_TO_SYN68K(&record)};
+        if (!cfp_private(&reference, 0x1395c, element, NELEM(element), NULL) ||
+            (record && !menu_forget_saved_pixels(&reference, CL(record))))
+            return 0;
+    }
+    return !count || cfp_private(&reference, 0x13974, &list, 1, NULL);
 }
 
 static int menu_uses_saved_edit(uint32_t slot, uint32_t code_offset)
@@ -153,12 +354,6 @@ static int carbon_DeleteMenuItem(ROMlib_carbon_ppc_frame* call)
 }
 
 enum { menu_invalid = -5623, menu_attributes_mask = 0xfffff, menu_attributes_with_side_effects = 0x0d };
-
-static int menu_result(ROMlib_carbon_ppc_frame* call, uint32 status)
-{
-    call->words[0] = status;
-    return 1;
-}
 
 static int menu_registry(const ROMlib_carbon_reference* reference, uint32* collection)
 {

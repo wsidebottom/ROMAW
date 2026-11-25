@@ -21,9 +21,12 @@
 int ROMlib_carbon_file_parameter_block(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_word, int selector,
                                        size_t extent);
 int ROMlib_carbon_file_trap(uint16_t trap_word, int selector, uint32_t address, uint32_t* result);
+int ROMlib_carbon_PBUnmountVol(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_UnmountVol(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_file_io(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_word);
 int ROMlib_carbon_file_hierarchy(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_word, int selector);
 int ROMlib_carbon_file_spec(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_word, int selector);
 int ROMlib_carbon_file_make_spec(ROMlib_carbon_ppc_frame* call_frame);
+int ROMlib_carbon_PBWaitIOComplete(ROMlib_carbon_ppc_frame* call_frame);
 
 #endif

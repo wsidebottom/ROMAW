@@ -72,6 +72,7 @@ typedef struct PACKED _ModifierStub {
     SndDoubleBufferHeader* dbhp;
     int current_db;
     uint16 amplitude;
+    uint32 volume;
 } ModifierStub, *ModifierStubPtr;
 
 extern BOOLEAN C_snth5(SndChannelPtr, SndCommand*, ModifierStubPtr);
@@ -105,6 +106,7 @@ extern syn68k_addr_t sound_callback(syn68k_addr_t, void*);
 
 extern INTEGER ROMlib_sysbeep_state;
 extern boolean_t ROMlib_sound_play_alert(void);
+extern unsigned ROMlib_sound_channel_amplitude(SndChannelPtr channel);
 extern boolean_t ROMlib_sound_finish_mix(struct hunger_info info);
 
 extern int ROMlib_get_snd_cmds(Handle sndh, SndCommand** cmdsp);

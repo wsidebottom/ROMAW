@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: PBCatSearch, cachecheck, test_serial
+  Functions: OpenDeny, OpenRFDeny, PBCatSearch, PBCreateFileIDRef, PBDeleteFileIDRef, PBHMoveRename, PBResolveFileIDRef,
+             cachecheck, test_serial
 
   Origin:    Existing repository source in executor/src/hfs; original attribution and provenance comments are preserved
              below.
@@ -195,6 +196,10 @@ PUBLIC int ROMlib_directdiskaccess = FALSE;
 
 A2(PUBLIC trap, OSErrRET, PBRead, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (!ROMlib_fork_access_allowed(CW(pb->ioParam.ioRefNum), file_access_read)) {
+        pb->ioParam.ioActCount = 0;
+        FAKEASYNC(pb, async, permErr);
+    }
     OSErr retval;
     DrvQExtra* dqp;
 
@@ -300,6 +305,10 @@ A2(PUBLIC trap, OSErrRET, PBRead, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBWrite, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (!ROMlib_fork_access_allowed(CW(pb->ioParam.ioRefNum), file_access_write)) {
+        pb->ioParam.ioActCount = 0;
+        FAKEASYNC(pb, async, wrPermErr);
+    }
     if (host_image_locked((ioParam*)pb, TRUE)) {
         FAKEASYNC(pb, async, wPrErr);
     }
@@ -452,6 +461,40 @@ A2(PUBLIC trap, OSErrRET, PBGetCatInfo, CInfoPBPtr, pb, BOOLEAN, async)
     FAKEASYNC(pb, async, retval);
 }
 
+static OSErr open_fork_with_deny(HParmBlkPtr request, bool resource)
+{
+    ForkAccessParam* access = (ForkAccessParam*)request;
+    const unsigned modes = CW(access->ioDenyModes) &
+                           (file_access_read | file_access_write | file_deny_read | file_deny_write);
+    HParamBlockRec block = {0};
+    PP_RAW(block.ioParam.ioNamePtr) = PP_RAW(access->ioNamePtr);
+    block.ioParam.ioVRefNum = access->ioVRefNum;
+    block.fileParam.ioDirID = access->ioDirID;
+    const bool writing = (modes & file_access_write) != 0;
+    block.ioParam.ioPermssn = writing ? ((modes & file_access_read) ? fsRdWrShPerm : fsWrPerm) : fsRdPerm;
+
+    if (writing && host_image_locked(&block.ioParam, FALSE)) {
+        access->ioRefNum = 0;
+        return wPrErr;
+    }
+    const OSErr status = hfsvol(&block.ioParam) ? ROMlib_hfs_open_deny(&block, resource, modes)
+                                               : ROMlib_ufs_open_deny(&block, resource, modes);
+    access->ioRefNum = block.ioParam.ioRefNum;
+    return status;
+}
+
+A2(PUBLIC trap, OSErrRET, OpenDeny, HParmBlkPtr, pb, BOOLEAN, async)
+{
+    const OSErr status = open_fork_with_deny(pb, false);
+    FAKEASYNC(pb, async, status);
+}
+
+A2(PUBLIC trap, OSErrRET, OpenRFDeny, HParmBlkPtr, pb, BOOLEAN, async)
+{
+    const OSErr status = open_fork_with_deny(pb, true);
+    FAKEASYNC(pb, async, status);
+}
+
 A2(PUBLIC trap, OSErrRET, PBSetCatInfo, CInfoPBPtr, pb, BOOLEAN, async)
 {
     if (host_image_locked((ioParam*)pb, FALSE)) {
@@ -478,6 +521,20 @@ A2(PUBLIC trap, OSErrRET, PBCatMove, CMovePBPtr, pb, BOOLEAN, async)
     else
         retval = ufsPBCatMove(pb, async);
     FAKEASYNC(pb, async, retval);
+}
+
+A2(PUBLIC trap, OSErrRET, PBHMoveRename, HParmBlkPtr, pb, BOOLEAN, async)
+{
+    CopyParam* move = (CopyParam*)pb;
+    const Byte* leaf = PPR(move->ioCopyName);
+    if (leaf && (!leaf[0] || leaf[0] > 31 || memchr(leaf + 1, ':', leaf[0]) || memchr(leaf + 1, 0, leaf[0]))) {
+        FAKEASYNC(pb, async, bdNamErr);
+    }
+    if (host_image_locked((ioParam*)pb, FALSE)) {
+        FAKEASYNC(pb, async, wPrErr);
+    }
+    const OSErr error = hfsvol((ioParam*)pb) ? ROMlib_hfs_move_rename(move) : ROMlib_ufs_move_rename(move);
+    FAKEASYNC(pb, async, error);
 }
 
 A2(PUBLIC trap, OSErrRET, PBGetVInfo, ParmBlkPtr, pb, BOOLEAN, async)
@@ -957,7 +1014,7 @@ A2(PUBLIC trap, OSErrRET, PBHGetVolParms, HParmBlkPtr, pb, BOOLEAN, async)
          unrated volume and no supported foreign privilege model. */
         getvolparams_info_t info = {0};
         info.vMVersion = CWC(2);
-        info.vMAttrib = CLC(VOL_BITS);
+        info.vMAttrib = CLC(VOL_BITS | (1UL << bHasOpenDeny) | (1UL << bHasMoveRename) | (1UL << bHasCopyFile));
         /* Host volumes implement the classic Desktop DB/DF traps. Image
          volumes retain their existing resource-based Desktop path. */
         if (!vcbp->vcbCTRef) {
@@ -967,6 +1024,8 @@ A2(PUBLIC trap, OSErrRET, PBHGetVolParms, HParmBlkPtr, pb, BOOLEAN, async)
             else
                 info.vMAttrib |= CL(1UL << bNoDeskItems);
         }
+        else
+            info.vMAttrib |= CLC(1UL << bHasFileIDs);
         size_t count = MIN((size_t)requested, sizeof info);
         syn68k_addr_t buffer = CL((uint32)(uintptr_t)PP_RAW(pb->ioParam.ioBuffer));
         buffer &= syn68k_address_mask;
@@ -1248,29 +1307,38 @@ A2(PUBLIC trap, OSErrRET, PBCatSearch, ParmBlkPtr, pb, BOOLEAN, async)
     FAKEASYNC(pb, async, result);
 }
 
+static HVCB* file_id_volume(FIDParam* pb)
+{
+    LONGINT directory;
+    return ROMlib_findvcb(CW(pb->ioVRefNum), PPR(pb->ioNamePtr), &directory, TRUE);
+}
+
 A2(PUBLIC trap, OSErrRET, PBCreateFileIDRef, ParmBlkPtr, pb, BOOLEAN, async)
 {
-    OSErr retval;
-
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    FAKEASYNC(pb, async, retval);
+    FIDParam* file_id = (FIDParam*)pb;
+    HVCB* volume = file_id_volume(file_id);
+    OSErr status = nsvErr;
+    if (volume)
+        status = volume->vcbCTRef ? ROMlib_hfs_create_file_id(file_id) : wrgVolTypErr;
+    FAKEASYNC(pb, async, status);
 }
 
 A2(PUBLIC trap, OSErrRET, PBDeleteFileIDRef, ParmBlkPtr, pb, BOOLEAN, async)
 {
-    OSErr retval;
-
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    FAKEASYNC(pb, async, retval);
+    FIDParam* file_id = (FIDParam*)pb;
+    HVCB* volume = file_id_volume(file_id);
+    OSErr status = nsvErr;
+    if (volume)
+        status = volume->vcbCTRef ? ROMlib_hfs_resolve_file_id(volume, file_id, true) : wrgVolTypErr;
+    FAKEASYNC(pb, async, status);
 }
 
 A2(PUBLIC trap, OSErrRET, PBResolveFileIDRef, ParmBlkPtr, pb, BOOLEAN, async)
 {
-    OSErr retval;
-
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    FAKEASYNC(pb, async, retval);
+    FIDParam* file_id = (FIDParam*)pb;
+    HVCB* volume = file_id_volume(file_id);
+    OSErr status = nsvErr;
+    if (volume)
+        status = volume->vcbCTRef ? ROMlib_hfs_resolve_file_id(volume, file_id, false) : wrgVolTypErr;
+    FAKEASYNC(pb, async, status);
 }

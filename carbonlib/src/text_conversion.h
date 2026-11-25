@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: Declares ROMlib_carbon_text_conversion and its export wrappers.
+  Functions: Declares the text conversion dispatcher and collation key comparator.
 
   Origin:    Mac OS 9.2.1 Text Encoding Converter and Universal Interfaces 3.4.2.
 
@@ -66,6 +66,7 @@ enum {
 };
 
 int ROMlib_carbon_text_conversion(const char* name, uint32_t offset, int operation, ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_compare_collation_keys(ROMlib_carbon_ppc_frame* call);
 
 #ifdef CARBON_TEXT_CONVERSION_EXPORTS
 #define CARBON_TEXT(name, library, offset, operation)                         \

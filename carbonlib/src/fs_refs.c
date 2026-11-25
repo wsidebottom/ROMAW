@@ -25,6 +25,8 @@
 #include "ResourceMgr.h"
 #include "rsys/resource.h"
 #include "rsys/system_resources.h"
+#include "rsys/time.h"
+#include "OSUtil.h"
 
 enum {
     fsref_stamp = 0x45584652, /* EXFR. The public FSRef bytes are opaque. */
@@ -42,6 +44,7 @@ enum {
     fsref_bad_allocation_flags = -1413,
     fsref_no_more_items = -1417,
     fsref_bad_item_count = -1418,
+    fsref_bad_search = -1419,
     fsref_different = -1420,
     fsref_fork_exists = -1421,
     fsref_bad_iterator_flags = -1422,
@@ -229,11 +232,22 @@ typedef struct PACKED {
     uint32_t search;
 } carbon_bulk_pb;
 
+typedef struct PACKED {
+    uint32_t duration;
+    uint32_t bits;
+    uint32_t name_length;
+    uint32_t name;
+    uint32_t lower;
+    uint32_t upper;
+} carbon_search_params;
+
 typedef struct {
     uint32_t stamp;
     uint32_t index;
     uint32_t modified;
     uint16_t count;
+    uint16_t flags;
+    uint32_t search_position[4];
     carbon_file_ref directory;
 } carbon_catalog_iterator;
 
@@ -248,6 +262,7 @@ _Static_assert(offsetof(carbon_fork_pb, position) == 46 && offsetof(carbon_fork_
                "Fork I/O parameter block ABI");
 _Static_assert(sizeof(carbon_fork_info) == 48 && sizeof(carbon_fork_info_pb) == 38 && sizeof(carbon_bulk_pb) == 64,
                "Fork and bulk catalog info parameter block ABI");
+_Static_assert(sizeof(carbon_search_params) == 24, "Catalog search criteria ABI");
 
 static const struct {
     uint16_t value;
@@ -865,7 +880,7 @@ static OSErr open_catalog_iterator(carbon_bulk_pb* block)
     const uint32_t flags = CL(block->flags);
     if (flags & ~3u)
         return fsref_bad_iterator_flags;
-    if (flags)
+    if (flags & 2)
         return fsref_iterator_not_supported;
     const carbon_file_ref* ref = fs_memory(CL(block->container), sizeof *ref, 0);
     if (!ref || ref->stamp != CL((uint32_t)fsref_stamp))
@@ -885,6 +900,7 @@ static OSErr open_catalog_iterator(carbon_bulk_pb* block)
         .index = 1,
         .modified = catalog.dirInfo.ioDrMdDat,
         .count = catalog.dirInfo.ioDrNmFls,
+        .flags = flags,
         .directory = *ref,
     };
     block->iterator = CL(US_TO_SYN68K(iterator));
@@ -896,7 +912,71 @@ static void* catalog_array(uint32_t address, size_t item_size, uint32_t count)
     return count <= SIZE_MAX / item_size ? fs_memory(address, item_size * count, 1) : NULL;
 }
 
-static OSErr read_catalog_iterator(carbon_bulk_pb* block, carbon_catalog_iterator* iterator)
+static int search_name_matches(const Byte* name, Byte* wanted, uint32_t bits)
+{
+    const unsigned length = wanted[0];
+    if ((bits & 2) && length != name[0])
+        return 0;
+    for (unsigned i = 0; i + length <= name[0]; ++i)
+        if (!ROMlib_RelString((Byte*)name + 1 + i, wanted + 1, FALSE, TRUE, (length << 16) | length))
+            return 1;
+    return 0;
+}
+
+static int search_mask_matches(const void* value, const void* lower, const void* upper, size_t size)
+{
+    const Byte* bytes = value;
+    const Byte* expected = lower;
+    const Byte* mask = upper;
+    for (size_t i = 0; i < size; ++i)
+        if ((bytes[i] ^ expected[i]) & mask[i])
+            return 0;
+    return 1;
+}
+
+static uint64_t search_date(carbon_file_date date)
+{
+    return ((uint64_t)CW(date.high) << 48) | ((uint64_t)CL(date.low) << 16) | CW(date.fraction);
+}
+
+static int search_catalog_matches(const carbon_catalog_info* info, const carbon_catalog_info* lower,
+                                  const carbon_catalog_info* upper, uint32_t bits, int folder)
+{
+    if ((bits & 4) && ((info->flags ^ lower->flags) & upper->flags))
+        return 0;
+    if ((bits & 8) && !search_mask_matches(info->finder, lower->finder, upper->finder, sizeof info->finder))
+        return 0;
+    if ((bits & 0x1000) &&
+        !search_mask_matches(info->extended, lower->extended, upper->extended, sizeof info->extended))
+        return 0;
+    if ((bits & 0x40000) &&
+        !search_mask_matches(info->permissions, lower->permissions, upper->permissions, sizeof info->permissions))
+        return 0;
+
+#define SEARCH_RANGE(bit, field, decode)                                                                              \
+    if ((bits & (bit)) && (decode(info->field) < decode(lower->field) || decode(info->field) > decode(upper->field))) \
+    return 0
+    if (folder) {
+        SEARCH_RANGE(16, children, CL);
+    }
+    else {
+        SEARCH_RANGE(32, data_logical_size, read_file_size);
+        SEARCH_RANGE(64, data_physical_size, read_file_size);
+        SEARCH_RANGE(128, resource_logical_size, read_file_size);
+        SEARCH_RANGE(256, resource_physical_size, read_file_size);
+    }
+    SEARCH_RANGE(0x200, created, search_date);
+    SEARCH_RANGE(0x400, modified, search_date);
+    SEARCH_RANGE(0x800, backed_up, search_date);
+    SEARCH_RANGE(0x2000, parent, CL);
+    SEARCH_RANGE(0x8000, node, CL);
+    SEARCH_RANGE(0x10000, attribute_modified, search_date);
+    SEARCH_RANGE(0x20000, accessed, search_date);
+#undef SEARCH_RANGE
+    return 1;
+}
+
+static OSErr read_catalog_iterator(carbon_bulk_pb* block, carbon_catalog_iterator* iterator, int search)
 {
     block->actual = 0;
     block->changed = 0;
@@ -911,6 +991,36 @@ static OSErr read_catalog_iterator(carbon_bulk_pb* block, carbon_catalog_iterato
         return paramErr;
 
     const carbon_file_ref directory = iterator->directory;
+    if (search ? iterator->flags != 1 || CL(directory.node) != 2 : iterator->flags != 0)
+        return fsref_iterator_not_supported;
+    uint32_t match_bits = 0, milliseconds = 0;
+    int representable = 1;
+    _Alignas(256) Str255 wanted = {0};
+    const carbon_catalog_info *lower = NULL, *upper = NULL;
+    if (search) {
+        const carbon_search_params* criteria = fs_memory(CL(block->search), sizeof *criteria, 0);
+        if (!criteria)
+            return fsref_bad_search;
+        match_bits = CL(criteria->bits);
+        if ((match_bits & ~0x7ffffu) || (match_bits & 3) == 3)
+            return fsref_bad_search;
+        if (match_bits & 3) {
+            const OSErr error = copy_mac_name(wanted, CL(criteria->name), CL(criteria->name_length));
+            if (error && error != bdNamErr)
+                return fsref_bad_search;
+            representable = error == noErr;
+        }
+        if (match_bits & ~(3u | 0x4000u)) {
+            lower = fs_memory(CL(criteria->lower), sizeof *lower, 0);
+            upper = fs_memory(CL(criteria->upper), sizeof *upper, 0);
+            if (!lower || !upper)
+                return fsref_bad_search;
+        }
+        const int32_t duration = (int32_t)CL(criteria->duration);
+        if (duration != INT32_MAX)
+            milliseconds = duration < 0 ? ((uint64_t) - (int64_t)duration + 999) / 1000 : duration;
+    }
+
     _Alignas(256) Str255 name = {0};
     _Alignas(128) CInfoPBRec catalog;
     OSErr error = resolve_ref(&directory, &catalog, name);
@@ -922,13 +1032,68 @@ static OSErr read_catalog_iterator(carbon_bulk_pb* block, carbon_catalog_iterato
         iterator->count = catalog.dirInfo.ioDrNmFls;
     }
 
-    uint32_t count = 0;
-    for (; count < max; ++count) {
-        if (iterator->index > INT16_MAX) {
-            error = fsref_no_more_items;
-            break;
+    const unsigned long started = msecs_elapsed();
+    _Alignas(128) CInfoPBRec bounds = {0};
+    _Alignas(128) catalog_search_pb_t request = {0};
+    _Alignas(128) FSSpec candidate = {0};
+    if (search) {
+        request.ioVRefNum = directory.volume;
+        request.matches = CL(US_TO_SYN68K(&candidate));
+        request.requested = CLC(1);
+        request.lower = request.upper = CL(US_TO_SYN68K(&bounds));
+        if (representable && (match_bits & 3) && !(match_bits & 0x4000)) {
+            request.search_bits = CL(match_bits & 3);
+            PP_RAW(bounds.hFileInfo.ioNamePtr) = CL(US_TO_SYN68K(wanted));
         }
-        error = get_catalog(directory.volume, directory.node, iterator->index, name, &catalog);
+        memcpy(request.position, iterator->search_position, sizeof request.position);
+    }
+    uint32_t count = 0;
+    while (count < max) {
+        uint32_t parent = directory.node;
+        if (search) {
+            const unsigned long elapsed = msecs_elapsed() - started;
+            if (milliseconds && elapsed >= milliseconds)
+                break;
+            request.milliseconds = CL(milliseconds ? milliseconds - (uint32_t)elapsed : 0);
+            error = PBCatSearch((ParmBlkPtr)&request, FALSE);
+            if (!request.actual || (error && error != eofErr)) {
+                if (!error || error == eofErr)
+                    memcpy(iterator->search_position, request.position, sizeof request.position);
+                if (error == eofErr)
+                    error = fsref_no_more_items;
+                break;
+            }
+            parent = candidate.parID;
+            if (candidate.name[0] >= sizeof candidate.name) {
+                error = bdNamErr;
+                break;
+            }
+            if (CL(parent) == 1) {
+                memcpy(iterator->search_position, request.position, sizeof request.position);
+                continue;
+            }
+            memcpy(name, candidate.name, candidate.name[0] + 1);
+            error = get_catalog(directory.volume, parent, 0, name, &catalog);
+            if (error)
+                break;
+            carbon_catalog_info fields;
+            if (lower)
+                copy_catalog_info(&fields, 0xfffa, &directory, &catalog);
+            const int matches =
+                (!(match_bits & 3) || (representable && search_name_matches(name, wanted, match_bits))) &&
+                (!lower || search_catalog_matches(&fields, lower, upper, match_bits, is_directory(&catalog)));
+            if (matches == !!(match_bits & 0x4000)) {
+                memcpy(iterator->search_position, request.position, sizeof request.position);
+                continue;
+            }
+        }
+        else {
+            if (iterator->index > INT16_MAX) {
+                error = fsref_no_more_items;
+                break;
+            }
+            error = get_catalog(directory.volume, parent, iterator->index, name, &catalog);
+        }
         if (error) {
             if (error == fnfErr)
                 error = fsref_no_more_items;
@@ -945,10 +1110,14 @@ static OSErr read_catalog_iterator(carbon_bulk_pb* block, carbon_catalog_iterato
         if (refs)
             store_ref(refs + count, directory.volume, &catalog, name);
         if (specs) {
-            specs[count] = (FSSpec){.vRefNum = directory.volume, .parID = directory.node};
+            specs[count] = (FSSpec){.vRefNum = directory.volume, .parID = parent};
             memcpy(specs[count].name, name, (size_t)name[0] + 1);
         }
-        ++iterator->index;
+        ++count;
+        if (search)
+            memcpy(iterator->search_position, request.position, sizeof request.position);
+        else
+            ++iterator->index;
     }
     block->actual = CL(count);
     return error;
@@ -1476,7 +1645,7 @@ static int call_fork_info(ROMlib_carbon_ppc_frame* call)
 static int is_bulk_operation(enum carbon_fs_operation operation)
 {
     return operation == carbon_fs_open_iterator || operation == carbon_fs_close_iterator ||
-           operation == carbon_fs_bulk_catalog;
+           operation == carbon_fs_bulk_catalog || operation == carbon_fs_search_catalog;
 }
 
 static int dispatch_bulk(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation operation, int asynchronous,
@@ -1498,8 +1667,10 @@ static int dispatch_bulk(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation
                 error = noErr;
             }
             else
-                error = read_catalog_iterator(block, cursor);
+                error = read_catalog_iterator(block, cursor, operation == carbon_fs_search_catalog);
         }
+        else if (cursor && operation == carbon_fs_search_catalog)
+            return ROMlib_carbon_file_trap(asynchronous ? 0xa660 : 0xa260, operation, US_TO_SYN68K(block), call->words);
     }
     return fs_result(call, ROMlib_file_complete(block, asynchronous, error));
 }
@@ -1519,25 +1690,29 @@ static int call_bulk(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation ope
     }
     else {
         block.iterator = CL(words[0]);
-        if (operation == carbon_fs_bulk_catalog) {
-            result = fs_memory(words[2], sizeof block.actual, 1);
-            changed = fs_memory(words[3], 1, 1);
-            if (!result || (words[3] && !changed))
+        if (operation == carbon_fs_bulk_catalog || operation == carbon_fs_search_catalog) {
+            const unsigned first = operation == carbon_fs_search_catalog ? 2 : 1;
+            if (operation == carbon_fs_search_catalog)
+                block.search = CL(words[1]);
+            result = fs_memory(words[first + 1], sizeof block.actual, 1);
+            changed = fs_memory(words[first + 2], 1, 1);
+            if (!result || (words[first + 2] && !changed))
                 return fs_result(call, paramErr);
-            block.maximum = CL(words[1]);
-            block.fields = CL(words[4]);
-            block.info = CL(words[5]);
-            block.refs = CL(words[6]);
-            block.specs = CL(words[7]);
-            uint32_t names;
-            if (!ROMlib_carbon_frame_word(call, 8, &names))
+            block.maximum = CL(words[first]);
+            block.fields = CL(words[first + 3]);
+            block.info = CL(words[first + 4]);
+            block.refs = CL(words[first + 5]);
+            uint32_t specs, names;
+            if (!ROMlib_carbon_frame_word(call, first + 6, &specs) ||
+                !ROMlib_carbon_frame_word(call, first + 7, &names))
                 return 0;
+            block.specs = CL(specs);
             block.names = CL(names);
         }
     }
     const int ok = dispatch_bulk(call, operation, 0, &block);
     if (ok && result) {
-        if (operation == carbon_fs_bulk_catalog) {
+        if (operation == carbon_fs_bulk_catalog || operation == carbon_fs_search_catalog) {
             memcpy(result, &block.actual, sizeof block.actual);
             if (changed)
                 *changed = block.changed;

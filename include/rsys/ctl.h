@@ -53,6 +53,7 @@ enum {
     ROMlib_root_control_proc = 257,
     ROMlib_edit_text_proc = 272,
     ROMlib_static_text_proc = 288,
+    ROMlib_picture_proc = 304,
     ROMlib_live_scroll_proc = 386
 };
 

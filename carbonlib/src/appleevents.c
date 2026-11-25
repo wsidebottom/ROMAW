@@ -10,6 +10,9 @@
              ROMlib_carbon_AEPrintDescToHandle, ROMlib_carbon_AEGetArray, ROMlib_carbon_AEPutArray,
              ROMlib_carbon_get_desc_data, ROMlib_carbon_get_desc_data_size,
              ROMlib_carbon_replace_desc_data, ROMlib_carbon_CreateCompDescriptor, ROMlib_carbon_CreateLogicalDescriptor,
+             ROMlib_carbon_DCMCreateFieldInfoRecord, ROMlib_carbon_DCMGetFieldTagAndType,
+             ROMlib_carbon_DCMGetFieldMaxRecordSize, ROMlib_carbon_DCMGetFieldAttributes,
+             ROMlib_carbon_DCMGetFieldDefaultData, ROMlib_carbon_DCMGetFieldFindMethods,
              ROMlib_carbon_CreateObjSpecifier, ROMlib_carbon_CreateOffsetDescriptor, ROMlib_carbon_CreateRangeDescriptor
 
   Origin:    Existing repository source in packages/carbonlib/src; original attribution and provenance comments are
@@ -1336,6 +1339,19 @@ struct apple_event_array_item {
     Handle handle;
 };
 
+static int apple_event_array_bytes(const Byte* bytes, size_t size, uint32_t type, struct apple_event_array* array)
+{
+    if (size < sizeof(list_header_t) ||
+        descriptor_word(bytes + offsetof(list_header_t, param_offset)) != sizeof(list_header_t) ||
+        descriptor_word(bytes + offsetof(list_header_t, attribute_count)) != type)
+        return 0;
+    array->keyed = type == typeAERecord;
+    array->count = descriptor_word(bytes + offsetof(list_header_t, param_count));
+    array->cursor = bytes + sizeof(list_header_t);
+    array->remaining = size - sizeof(list_header_t);
+    return 1;
+}
+
 static int apple_event_array_view(const AEDescList* list, struct apple_event_array* array)
 {
     const Handle handle = DESC_DATA(list);
@@ -1344,15 +1360,7 @@ static int apple_event_array_view(const AEDescList* list, struct apple_event_arr
     const Size size = GetHandleSize(handle);
     if (size < (Size)sizeof(list_header_t))
         return 0;
-    const Byte* bytes = (const Byte*)STARH(handle);
-    if (descriptor_word(bytes + offsetof(list_header_t, param_offset)) != sizeof(list_header_t) ||
-        descriptor_word(bytes + offsetof(list_header_t, attribute_count)) != (uint32)DESC_TYPE(list))
-        return 0;
-    array->keyed = DESC_TYPE(list) == typeAERecord;
-    array->count = descriptor_word(bytes + offsetof(list_header_t, param_count));
-    array->cursor = bytes + sizeof(list_header_t);
-    array->remaining = size - sizeof(list_header_t);
-    return 1;
+    return apple_event_array_bytes((const Byte*)STARH(handle), size, DESC_TYPE(list), array);
 }
 
 static int apple_event_array_next(struct apple_event_array* array, struct apple_event_array_item* item)
@@ -1600,3 +1608,247 @@ int ROMlib_carbon_AEPutArray(ROMlib_carbon_ppc_frame* call)
     FIELD_ASSIGN_RAW(DESC_DATA_X(list), RM(replacement));
     return descriptor_result(call, noErr);
 }
+
+/* Dictionary Manager field information is an AERecord. These services share
+   the native record and list representation with AppleEvent Manager callers. */
+enum {
+    dcm_param_error = -7100,
+    dcm_bad_field_info = -7111,
+    dcm_no_field = -7113,
+    dcm_buffer_overflow = -7127,
+};
+
+static void* dcm_memory(uint32 address, size_t size, bool write)
+{
+    return address ? ROMlib_carbon_try_guest_memory(address, size, write) : NULL;
+}
+
+static int dcm_reference(const char* name, ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (ROMlib_carbon_load_reference("DictionaryMgrLib", name, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    return descriptor_result(call, dcm_bad_field_info);
+}
+
+static OSErr dcm_put_word(AERecord* record, AEKeyword key, DescType type, uint32 value)
+{
+    AEDesc scalar = {CLC(typeNull), {0}};
+    const uint32 encoded = CL(value);
+    OSErr status = C_AECreateDesc(type, (Ptr)&encoded, sizeof encoded, &scalar);
+    if (!status)
+        status = C_AEPutKeyDesc(record, key, &scalar);
+    C_AEDisposeDesc(&scalar);
+    return status;
+}
+
+static OSErr dcm_create_methods(AEDescList* list, const Byte* methods, uint32 count)
+{
+    const size_t element_size = sizeof(inline_desc_t) + sizeof(uint32);
+    const uint64 extent = sizeof(list_header_t) + (uint64)count * element_size;
+    if (extent > INT32_MAX)
+        return dcm_buffer_overflow;
+    Handle contents = NewHandleClear(extent);
+    if (!contents)
+        return memFullErr;
+    Byte* bytes = (Byte*)STARH(contents);
+    apple_event_array_word(bytes + offsetof(list_header_t, param_offset), sizeof(list_header_t));
+    apple_event_array_word(bytes + offsetof(list_header_t, attribute_count), typeAEList);
+    apple_event_array_word(bytes + offsetof(list_header_t, param_count), count);
+    bytes += sizeof(list_header_t);
+    for (uint32 i = 0; i < count; ++i) {
+        apple_event_array_word(bytes, TICK("fmth"));
+        apple_event_array_word(bytes + 4, sizeof(uint32));
+        memcpy(bytes + 8, methods + i * sizeof(uint32), sizeof(uint32));
+        bytes += element_size;
+    }
+    DESC_TYPE_X(list) = CLC(typeAEList);
+    FIELD_ASSIGN_RAW(DESC_DATA_X(list), RM(contents));
+    return noErr;
+}
+
+int ROMlib_carbon_DCMCreateFieldInfoRecord(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32* a = call->words;
+    AEDesc* output = dcm_memory(a[7], sizeof *output, true);
+    AEDesc* default_value = dcm_memory(a[4], sizeof *default_value, false);
+    const uint32 count = a[5];
+    const uint64 method_bytes = (uint64)count * sizeof(uint32);
+    const Byte* methods = count && method_bytes <= INT32_MAX ? dcm_memory(a[6], method_bytes, false) : NULL;
+    if (!output || (count && !methods) || (a[4] && !default_value))
+        return descriptor_result(call, dcm_param_error);
+    const DescType previous_type = DESC_TYPE(output);
+    struct apple_event_array previous;
+    if (previous_type != typeNull &&
+        (previous_type != typeAERecord || !apple_event_array_view(output, &previous)))
+        return dcm_reference("DCMCreateFieldInfoRecord", call);
+
+    AERecord result = {CLC(typeNull), {0}};
+    OSErr status = C_AECreateList(NULL, 0, TRUE, &result);
+    const uint32 keys[] = {TICK("ftag"), TICK("ftyp"), TICK("mrsz"), TICK("fatr")};
+    const uint32 types[] = {TICK("enum"), TICK("enum"), TICK("magn"), TICK("fatr")};
+    for (unsigned i = 0; !status && i < NELEM(keys); ++i)
+        status = dcm_put_word(&result, keys[i], types[i], a[i]);
+    if (!status && default_value && DESC_TYPE(default_value) != typeNull)
+        status = C_AEPutKeyDesc(&result, TICK("fdef"), default_value);
+
+    AEDescList list = {CLC(typeNull), {0}};
+    if (!status)
+        status = dcm_create_methods(&list, methods, count);
+    if (!status)
+        status = C_AEPutKeyDesc(&result, TICK("ffnd"), &list);
+    C_AEDisposeDesc(&list);
+
+    if (!status && previous_type != typeNull)
+        status = C_AEDisposeDesc(output);
+    if (!status)
+        *output = result;
+    else
+        C_AEDisposeDesc(&result);
+    return descriptor_result(call, status);
+}
+
+enum dcm_field_query {
+    dcm_tag_type,
+    dcm_maximum_size,
+    dcm_attributes,
+    dcm_default,
+    dcm_methods,
+};
+
+static OSErr dcm_find_field(struct apple_event_array array, uint32_t key, struct apple_event_array_item* found)
+{
+    while (array.count--) {
+        if (!apple_event_array_next(&array, found))
+            return dcm_bad_field_info;
+        if (found->keyword == key)
+            return noErr;
+    }
+    return dcm_no_field;
+}
+
+static OSErr dcm_get_word(struct apple_event_array array, uint32_t key, uint32_t type, uint32_t* value)
+{
+    struct apple_event_array_item item;
+    if (dcm_find_field(array, key, &item) || item.size != sizeof *value || item.type != type)
+        return dcm_bad_field_info;
+    memcpy(value, item.bytes, sizeof *value);
+    return noErr;
+}
+
+static OSErr dcm_get_methods(struct apple_event_array record, Byte* output, uint32 capacity, uint32_t* actual)
+{
+    struct apple_event_array_item item;
+    OSErr status = dcm_find_field(record, TICK("ffnd"), &item);
+    if (status == dcm_no_field) {
+        *actual = 0;
+        return noErr;
+    }
+    struct apple_event_array array;
+    if (status || item.type != typeAEList || !apple_event_array_bytes(item.bytes, item.size, typeAEList, &array))
+        return dcm_bad_field_info;
+
+    const uint32 count = array.count;
+    const uint32 copied = MIN(capacity, count);
+    struct apple_event_array validation = array;
+    for (uint32 i = 0; i < count; ++i)
+        if (!apple_event_array_next(&validation, &item) || item.type != TICK("fmth") || item.size != sizeof(uint32))
+            return dcm_bad_field_info;
+    if (validation.remaining)
+        return dcm_bad_field_info;
+    if (copied) {
+        const size_t extent = (size_t)copied * sizeof(uint32);
+        uint32* values = malloc(extent);
+        if (!values)
+            return memFullErr;
+        for (uint32 i = 0; i < copied; ++i) {
+            apple_event_array_next(&array, &item);
+            memcpy(&values[i], item.bytes, sizeof values[i]);
+        }
+        memcpy(output, values, extent);
+        free(values);
+    }
+    apple_event_array_word(actual, count);
+    return copied < count && capacity ? dcm_buffer_overflow : noErr;
+}
+
+static int dcm_get_field(ROMlib_carbon_ppc_frame* call, const char* name, enum dcm_field_query query)
+{
+    const uint32* a = call->words;
+    const AEDesc* input = dcm_memory(a[0], sizeof *input, false);
+    if (!input)
+        return descriptor_result(call, dcm_param_error);
+    struct apple_event_array record;
+    if (DESC_TYPE(input) != typeAERecord || !apple_event_array_view(input, &record))
+        return dcm_reference(name, call);
+
+    if (query == dcm_default) {
+        AEDesc* output = dcm_memory(a[2], sizeof *output, true);
+        if (!output || a[0] == a[2])
+            return descriptor_result(call, dcm_param_error);
+        struct apple_event_array_item item;
+        OSErr status = dcm_find_field(record, TICK("fdef"), &item);
+        if (status)
+            return descriptor_result(call, status);
+        Handle contents = DESC_DATA(input);
+        const SignedByte handle_state = HGetState(contents);
+        HLock(contents);
+        AEDesc value = {CLC(typeNull), {0}};
+        status = C_AECreateDesc(item.type, (Ptr)item.bytes, item.size, &value);
+        HSetState(contents, handle_state);
+        if (status)
+            return descriptor_result(call, status);
+        if (a[1] == typeWildCard || a[1] == item.type) {
+            *output = value;
+            return descriptor_result(call, noErr);
+        }
+        status = C_AECoerceDesc(&value, a[1], output);
+        C_AEDisposeDesc(&value);
+        return descriptor_result(call, status);
+    }
+    if (query == dcm_methods) {
+        const uint32 capacity = a[1];
+        const uint64 extent = (uint64)capacity * sizeof(uint32);
+        Byte* methods = capacity && extent <= INT32_MAX ? dcm_memory(a[2], extent, true) : NULL;
+        uint32_t* actual = dcm_memory(a[3], sizeof *actual, true);
+        if (!actual || (capacity && !methods))
+            return descriptor_result(call, dcm_param_error);
+        return descriptor_result(call, dcm_get_methods(record, methods, capacity, actual));
+    }
+
+    void* output = dcm_memory(a[1], sizeof(uint32), true);
+    void* second = query == dcm_tag_type ? dcm_memory(a[2], sizeof(uint32), true) : NULL;
+    if (!output || (query == dcm_tag_type && !second))
+        return descriptor_result(call, dcm_param_error);
+    uint32 first_value, second_value;
+    OSErr status;
+    if (query == dcm_tag_type) {
+        status = dcm_get_word(record, TICK("ftag"), TICK("enum"), &first_value);
+        if (!status)
+            status = dcm_get_word(record, TICK("ftyp"), TICK("enum"), &second_value);
+    }
+    else if (query == dcm_maximum_size)
+        status = dcm_get_word(record, TICK("mrsz"), TICK("magn"), &first_value);
+    else
+        status = dcm_get_word(record, TICK("fatr"), TICK("fatr"), &first_value);
+    if (!status) {
+        memcpy(output, &first_value, sizeof first_value);
+        if (second)
+            memcpy(second, &second_value, sizeof second_value);
+    }
+    return descriptor_result(call, status);
+}
+
+#define DCM_FIELD_QUERY(name, query)                                    \
+    int ROMlib_carbon_##name(ROMlib_carbon_ppc_frame* call)             \
+    {                                                                  \
+        return dcm_get_field(call, #name, query);                       \
+    }
+
+DCM_FIELD_QUERY(DCMGetFieldTagAndType, dcm_tag_type)
+DCM_FIELD_QUERY(DCMGetFieldMaxRecordSize, dcm_maximum_size)
+DCM_FIELD_QUERY(DCMGetFieldAttributes, dcm_attributes)
+DCM_FIELD_QUERY(DCMGetFieldDefaultData, dcm_default)
+DCM_FIELD_QUERY(DCMGetFieldFindMethods, dcm_methods)
+
+#undef DCM_FIELD_QUERY

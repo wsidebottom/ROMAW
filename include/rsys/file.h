@@ -100,6 +100,19 @@ typedef struct PACKED {
     Byte fcname[32];  /* Str31 fcbCName */
 } fcbrec;
 
+enum {
+    file_access_read = 1,
+    file_access_write = 2,
+    file_deny_read = 0x10,
+    file_deny_write = 0x20,
+    file_open_regular = -1,
+};
+
+extern OSErr ROMlib_check_fork_sharing(VCB* volume, LONGINT file_id, bool resource, int modes,
+                                     SignedByte* permission, INTEGER* existing);
+extern void ROMlib_record_fork_access(INTEGER reference, int modes, SignedByte permission, bool writable);
+extern bool ROMlib_fork_access_allowed(INTEGER reference, unsigned access);
+extern OSErr ROMlib_ufs_open_deny(HParmBlkPtr pb, bool resource, int modes);
 extern OSErr ROMlib_open_empty_fork(fcbrec* fp, const char* path);
 extern void ROMlib_close_empty_fork(fcbrec* fp);
 extern boolean_t ROMlib_empty_fork_p(fcbrec* fp);
@@ -143,7 +156,7 @@ typedef enum { File, Directory } FOrDType;
 
 typedef enum { Get, Set } GetOrSetType;
 
-typedef enum { CatMove, FRename, HRename } MoveOrRenameType;
+typedef enum { CatMove, FRename, HRename, MoveRename } MoveOrRenameType;
 
 typedef enum { Lock, Unlock } LockOrUnlockType;
 
@@ -481,6 +494,7 @@ extern OSErr ufsPBHDelete(HParmBlkPtr ufsPB, BOOLEAN a);
 extern OSErr ufsPBGetCatInfo(CInfoPBPtr ufsPB, BOOLEAN a);
 extern OSErr ufsPBSetCatInfo(CInfoPBPtr ufsPB, BOOLEAN a);
 extern OSErr ufsPBCatMove(CMovePBPtr ufsPB, BOOLEAN a);
+extern OSErr ROMlib_ufs_move_rename(CopyParam* pb);
 extern OSErr ufsPBOpenWD(WDPBPtr ufsPB, BOOLEAN a);
 extern OSErr ufsPBCloseWD(WDPBPtr ufsPB, BOOLEAN a);
 extern OSErr ufsPBGetWDInfo(WDPBPtr ufsPB, BOOLEAN a);

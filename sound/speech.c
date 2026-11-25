@@ -62,6 +62,7 @@ static const struct {
     {"PauseSpeechAt", "2p4", 0x0434000c},
     {"ContinueSpeech", "2p", 0x0238000c},
     {"SpeechBusy", "2", 0x003c000c},
+    {"SpeechBusySystemWide", "2", 0x0040000c},
     {"SetSpeechRate", "2p4", 0x0444000c},
     {"GetSpeechRate", "2pp", 0x0448000c},
     {"SetSpeechInfo", "2p4p", 0x0654000c},
@@ -232,7 +233,7 @@ int ROMlib_speech_service(uint32_t selector, const uint32_t* a, uint32_t* result
                 error = -240; /* noSynthFound */
         }
     }
-    else if (selector == 0x003c000c) {
+    else if (selector == 0x003c000c || selector == 0x0040000c) {
         ROMlib_speech_poll();
         unsigned busy = 0;
         host_speech_status state;

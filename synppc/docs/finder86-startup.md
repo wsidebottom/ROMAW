@@ -63,6 +63,23 @@ idle animation and the one-byte `anim` property. Native window definitions repor
 their capabilities. Zoom transitions use the rectangle animator and actual
 Window Manager visibility. Header drawing uses native QuickDraw state.
 
+The About window also requires the Appearance picture control (CDEF 19).
+A missing definition makes Finder report a generic insufficient-memory alert
+even when its heap has space. The native fallback resolves the initial PICT
+resource, draws through QuickDraw, and exposes the borrowed picture handle via
+`pich`. Disposing the control leaves resource-owned and caller-owned pictures
+intact; the non-tracking variant returns the standard picture part immediately.
+
+FinderLib refreshes the Largest Unused Block field through private OSDispatch
+selector `0x74` (no arguments, four-byte result), then subtracts `DefltStack`.
+This contract is inferred from its original call site and destination control.
+ROMAW reports the actual maximum temporary allocation backed by the system
+zone, using the existing allocator. The regression allocates within that
+reported capacity and verifies that the largest available block decreases.
+
+The native progress and relevance controls (CDEF 5) let Finder finish creating
+the About window's memory indicators.
+
 Windows validation reached the populated desktop, opened the ROMAW disk and
 browsed System Folder contents. Closing the host window completed the PPC
 fragment and exited with status zero. Normal launches also reached the desktop
@@ -106,6 +123,20 @@ an entire System file therefore does not by itself supply a working runtime.
 No initializer was skipped and no private boot structures were fabricated.
 Copying and application launching have not been validated. Native service tests establish their listed contracts, not full
 Finder compatibility.
+
+## Get Info services
+
+Get Info's synchronous Control and Status imports invoke the live OS trap
+vectors with the caller's parameter block. Native synchronous errors update
+`ioResult`; guest driver patches retain their own result and parameter writes.
+The grouped fixture checks invalid pointers, native driver errors and a real
+68K trap patch in both PPC engines.
+
+The date and time imports use the live Pack6 vector, including guest patches,
+and the existing International Utilities implementation. `IUGetIntl` returns
+real System resources; date/time variants accept explicit or default locale
+handles. The fixture compares formatted strings for short, long and abbreviated
+dates and time using a timestamp observed in Finder's Get Info flow.
 
 ## Validation
 

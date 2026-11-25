@@ -400,6 +400,7 @@ PUBLIC OSErr ROMlib_get_control_features(ControlHandle control, uint32* features
     case ROMlib_bevel_button_proc:
     case ROMlib_edit_text_proc:
     case ROMlib_static_text_proc:
+    case ROMlib_picture_proc:
         *features = CL(1U << 6); /* kControlSupportsDataAccess */
         return noErr;
     case ROMlib_user_pane_proc:
@@ -882,6 +883,23 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
         }
         const int definition = ROMlib_native_control_kind(control);
         const int kind = definition & ~15;
+        if (tag == TICK("pich") && kind == ROMlib_picture_proc) {
+            if (actual)
+                *actual = CLC(4);
+            if (operation == ROMLIB_CONTROL_MEASURE)
+                return noErr;
+            if (size < 4 || (operation == ROMLIB_CONTROL_WRITE && size != 4))
+                return -30591;
+            Byte content[6];
+            if (operation == ROMLIB_CONTROL_WRITE) {
+                const INTEGER type = CWC(131); /* Borrowed picture handle. */
+                memcpy(content, &type, 2);
+                memcpy(content + 2, data, 4);
+                return ROMlib_set_control_image_content(control, content, ROMlib_picture_proc);
+            }
+            memcpy(data, ROMlib_aux_control_extra(aux)->image_content + 2, 4);
+            return noErr;
+        }
         if (tag == TICK("anim") && kind == ROMlib_chasing_arrows_proc) {
             if (actual)
                 *actual = CLC(1);
@@ -1375,7 +1393,7 @@ OSErr ROMlib_set_control_image_content(ControlHandle control, const Byte* conten
     int kind = Hx(aux, acReserved) & ~15;
     if (!kind)
         return ROMlib_control_data(control, 0, TICK("cont"), 6, (Byte*)content, NULL, ROMLIB_CONTROL_WRITE);
-    if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc) ||
+    if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc && kind != ROMlib_picture_proc) ||
         (expected_kind && kind != expected_kind))
         return -30581;
     INTEGER type;
@@ -1383,6 +1401,24 @@ OSErr ROMlib_set_control_image_content(ControlHandle control, const Byte* conten
     type = CW(type);
     if (type != 0 && type != 1 && type != 2 && type != 3 && type != 129 && type != 130 && type != 131)
         return -4;
+    if (kind == ROMlib_picture_proc) {
+        uint32 address;
+        memcpy(&address, content + 2, 4);
+        address = CL(address);
+        if (type != 131)
+            return paramErr;
+        if (address) {
+            if (address > ROMlib_guest_memory_size - sizeof(uint32))
+                return paramErr;
+            Handle picture = SYN68K_TO_US(address);
+            const uint32 data_address = US_TO_SYN68K(STARH(picture));
+            if (data_address < 12 || data_address > ROMlib_guest_memory_size - sizeof(Picture))
+                return paramErr;
+            Size length = GetHandleSize(picture);
+            if (length < sizeof(Picture) || (uint32)length > ROMlib_guest_memory_size - data_address)
+                return paramErr;
+        }
+    }
     memcpy(ROMlib_aux_control_extra(aux)->image_content, content, 6);
     CTL_CALL_EXCURSION(control, { InvalRect(&CTL_RECT(control)); });
     return noErr;
@@ -1396,7 +1432,7 @@ OSErr ROMlib_get_control_image_content(ControlHandle control, Byte* content, int
     int kind = Hx(aux, acReserved) & ~15;
     if (!kind)
         return ROMlib_control_data(control, 0, TICK("cont"), 6, content, NULL, ROMLIB_CONTROL_READ);
-    if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc) ||
+    if ((kind != ROMlib_image_well_proc && kind != ROMlib_bevel_button_proc && kind != ROMlib_picture_proc) ||
         (expected_kind && kind != expected_kind))
         return -30581;
     memcpy(content, ROMlib_aux_control_extra(aux)->image_content, 6);
@@ -1500,6 +1536,20 @@ PRIVATE void draw_native_image_well(ControlHandle control)
         PenSize(2, 2);
         FrameRect(&bounds);
     }
+    draw_state_restore(&saved);
+}
+
+/* Picture handles belong to their resource map or the caller, never the control. */
+PRIVATE void draw_native_picture(ControlHandle control)
+{
+    draw_state_t saved;
+    draw_state_save(&saved);
+    control_image image;
+    Rect bounds = CTL_RECT(control);
+    if (load_control_image(control, ROMlib_picture_proc, &image))
+        draw_control_image(&image, &bounds, control);
+    if (!(ROMlib_native_control_kind(control) & 1) && CTL_HILITE(control) == 6)
+        InvertRect(&bounds);
     draw_state_restore(&saved);
 }
 
@@ -1901,6 +1951,26 @@ int32 ROMlib_ctlcall(ControlHandle c, int16 i, intptr_t native_param)
                     for (int tab = 1; tab <= count; ++tab)
                         if (where.h >= edges[tab - 1] && where.h < edges[tab])
                             return tab;
+            }
+            return 0;
+        }
+        if ((kind & ~15) == ROMlib_picture_proc) {
+            if (i == initCntl && aux) {
+                PicHandle picture = CTL_VALUE(c) ? GetPicture(CTL_VALUE(c)) : NULL;
+                const INTEGER type = CWC(131);
+                const uint32 address = picture ? CL(US_TO_SYN68K(picture)) : 0;
+                memcpy(ROMlib_aux_control_extra(aux)->image_content, &type, 2);
+                memcpy(ROMlib_aux_control_extra(aux)->image_content + 2, &address, 4);
+                CTL_VALUE_X(c) = CWC(0);
+            }
+            if (i == drawCntl && CTL_VIS(c) && WINDOW_VISIBLE(CTL_OWNER(c)))
+                draw_native_picture(c);
+            if (i == calcCntlRgn || i == calcCRgns)
+                RectRgn((RgnHandle)native_param, &CTL_RECT(c));
+            if (i == testCntl && CTL_HILITE(c) != INACTIVE) {
+                Point where = {(INTEGER)((uint32)l >> 16), (INTEGER)l};
+                if (PtInRect(where, &CTL_RECT(c)))
+                    return 6; /* kControlPicturePart */
             }
             return 0;
         }

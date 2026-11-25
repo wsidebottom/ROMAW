@@ -97,7 +97,7 @@ void ROMlib_fileplay_mix(SndChannelPtr channel, struct hunger_info info)
             !play->frames ||
             ROMlib_sound_resample(play->samples, info.buf, play->frames + 1, info.bufsize, play->rate, SND_RATE << 16,
                                   &SND_CHAN_CURRENT_START(channel), &SND_CHAN_PREV_SAMP(channel),
-                                  &SND_CHAN_TIME(channel), info.t3, SND_CHAN_FIRSTMOD(channel)->amplitude);
+                                  &SND_CHAN_TIME(channel), info.t3, ROMlib_sound_channel_amplitude(channel));
         play->end = SND_CHAN_TIME(channel);
         if (play->rendered)
             warning_sound_log("file rendered channel=%p frames=%u rate=%08x end=%llu", channel, play->frames,

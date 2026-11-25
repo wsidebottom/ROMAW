@@ -6,8 +6,8 @@
   Classes:   None.
 
   Functions: C_SndAddModifier, C_SndChannelStatus, C_SndControl, C_SndDisposeChannel, C_SndDoCommand, C_SndDoImmediate,
-             C_SndPlay, GetSoundVol, ROMlib_get_snd_cmds, ROMlib_sound_resample, SetSoundVol, SoundDone, StartSound,
-             StopSound, callasynth, sound_callback
+             C_SndPlay, GetSoundVol, ROMlib_get_snd_cmds, ROMlib_sound_channel_amplitude, ROMlib_sound_resample,
+             SetSoundVol, SoundDone, StartSound, StopSound, callasynth, sound_callback
 
   Origin:    Existing repository source in executor/src/sound; original attribution and provenance comments are
              preserved below.
@@ -182,9 +182,18 @@ static const uint8 mix8[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 };
 
+unsigned ROMlib_sound_channel_amplitude(SndChannelPtr channel)
+{
+    const ModifierStub* modifier = SND_CHAN_FIRSTMOD(channel);
+    const uint32 volume = modifier->volume;
+    const unsigned mono_gain = ((volume >> 16) + (uint16)volume) / 2;
+    return modifier->amplitude * mono_gain / 256;
+}
+
 static unsigned scale_sample(uint8 sample, unsigned amplitude)
 {
-    return 128 + ((int)sample - 128) * (int)amplitude / 255;
+    const int scaled = 128 + ((int)sample - 128) * (int)amplitude / 255;
+    return MAX(0, MIN(scaled, 255));
 }
 
 /* Return TRUE if the buffer was used up.  I hate value-result parms,
@@ -394,6 +403,7 @@ P4(PUBLIC pascal trap, OSErr, SndNewChannel, HIDDEN_SndChannelPtr*, chanpp, INTE
     }
     modifier->userInfo = CL(init ? init : 0x80);
     modifier->amplitude = 255;
+    modifier->volume = 0x01000100;
     FIELD_ASSIGN_RAW(channel->firstMod, RM((Ptr)modifier));
     channel->flags = CW(allocated ? CHAN_ALLOC_FLAG : 0);
     FIELD_ASSIGN_RAW(channel->callBack, RM(userroutinep));
@@ -591,7 +601,7 @@ static void do_current_command(SndChannelPtr chanp, struct hunger_info info)
         sp = decoded_note_samples(chanp, chanp->cmdInProg.cmd != CWC(noteCmd), &length);
         if (!sp || ROMlib_sound_resample(sp, info.buf, length, info.bufsize, SND_RATE << 16, SND_RATE << 16,
                                          &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp),
-                                         &SND_CHAN_TIME(chanp), info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude))
+                                         &SND_CHAN_TIME(chanp), info.t3, ROMlib_sound_channel_amplitude(chanp)))
             CMD_DONE(chanp);
         break;
     }
@@ -608,7 +618,7 @@ static void do_current_command(SndChannelPtr chanp, struct hunger_info info)
             }
             else if (ROMlib_sound_resample(sp, info.buf, length, info.bufsize, CL(hp->sampleRate), SND_RATE << 16,
                                            &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp),
-                                           &SND_CHAN_TIME(chanp), info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude))
+                                           &SND_CHAN_TIME(chanp), info.t3, ROMlib_sound_channel_amplitude(chanp)))
                 CMD_DONE(chanp);
             break;
         }
@@ -629,7 +639,7 @@ static void do_current_command(SndChannelPtr chanp, struct hunger_info info)
 
             if (ROMlib_sound_resample(sp, info.buf, CL(hp->length), info.bufsize, CL(hp->sampleRate), SND_RATE << 16,
                                       &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp), &SND_CHAN_TIME(chanp),
-                                      info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude)) {
+                                      info.t3, ROMlib_sound_channel_amplitude(chanp))) {
                 CMD_DONE(chanp);
             }
         }
@@ -699,7 +709,7 @@ static void do_current_db(SndChannelPtr chanp, struct hunger_info info)
 #endif
     if (ROMlib_sound_resample(sp, info.buf, CL(dbp->dbNumFrames), info.bufsize, CL(dbhp->dbhSampleRate), SND_RATE << 16,
                               &SND_CHAN_CURRENT_START(chanp), &SND_CHAN_PREV_SAMP(chanp), &SND_CHAN_TIME(chanp),
-                              info.t3, SND_CHAN_FIRSTMOD(chanp)->amplitude)) {
+                              info.t3, ROMlib_sound_channel_amplitude(chanp))) {
         /* We are done with this buffer */
         dbp->dbFlags &= CLC(~dbBufferReady);
         if (dbp->dbFlags & CLC(dbLastBuffer))

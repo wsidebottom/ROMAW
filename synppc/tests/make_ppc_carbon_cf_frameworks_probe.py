@@ -35,6 +35,10 @@ from make_ppc_carbon_cf_values_probe import ValuesProbe
 ROOT = Path(__file__).resolve().parents[2]
 ROWS = json.loads((ROOT / "carbonlib/plans/cf-frameworks-batch.json").read_text())["entries"]
 TIMEZONES = (
+    "CFTimeZoneCopyAbbreviationDictionary",
+    "CFTimeZoneCopyKnownNames",
+    "CFTimeZoneCreateWithName",
+    "CFTimeZoneSetAbbreviationDictionary",
     "CFTimeZoneCopyAbbreviation",
     "CFTimeZoneCopyDefault",
     "CFTimeZoneCopySystem",
@@ -431,6 +435,48 @@ class FrameworksProbe(ValuesProbe):
         load_double(64801)
         self.call("CFTimeZoneCreateWithTimeIntervalFromGMT", [0])
         p.expect(0, "fixed offsets outside 18 hours are rejected")
+
+        self.call("CFTimeZoneCopyKnownNames")
+        known_names = save(0, "copy names from the host time-zone database")
+        self.call("CFArrayGetCount", [known_names])
+        p.nonzero("the known names array contains time zones")
+        self.call("CFRelease", [known_names])
+
+        self.call("CFTimeZoneCopyAbbreviationDictionary")
+        original = save(4, "copy the built-in abbreviation dictionary")
+        self.call("CFStringCreateWithCString", [0, self.raw(b"Pacific/Auckland\0"), 0x600])
+        name = save(8, "create an IANA time-zone identifier")
+        self.call("CFTimeZoneCreateWithName", [0, name, 0])
+        zone = save(12, "resolve an IANA name with the host's historical and future rules")
+        for instant, hours in ((1862006400, 13), (1877731200, 12)):
+            load_double(instant)
+            self.call("CFTimeZoneGetSecondsFromGMT", [zone])
+            expect_double(hours * 3600, "named time zones preserve seasonal offsets after 2038")
+
+        self.call("CFStringCreateWithCString", [0, self.raw(b"ROMAW\0"), 0x600])
+        abbreviation = save(16, "create a caller-defined abbreviation")
+        self.call(
+            "CFDictionaryCreateMutable",
+            [
+                0,
+                1,
+                self.constant("kCFTypeDictionaryKeyCallBacks", False),
+                self.constant("kCFTypeDictionaryValueCallBacks", False),
+            ],
+        )
+        custom = save(20, "create a mutable replacement abbreviation dictionary")
+        self.call("CFDictionarySetValue", [custom, abbreviation, name])
+        self.call("CFTimeZoneSetAbbreviationDictionary", [custom])
+        self.call("CFRelease", [custom])
+        self.call("CFTimeZoneCreateWithName", [0, abbreviation, 0])
+        p.expect(0, "custom abbreviations are only used when requested")
+        self.call("CFTimeZoneCreateWithName", [0, abbreviation, 1])
+        remapped = save(24, "resolve the abbreviation after releasing the caller's dictionary")
+        self.call("CFEqual", [zone, remapped])
+        p.expect(1, "an abbreviation produces the named zone it maps to")
+        self.call("CFTimeZoneSetAbbreviationDictionary", [original])
+        for item in (remapped, abbreviation, zone, name, original):
+            self.call("CFRelease", [item])
 
     def calendar(self):
         def load_double(register, value):

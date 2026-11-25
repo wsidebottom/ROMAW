@@ -1,13 +1,13 @@
 /*+===================================================================
   File:      text_common.h
 
-  Summary:   Resolves TextCommon encodings and selects names from installed tables.
+  Summary:   Resolves TextCommon encodings and compares Unicode collation keys.
 
   Classes:   None.
 
-  Functions: Private TextCommon helpers and PowerPC entry adapters.
+  Functions: ROMlib_carbon_compare_collation_keys and private TextCommon adapters.
 
-  Origin:    Mac OS 9.2.1 TextCommon workers and Universal Interfaces 3.4.2.
+  Origin:    Mac OS 9.2.1 TextCommon and UnicodeUtilitiesCoreLib, and Universal Interfaces 3.4.2.
 
   Copyright and Legal notices: See COPYING.
 ===================================================================+*/
@@ -940,6 +940,57 @@ static int text_common_dispatch(const char* name, uint32_t offset, int operation
     if (operation == text_encoding_name)
         return text_common_name(&ref, call);
     return text_common_resolve(&ref, call->words[0], &call->words[0]);
+}
+
+static const Byte* text_collation_key(uint32 address, uint32 count)
+{
+    const uint64 size = (uint64)count * 4;
+    if (!address || size > (uint64)UINT32_MAX + 1 - address)
+        return NULL;
+    return ROMlib_carbon_try_guest_memory(address, size ? size : 1, 0);
+}
+
+int ROMlib_carbon_compare_collation_keys(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32 left_count = call->words[1], right_count = call->words[3];
+    const Byte* left = text_collation_key(call->words[0], left_count);
+    const Byte* right = text_collation_key(call->words[2], right_count);
+    Byte* equivalent = call->words[4] ? ROMlib_carbon_try_guest_memory(call->words[4], 1, 1) : NULL;
+    Byte* order = call->words[5] ? ROMlib_carbon_try_guest_memory(call->words[5], 4, 1) : NULL;
+    if (equivalent)
+        *equivalent = true;
+    if (order)
+        memset(order, 0, 4);
+    if (!left || !right || (!equivalent && !order) || (call->words[4] && !equivalent) || (call->words[5] && !order))
+        return text_result(call, paramErr);
+
+    /* The reference keys use 0 and 1 to delimit weight levels. A difference
+       before both keys reach marker 1 also affects equivalence. */
+    bool left_primary = true, right_primary = true;
+    bool left_significant = true, right_significant = true;
+    int32 result = 0;
+    const uint32 common = left_count < right_count ? left_count : right_count;
+    for (uint32 i = 0; i < common; ++i, left += 4, right += 4) {
+        const uint32 a = text_table_long(left), b = text_table_long(right);
+        left_primary &= a > 1;
+        right_primary &= b > 1;
+        left_significant &= a != 1;
+        right_significant &= b != 1;
+        if (a != b) {
+            result = a < b ? -1 : 1;
+            break;
+        }
+    }
+    /* Preserve the classic prefix rule when one key has unmatched words. */
+    if (!result && left_count != right_count)
+        result = left_primary ? 1 : -1;
+    if (result && equivalent)
+        *equivalent = !left_significant && !right_significant;
+    if (order) {
+        const uint32 encoded = CL((uint32)(result * (left_primary || right_primary ? 2 : 1)));
+        memcpy(order, &encoded, sizeof encoded);
+    }
+    return text_result(call, noErr);
 }
 
 #endif

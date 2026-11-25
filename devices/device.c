@@ -278,11 +278,11 @@ A4(PUBLIC, OSErr, ROMlib_dispatch, ParmBlkPtr, p, /* INTERNAL */
                 if (installed_drivers[devicen] != h)
                     HIDDEN_RAW_SET(MR(UTableBase)[devicen], 0);
             }
-
-            if (!async)
-                p->ioParam.ioResult = CW(retval);
         }
     }
+    /* Invalid or empty driver slots must complete synchronous PBs too. */
+    if (!async)
+        p->ioParam.ioResult = CW(retval);
     fs_err_hook(retval);
     return retval;
 }

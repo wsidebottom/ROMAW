@@ -7,11 +7,11 @@
 
   Functions: C_Comp3to1, C_Comp6to1, C_DirectorUnknown3, C_DirectorUnknown4, C_Exp1to3, C_Exp1to6, C_FinaleUnknown1,
              C_FinaleUnknown2, C_GetCompressionInfo, C_GetDefaultOutputVolume, C_GetSoundHeaderOffset,
-             C_GetSoundPreference, C_GetSysBeepVolume, C_MACEVersion, C_SPBBytesToMilliseconds, C_SPBCloseDevice,
+             C_GetSoundOutputInfo, C_GetSoundPreference, C_GetSysBeepVolume, C_MACEVersion, C_SPBBytesToMilliseconds, C_SPBCloseDevice,
              C_SPBGetDeviceInfo, C_SPBGetIndexedDevice, C_SPBGetRecordingStatus, C_SPBMillisecondsToBytes,
              C_SPBOpenDevice, C_SPBPauseRecording, C_SPBRecord, C_SPBRecordToFile, C_SPBResumeRecording,
              C_SPBSetDeviceInfo, C_SPBSignInDevice, C_SPBSignOutDevice, C_SPBStopRecording, C_SPBVersion,
-             C_SetDefaultOutputVolume, C_SetSoundPreference, C_SetSysBeepVolume, C_SetupAIFFHeader, C_SetupSndHeader,
+             C_SetDefaultOutputVolume, C_SetSoundOutputInfo, C_SetSoundPreference, C_SetSysBeepVolume, C_SetupAIFFHeader, C_SetupSndHeader,
              C_SndGetInfo, C_SndGetSysBeepState, C_SndManagerStatus, C_SndPlayDoubleBuffer, C_SndRecord,
              C_SndRecordToFile, C_SndSetInfo, C_SndSetSysBeepState, C_SndSoundManagerVersion, C_UnsignedFixedMulDiv,
              C_sound_timer_handler, ROMlib_get_sound_compression_name, ROMlib_sound_finish_mix,
@@ -53,6 +53,7 @@ INTEGER ROMlib_sysbeep_state = 1;
 enum { sound_full_gain = 0x100, sound_full_stereo = 0x01000100 };
 static uint32 alert_volume = sound_full_stereo;
 static uint32 output_volume = sound_full_stereo;
+static Boolean output_muted;
 static unsigned alert_frames, alert_phase;
 
 P1(PUBLIC, pascal trap void, SndGetSysBeepState, INTEGER*, statep)
@@ -624,7 +625,7 @@ static uint32 sound_output_level(uint32 level)
 
 boolean_t ROMlib_sound_play_alert(void)
 {
-    if (!alert_volume || !output_volume)
+    if (!alert_volume || !output_volume || output_muted)
         return TRUE;
     if ((alert_volume == sound_full_stereo && output_volume == sound_full_stereo) ||
         !sound_driver.sound_works_p || !SOUND_WORKS_P())
@@ -638,11 +639,11 @@ boolean_t ROMlib_sound_play_alert(void)
 boolean_t ROMlib_sound_finish_mix(struct hunger_info info)
 {
     const boolean_t played_alert = alert_frames != 0;
-    if (!played_alert && output_volume == sound_full_stereo)
+    if (!played_alert && !output_muted && output_volume == sound_full_stereo)
         return FALSE;
 
     const unsigned alert_gain = sound_mono_gain(alert_volume);
-    const unsigned output_gain = sound_mono_gain(output_volume);
+    const unsigned output_gain = output_muted ? 0 : sound_mono_gain(output_volume);
     for (snd_time sample_index = info.t2; sample_index < info.t3; ++sample_index) {
         int alert = 0;
         if (alert_frames) {
@@ -879,24 +880,114 @@ P3(PUBLIC, pascal trap OSErr, GetSoundPreference, OSType, theType, Str255, name,
     return sound_preference(theType, name, settings, FALSE);
 }
 
-/* Sound Manager 3.1 */
+enum {
+    siHardwareVolume = 0x68766f6c, /* 'hvol' */
+    siHardwareMute = 0x686d7574, /* 'hmut' */
+    siSampleSize = 0x7373697a, /* 'ssiz' */
+    siNumberChannels = 0x6368616e, /* 'chan' */
+    siSampleRate = 0x73726174, /* 'srat' */
+    siVolume = 0x766f6c75, /* 'volu' */
+};
+
+static void write_sound_info_word(void* info, uint16 value)
+{
+    value = CW(value);
+    memcpy(info, &value, sizeof value);
+}
+
+static void write_sound_info_long(void* info, uint32 value)
+{
+    value = CL(value);
+    memcpy(info, &value, sizeof value);
+}
+
+static uint32 read_sound_info_long(const void* info)
+{
+    uint32 value;
+    memcpy(&value, info, sizeof value);
+    return CL(value);
+}
+
+P3(PUBLIC, pascal trap OSErr, GetSoundOutputInfo, void*, device, OSType, selector, void*, infoPtr)
+{
+    if (device)
+        return ROMLIB_SOUND_REFERENCE_REQUIRED;
+    if (!infoPtr)
+        return paramErr;
+    switch (selector) {
+    case siHardwareVolume:
+        write_sound_info_long(infoPtr, output_volume);
+        break;
+    case siHardwareMute:
+        write_sound_info_word(infoPtr, output_muted);
+        break;
+    case siSampleSize:
+        write_sound_info_word(infoPtr, 8);
+        break;
+    case siNumberChannels:
+        write_sound_info_word(infoPtr, 1);
+        break;
+    case siSampleRate:
+        write_sound_info_long(infoPtr, (uint32)SND_RATE << 16);
+        break;
+    default:
+        return ROMLIB_SOUND_UNKNOWN_INFO;
+    }
+    return noErr;
+}
+
+P3(PUBLIC, pascal trap OSErr, SetSoundOutputInfo, void*, device, OSType, selector, void*, infoPtr)
+{
+    if (device)
+        return ROMLIB_SOUND_REFERENCE_REQUIRED;
+    if (!infoPtr)
+        return paramErr;
+    switch (selector) {
+    case siHardwareVolume:
+        output_volume = read_sound_info_long(infoPtr);
+        break;
+    case siHardwareMute: {
+        uint16 mute;
+        memcpy(&mute, infoPtr, sizeof mute);
+        output_muted = mute != 0;
+        break;
+    }
+    default:
+        return ROMLIB_SOUND_UNKNOWN_INFO;
+    }
+    return noErr;
+}
+
+static ModifierStubPtr sound_channel_modifier(SndChannelPtr channel)
+{
+    for (SndChannelPtr item = MR(HIDDEN_RAW(allchans)); item; item = PPR(item->nextChan))
+        if (item == channel)
+            return SND_CHAN_FIRSTMOD(item);
+    return NULL;
+}
 
 P3(PUBLIC, pascal trap OSErr, SndGetInfo, SndChannelPtr, chan, OSType, selector, void*, infoPtr)
 {
-    OSErr retval;
-
-    warning_sound_log(NULL_STRING);
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    return retval;
+    if (!infoPtr)
+        return paramErr;
+    const ModifierStub* modifier = sound_channel_modifier(chan);
+    if (!modifier)
+        return chan ? ROMLIB_SOUND_REFERENCE_REQUIRED : badChannel;
+    if (selector != siVolume)
+        return C_GetSoundOutputInfo(NULL, selector, infoPtr);
+    write_sound_info_long(infoPtr, modifier->volume);
+    return noErr;
 }
 
 P3(PUBLIC, pascal trap OSErr, SndSetInfo, SndChannelPtr, chan, OSType, selector, void*, infoPtr)
 {
-    OSErr retval;
-
-    warning_sound_log(NULL_STRING);
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    return retval;
+    if (!infoPtr)
+        return paramErr;
+    ModifierStub* modifier = sound_channel_modifier(chan);
+    if (!modifier)
+        return chan ? ROMLIB_SOUND_REFERENCE_REQUIRED : badChannel;
+    if (selector != siVolume)
+        return C_SetSoundOutputInfo(NULL, selector, infoPtr);
+    modifier->volume = read_sound_info_long(infoPtr);
+    return noErr;
 }

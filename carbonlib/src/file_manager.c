@@ -7,7 +7,8 @@
 
   Functions: ROMlib_carbon_file_trap, ROMlib_carbon_file_parameter_block, ROMlib_carbon_file_io,
              ROMlib_carbon_file_hierarchy,
-             ROMlib_carbon_file_spec, ROMlib_carbon_file_make_spec.
+             ROMlib_carbon_file_spec, ROMlib_carbon_file_make_spec, ROMlib_carbon_PBWaitIOComplete,
+             ROMlib_carbon_PBUnmountVol and ROMlib_carbon_UnmountVol.
 
   Origin:    System 9.2.1 InterfaceLib File Manager overlay (fovr 50),
              CarbonLib 1.4 FSSpec wrappers, Universal Interfaces 3.4.2 Files.h, and Executor's File Manager.
@@ -16,7 +17,14 @@
 ===================================================================+*/
 
 #include "file_manager.h"
+#include "rsys/hfs.h"
 #include <string.h>
+
+_Static_assert(sizeof(CopyParam) == 52 && offsetof(CopyParam, ioCopyName) == 32,
+               "HFS move-and-rename parameter block layout");
+_Static_assert(sizeof(ForkAccessParam) == 52 && offsetof(ForkAccessParam, ioDenyModes) == 26,
+               "HFS fork sharing parameter block layout");
+_Static_assert(sizeof(FIDParam) == 58 && offsetof(FIDParam, ioFileID) == 54, "HFS file ID parameter block layout");
 
 int ROMlib_carbon_file_trap(uint16_t trap_word, int selector, uint32_t address, uint32_t* result)
 {
@@ -39,7 +47,78 @@ static int result_error(ROMlib_carbon_ppc_frame* call_frame, int16_t error)
     return 1;
 }
 
+int ROMlib_carbon_PBWaitIOComplete(ROMlib_carbon_ppc_frame* call_frame)
+{
+    const uint32_t address = call_frame->words[0];
+    if (!address)
+        return result_error(call_frame, paramErr);
+
+    const size_t result_offset = offsetof(ioParam, ioResult);
+    if (address > UINT32_MAX - result_offset)
+        return result_error(call_frame, paramErr);
+    const void* field = ROMlib_carbon_guest_memory(address + result_offset, sizeof(INTEGER), 0);
+    if (!field)
+        return 0;
+    INTEGER encoded;
+    memcpy(&encoded, field, sizeof encoded);
+    const int16_t result = CW(encoded);
+    if (result != 1 || !call_frame->words[1])
+        return result_error(call_frame, result);
+
+    /* A patched driver can leave operations pending. Let CarbonLib perform
+       the timed wait and service any cooperative guest driver hooks. */
+    ROMlib_carbon_reference original;
+    return ROMlib_carbon_reference_function("CarbonLib", "PBWaitIOComplete", &original) &&
+           ROMlib_carbon_invoke_frame(original.function, call_frame);
+}
+
 static int check_name(uint32_t address);
+
+static int file_unmount_volume(ROMlib_carbon_ppc_frame* call, ioParam* block, uint32 address)
+{
+    const uint32 name = CL(PP_RAW(block->ioNamePtr));
+    if (!check_name(name))
+        return 0;
+    LONGINT directory;
+    char* remainder;
+    VCB* volume = ROMlib_breakoutioname((ParmBlkPtr)block, &directory, &remainder, NULL, FALSE);
+    if (!volume)
+        return result_error(call, nsvErr);
+
+    const INTEGER drive = CW(volume->vcbDrvNum);
+    const DrvQExtra* queue_entry = drive ? ROMlib_dqbydrive(drive) : NULL;
+    /* Carbon ejects optical media after a successful unmount. Record the
+       drive type before the unmount changes the volume or the drive queue. */
+    const bool optical = queue_entry && ((CL(queue_entry->flags) >> 16) & 0xff) == 8;
+    uint32 result;
+    if (!ROMlib_carbon_file_trap(0xa00e, -1, address, &result))
+        return 0;
+    if (!(int16)result && optical) {
+        const INTEGER previous = block->ioVRefNum;
+        block->ioVRefNum = CW(drive);
+        uint32 ignored;
+        const int invoked = ROMlib_carbon_file_trap(0xa017, -1, address, &ignored);
+        block->ioVRefNum = previous;
+        if (!invoked)
+            return 0;
+    }
+    return result_error(call, result);
+}
+
+int ROMlib_carbon_PBUnmountVol(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32 address = call->words[0];
+    ioParam* block = address ? ROMlib_carbon_try_guest_memory(address, sizeof *block, 1) : NULL;
+    return block ? file_unmount_volume(call, block, address) : result_error(call, paramErr);
+}
+
+int ROMlib_carbon_UnmountVol(ROMlib_carbon_ppc_frame* call)
+{
+    _Alignas(64) ioParam block = {0};
+    PP_RAW(block.ioNamePtr) = CL(call->words[0]);
+    block.ioVRefNum = CW((INTEGER)call->words[1]);
+    return file_unmount_volume(call, &block, US_TO_SYN68K(&block));
+}
 
 int ROMlib_carbon_file_parameter_block(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_word, int selector,
                                        size_t extent)
@@ -56,6 +135,19 @@ int ROMlib_carbon_file_parameter_block(ROMlib_carbon_ppc_frame* call_frame, uint
         if (!check_name(name) || (spec && !ROMlib_carbon_guest_memory(spec, sizeof(FSSpec), 1)))
             return 0;
     }
+    if (selector >= 0x14 && selector <= 0x16) {
+        const uint32_t name = CL(PP_RAW(block->ioParam.ioNamePtr));
+        if (!check_name(name) || (selector == 0x16 && name && !ROMlib_carbon_guest_memory(name, 32, 1)))
+            return 0;
+    }
+    if (selector == 0x36 || selector == 0x37) {
+        const CopyParam* transfer = (const CopyParam*)block;
+        if (!check_name(CL(PP_RAW(transfer->ioNamePtr))) || !check_name(CL(PP_RAW(transfer->ioNewName))) ||
+            !check_name(CL(PP_RAW(transfer->ioCopyName))))
+            return 0;
+    }
+    if ((selector == 0x38 || selector == 0x39) && !check_name(CL(PP_RAW(block->ioParam.ioNamePtr))))
+        return 0;
     return ROMlib_carbon_file_trap(trap_word, selector, address, call_frame->words);
 }
 

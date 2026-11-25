@@ -191,6 +191,7 @@ PRIVATE gestaltentry_t gtable[] = {
         gestaltPhysicalRAMSize,
         (LONGINT)3 * 1024 * 1024,
     },
+    {T('r', 'r', 'a', 'm'), (LONGINT)3 * 1024 * 1024}, /* Finder's built-in RAM query. */
 #if defined(SYN68K)
     {
         gestaltProcessorType,
@@ -426,6 +427,7 @@ PUBLIC void gestalt_set_memory_size(uint32 size)
 {
     REPLACE_SELECTOR_IN_TABLE(gestaltLogicalRAMSize, size, gtable);
     REPLACE_SELECTOR_IN_TABLE(gestaltPhysicalRAMSize, size, gtable);
+    REPLACE_SELECTOR_IN_TABLE(T('r', 'r', 'a', 'm'), size, gtable);
 }
 
 PUBLIC void gestalt_set_system_version(uint32 version)

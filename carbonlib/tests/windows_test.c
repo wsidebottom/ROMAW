@@ -20,7 +20,8 @@
              ResetAlrtStage, SetDAFont, SetHandleSize, _NewHandle_flags,
              C_AddIconToSuite, C_DisposeIconSuite, C_GetIconFromSuite, C_IconSuiteToRgn, C_NewIconSuite,
              C_PlotIconSuite, C_PtInIconSuite, C_RectInIconSuite,
-             _PurgeSpace_flags, ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_service, ROMlib_component_signature,
+             _PurgeSpace_flags, ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_owns_token,
+             ROMlib_component_service, ROMlib_component_signature,
              ROMlib_carbon_canonical_cf_callbacks, ROMlib_carbon_call_romaw_service,
              ROMlib_carbon_call_register_vector,
              ROMlib_carbon_call_toolbox_vector, ROMlib_carbon_dispose_descriptor,
@@ -1582,6 +1583,12 @@ const char* ROMlib_component_signature(unsigned selector)
 {
     (void)selector;
     abort();
+}
+
+int ROMlib_component_owns_token(uint32 id)
+{
+    (void)id;
+    return 0;
 }
 
 int ROMlib_component_service(unsigned selector, const uint32* arguments, uint32* result)

@@ -356,20 +356,39 @@ PUBLIC int ROMlib_sidecar_move(char* source, char* target)
 {
     struct stat sb;
     int result = 0;
+    char* old_resource = NULL;
+    char* new_resource = NULL;
+    boolean_t moved_resource = FALSE;
     if (ROMlib_basilisk_sidecar_p(source)) {
-        char* old_resource = ROMlib_sidecar_resource_name(source);
-        char* new_resource = ROMlib_sidecar_resource_name(target);
+        old_resource = ROMlib_sidecar_resource_name(source);
+        new_resource = ROMlib_sidecar_resource_name(target);
+        if (!old_resource || !new_resource) {
+            free(old_resource);
+            free(new_resource);
+            errno = ENOMEM;
+            return -1;
+        }
         if (Ustat(old_resource, &sb) == 0) {
             double_dir_op(new_resource, mkdir_op);
             result = Urename(old_resource, new_resource);
+            moved_resource = result == 0;
         }
-        free(old_resource);
-        free(new_resource);
     }
     if (!result && Ustat(source, &sb) == 0) {
         double_dir_op(target, mkdir_op);
         result = Urename(source, target);
+        if (result && moved_resource) {
+            const int move_error = errno;
+            if (Urename(new_resource, old_resource))
+                warning_unexpected("could not restore resource fork after Finder metadata move failure");
+            errno = move_error;
+        }
     }
+    const int saved_error = errno;
+    free(old_resource);
+    free(new_resource);
+    if (result)
+        errno = saved_error;
     return result;
 }
 

@@ -218,6 +218,12 @@ BOOLEAN ROMlib_carbon_compare_and_swap(uint32 expected, uint32 replacement, vola
 
 OSErr ROMlib_carbon_get_desc_data(const AEDesc* descriptor, void* output, Size maximum);
 int ROMlib_carbon_AECheckIsRecord(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMCreateFieldInfoRecord(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMGetFieldTagAndType(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMGetFieldMaxRecordSize(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMGetFieldAttributes(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMGetFieldDefaultData(ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_DCMGetFieldFindMethods(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AESizeOfFlattenedDesc(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AEFlattenDesc(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_AEUnflattenDesc(ROMlib_carbon_ppc_frame* call);

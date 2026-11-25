@@ -6,7 +6,9 @@
   Classes:   None.
 
   Functions: AllocContig, Allocate, FSClose, FSOpen, FSRead, FSReadAll, FSWrite, FSWriteAll, GetEOF, GetFPos, OpenRF,
-             ROMlib_breakoutioname, ROMlib_destroy_blocks, ROMlib_isresourcefork, ROMlib_maperrno, ROMlib_nami,
+             PBHCopyFile,
+             ROMlib_breakoutioname, ROMlib_check_fork_sharing, ROMlib_destroy_blocks, ROMlib_fork_access_allowed,
+             ROMlib_isresourcefork, ROMlib_maperrno, ROMlib_nami, ROMlib_record_fork_access, ROMlib_ufs_open_deny,
              ROMlib_newunixfrommac, ROMlib_open_internal_resource, ROMlib_resname, ROMlib_rewinddir,
              ROMlib_ufs_directory_count, ROMlib_ufs_volume_counts, SetEOF, SetFPos, fs_err_hook, ufsPBAllocContig,
              ufsPBAllocate, ufsPBClose, ufsPBFlushFile, ufsPBGetEOF, ufsPBGetFPos, ufsPBHOpen, ufsPBHOpenRF,
@@ -14,7 +16,7 @@
              vlookupbyname
 
   Origin:    Existing repository source in executor/src/files; original attribution and provenance comments are
-             preserved below.
+             preserved below. The copy parameter block follows Universal Interfaces 3.4.2.
 
   Copyright and Legal notices: File-specific notices, where present, are retained below. License reference: COPYING.
 ===================================================================+*/
@@ -44,6 +46,7 @@
 #include "rsys/file.h"
 #include "rsys/suffix_maps.h"
 #include "rsys/lockunlock.h"
+#include "rsys/time.h"
 
 #include <ctype.h>
 #include "rsys/system_resources.h"
@@ -1305,6 +1308,79 @@ A5(PRIVATE, OSErr, macopen, char*, file, short, perm, LONGINT*, fdp, BOOLEAN, is
     return err;
 }
 
+enum { fork_access_recorded = 0x40, fork_access_explicit = 0x80, fork_access_exclusive = 4, fork_access_mask = 3 };
+/* Guest FCB layouts remain fixed. Access metadata is indexed by the reference
+   number, and a slot is ignored as soon as the FCB is closed. */
+static Byte fork_access[INT16_MAX + 1];
+
+static unsigned permission_access(SignedByte permission)
+{
+    if (permission == fsRdPerm)
+        return file_access_read;
+    if (permission == fsWrPerm)
+        return file_access_write;
+    return file_access_read | file_access_write;
+}
+
+static OSErr fork_sharing_conflict(VCB* volume, LONGINT file_id, bool resource, unsigned requested, INTEGER* existing)
+{
+    const Byte* base = (const Byte*)MR(FCBSPtr);
+    const uint16 size = CW(*(const uint16*)base);
+    const uint16 stride = CW(FSFCBLen);
+    if (stride < sizeof(filecontrolblock))
+        return noErr;
+    for (unsigned ref = 2; ref + stride <= size && ref < NELEM(fork_access); ref += stride) {
+        const filecontrolblock* file = (const filecontrolblock*)(base + ref);
+        if (!file->fcbFlNum || file->fcbFlNum != file_id || (VCB*)PPR(file->fcbVPtr) != volume ||
+            ((file->fcbMdRByt & RESOURCEBIT) != 0) != resource)
+            continue;
+        const unsigned active = fork_access[ref] & fork_access_recorded
+                                    ? fork_access[ref]
+                                    : file_access_read | ((file->fcbMdRByt & WRITEBIT) ? file_access_write : 0);
+        if (((active >> 4) & requested & fork_access_mask) ||
+            ((requested >> 4) & active & fork_access_mask))
+            return permErr;
+        if (existing && (requested & file_access_write) && (active & fork_access_exclusive)) {
+            *existing = ref;
+            return opWrErr;
+        }
+    }
+    return noErr;
+}
+
+OSErr ROMlib_check_fork_sharing(VCB* volume, LONGINT file_id, bool resource, int modes, SignedByte* permission,
+                               INTEGER* existing)
+{
+    if (modes != file_open_regular)
+        return fork_sharing_conflict(volume, file_id, resource, modes, existing);
+    OSErr error = fork_sharing_conflict(volume, file_id, resource, permission_access(*permission), NULL);
+    if (error && *permission == fsCurPerm) {
+        error = fork_sharing_conflict(volume, file_id, resource, file_access_read, NULL);
+        if (!error)
+            *permission = fsRdPerm;
+    }
+    return error;
+}
+
+void ROMlib_record_fork_access(INTEGER reference, int modes, SignedByte permission, bool writable)
+{
+    if (reference <= 0)
+        return;
+    if (modes != file_open_regular)
+        fork_access[reference] = fork_access_recorded | fork_access_explicit | modes;
+    else {
+        const unsigned access = writable ? permission_access(permission) : file_access_read;
+        const unsigned exclusive = writable && permission != fsRdWrShPerm ? fork_access_exclusive : 0;
+        fork_access[reference] = fork_access_recorded | access | exclusive;
+    }
+}
+
+bool ROMlib_fork_access_allowed(INTEGER reference, unsigned access)
+{
+    return reference <= 0 || !(fork_access[reference] & fork_access_explicit) ||
+           !ROMlib_refnumtofcbp(reference) || (fork_access[reference] & access);
+}
+
 A1(PRIVATE, void, freeprn, fcbrec*, fp)
 {
     ROMlib_forget_fork_offset(fp);
@@ -1353,6 +1429,7 @@ ROMlib_open_internal_resource(int fd, LONGINT length)
     fp = (fcbrec*)(MR(FCBSPtr) + refnum);
     memset(fp, 0, sizeof *fp);
     fp->fdfnum = CL(0x7FFF0000L + refnum);
+    ROMlib_record_fork_access(refnum, file_open_regular, fsRdWrPerm, true);
     fp->fcflags = fcwriteperm | fcfisres;
     fp->fcfd = fd;
     fp->hiddenfd = -1; /* Raw fork, with no AppleDouble preamble. */
@@ -1366,7 +1443,7 @@ ROMlib_open_internal_resource(int fd, LONGINT length)
     return ROMlib_open_resource_descriptor(refnum);
 }
 
-A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONGINT, dir)
+static OSErr PBOpenForkD(ParmBlkPtr pb, BOOLEAN a, ForkType fork, LONGINT dir, int modes)
 {
     OSErr err;
     int temp;
@@ -1394,6 +1471,18 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
     if ((err = ROMlib_nami(pb, dir, NoIndex, &pathname, &filename, &endname, TRUE, &vcbp, (struct stat*)&sbuf)) ==
         noErr) {
         mode_t file_mode = sbuf.st_mode;
+        SignedByte permission = pb->ioParam.ioPermssn;
+        INTEGER existing = 0;
+        err = ROMlib_check_fork_sharing((VCB*)vcbp, CL((LONGINT)ST_INO(sbuf)), fork == ResourceFork, modes,
+                                       &permission, &existing);
+        if (err) {
+            pb->ioParam.ioRefNum = CW(existing);
+            goto openfork_done;
+        }
+        if (modes != file_open_regular && (modes & file_access_write) && !(file_mode & S_IWUSR)) {
+            err = fLckdErr;
+            goto openfork_done;
+        }
         err = getprn(&prn);
         if (err == noErr) {
             fp = (fcbrec*)(MR(FCBSPtr) + prn);
@@ -1439,7 +1528,7 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
                 }
             }
             if (err == noErr) {
-                err = macopen(pathname, pb->ioParam.ioPermssn, &fp->fcfd, fork == ResourceFork, &fp->fcflags);
+                err = macopen(pathname, permission, &fp->fcfd, fork == ResourceFork, &fp->fcflags);
                 if (err != noErr && fork == ResourceFork && netatalk_conventions_p) {
                     char* oldname;
                     LONGINT oldfd;
@@ -1453,7 +1542,7 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
                         goto openfork_done;
                     }
                     oldflags = fp->fcflags;
-                    olderr = macopen(oldname, pb->ioParam.ioPermssn, &oldfd, TRUE, &oldflags);
+                    olderr = macopen(oldname, permission, &oldfd, TRUE, &oldflags);
                     if (olderr == noErr) {
                         free(pathname);
                         pathname = oldname;
@@ -1470,11 +1559,11 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
                     err = fnfErr;
                 }
                 if (err == fnfErr) {
-                    if (!(file_mode & 0200) && pb->ioParam.ioPermssn != fsCurPerm && pb->ioParam.ioPermssn != fsRdPerm)
+                    if (!(file_mode & 0200) && permission != fsCurPerm && permission != fsRdPerm)
                         err = wPrErr;
                     else
                         err = ROMlib_open_empty_fork(fp, pathname);
-                    if (err == noErr && pb->ioParam.ioPermssn == fsCurPerm && (file_mode & 0200))
+                    if (err == noErr && permission == fsCurPerm && (file_mode & 0200))
                         fp->fcflags |= fcwriteperm;
                 }
                 if (err != noErr)
@@ -1522,7 +1611,7 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
                                 fp->hiddenfd = -1;
                             }
                             else
-                                macopen(newname, pb->ioParam.ioPermssn, &fp->hiddenfd, TRUE, &dummy_byte);
+                                macopen(newname, permission, &fp->hiddenfd, TRUE, &dummy_byte);
                         }
                         free(newname);
                     }
@@ -1530,6 +1619,7 @@ A4(PRIVATE, OSErr, PBOpenForkD, ParmBlkPtr, pb, BOOLEAN, a, ForkType, fork, LONG
                         err = ROMlib_geteofostype(fp);
                     FIELD_ASSIGN_RAW(fp->fcvptr, RM((VCB*)vcbp));
                     pb->ioParam.ioRefNum = CW(prn);
+                    ROMlib_record_fork_access(prn, modes, permission, (fp->fcflags & fcwriteperm) != 0);
                     namelen = strlen(filename);
                     namelen -= ROMlib_UNIX7_to_Mac(filename, namelen);
                     namelen = MIN(namelen, 31);
@@ -1555,7 +1645,7 @@ A2(PUBLIC, OSErr, ufsPBOpen, ParmBlkPtr, pb, BOOLEAN, a) /* INTERNAL */
 {
     OSErr err;
 
-    err = PBOpenForkD(pb, a, DataFork, 0);
+    err = PBOpenForkD(pb, a, DataFork, 0, file_open_regular);
     fs_err_hook(err);
     return err;
 }
@@ -1565,53 +1655,14 @@ A2(PUBLIC, OSErr, ufsPBHOpen, HParmBlkPtr, pb, /* INTERNAL */
 {
     OSErr err;
 
-    err = PBOpenForkD((ParmBlkPtr)pb, a, DataFork, CL(pb->fileParam.ioDirID));
+    err = PBOpenForkD((ParmBlkPtr)pb, a, DataFork, CL(pb->fileParam.ioDirID), file_open_regular);
     fs_err_hook(err);
     return err;
 }
 
-static OSErr open_deny_fork(HParmBlkPtr pb, BOOLEAN a, boolean_t resource_fork)
+OSErr ROMlib_ufs_open_deny(HParmBlkPtr pb, bool resource, int modes)
 {
-    HParamBlockRec block = {0};
-    OSErr retval;
-
-    PP_RAW(block.ioParam.ioCompletion) = PP_RAW(pb->ioParam.ioCompletion);
-    PP_RAW(block.ioParam.ioNamePtr) = PP_RAW(pb->ioParam.ioNamePtr);
-    block.ioParam.ioVRefNum = pb->ioParam.ioVRefNum;
-    block.ioParam.ioVersNum = 0;
-    switch (pb->ioParam.ioPermssn & 3) {
-    case 0:
-        block.ioParam.ioPermssn = fsCurPerm;
-        break;
-    case 1:
-        block.ioParam.ioPermssn = fsRdPerm;
-        break;
-    case 2:
-        block.ioParam.ioPermssn = fsWrPerm;
-        break;
-    case 3:
-        block.ioParam.ioPermssn = fsRdWrPerm;
-        break;
-    }
-    block.ioParam.ioMisc = 0;
-    block.fileParam.ioDirID = pb->fileParam.ioDirID;
-
-    retval = resource_fork ? PBHOpenRF(&block, a) : PBHOpen(&block, a);
-    pb->ioParam.ioResult = block.ioParam.ioResult;
-    pb->ioParam.ioRefNum = block.ioParam.ioRefNum;
-    fs_err_hook(retval);
-    return retval;
-}
-
-A2(PUBLIC trap, OSErrRET, OpenDeny, HParmBlkPtr, pb, /* IMV-397 */
-   BOOLEAN, a)
-{
-    return open_deny_fork(pb, a, FALSE);
-}
-
-A2(PUBLIC trap, OSErrRET, OpenRFDeny, HParmBlkPtr, pb, BOOLEAN, a)
-{
-    return open_deny_fork(pb, a, TRUE);
+    return PBOpenForkD((ParmBlkPtr)pb, FALSE, resource ? ResourceFork : DataFork, CL(pb->fileParam.ioDirID), modes);
 }
 
 A2(PUBLIC, OSErr, ufsPBOpenRF, ParmBlkPtr, pb, /* INTERNAL */
@@ -1619,7 +1670,7 @@ A2(PUBLIC, OSErr, ufsPBOpenRF, ParmBlkPtr, pb, /* INTERNAL */
 {
     OSErr err;
 
-    err = PBOpenForkD(pb, a, ResourceFork, 0);
+    err = PBOpenForkD(pb, a, ResourceFork, 0, file_open_regular);
     fs_err_hook(err);
     return err;
 }
@@ -1629,7 +1680,7 @@ A2(PUBLIC, OSErr, ufsPBHOpenRF, HParmBlkPtr, pb, /* INTERNAL */
 {
     OSErr err;
 
-    err = PBOpenForkD((ParmBlkPtr)pb, a, ResourceFork, CL(pb->fileParam.ioDirID));
+    err = PBOpenForkD((ParmBlkPtr)pb, a, ResourceFork, CL(pb->fileParam.ioDirID), file_open_regular);
     fs_err_hook(err);
     return err;
 }
@@ -2055,13 +2106,153 @@ A2(PUBLIC trap, OSErrRET, PBHGetDirAccess, HParmBlkPtr, pb, BOOLEAN, a)
     return retval;
 }
 
+static OSErr copy_file_open(const FSSpec* file, int resource, uint16_t mode, INTEGER* reference)
+{
+    ForkAccessParam request = {0};
+    request.ioVRefNum = file->vRefNum;
+    request.ioDirID = file->parID;
+    PP_ASSIGN(request.ioNamePtr, (StringPtr)file->name);
+    request.ioDenyModes = CW(mode);
+    const OSErr error = resource ? OpenRFDeny((HParmBlkPtr)&request, FALSE) : OpenDeny((HParmBlkPtr)&request, FALSE);
+    if (!error)
+        *reference = CW(request.ioRefNum);
+    return error;
+}
+
+static OSErr copy_file_fork(const FSSpec* source, const FSSpec* destination, int resource, Ptr buffer, LONGINT capacity)
+{
+    INTEGER input;
+    OSErr error = copy_file_open(source, resource, 0x21, &input); /* Read and deny write. */
+    if (error)
+        return error;
+    INTEGER output;
+    error = copy_file_open(destination, resource, 0x32, &output); /* Write and deny read/write. */
+    if (!error) {
+        for (;;) {
+            LONGINT count = capacity;
+            const OSErr read_error = FSRead(input, &count, buffer);
+            if (read_error && read_error != eofErr) {
+                error = read_error;
+                break;
+            }
+            if (count < 0 || count > capacity) {
+                error = ioErr;
+                break;
+            }
+            if (count)
+                error = FSWriteAll(output, &count, buffer);
+            if (error || read_error == eofErr || !count)
+                break;
+        }
+        const OSErr close_error = FSClose(output);
+        if (!error)
+            error = close_error;
+    }
+    const OSErr close_error = FSClose(input);
+    return error ? error : close_error;
+}
+
+static OSErr copy_file_catalog(FSSpec* file, CInfoPBRec* info, int write)
+{
+    PP_ASSIGN(info->hFileInfo.ioNamePtr, (StringPtr)file->name);
+    info->hFileInfo.ioVRefNum = file->vRefNum;
+    info->hFileInfo.ioFDirIndex = 0;
+    info->hFileInfo.ioDirID = file->parID;
+    return write ? PBSetCatInfo(info, FALSE) : PBGetCatInfo(info, FALSE);
+}
+
+static OSErr copy_file(CopyParam* request)
+{
+    const StringPtr input = PPR(request->ioNamePtr);
+    if (!input || !input[0])
+        return bdNamErr;
+    Str255 source_path;
+    str255assign(source_path, input);
+    FSSpec source;
+    OSErr error = FSMakeFSSpec(CW(request->ioVRefNum), CL(request->ioDirID), source_path, &source);
+    if (error)
+        return error;
+    CInfoPBRec metadata = {0};
+    error = copy_file_catalog(&source, &metadata, FALSE);
+    if (error)
+        return error;
+    if (metadata.hFileInfo.ioFlAttrib & ATTRIB_ISADIR)
+        return paramErr;
+
+    const StringPtr path = PPR(request->ioNewName);
+    Str255 directory_name = {0};
+    if (path)
+        str255assign(directory_name, path);
+    FSSpec directory;
+    error = FSMakeFSSpec(CW(request->ioDstVRefNum), CL(request->ioNewDirID), directory_name, &directory);
+    if (error)
+        return error == fnfErr ? dirNFErr : error;
+    CInfoPBRec directory_info = {0};
+    const int named_directory = directory_name[0] != 0;
+    PP_ASSIGN(directory_info.dirInfo.ioNamePtr, (StringPtr)directory_name);
+    directory_info.dirInfo.ioVRefNum = request->ioDstVRefNum;
+    directory_info.dirInfo.ioDrDirID = request->ioNewDirID;
+    directory_info.dirInfo.ioFDirIndex = CW((int16)(named_directory ? 0 : -1));
+    error = PBGetCatInfo(&directory_info, FALSE);
+    if (error)
+        return error;
+    if (!(directory_info.dirInfo.ioFlAttrib & ATTRIB_ISADIR))
+        return dirNFErr;
+
+    const StringPtr leaf = PPR(request->ioCopyName);
+    Str255 name;
+    str255assign(name, leaf ? leaf : source.name);
+    if (!name[0] || memchr(name + 1, ':', name[0]))
+        return bdNamErr;
+    FSSpec destination;
+    error = FSMakeFSSpec(CW(directory.vRefNum), CL(directory_info.dirInfo.ioDrDirID), name, &destination);
+    if (error != fnfErr)
+        return error ? error : dupFNErr;
+
+    enum { buffer_size = 32 * 1024 };
+
+    Ptr buffer = NewPtr(buffer_size);
+    if (!buffer)
+        return memFullErr;
+    FSSpec temporary = destination;
+    HParamBlockRec create = {0};
+    create.fileParam.ioVRefNum = temporary.vRefNum;
+    create.fileParam.ioDirID = temporary.parID;
+    PP_ASSIGN(create.fileParam.ioNamePtr, (StringPtr)temporary.name);
+    const unsigned long stamp = msecs_elapsed();
+    for (unsigned attempt = 0; attempt < 256; ++attempt) {
+        temporary.name[0] =
+            snprintf((char*)temporary.name + 1, sizeof temporary.name - 1, "ROMAW Copy %08lx.%02x", stamp, attempt);
+        error = PBHCreate(&create, FALSE);
+        if (error != dupFNErr)
+            break;
+    }
+    if (!error) {
+        error = copy_file_fork(&source, &temporary, 0, buffer, buffer_size);
+        if (!error && metadata.hFileInfo.ioFlRLgLen)
+            error = copy_file_fork(&source, &temporary, 1, buffer, buffer_size);
+        if (!error)
+            error = copy_file_catalog(&temporary, &metadata, TRUE);
+        if (!error) {
+            error = FSpRename(&temporary, name);
+            if (!error)
+                temporary = destination;
+        }
+        if (!error && (metadata.hFileInfo.ioFlAttrib & ATTRIB_ISLOCKED))
+            error = FSpSetFLock(&temporary);
+        if (error)
+            FSpDelete(&temporary);
+    }
+    DisposPtr(buffer);
+    return error;
+}
+
 A2(PUBLIC trap, OSErrRET, PBHCopyFile, HParmBlkPtr, pb, BOOLEAN, a)
 {
-    OSErrRET retval;
-
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    return retval;
+    if (!pb)
+        return paramErr;
+    const OSErr error = copy_file((CopyParam*)pb);
+    FAKEASYNC(pb, a, error);
 }
 
 A2(PUBLIC trap, OSErrRET, PBHMapName, HParmBlkPtr, pb, BOOLEAN, a)
@@ -2083,15 +2274,6 @@ A2(PUBLIC trap, OSErrRET, PBHMapID, HParmBlkPtr, pb, BOOLEAN, a)
 }
 
 A2(PUBLIC trap, OSErrRET, PBHSetDirAccess, HParmBlkPtr, pb, BOOLEAN, a)
-{
-    OSErrRET retval;
-
-    warning_unimplemented(NULL_STRING);
-    retval = paramErr;
-    return retval;
-}
-
-A2(PUBLIC trap, OSErrRET, PBHMoveRename, HParmBlkPtr, pb, BOOLEAN, a)
 {
     OSErrRET retval;
 

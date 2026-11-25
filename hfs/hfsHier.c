@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: hfsPBCatMove, hfsPBGetCatInfo, hfsPBSetCatInfo
+  Functions: ROMlib_hfs_move_rename, hfsPBCatMove, hfsPBGetCatInfo, hfsPBSetCatInfo
 
   Origin:    Existing repository source in executor/src/hfs; original attribution and provenance comments are preserved
              below.
@@ -219,78 +219,129 @@ PRIVATE OSErr parentchild(HVCB* vcbp, catkey* parentcatp, directoryrec* parentdi
     return err;
 }
 
-PUBLIC OSErr hfsPBCatMove(CMovePBPtr pb, BOOLEAN async)
+static OSErr hfs_catalog_move(CMovePBPtr pb, const Byte* leaf, bool move_rename)
 {
-    OSErr err, err1;
-    filekind srccurkind, dstcurkind;
-    ioParam iop;
-    btparam srcbtparam, dstdirbtparam, dstbtparam;
-    directoryrec* dstdirdrp;
-    directoryrec srcdrec;
-    filerec srcfrec;
-    BOOLEAN ignorename;
+    filekind source_kind = regular | directory;
+    btparam source = {0};
+    OSErr error = ROMlib_findvcbandfile((ioParam*)pb, CL(pb->ioDirID), &source, &source_kind, FALSE);
+    if (error)
+        return error;
+    error = ROMlib_writevcbp(source.vcbp);
+    if (error)
+        return error;
 
-    srccurkind = regular | directory;
-    err = ROMlib_findvcbandfile((ioParam*)pb, CL(pb->ioDirID), &srcbtparam, &srccurkind, FALSE);
-    if (err == noErr) {
-        err = ROMlib_writevcbp(srcbtparam.vcbp);
-        iop = *(ioParam*)pb;
-        PP_RAW(iop.ioNamePtr) = PP_RAW(pb->ioNewName);
-        dstcurkind = directory;
-        ignorename = PP_RAW(iop.ioNamePtr) == 0;
-        err = ROMlib_findvcbandfile(&iop, CL(pb->ioNewDirID), &dstdirbtparam, &dstcurkind, ignorename);
-        if (err == noErr) {
-            if (srcbtparam.vcbp != dstdirbtparam.vcbp)
-                err = badMovErr;
-            else {
-                dstdirdrp = (directoryrec*)DATAPFROMKEY(dstdirbtparam.foundp);
-                dstbtparam = dstdirbtparam;
-                err = ROMlib_makecatkey((catkey*)&dstbtparam.tofind, CL(dstdirdrp->dirDirID),
-                                        srcbtparam.foundp->catk.ckrCName[0], (Ptr)srcbtparam.foundp->catk.ckrCName + 1);
-                dstbtparam.leafindex = -1;
-                err = ROMlib_keyfind(&dstbtparam);
-                if (err != noErr)
-                    ;
-                else if (dstbtparam.success)
-                    err = dupFNErr;
-                else {
-                    dstbtparam.leafindex = -1;
-                    if (srccurkind == directory) {
-                        srcdrec = *(directoryrec*)DATAPFROMKEY(srcbtparam.foundp);
-                        if (err == noErr)
-                            err = parentchild(srcbtparam.vcbp, (catkey*)srcbtparam.foundp, &srcdrec,
-                                              (catkey*)dstdirbtparam.foundp, dstdirdrp);
-                        /*
-						 * NOTE: Even though it is less safe to delete and then create (an
-						 *	 untimely power hit loses the file), we need to do it in this
-						 *	 order or greatly rework things.  The problem is that if we
-						 *	 do a create followed by a delete, we wind up putting in another
-						 *	 thread record WITH A DUPLICATE KEY, which means that the dirdelete
-						 *	 may will the wrong thread record when moving directories up.
-						 */
-                        if (err == noErr)
-                            err = ROMlib_dirdelete(&srcbtparam);
-                        if (err == noErr)
-                            err = ROMlib_dircreate(&dstbtparam, &srcdrec);
-                    }
-                    else {
-                        srcfrec = *(filerec*)DATAPFROMKEY(srcbtparam.foundp);
-                        if (err == noErr)
-                            err = ROMlib_filecreate(&dstbtparam, &srcfrec, regular);
-                        if (err == noErr) {
-                            srcbtparam.leafindex = -1;
-                            err = ROMlib_filedelete(&srcbtparam, regular);
-                        }
-                    }
-                }
+    const catkey source_key = source.foundp->catk;
+    directoryrec directory_record;
+    filerec file_record;
+    if (source_kind == directory) {
+        directory_record = *(directoryrec*)DATAPFROMKEY(source.foundp);
+        if (CL(directory_record.dirDirID) <= 2)
+            return badMovErr;
+    }
+    else {
+        file_record = *(filerec*)DATAPFROMKEY(source.foundp);
+        if (move_rename && (file_record.filFlags & FSOFTLOCKBIT))
+            return fLckdErr;
+    }
+
+    ioParam target_pb = *(ioParam*)pb;
+    PP_RAW(target_pb.ioNamePtr) = PP_RAW(pb->ioNewName);
+    btparam destination;
+    filekind target_kind = directory;
+    error = ROMlib_findvcbandfile(&target_pb, CL(pb->ioNewDirID), &destination, &target_kind,
+                                 PP_RAW(target_pb.ioNamePtr) == 0);
+    if (error)
+        goto finish;
+    if (source.vcbp != destination.vcbp) {
+        error = badMovErr;
+        goto finish;
+    }
+
+    directoryrec* target_dir = (directoryrec*)DATAPFROMKEY(destination.foundp);
+    const uint32 parent_id = CL(target_dir->dirDirID);
+    const Byte* name = leaf ? leaf : source_key.ckrCName;
+    if (move_rename && parent_id == CL(source_key.ckrParID) &&
+        name[0] == source_key.ckrCName[0] && !memcmp(name + 1, source_key.ckrCName + 1, name[0]))
+        goto finish;
+    if (source_kind == directory) {
+        error = parentchild(source.vcbp, (catkey*)&source_key, &directory_record,
+                            (catkey*)destination.foundp, target_dir);
+        if (error)
+            goto finish;
+    }
+
+    error = ROMlib_makecatkey((catkey*)&destination.tofind, parent_id, name[0], (Ptr)name + 1);
+    if (error)
+        goto finish;
+    destination.leafindex = -1;
+    error = ROMlib_keyfind(&destination);
+    if (error)
+        goto finish;
+    if (destination.success) {
+        error = dupFNErr;
+        goto finish;
+    }
+    const catkey destination_key = destination.tofind.catk;
+    destination.leafindex = -1;
+    source.tofind.catk = source_key;
+    source.leafindex = -1;
+    if (source_kind == directory) {
+        error = ROMlib_keyfind(&source);
+        if (error || !source.success) {
+            if (!error)
+                error = fnfErr;
+            goto finish;
+        }
+        /* The new directory and its old catalog entry share a thread key. */
+        error = ROMlib_dirdelete(&source);
+        if (!error) {
+            error = ROMlib_dircreate(&destination, &directory_record);
+            if (error) {
+                destination.tofind.catk = destination_key;
+                destination.leafindex = -1;
+                if (!ROMlib_keyfind(&destination) && destination.success &&
+                    ROMlib_filedelete(&destination, directory))
+                    warning_unexpected("could not discard the partial HFS catalog directory");
+                source.tofind.catk = source_key;
+                source.leafindex = -1;
+                if (ROMlib_dircreate(&source, &directory_record))
+                    warning_unexpected("could not restore the original HFS catalog directory");
             }
         }
     }
-    err1 = ROMlib_cleancache(srcbtparam.vcbp);
-    if (err1 == noErr)
-        err1 = ROMlib_flushvcbp(srcbtparam.vcbp);
-    if (err == noErr)
-        err = err1;
-    fs_err_hook(err);
-    PBRETURN(pb, err);
+    else {
+        error = ROMlib_filecreate(&destination, &file_record, regular);
+        if (!error) {
+            error = ROMlib_filedelete(&source, regular);
+            if (!error && (file_record.filFlags & FSFILETHREADBIT))
+                error = ROMlib_hfs_update_file_thread(source.vcbp, CL(file_record.filFlNum), parent_id, name);
+            if (error) {
+                source.leafindex = -1;
+                destination.leafindex = -1;
+                if (!ROMlib_keyfind(&source) && source.success && ROMlib_filedelete(&destination, regular))
+                    warning_unexpected("could not restore the original HFS file catalog state");
+            }
+        }
+    }
+
+finish: {
+        OSErr flushed = ROMlib_cleancache(source.vcbp);
+        if (!flushed)
+            flushed = ROMlib_flushvcbp(source.vcbp);
+        if (!error)
+            error = flushed;
+    }
+    return error;
+}
+
+PUBLIC OSErr hfsPBCatMove(CMovePBPtr pb, BOOLEAN async)
+{
+    const OSErr error = hfs_catalog_move(pb, NULL, false);
+    fs_err_hook(error);
+    PBRETURN(pb, error);
+}
+
+OSErr ROMlib_hfs_move_rename(CopyParam* pb)
+{
+    return hfs_catalog_move((CMovePBPtr)pb, PPR(pb->ioCopyName), true);
 }

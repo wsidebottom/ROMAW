@@ -34,6 +34,7 @@ enum carbon_fs_operation {
     carbon_fs_fork_info = 0x5a,
     carbon_fs_close_iterator = 0x5b,
     carbon_fs_bulk_catalog = 0x5c,
+    carbon_fs_search_catalog = 0x5d,
     carbon_fs_make_ref = 0x6e,
     carbon_fs_create_file = 0x70,
     carbon_fs_create_directory = 0x71,

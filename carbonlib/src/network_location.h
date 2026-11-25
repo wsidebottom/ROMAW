@@ -16,8 +16,12 @@
 #define ROMAW_CARBON_NETWORK_LOCATION_H
 
 #include "MemoryMgr.h"
+#include "ResourceMgr.h"
+#include "rsys/resource.h"
+#include "rsys/system_resources.h"
 
 enum {
+    nsl_bad_parameter = -4176,
     nsl_bad_list = -4184,
     nsl_bad_data = -4193,
     nsl_bad_service = -4194,
@@ -367,6 +371,195 @@ static int carbon_NSLGetServiceFromURL(ROMlib_carbon_ppc_frame* call)
     else
         separator = memchr(text, ':', length);
     return separator ? nsl_record_outputs(call, 1, call->words[0], separator - text) : nsl_result(call, nsl_bad_data);
+}
+
+static int nsl_hex_digit(unsigned char character)
+{
+    if (character >= '0' && character <= '9')
+        return character - '0';
+    character |= 0x20;
+    return character >= 'a' && character <= 'f' ? character - 'a' + 10 : -1;
+}
+
+static bool nsl_hex_escape(unsigned char character)
+{
+    if (character >= '0' && character <= '9')
+        return false;
+    const unsigned char lower = character | 0x20;
+    if (lower >= 'a' && lower <= 'z')
+        return false;
+    return !character || !strchr("!$'()*+-._", character);
+}
+
+static int nsl_hex_text(ROMlib_carbon_ppc_frame* call, bool encode)
+{
+    enum { bad_escape = -4172, short_buffer = -4187 };
+
+    static const char digits[] = "0123456789abcdef";
+    const size_t length = (uint16)call->words[1];
+    const uint32_t input_address = call->words[0], output_address = call->words[2];
+    const uint32_t size_address = call->words[3], changed_address = call->words[4];
+    const unsigned char* input =
+        input_address ? ROMlib_carbon_try_guest_memory(input_address, length ? length : 1, 0) : NULL;
+    void* size_output = size_address ? ROMlib_carbon_try_guest_memory(size_address, sizeof(uint16), 1) : NULL;
+    unsigned char* changed_output = changed_address ? ROMlib_carbon_try_guest_memory(changed_address, 1, 1) : NULL;
+    if (!size_output || !changed_output)
+        return nsl_result(call, nsl_bad_parameter);
+
+    uint16 capacity_be;
+    memcpy(&capacity_be, size_output, sizeof capacity_be);
+    const size_t capacity = CW(capacity_be);
+    unsigned char* output =
+        output_address ? ROMlib_carbon_try_guest_memory(output_address, capacity ? capacity : 1, 1) : NULL;
+    int status = noErr;
+    size_t written = 0;
+    bool changed = false;
+    /* Finish reading guest input before publishing bytes so overlapping buffers work. */
+    unsigned char* buffer = NULL;
+    if (!input || !output)
+        status = nsl_bad_parameter;
+    else if (length && capacity && !(buffer = malloc(MIN(capacity, length * (encode ? 3 : 1)))))
+        status = memFullErr;
+
+    for (size_t i = 0; !status && i < length; ++i) {
+        const unsigned char character = input[i];
+        if (encode && nsl_hex_escape(character)) {
+            if (capacity - written < 3) {
+                status = short_buffer;
+                break;
+            }
+            buffer[written++] = '%';
+            buffer[written++] = digits[character >> 4];
+            buffer[written++] = digits[character & 15];
+            changed = true;
+            continue;
+        }
+        if (written == capacity) {
+            status = short_buffer;
+            break;
+        }
+        if (!encode && character == '%') {
+            const int high = length - i >= 3 ? nsl_hex_digit(input[i + 1]) : -1;
+            const int low = length - i >= 3 ? nsl_hex_digit(input[i + 2]) : -1;
+            if (high < 0 || low < 0) {
+                status = bad_escape;
+                break;
+            }
+            buffer[written++] = (high << 4) | low;
+            i += 2;
+            changed = true;
+        }
+        else
+            buffer[written++] = character;
+    }
+    if (!status && written)
+        memcpy(output, buffer, written);
+    free(buffer);
+    nsl_store_word(size_output, status ? 0 : written);
+    *changed_output = !status && changed;
+    return nsl_result(call, status);
+}
+
+static int carbon_NSLHexEncodeText(ROMlib_carbon_ppc_frame* call)
+{
+    return nsl_hex_text(call, true);
+}
+
+static int carbon_NSLHexDecodeText(ROMlib_carbon_ppc_frame* call)
+{
+    return nsl_hex_text(call, false);
+}
+
+static int carbon_NSLGetDefaultDialogOptions(ROMlib_carbon_ppc_frame* call)
+{
+    enum { header = 6, fields = 4, field_size = 256 };
+
+    unsigned char* options =
+        call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], header + fields * field_size, 1) : NULL;
+    if (!options)
+        return nsl_result(call, nsl_bad_parameter);
+    nsl_store_word(options, 0x0101);
+    nsl_store_long(options + 2, 0);
+    for (unsigned field = 0; field < fields; ++field)
+        options[header + field * field_size] = 0;
+    return nsl_result(call, noErr);
+}
+
+static OSErr nsl_error_strings(Handle resource, uint32 error, char* description, char* solution)
+{
+    /* NSLE has a word count followed by an OSStatus and two Pascal strings per entry. */
+    const Size size = resource ? GetHandleSize(resource) : 0;
+    if (size < 2)
+        return resource ? nsl_bad_data : nsl_bad_parameter;
+    const unsigned char* bytes = (const unsigned char*)STARH(resource);
+    if (!bytes)
+        return nsl_bad_data;
+    const unsigned count = ((unsigned)bytes[0] << 8) | bytes[1];
+    size_t offset = 2;
+    for (unsigned entry = 0; entry < count; ++entry) {
+        if ((size_t)size - offset < 6)
+            return nsl_bad_data;
+        const uint32 code = nsl_read_long(bytes + offset);
+        offset += 4;
+        const unsigned first = bytes[offset++];
+        if ((size_t)size - offset <= first)
+            return nsl_bad_data;
+        const unsigned char* first_string = bytes + offset;
+        offset += first;
+        const unsigned second = bytes[offset++];
+        if ((size_t)size - offset < second)
+            return nsl_bad_data;
+        if (code == error) {
+            memcpy(description, first_string, first);
+            description[first] = 0;
+            memcpy(solution, bytes + offset, second);
+            solution[second] = 0;
+            return noErr;
+        }
+        offset += second;
+    }
+    return noErr;
+}
+
+static int carbon_NSLGetErrorStringsFromResource(ROMlib_carbon_ppc_frame* call)
+{
+    const FSSpec* input = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof(FSSpec), 0) : NULL;
+    if (!input || !call->words[3] || !call->words[4])
+        return nsl_result(call, nsl_bad_parameter);
+    FSSpec spec = *input;
+    const INTEGER original_map = C_CurResFile();
+    const BOOLEAN original_loading = ResLoad;
+    BOOLEAN in_chain;
+    INTEGER opened;
+    const bool borrowed = ROMlib_resource_file_already_open(&spec, &in_chain, &opened) && in_chain;
+    if (borrowed)
+        opened = CW(opened);
+    else
+        opened = C_FSpOpenResFile(&spec, fsRdPerm);
+    if (opened == -1)
+        return nsl_result(call, C_ResError());
+
+    char description[256] = "", solution[256] = "";
+    C_UseResFile(opened);
+    OSErr status = C_ResError();
+    if (!status) {
+        C_SetResLoad(TRUE);
+        Handle resource = C_Get1Resource(TICK("NSLE"), (INTEGER)call->words[2]);
+        status = nsl_error_strings(resource, call->words[0], description, solution);
+    }
+    if (!borrowed)
+        C_CloseResFile(opened);
+    C_UseResFile(original_map);
+    C_SetResLoad(original_loading);
+
+    const size_t description_size = strlen(description) + 1, solution_size = strlen(solution) + 1;
+    void* description_output = ROMlib_carbon_try_guest_memory(call->words[3], description_size, 1);
+    void* solution_output = ROMlib_carbon_try_guest_memory(call->words[4], solution_size, 1);
+    if (!description_output || !solution_output)
+        return nsl_result(call, nsl_bad_parameter);
+    memcpy(description_output, description, description_size);
+    memcpy(solution_output, solution, solution_size);
+    return nsl_result(call, status);
 }
 
 static int nsl_next_result(ROMlib_carbon_ppc_frame* call, bool neighborhood)

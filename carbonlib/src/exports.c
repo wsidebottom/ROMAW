@@ -17,6 +17,7 @@
 #include "internal.h"
 #include "carbon_threads.h"
 #include "application_access.h"
+#include "multiprocessing_memory.h"
 #include "atsu_entries.h"
 #include "textension.h"
 #include "type_selection.h"
@@ -195,6 +196,7 @@ AE_BUILD_WRAPPER(vAEBuildAppleEvent, 2, 1)
 
 #include "toolbox_vectors.h"
 #include "appearance_state.h"
+#include "locale_access.h"
 #include "theme_cursor.h"
 #include "theme_font.h"
 #include "theme_text.h"
@@ -230,6 +232,37 @@ CARBON_REGION_BITS(QDDisposeRegionBits, 0x71908)
 #include "font_access.h"
 #include "sound_input.h"
 #include "sound_converter.h"
+#include "SoundMgr.h"
+
+static int carbon_sound_info(ROMlib_carbon_ppc_frame* call, const char* name,
+                             int (*invoke)(ROMlib_carbon_ppc_frame*), bool device_api)
+{
+    const ROMlib_carbon_ppc_frame arguments = *call;
+    const bool handled = invoke(call);
+    const int32_t status = (int32_t)call->words[0];
+    if (!handled || status == ROMLIB_SOUND_REFERENCE_REQUIRED ||
+        (device_api && status == ROMLIB_SOUND_UNKNOWN_INFO)) {
+        ROMlib_carbon_reference reference;
+        if (ROMlib_carbon_load_reference("SoundLib", name, &reference)) {
+            *call = arguments;
+            return ROMlib_carbon_invoke_frame(reference.function, call);
+        }
+    }
+    return handled;
+}
+
+#define CARBON_SOUND_INFO(name, device_api) \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call) \
+    { \
+        return carbon_sound_info(call, #name, carbon_vector_##name, device_api); \
+    }
+
+CARBON_SOUND_INFO(SndGetInfo, false)
+CARBON_SOUND_INFO(SndSetInfo, false)
+CARBON_SOUND_INFO(GetSoundOutputInfo, true)
+CARBON_SOUND_INFO(SetSoundOutputInfo, true)
+
+#undef CARBON_SOUND_INFO
 #include "power_manager.h"
 #include "code_fragments.h"
 #include "navigation.h"
@@ -624,6 +657,11 @@ const ROMlib_carbon_export* ROMlib_carbon_cf_collection_callbacks(void)
 }
 
 static const ROMlib_carbon_export exports[] = {
+    {"MPAllocate", carbon_MPAllocate, ROMLIB_CARBON_PPC_FRAME, 0x5c60, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"MPAllocateAligned", carbon_MPAllocateAligned, ROMLIB_CARBON_PPC_FRAME, 0x54a0, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"MPFree", carbon_MPFree, ROMLIB_CARBON_PPC_FRAME, 0x54d0, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"MPGetAllocatedBlockSize", carbon_MPGetAllocatedBlockSize, ROMLIB_CARBON_PPC_FRAME, 0x54fc, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
     {"LSGetApplicationForInfo", carbon_LSGetApplicationForInfo, ROMLIB_CARBON_PPC_FRAME, 0xffffffff, NULL,
      ROMLIB_CARBON_PPC_ONLY | ROMLIB_CARBON_EXTENSION},
     {"GetControl32BitValue", carbon_GetControl32BitValue, ROMLIB_CARBON_PPC_FRAME, 0x377, "ControlsLib",
@@ -1309,6 +1347,12 @@ static const ROMlib_carbon_export exports[] = {
     {"HSetFInfo", carbon_romaw_HSetFInfo, ROMLIB_CARBON_PPC_FRAME, 0x77a, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"SetScriptManagerVariable", carbon_romaw_SetScriptManagerVariable, ROMLIB_CARBON_PPC_FRAME, 0x4ce, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"SndGetInfo", carbon_SndGetInfo, ROMLIB_CARBON_PPC_FRAME, 0x939, "SoundLib", ROMLIB_CARBON_PPC_ONLY},
+    {"SndSetInfo", carbon_SndSetInfo, ROMLIB_CARBON_PPC_FRAME, 0x938, "SoundLib", ROMLIB_CARBON_PPC_ONLY},
+    {"GetSoundOutputInfo", carbon_GetSoundOutputInfo, ROMLIB_CARBON_PPC_FRAME, 0x920, "SoundLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SetSoundOutputInfo", carbon_SetSoundOutputInfo, ROMLIB_CARBON_PPC_FRAME, 0x927, "SoundLib",
+     ROMLIB_CARBON_PPC_ONLY},
     {"SndSoundManagerVersion", carbon_romaw_SndSoundManagerVersion, ROMLIB_CARBON_PPC_FRAME, 0x78c, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"StandardAlert", carbon_romaw_StandardAlert, ROMLIB_CARBON_PPC_FRAME, 0x245, "AppearanceLib",
@@ -1403,6 +1447,20 @@ static const ROMlib_carbon_export exports[] = {
     {"DrawThemeTabPane", carbon_DrawThemeTabPane, ROMLIB_CARBON_PPC_FRAME, 0x54b44, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"DrawThemeTabPane", appearance_DrawThemeTabPane, ROMLIB_CARBON_PPC_FRAME, 0x3320, "AppearanceLib",
      ROMLIB_CARBON_PPC_ONLY | ROMLIB_CARBON_COMPANION_ONLY},
+    {"GetThemeButtonBackgroundBounds", carbon_GetThemeButtonBackgroundBounds, ROMLIB_CARBON_PPC_FRAME, 0x289,
+     "AppearanceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"GetThemeButtonContentBounds", carbon_GetThemeButtonContentBounds, ROMLIB_CARBON_PPC_FRAME, 0x244, "AppearanceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetThemeButtonRegion", carbon_GetThemeButtonRegion, ROMLIB_CARBON_PPC_FRAME, 0x280, "AppearanceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetThemeTabRegion", carbon_GetThemeTabRegion, ROMLIB_CARBON_PPC_FRAME, 0x287, "AppearanceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"CopyThemeIdentifier", carbon_CopyThemeIdentifier, ROMLIB_CARBON_PPC_FRAME, 0x554e4, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetThemeWindowRegion", carbon_GetThemeWindowRegion, ROMLIB_CARBON_PPC_FRAME, 0x54bc8, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetThemeWindowRegionHit", carbon_GetThemeWindowRegionHit, ROMLIB_CARBON_PPC_FRAME, 0x54dc4, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
     {"DrawThemePopupArrow", carbon_DrawThemePopupArrow, ROMLIB_CARBON_PPC_FRAME, 0x55024, NULL,
      ROMLIB_CARBON_PPC_ONLY},
     {"DrawThemePopupArrow", appearance_DrawThemePopupArrow, ROMLIB_CARBON_PPC_FRAME, 0x4358, "AppearanceLib",
@@ -1817,6 +1875,8 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"GetTextEncodingName", carbon_text_GetTextEncodingName, ROMLIB_CARBON_PPC_FRAME, 0x98e, "TextCommon",
      ROMLIB_CARBON_PPC_ONLY},
+    {"UCCompareCollationKeys", ROMlib_carbon_compare_collation_keys, ROMLIB_CARBON_PPC_FRAME, 0x9e9,
+     "UnicodeUtilitiesCoreLib", ROMLIB_CARBON_PPC_ONLY},
     {"UCGetCharProperty", carbon_text_UCGetCharProperty, ROMLIB_CARBON_PPC_FRAME, 0x987, "TextCommon",
      ROMLIB_CARBON_PPC_ONLY},
     {"UCUseCharPropsTablePriv", carbon_text_UCUseCharPropsTablePriv, ROMLIB_CARBON_PPC_FRAME, 0xabb, "TextCommon",
@@ -2026,10 +2086,54 @@ static const ROMlib_carbon_export exports[] = {
     {"SoundConverterFillBuffer", carbon_SoundConverterFillBuffer, ROMLIB_CARBON_PPC_FRAME, 0x921, "SoundLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"IdleUpdate", carbon_IdleUpdate, ROMLIB_CARBON_PPC_FRAME, 0x739, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"SpeechManagerVersion", carbon_vector_SpeechManagerVersion, ROMLIB_CARBON_PPC_FRAME, 0x957, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"CountVoices", carbon_vector_CountVoices, ROMLIB_CARBON_PPC_FRAME, 0x95a, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetIndVoice", carbon_vector_GetIndVoice, ROMLIB_CARBON_PPC_FRAME, 0x94c, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"MakeVoiceSpec", carbon_vector_MakeVoiceSpec, ROMLIB_CARBON_PPC_FRAME, 0x95d, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetVoiceDescription", carbon_vector_GetVoiceDescription, ROMLIB_CARBON_PPC_FRAME, 0x945, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"NewSpeechChannel", carbon_vector_NewSpeechChannel, ROMLIB_CARBON_PPC_FRAME, 0x958, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"DisposeSpeechChannel", carbon_vector_DisposeSpeechChannel, ROMLIB_CARBON_PPC_FRAME, 0x946, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SpeakString", carbon_vector_SpeakString, ROMLIB_CARBON_PPC_FRAME, 0x94a, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SpeakText", carbon_vector_SpeakText, ROMLIB_CARBON_PPC_FRAME, 0x947, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SpeakBuffer", carbon_vector_SpeakBuffer, ROMLIB_CARBON_PPC_FRAME, 0x94f, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"StopSpeech", carbon_vector_StopSpeech, ROMLIB_CARBON_PPC_FRAME, 0x959, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PauseSpeechAt", carbon_vector_PauseSpeechAt, ROMLIB_CARBON_PPC_FRAME, 0x952, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"ContinueSpeech", carbon_vector_ContinueSpeech, ROMLIB_CARBON_PPC_FRAME, 0x951, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SpeechBusy", carbon_vector_SpeechBusy, ROMLIB_CARBON_PPC_FRAME, 0x94b, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SpeechBusySystemWide", carbon_vector_SpeechBusySystemWide, ROMLIB_CARBON_PPC_FRAME, 0x948, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SetSpeechRate", carbon_vector_SetSpeechRate, ROMLIB_CARBON_PPC_FRAME, 0x949, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetSpeechRate", carbon_vector_GetSpeechRate, ROMLIB_CARBON_PPC_FRAME, 0x94d, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SetSpeechInfo", carbon_vector_SetSpeechInfo, ROMLIB_CARBON_PPC_FRAME, 0x953, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetSpeechInfo", carbon_vector_GetSpeechInfo, ROMLIB_CARBON_PPC_FRAME, 0x95c, "SpeechLib",
+     ROMLIB_CARBON_PPC_ONLY},
     {"NSLAddServiceToServicesList", carbon_NSLAddServiceToServicesList, ROMLIB_CARBON_PPC_FRAME, 0x8c0, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLFreeTypedDataPtr", carbon_NSLFreeTypedDataPtr, ROMLIB_CARBON_PPC_FRAME, 0x8c1, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLFreeURL", carbon_NSLFreeURL, ROMLIB_CARBON_PPC_FRAME, 0x8c4, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLGetNameFromNeighborhood", carbon_NSLGetNameFromNeighborhood, ROMLIB_CARBON_PPC_FRAME, 0x8cb, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
+    {"NSLGetDefaultDialogOptions", carbon_NSLGetDefaultDialogOptions, ROMLIB_CARBON_PPC_FRAME, 0x8c7, "NSLPPCLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"NSLGetErrorStringsFromResource", carbon_NSLGetErrorStringsFromResource, ROMLIB_CARBON_PPC_FRAME, 0x8c2, "NSLPPCLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"NSLHexDecodeText", carbon_NSLHexDecodeText, ROMLIB_CARBON_PPC_FRAME, 0x8c6, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
+    {"NSLHexEncodeText", carbon_NSLHexEncodeText, ROMLIB_CARBON_PPC_FRAME, 0x8c9, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLGetNextUrl", carbon_NSLGetNextUrl, ROMLIB_CARBON_PPC_FRAME, 0x8cc, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLMakeNewNeighborhood", carbon_NSLMakeNewNeighborhood, ROMLIB_CARBON_PPC_FRAME, 0x8cd, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
     {"NSLMakeNewServicesList", carbon_NSLMakeNewServicesList, ROMLIB_CARBON_PPC_FRAME, 0x8ce, "NSLPPCLib", ROMLIB_CARBON_PPC_ONLY},
@@ -2858,6 +2962,20 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"ValidateMenuBar", carbon_ValidateMenuBar, ROMLIB_CARBON_PPC_FRAME, 0xaad, "MenusLib", ROMLIB_CARBON_PPC_ONLY},
     {"SetMenuBarHeight", carbon_SetMenuBarHeight, ROMLIB_CARBON_PPC_FRAME, 0xab7, "MenusLib", ROMLIB_CARBON_PPC_ONLY},
+    {"IsMenuBarClockEnabled", carbon_IsMenuBarClockEnabled, ROMLIB_CARBON_PPC_FRAME, 0xab6, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"EnableMenuBarClock", carbon_EnableMenuBarClock, ROMLIB_CARBON_PPC_FRAME, 0xaac, "MenusLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DisableMenuBarClock", carbon_DisableMenuBarClock, ROMLIB_CARBON_PPC_FRAME, 0xaa8, "MenusLib", ROMLIB_CARBON_PPC_ONLY},
+    {"GetMenuBarClockConfig", carbon_GetMenuBarClockConfig, ROMLIB_CARBON_PPC_FRAME, 0xab2, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"SetMenuBarClockConfig", carbon_SetMenuBarClockConfig, ROMLIB_CARBON_PPC_FRAME, 0xab5, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"RefreshMenuBarClock", carbon_RefreshMenuBarClock, ROMLIB_CARBON_PPC_FRAME, 0xaae, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"InvalidateCachedMenuPixels", carbon_InvalidateCachedMenuPixels, ROMLIB_CARBON_PPC_FRAME, 0xaa9, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"InvalidateAllCachedMenuPixels", carbon_InvalidateAllCachedMenuPixels, ROMLIB_CARBON_PPC_FRAME, 0xab4, "MenusLib",
+     ROMLIB_CARBON_PPC_ONLY},
     {"EnableMenuItem", carbon_EnableMenuItem, ROMLIB_CARBON_PPC_FRAME, 0x5f5b8, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"DisableMenuItem", carbon_DisableMenuItem, ROMLIB_CARBON_PPC_FRAME, 0x5f798, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"IsMenuItemEnabled", carbon_IsMenuItemEnabled, ROMLIB_CARBON_PPC_FRAME, 0x5d050, NULL, ROMLIB_CARBON_PPC_ONLY},
@@ -3720,6 +3838,33 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"KeyScript", carbon_vector_KeyScript, ROMLIB_CARBON_PPC_FRAME, 0x708, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"LActivate", carbon_vector_LActivate, ROMLIB_CARBON_PPC_FRAME, 0x4fd, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleRefFromLangOrRegionCode", carbon_LocaleRefFromLangOrRegionCode, ROMLIB_CARBON_PPC_FRAME, 0x3141c, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleRefFromLocaleString", carbon_LocaleRefFromLocaleString, ROMLIB_CARBON_PPC_FRAME, 0x314d0, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleRefGetPartString", carbon_LocaleRefGetPartString, ROMLIB_CARBON_PPC_FRAME, 0x3157c, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleStringToLangAndRegionCodes", carbon_LocaleStringToLangAndRegionCodes, ROMLIB_CARBON_PPC_FRAME, 0x31638,
+     NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationCountLocales", carbon_LocaleOperationCountLocales, ROMLIB_CARBON_PPC_FRAME, 0x316ec, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationGetLocales", carbon_LocaleOperationGetLocales, ROMLIB_CARBON_PPC_FRAME, 0x31798, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleGetName", carbon_LocaleGetName, ROMLIB_CARBON_PPC_FRAME, 0x31854, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleCountNames", carbon_LocaleCountNames, ROMLIB_CARBON_PPC_FRAME, 0x31928, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleGetIndName", carbon_LocaleGetIndName, ROMLIB_CARBON_PPC_FRAME, 0x319e4, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleGetRegionLanguageName", carbon_LocaleGetRegionLanguageName, ROMLIB_CARBON_PPC_FRAME, 0x31ac0, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationGetName", carbon_LocaleOperationGetName, ROMLIB_CARBON_PPC_FRAME, 0x31b6c, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationCountNames", carbon_LocaleOperationCountNames, ROMLIB_CARBON_PPC_FRAME, 0x31c30, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationGetIndName", carbon_LocaleOperationGetIndName, ROMLIB_CARBON_PPC_FRAME, 0x31cdc, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationLoadData", carbon_LocaleOperationLoadData, ROMLIB_CARBON_PPC_FRAME, 0x31da8, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
+    {"LocaleOperationUnloadData", carbon_LocaleOperationUnloadData, ROMLIB_CARBON_PPC_FRAME, 0x31e6c, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
     {"LAddColumn", carbon_vector_LAddColumn, ROMLIB_CARBON_PPC_FRAME, 0x7bf, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"LAddRow", carbon_vector_LAddRow, ROMLIB_CARBON_PPC_FRAME, 0x4ba, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"LAddToCell", carbon_vector_LAddToCell, ROMLIB_CARBON_PPC_FRAME, 0x4c9, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
@@ -3861,6 +4006,18 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"AECreateDesc", carbon_vector_AECreateDesc, ROMLIB_CARBON_PPC_FRAME, 0x692, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"DCMCreateFieldInfoRecord", ROMlib_carbon_DCMCreateFieldInfoRecord, ROMLIB_CARBON_PPC_FRAME, 0x3b7,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DCMGetFieldTagAndType", ROMlib_carbon_DCMGetFieldTagAndType, ROMLIB_CARBON_PPC_FRAME, 0x3bc,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DCMGetFieldMaxRecordSize", ROMlib_carbon_DCMGetFieldMaxRecordSize, ROMLIB_CARBON_PPC_FRAME, 0x3b3,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DCMGetFieldAttributes", ROMlib_carbon_DCMGetFieldAttributes, ROMLIB_CARBON_PPC_FRAME, 0x3b1,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DCMGetFieldDefaultData", ROMlib_carbon_DCMGetFieldDefaultData, ROMLIB_CARBON_PPC_FRAME, 0x3a6,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
+    {"DCMGetFieldFindMethods", ROMlib_carbon_DCMGetFieldFindMethods, ROMLIB_CARBON_PPC_FRAME, 0x3b0,
+     "DictionaryMgrLib", ROMLIB_CARBON_PPC_ONLY},
     {"AECreateList", carbon_vector_AECreateList, ROMLIB_CARBON_PPC_FRAME, 0x65c, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"AECallObjectAccessor", C_AECallObjectAccessor, PTOC_AECallObjectAccessor, 0x8e6, "ObjectSupportLib",
@@ -4277,6 +4434,7 @@ static const ROMlib_carbon_export exports[] = {
     {"FSCloseIterator", carbon_fs_FSCloseIterator, ROMLIB_CARBON_PPC_FRAME, 0xa8090, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"FSGetCatalogInfoBulk", carbon_fs_FSGetCatalogInfoBulk, ROMLIB_CARBON_PPC_FRAME, 0xa80c0, NULL,
      ROMLIB_CARBON_PPC_ONLY},
+    {"FSCatalogSearch", carbon_fs_FSCatalogSearch, ROMLIB_CARBON_PPC_FRAME, 0xa8130, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"FSFindFolderExtended", carbon_fs_FSFindFolderExtended, ROMLIB_CARBON_PPC_FRAME, 0x65d24, NULL,
      ROMLIB_CARBON_PPC_ONLY},
     {"GetVRefNum", carbon_fs_GetVRefNum, ROMLIB_CARBON_PPC_FRAME, 0x6f5, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
@@ -4309,6 +4467,10 @@ static const ROMlib_carbon_export exports[] = {
     {"PBGetCatalogInfoBulkSync", carbon_fs_PBGetCatalogInfoBulkSync, ROMLIB_CARBON_PPC_FRAME, 0x4cb, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"PBGetCatalogInfoBulkAsync", carbon_fs_PBGetCatalogInfoBulkAsync, ROMLIB_CARBON_PPC_FRAME, 0x558, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PBCatalogSearchSync", carbon_fs_PBCatalogSearchSync, ROMLIB_CARBON_PPC_FRAME, 0x72f, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PBCatalogSearchAsync", carbon_fs_PBCatalogSearchAsync, ROMLIB_CARBON_PPC_FRAME, 0x7c4, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"PBXGetVolInfoSync", carbon_fs_PBXGetVolInfoSync, ROMLIB_CARBON_PPC_FRAME, 0x76e, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
@@ -4369,6 +4531,18 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"PBCloseAsync", carbon_file_PBCloseAsync, ROMLIB_CARBON_PPC_FRAME, 0x638, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"PBCloseSync", carbon_file_PBCloseSync, ROMLIB_CARBON_PPC_FRAME, 0x5e1, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBCreateFileIDRefAsync", carbon_file_PBCreateFileIDRefAsync, ROMLIB_CARBON_PPC_FRAME, 0x749,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBCreateFileIDRefSync", carbon_file_PBCreateFileIDRefSync, ROMLIB_CARBON_PPC_FRAME, 0x67e,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBDeleteFileIDRefAsync", carbon_file_PBDeleteFileIDRefAsync, ROMLIB_CARBON_PPC_FRAME, 0x66a,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBDeleteFileIDRefSync", carbon_file_PBDeleteFileIDRefSync, ROMLIB_CARBON_PPC_FRAME, 0x627,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBResolveFileIDRefAsync", carbon_file_PBResolveFileIDRefAsync, ROMLIB_CARBON_PPC_FRAME, 0x626,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBResolveFileIDRefSync", carbon_file_PBResolveFileIDRefSync, ROMLIB_CARBON_PPC_FRAME, 0x787,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"PBDTAddAPPLAsync", carbon_file_PBDTAddAPPLAsync, ROMLIB_CARBON_PPC_FRAME, 0x5ed, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"PBDTAddAPPLSync", carbon_file_PBDTAddAPPLSync, ROMLIB_CARBON_PPC_FRAME, 0x4ef, "InterfaceLib",
@@ -4438,6 +4612,10 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"PBFlushVolSync", carbon_file_PBFlushVolSync, ROMLIB_CARBON_PPC_FRAME, 0x6eb, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"PBUnmountVol", ROMlib_carbon_PBUnmountVol, ROMLIB_CARBON_PPC_FRAME, 0x60538, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"UnmountVol", ROMlib_carbon_UnmountVol, ROMLIB_CARBON_PPC_FRAME, 0x60688, NULL, ROMLIB_CARBON_PPC_ONLY},
+    {"PBWaitIOComplete", ROMlib_carbon_PBWaitIOComplete, ROMLIB_CARBON_PPC_FRAME, 0xa9e24, NULL,
+     ROMLIB_CARBON_PPC_ONLY},
     {"PBGetCatInfoAsync", carbon_file_PBGetCatInfoAsync, ROMLIB_CARBON_PPC_FRAME, 0x61c, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"PBGetCatInfoSync", carbon_file_PBGetCatInfoSync, ROMLIB_CARBON_PPC_FRAME, 0x61d, "InterfaceLib",
@@ -4477,7 +4655,23 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"PBHGetVolSync", carbon_file_PBHGetVolSync, ROMLIB_CARBON_PPC_FRAME, 0x568, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"PBHCopyFileAsync", carbon_file_PBHCopyFileAsync, ROMLIB_CARBON_PPC_FRAME, 0x53b, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PBHCopyFileSync", carbon_file_PBHCopyFileSync, ROMLIB_CARBON_PPC_FRAME, 0x51a, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PBHMoveRenameAsync", carbon_file_PBHMoveRenameAsync, ROMLIB_CARBON_PPC_FRAME, 0x5b8, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"PBHMoveRenameSync", carbon_file_PBHMoveRenameSync, ROMLIB_CARBON_PPC_FRAME, 0x7ba, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
     {"PBHOpenAsync", carbon_file_PBHOpenAsync, ROMLIB_CARBON_PPC_FRAME, 0x6db, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBHOpenDenyAsync", carbon_file_PBHOpenDenyAsync, ROMLIB_CARBON_PPC_FRAME, 0x6ae,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBHOpenDenySync", carbon_file_PBHOpenDenySync, ROMLIB_CARBON_PPC_FRAME, 0x7ca,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBHOpenRFDenyAsync", carbon_file_PBHOpenRFDenyAsync, ROMLIB_CARBON_PPC_FRAME, 0x683,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"PBHOpenRFDenySync", carbon_file_PBHOpenRFDenySync, ROMLIB_CARBON_PPC_FRAME, 0x786,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"PBHOpenDFAsync", carbon_file_PBHOpenDFAsync, ROMLIB_CARBON_PPC_FRAME, 0x4fc, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"PBHOpenDFSync", carbon_file_PBHOpenDFSync, ROMLIB_CARBON_PPC_FRAME, 0x5ca, "InterfaceLib",
@@ -4550,6 +4744,12 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"OpenAComponentResFile", carbon_component_OpenAComponentResFile, ROMLIB_CARBON_PPC_FRAME, 0x776, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"GetComponentIconSuite", carbon_component_GetComponentIconSuite, ROMLIB_CARBON_PPC_FRAME, 0x55a, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"GetComponentPublicResource", carbon_component_GetComponentPublicResource, ROMLIB_CARBON_PPC_FRAME, 0x4f7,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"GetComponentPublicIndString", carbon_component_GetComponentPublicIndString, ROMLIB_CARBON_PPC_FRAME, 0x625,
+     "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"GetComponentResource", carbon_component_GetComponentResource, ROMLIB_CARBON_PPC_FRAME, 0x4ac, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"GetComponentIndString", carbon_component_GetComponentIndString, ROMLIB_CARBON_PPC_FRAME, 0x577, "InterfaceLib",
@@ -4639,6 +4839,10 @@ static const ROMlib_carbon_export exports[] = {
      "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"RegisterComponentResourceFile", carbon_component_RegisterComponentResourceFile, ROMLIB_CARBON_PPC_FRAME, 0x561,
      "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CaptureComponent", carbon_component_CaptureComponent, ROMLIB_CARBON_PPC_FRAME, 0x663, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"UncaptureComponent", carbon_component_UncaptureComponent, ROMLIB_CARBON_PPC_FRAME, 0x4f4, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
     {"SetDefaultComponent", carbon_component_SetDefaultComponent, ROMLIB_CARBON_PPC_FRAME, 0x6fb, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"OpenDefaultComponent", carbon_component_OpenDefaultComponent, ROMLIB_CARBON_PPC_FRAME, 0x676, "InterfaceLib",
@@ -4647,6 +4851,12 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"OpenADefaultComponent", carbon_component_OpenADefaultComponent, ROMLIB_CARBON_PPC_FRAME, 0x779, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
+    {"CallComponentFunction", carbon_component_CallComponentFunction, ROMLIB_CARBON_PPC_FRAME, 0x546, "InterfaceLib",
+     ROMLIB_CARBON_PPC_ONLY},
+    {"CallComponentFunctionWithStorage", carbon_component_CallComponentFunctionWithStorage, ROMLIB_CARBON_PPC_FRAME,
+     0x68e, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CallComponentFunctionWithStorageProcInfo", carbon_component_CallComponentFunctionWithStorageProcInfo,
+     ROMLIB_CARBON_PPC_FRAME, 0x478, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"CallComponentOpen", carbon_component_CallComponentOpen, ROMLIB_CARBON_PPC_FRAME, 0x47d, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"CallComponentClose", carbon_component_CallComponentClose, ROMLIB_CARBON_PPC_FRAME, 0x6f1, "InterfaceLib",
@@ -8303,6 +8513,14 @@ static const ROMlib_carbon_export exports[] = {
     {"CFAbsoluteTimeGetCurrent", ROMlib_carbon_cf_absolute_time, ROMLIB_CARBON_DOUBLE_RESULT, 0x8a,
      "CoreFoundationLib"},
     {"CFTimeZoneCopyAbbreviation", ROMlib_cfx_CFTimeZoneCopyAbbreviation, ROMLIB_CARBON_PPC_FRAME, 0x184,
+     "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CFTimeZoneCopyAbbreviationDictionary", ROMlib_cfx_CFTimeZoneCopyAbbreviationDictionary, ROMLIB_CARBON_PPC_FRAME, 0x61,
+     "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CFTimeZoneCopyKnownNames", ROMlib_cfx_CFTimeZoneCopyKnownNames, ROMLIB_CARBON_PPC_FRAME, 0x170,
+     "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CFTimeZoneCreateWithName", ROMlib_cfx_CFTimeZoneCreateWithName, ROMLIB_CARBON_PPC_FRAME, 0x19b,
+     "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
+    {"CFTimeZoneSetAbbreviationDictionary", ROMlib_cfx_CFTimeZoneSetAbbreviationDictionary, ROMLIB_CARBON_PPC_FRAME, 0xa8,
      "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
     {"CFTimeZoneCopyDefault", ROMlib_cfx_CFTimeZoneCopyDefault, ROMLIB_CARBON_PPC_FRAME, 0xf3, "CoreFoundationLib",
      ROMLIB_CARBON_PPC_ONLY},

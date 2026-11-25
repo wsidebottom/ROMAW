@@ -1398,7 +1398,7 @@ PRIVATE LONGINT ppc_window_owner_count(uint32 address, uint32 output)
 }
 
 static WindowPtr ppc_interface_new_window(Ptr storage, Rect* bounds, StringPtr title, BOOLEAN visible, INTEGER proc_id,
-                                         WindowPtr behind, BOOLEAN close_box, LONGINT refcon)
+                                          WindowPtr behind, BOOLEAN close_box, LONGINT refcon)
 {
     /* The saved Dialog Manager reaches NewWindow through InterfaceLib. Use
        the live trap so the Window Manager registers the dialog before its
@@ -1935,6 +1935,34 @@ PRIVATE OSErrRET ppc_sys_environs(INTEGER version, uint32 address)
         return envBadVers;
     SysEnvRecPtr output = address ? ppc_memory(ppc_active_context, address, sizeof *output, TRUE) : NULL;
     return output ? SysEnvirons(version, output) : paramErr;
+}
+
+/* Device Manager parameter blocks share a packed 50-byte Control/Status ABI.
+   Call the installed OS vector so RAM drivers and guest patches remain live. */
+static OSErr ppc_device_sync(uint32 address, unsigned trap_index)
+{
+    ppc_context* ctx = ppc_active_context;
+    if (!address || !ppc_memory(ctx, address, sizeof(cntrlParam), TRUE))
+        return paramErr;
+    M68kReg saved[16];
+    memcpy(saved, cpu_state.regs, sizeof saved);
+    EM_A0 = address;
+    EM_D0 = 0;
+    EM_D1 = 0xa000 | trap_index; /* Synchronous call: ASYNCBIT is clear. */
+    CALL_EMULATOR(CL(ctx->os_vectors[trap_index]));
+    const OSErr result = EM_D0;
+    memcpy(cpu_state.regs, saved, sizeof saved);
+    return result;
+}
+
+static OSErr ppc_PBControlSync(uint32 address)
+{
+    return ppc_device_sync(address, 4);
+}
+
+static OSErr ppc_PBStatusSync(uint32 address)
+{
+    return ppc_device_sync(address, 5);
 }
 
 PRIVATE OSErr ppc_PBReadSync(void* pb)
@@ -3180,6 +3208,25 @@ static int ppc_script_char_byte(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+/* Pack6 uses a two-byte selector after its Pascal arguments. Keep the live
+   vector so installed guest international-utilities patches remain active. */
+#define CLASSIC_INTL_CALL(name, selector, info)                                        \
+    static int ppc_##name(ROMlib_carbon_ppc_frame* call)                               \
+    {                                                                                  \
+        uint32 result;                                                                 \
+        if (!ROMlib_carbon_call_toolbox_vector(0x15b4, info, selector, call, &result)) \
+            return 0;                                                                  \
+        call->words[0] = result;                                                       \
+        return 1;                                                                      \
+    }
+
+CLASSIC_INTL_CALL(IUDateString, 0x00, 0x378e)
+CLASSIC_INTL_CALL(IUTimeString, 0x02, 0x378e)
+CLASSIC_INTL_CALL(IUGetIntl, 0x06, 0x2be)
+CLASSIC_INTL_CALL(IUDatePString, 0x0e, 0xf78e)
+CLASSIC_INTL_CALL(IUTimePString, 0x10, 0xf78e)
+#undef CLASSIC_INTL_CALL
+
 static OSErr ppc_osdispatch_two_words(uint32 first, uint32 second, uint32 selector)
 {
     const ROMlib_carbon_ppc_frame args = {.words = {first, second}};
@@ -3326,6 +3373,11 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"InlineGetPtrSize", GetPtrSize, M1(4, 5)},
     {"HandleZone", HandleZone, M1(5, 5)},
     {"IUMagString", C_IUMagString, PTOC_IUMagString},
+    {"IUDateString", ppc_IUDateString, ROMLIB_CARBON_PPC_FRAME},
+    {"IUTimeString", ppc_IUTimeString, ROMLIB_CARBON_PPC_FRAME},
+    {"IUGetIntl", ppc_IUGetIntl, ROMLIB_CARBON_PPC_FRAME},
+    {"IUDatePString", ppc_IUDatePString, ROMLIB_CARBON_PPC_FRAME},
+    {"IUTimePString", ppc_IUTimePString, ROMLIB_CARBON_PPC_FRAME},
     {"IUMagPString", C_IUMagPString, PTOC_IUMagPString},
     {"IUMagIDPString", C_IUMagIDPString, PTOC_IUMagIDPString},
     {"CharacterType", C_CharacterType, PTOC_CharacterType},
@@ -3369,6 +3421,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetGrayRgn", ppc_gray_region, M0(5)},
     {"HMGetHelpMenuHandle", C_HMGetHelpMenuHandle, M1(2, 5)},
     {"HMGetBalloons", C_HMGetBalloons, M0(1)},
+    {"HMSetBalloons", C_HMSetBalloons, PTOC_HMSetBalloons},
     {"HMIsBalloon", C_HMIsBalloon, M0(1)},
     {"HMRemoveBalloon", C_HMRemoveBalloon, M0(2)},
     {"HideMenuBar", ROMlib_menu_hide_bar, M0(0)},
@@ -3500,6 +3553,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMGetIntlSpec", ppc_intl_spec, M0(4)},
     {"LMSetIntlSpec", ppc_set_intl_spec, M1(0, 4)},
     {"TempInsertROMMap", ppc_temp_insert_rom_map, M1(0, 1)},
+    {"PBControlSync", ppc_PBControlSync, M1(2, 4)},
+    {"PBStatusSync", ppc_PBStatusSync, M1(2, 4)},
     {"PBReadSync", ppc_PBReadSync, M1(2, 5)},
     {"PBReadAsync", ppc_PBReadAsync, M1(2, 5)},
     {"PBWriteSync", ppc_PBWriteSync, M1(2, 5)},
@@ -5046,7 +5101,7 @@ PRIVATE int ppc_service(void* opaque, uint32 id, ROMlib_ppc_registers* r)
         return 0;
     snapshot = ctx->imports[id - 1];
     binding = &snapshot;
-    {
+    if (!(binding->magic & ROMLIB_CARBON_PPC_FRAME)) {
         uint32 selector, answer, arguments[4] = {0};
         const char* signature = ROMlib_speech_signature(strrchr(binding->name, ':') + 1, &selector);
         if (signature) {
@@ -6030,8 +6085,9 @@ static OSErr ppc_display_draw_desktop(ppc_context* ctx, uint32 shape, boolean_t 
 
 PUBLIC uint32 ROMlib_ppc_display_device(uint16 selector, uint32 previous, BOOLEAN active_only)
 {
-    const GDHandle device = selector == 1 ? ppc_dm_next_screen_device((GDHandle)SYN68K_TO_US_CHECK0(previous), active_only)
-                                          : ppc_dm_first_screen_device(active_only);
+    const GDHandle device = selector == 1
+                                ? ppc_dm_next_screen_device((GDHandle)SYN68K_TO_US_CHECK0(previous), active_only)
+                                : ppc_dm_first_screen_device(active_only);
     return device ? US_TO_SYN68K(device) : 0;
 }
 
@@ -6214,6 +6270,11 @@ PRIVATE int ppc_reference_section(ppc_context* ctx, uint32 address, uint32 lengt
     return 0;
 }
 
+PUBLIC const void* ROMlib_carbon_mp_context(void)
+{
+    return ppc_active_context;
+}
+
 PUBLIC int ROMlib_carbon_probe_reference(const char* library, const char* name, ROMlib_carbon_reference* reference)
 {
     ppc_context* ctx = ppc_active_context;
@@ -6279,8 +6340,7 @@ PUBLIC BOOLEAN ROMlib_ppc_control_in_saved_window(ControlHandle control)
 {
     ppc_context* ctx = ppc_active_context;
     ROMlib_carbon_reference reference;
-    if (!ctx || !control ||
-        !ROMlib_carbon_probe_reference("WindowsLib", "IsValidWindowPtr", &reference))
+    if (!ctx || !control || !ROMlib_carbon_probe_reference("WindowsLib", "IsValidWindowPtr", &reference))
         return FALSE;
     const uint32 target = US_TO_SYN68K(control);
     const ControlRecord* record = ppc_read_control(ctx, target);
@@ -7505,6 +7565,7 @@ static int ppc_drag_manager_dispatch(ppc_context* ctx, ROMlib_ppc_registers* r,
         {0x23, 0x03d8, "WaitMouseMoved"},
         {0x27, 0x3ffe8, "SetDragImage"},
     };
+
     for (unsigned i = 0; i < NELEM(entries); ++i) {
         if (entries[i].selector != (uint16)r->gpr[5] || entries[i].proc_info != r->gpr[4])
             continue;
@@ -7987,7 +8048,7 @@ static OSErr ppc_update_folder_notifications(ppc_context* ctx, uint32 procedure,
 }
 
 PUBLIC int ROMlib_carbon_toolbox_vector_matches(uint32_t address, const ROMlib_carbon_reference* reference,
-                                               uint32_t code_offset)
+                                                uint32_t code_offset)
 {
     ppc_context* ctx = ppc_active_context;
     if (!ctx || ctx->error[0] || (address & 3) || address < 0xe00 || address >= 0x1e00)
@@ -9668,6 +9729,7 @@ done: {
     ROMlib_carbon_url_access_reset();
     ROMlib_carbon_icon_services_reset();
     ROMlib_carbon_drag_reset();
+    ROMlib_carbon_mp_memory_reset(&ctx);
     ROMlib_tsm_dispose_documents();
     ROMlib_ppc_threads_destroy(ctx.threads);
     ctx.threads = NULL;

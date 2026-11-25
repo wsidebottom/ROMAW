@@ -6,8 +6,8 @@
 #
 #   Classes:   Probe, imported fixture builder.
 #
-#   Functions: make_probe, check_object_accessors, check_file_icons, check_progress_controls;
-#              check_icon_file_registration; script entry point.
+#   Functions: make_probe, check_object_accessors, check_file_icons, check_picture_controls, check_progress_controls;
+#              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting; script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
 #
@@ -37,6 +37,7 @@ def make_probe(destination):
         "WriteResource",
         "CloseResFile",
         "ResError",
+        "TempNewHandle",
         "NewHandle",
         "GetHandleSize",
         "DisposeHandle",
@@ -67,17 +68,37 @@ def make_probe(destination):
         "CallUniversalProc",
         "NGetTrapAddress",
         "AECreateList",
+        "HMGetBalloons",
+        "HMSetBalloons",
+        "IUDateString",
+        "IUTimeString",
+        "IUDatePString",
+        "IUTimePString",
+        "IUGetIntl",
+        "EqualString",
+        "PBControlSync",
+        "PBStatusSync",
+        "NSetTrapAddress",
         "NewControl",
+        "GetPicture",
         "GetCtlValue",
         "Draw1Control",
         "TestControl",
+        "TrackControl",
         "GetCPixel",
+        "GetBackColor",
+        "GetPort",
+        "EraseRect",
         "SetPort",
         "FrontWindow",
         "DisposeControl",
         "GetControlFeatures",
         "GetControlData",
         "SetControlData",
+        "NewRgn",
+        "RectRgn",
+        "DisposeRgn",
+        "PtInRgn",
         "AEPutKeyPtr",
         "AEPutKeyDesc",
         "AEDisposeDesc",
@@ -110,6 +131,17 @@ def make_probe(destination):
             "DrawThemeWindowListViewHeader",
             "DrawThemePrimaryGroup",
             "DrawThemeSecondaryGroup",
+            "ApplyThemeBackground",
+            "DrawThemeTabPane",
+            "DrawThemePopupArrow",
+            "DrawThemeFocusRegion",
+            "GetThemeAccentColors",
+            "GetThemeMenuTitleExtra",
+            "GetThemeMenuBarShape",
+            "GetThemeMenuBackgroundRegion",
+            "DrawThemeMenuBackground",
+            "DrawThemeTickMark",
+            "DrawThemeScrollBarDelimiters",
         )
     ]
     imports += [
@@ -120,6 +152,10 @@ def make_probe(destination):
             "GetIconRefFromFile",
             "GetIconRefFromFolder",
             "UpdateIconRef",
+            "GetCustomIconsEnabled",
+            "SetCustomIconsEnabled",
+            "GetDeepIconsEnabled",
+            "SetDeepIconsEnabled",
             "ReleaseIconRef",
             "GetIconRefOwners",
             "IsValidIconRef",
@@ -142,7 +178,11 @@ def make_probe(destination):
     ]
     imports += [
         ("MacDialogsLib", name, 2)
-        for name in ("SetModalDialogEventMask", "GetModalDialogEventMask", "SetDialogTimeout")
+        for name in (
+            "SetModalDialogEventMask",
+            "GetModalDialogEventMask",
+            "SetDialogTimeout",
+        )
     ]
     imports.append(("CarbonLib", "GetDialogTimeout", 2))
     imports += [("ThreadsLib", name, 2) for name in ("GetThreadCurrentTaskRef", "GetThreadStateGivenTaskRef")]
@@ -169,14 +209,21 @@ def make_probe(destination):
     p.import_base = 0x1000
     p.identify_failed_checks = True
     p.reserve_parameter_words(9)
-    p.data.extend(bytes(0xC00 - len(p.data)))
+    p.data.extend(bytes(0x1000 - len(p.data)))
     p.call("InitWindows")
     for slot, icon_type in ((0x2E0, 0x74727368), (0x2E4, 0x66747268)):
         p.emit(
-            0x3C606D61, 0x60636373, 0x3C800000 | (icon_type >> 16), 0x60840000 | (icon_type & 0xFFFF), 0x38BE0000 | slot
+            0x3C606D61,
+            0x60636373,
+            0x3C800000 | (icon_type >> 16),
+            0x60840000 | (icon_type & 0xFFFF),
+            0x38BE0000 | slot,
         )
         p.call("GetIconRefByName")
-        p.expect(0, "empty/full Trash resolve actual bundled icon artwork without an isrv map")
+        p.expect(
+            0,
+            "empty/full Trash resolve actual bundled icon artwork without an isrv map",
+        )
     p.emit(0x807E02E0, 0x809E02E4)
     p._check(0x7C032000, 0x40820000, "empty and full Trash have distinct IconRef identities")
     for slot in (0x2E0, 0x2E4):
@@ -226,7 +273,10 @@ def make_probe(destination):
     p.call("DisposeRoutineDescriptor")
     p.emit(0x387E0180, 0x38800000)
     p.call("RequestVolumeNotification")
-    p.expect(-4, "optional volume notification reports unavailable instead of stopping execution")
+    p.expect(
+        -4,
+        "optional volume notification reports unavailable instead of stopping execution",
+    )
     p.emit(0x387E0180, 0x38800000)
     p.call("DeclineVolumeNotification")
     p.expect(0, "declining an unavailable volume notification is harmless")
@@ -275,7 +325,16 @@ def make_probe(destination):
     p.emit(0x38600000)
     p.call("GetGWorldDevice")
     p.expect(0, "a missing GWorld has no graphics device")
-    p.emit(0x38600000, 0x389E0300, 0x38BE0310, 0x38C00001, 0x38E00000, 0x3900FFFF, 0x39200001, 0x39400000)
+    p.emit(
+        0x38600000,
+        0x389E0300,
+        0x38BE0310,
+        0x38C00001,
+        0x38E00000,
+        0x3900FFFF,
+        0x39200001,
+        0x39400000,
+    )
     p.call("NewCWindow")
     p.nonzero("create a real native color window")
     p.emit(0x907E02C0)
@@ -300,17 +359,42 @@ def make_probe(destination):
     p.expect(0, "chasing arrows expose real control features")
     p.emit(0x807E0444)
     p.expect(0x48, "chasing arrows request idle time and support animation data")
-    p.emit(0x807E0440, 0x38800000, 0x3CA0616E, 0x60A5696D, 0x38C00001, 0x38FE0448, 0x391E044C)
+    p.emit(
+        0x807E0440,
+        0x38800000,
+        0x3CA0616E,
+        0x60A5696D,
+        0x38C00001,
+        0x38FE0448,
+        0x391E044C,
+    )
     p.call("GetControlData")
     p.expect(0, "read the actual chasing-arrows animation setting")
     p.emit(0x887E0448)
     p.expect(1, "new chasing-arrows controls animate by default")
     p.emit(0x807E044C)
     p.expect(1, "animation data has a one-byte Boolean ABI")
-    p.emit(0x38000000, 0x981E0448, 0x807E0440, 0x38800000, 0x3CA0616E, 0x60A5696D, 0x38C00001, 0x38FE0448)
+    p.emit(
+        0x38000000,
+        0x981E0448,
+        0x807E0440,
+        0x38800000,
+        0x3CA0616E,
+        0x60A5696D,
+        0x38C00001,
+        0x38FE0448,
+    )
     p.call("SetControlData")
     p.expect(0, "stop the chasing-arrows animation through its actual control data")
-    p.emit(0x807E0440, 0x38800000, 0x3CA0616E, 0x60A5696D, 0x38C00001, 0x38FE0448, 0x391E044C)
+    p.emit(
+        0x807E0440,
+        0x38800000,
+        0x3CA0616E,
+        0x60A5696D,
+        0x38C00001,
+        0x38FE0448,
+        0x391E044C,
+    )
     p.call("GetControlData")
     p.expect(0, "read back the stopped animation state")
     p.emit(0x887E0448)
@@ -347,6 +431,159 @@ def make_probe(destination):
         p.emit(0x38600000, 0x38800001)
         p.call(drawing)
         p.expect(-50, "group drawing rejects missing bounds")
+    p.emit(0x387E0450)
+    p.call("GetPort")
+    p.emit(0x807E02C0)
+    p.call("SetPort")
+    for kind, state, depth, is_color, gray in (
+        (1, 1, 8, 1, 0xEEEE),
+        (2, 2, 8, 1, 0xDDDD),
+        (3, 0, 4, 0, 0xEEEE),
+        (4, 1, 4, 1, 0xFFFF),
+    ):
+        p.emit(
+            0x38600000 | kind,
+            0x389E0300,
+            0x38A00000 | state,
+            0x38C00000 | depth,
+            0x38E00000 | is_color,
+        )
+        p.call("ApplyThemeBackground")
+        p.expect(0, "configure the current port for an embedded control")
+        p.emit(0x387E0454)
+        p.call("GetBackColor")
+        for address in (0x454, 0x456, 0x458):
+            p.emit(0xA07E0000 | address)
+            p.expect(
+                gray,
+                "the native Appearance background matches the Platinum device and state",
+            )
+    p.emit(0x38600003, 0x389E0300, 0x38A00002, 0x38C00008, 0x38E00001)
+    p.call("ApplyThemeBackground")
+    p.expect(-50, "only placards accept the pressed state")
+    p.emit(0x38600002, 0x38800000, 0x38A00001, 0x38C00008, 0x38E00001)
+    p.call("ApplyThemeBackground")
+    p.expect(-50, "the embedding API requires bounds")
+    p.data[0x490:0x498] = struct.pack(">4h", 8, 8, 30, 30)
+    p.data[0x49C:0x4A4] = struct.pack(">4h", 14, 14, 24, 24)
+    p.emit(0x387E0490)
+    p.call("EraseRect")
+    p.call("NewRgn")
+    p.nonzero("allocate a focus region")
+    p.emit(0x907E0498, 0x389E049C)
+    p.call("RectRgn")
+    for focused in (1, 0):
+        p.emit(0x807E0498, 0x38800000 | focused)
+        p.call("DrawThemeFocusRegion")
+        p.expect(0, "draw or erase focus around the same caller-owned region")
+        p.emit(0x38600010, 0x3880000B, 0x38BE0478)
+        p.call("GetCPixel")
+        p.emit(0xA07E0478)
+        if focused:
+            p.emit(0x6863FFFF)
+            p.nonzero("focus paints the outer two-pixel frame")
+        else:
+            p.expect(0xFFFF, "clearing focus restores the background")
+    p.emit(0x387E049C, 0x38800000, 0x80BE0498)
+    p.call("GetThemeMenuBackgroundRegion")
+    p.expect(0, "build the Platinum menu frame and shadow region")
+    for y, x, inside in ((13, 13, 1), (13, 25, 0), (14, 25, 1), (25, 25, 1)):
+        p.emit(0x3C600000 | y, 0x60630000 | x, 0x809E0498)
+        p.call("PtInRgn")
+        p.expect(inside, "the one-pixel shadow extends to the bottom and right")
+    p.emit(0x807E0498)
+    p.call("DisposeRgn")
+    for squished, width in ((0, 13), (1, 9)):
+        p.emit(0x387E0494, 0x38800000 | squished)
+        p.call("GetThemeMenuTitleExtra")
+        p.expect(0, "measure the menu title's horizontal padding")
+        p.emit(0xA07E0494)
+        p.expect(width, "squished and regular Platinum titles use different widths")
+    p.call("GetThemeMenuBarShape")
+    p.expect(0, "the built-in Platinum menu bar uses the rounded shape")
+    p.emit(0x387E049C, 0x38800000)
+    p.call("DrawThemeMenuBackground")
+    p.expect(0, "paint a Platinum menu background and its frame")
+    p.emit(0x3860000D, 0x38800012, 0x38BE0478)
+    p.call("GetCPixel")
+    p.emit(0xA07E0478)
+    p.expect(0, "the menu edge is painted outside the supplied content rectangle")
+    p.emit(0x387E049C)
+    p.call("EraseRect")
+    p.emit(0x387E049C, 0x38800001)
+    p.call("DrawThemeTickMark")
+    p.expect(0, "draw the active slider tick using the current display")
+    for x, expected in ((15, 0), (19, 0xFFFF)):
+        p.emit(0x38600000 | x, 0x38800010, 0x38BE0478)
+        p.call("GetCPixel")
+        p.emit(0xA07E0478)
+        p.expect(expected, "the vertical tick paints only its narrow band")
+    p.emit(0x38600001, 0x389E049C, 0x38A00001, 0x38C00000)
+    p.call("DrawThemeScrollBarDelimiters")
+    p.expect(0, "draw the active scroll-bar delimiters")
+    for x, y in ((18, 9), (9, 12)):
+        p.emit(0x38600000 | x, 0x38800000 | y, 0x38BE0478)
+        p.call("GetCPixel")
+        p.emit(0xA07E0478)
+        p.expect(0, "the scrollbar delimiter sits 15 pixels from the content edge")
+    p.emit(0x38600000)
+    p.call("GetThemeAccentColors")
+    p.expect(-50, "an accent palette copy requires an output slot")
+    p.data[0x470:0x478] = struct.pack(">4h", 12, 12, 26, 28)
+    p.emit(0x387E0470)
+    p.call("EraseRect")
+    p.routines.append(
+        (
+            0x718,
+            [
+                0x80030000,
+                0x90020480,
+                0x80030004,
+                0x90020484,
+                0x90820488,
+                0x90A2048C,
+                0x4E800020,
+            ],
+        )
+    )
+    p.emit(0x387E0470, 0x38800001, 0x38A00000, 0x38C00001, 0x38FE0718, 0x39001234)
+    p.call("DrawThemePopupArrow")
+    p.expect(0, "draw a three-point down arrow at the supplied origin")
+    for offset, value in ((0x480, 0x000C000C), (0x484, 0x000E000F), (0x488, 0x1234)):
+        p.emit(0x807E0000 | offset)
+        p.expect(
+            value,
+            "the popup erase callback receives the exact bitmap rectangle and refcon",
+        )
+    p.emit(0x807E048C)
+    p.nonzero("the popup erase callback receives the drawing display's pixel depth")
+    for y, channel in ((12, 0), (14, 0xFFFF)):
+        p.emit(0x3860000C, 0x38800000 | y, 0x38BE0478)
+        p.call("GetCPixel")
+        p.emit(0xA07E0478)
+        p.expect(
+            channel,
+            "the arrow mask paints its base and preserves pixels outside the glyph",
+        )
+    p.emit(0x387E0470, 0x38800004, 0x38A00000, 0x38C00001, 0x38E00000, 0x39000000)
+    p.call("DrawThemePopupArrow")
+    p.expect(-50, "invalid popup-arrow orientations are rejected")
+    p.emit(0x387E0470, 0x38800001)
+    p.call("DrawThemeTabPane")
+    p.expect(0, "draw a Platinum tab pane in the current port")
+    p.emit(0x3860000D, 0x3880000C, 0x38BE0478)
+    p.call("GetCPixel")
+    p.emit(0xA07E0478)
+    p.expect(0, "the active tab pane paints its outer border in black")
+    p.emit(0x38600014, 0x38800012, 0x38BE0478)
+    p.call("GetCPixel")
+    p.emit(0xA07E0478)
+    p.nonzero("the tab pane interior is lighter than its active border")
+    p.emit(0x387E0470, 0x38800002)
+    p.call("DrawThemeTabPane")
+    p.expect(-50, "tab panes accept only active or inactive state")
+    p.emit(0x807E0450)
+    p.call("SetPort")
     for action in (2, 1):
         p.emit(0x807E02C0, 0x38800001, 0x38A00000 | action, 0x38C00000)
         p.call("TransitionWindow")
@@ -359,7 +596,10 @@ def make_probe(destination):
             p.equal("shown window returns to the live visible window list")
     p.emit(0x807E02C0, 0x389E0340)
     p.call("SetWindowProxyFSSpec")
-    p.expect(-4, "unavailable native file proxies return an error for the plain-title fallback")
+    p.expect(
+        -4,
+        "unavailable native file proxies return an error for the plain-title fallback",
+    )
     p.emit(0x807E02C0, 0x38800000)
     p.call("SetWindowProxyFSSpec")
     p.expect(-50, "file proxies require a file specification")
@@ -374,6 +614,7 @@ def make_probe(destination):
     p.emit(0x807E02C0, 0x38800000)
     p.call("SetWindowProxyIcon")
     p.expect(-50, "null proxy icons return paramErr")
+    check_picture_controls(p)
     check_progress_controls(p)
     p.emit(0x807E02C0)
     p.call("DisposeWindow")
@@ -407,7 +648,12 @@ def make_probe(destination):
     p.emit(0x3860000C, 0x38800001)
     p.call("PostEvent")
     p.expect(0, "post an event excluded from the default modal mask")
-    p.routines.append((0x720, [0xA0C40000, 0x90C204C8, 0x38C00001, 0xB0C50000, 0x38600001, 0x4E800020]))
+    p.routines.append(
+        (
+            0x720,
+            [0xA0C40000, 0x90C204C8, 0x38C00001, 0xB0C50000, 0x38600001, 0x4E800020],
+        )
+    )
     p.emit(0x387E0720, 0x389E04CC)
     p.call("ModalDialog")
     p.emit(0x807E04C8)
@@ -491,11 +737,17 @@ def make_probe(destination):
     p.call("NGetTrapAddress")
     p.emit(0x388003D8, 0x38A0FFF6, 0x38DE0280)
     p.call("CallUniversalProc")
-    p.expect(0, "Display Manager leaves desktop clicks to Finder when no animation component is installed")
+    p.expect(
+        0,
+        "Display Manager leaves desktop clicks to Finder when no animation component is installed",
+    )
     for kind, result in ((0, 0), (0x776F706E, -4)):
         p.emit(0x3C600000 | (kind >> 16), 0x60630000 | (kind & 0xFFFF))
         p.call("PlayThemeSound")
-        p.expect(result, "native theme sound provider distinguishes silence from unavailable sound assets")
+        p.expect(
+            result,
+            "native theme sound provider distinguishes silence from unavailable sound assets",
+        )
     p.call("VM_GetHoldableBytes")
     p.nonzero("fixed guest RAM is available to HoldMemory without enabling guest paging")
     p.emit(0x3C607468, 0x60636473, 0x389E04A0)
@@ -514,12 +766,228 @@ def make_probe(destination):
     p.emit(0xA07E04A4)
     p.expect(2, "the application thread is running in its own task")
     check_object_accessors(p)
+    for enabled in (0, 1):
+        p.emit(0x38600000 | enabled)
+        p.call("HMSetBalloons")
+        p.expect(-855, "unavailable Balloon Help reports its actual initialization error")
+        p.call("HMGetBalloons")
+        p.expect(0, "unavailable Balloon Help remains disabled")
+    check_date_formatting(p)
+    check_device_parameter_blocks(p)
     check_file_icons(p, destination)
+    for selector, offset in ((0x72616D20, 0xB50), (0x7272616D, 0xB54)):
+        p.emit(0x3C600000 | (selector >> 16), 0x60630000 | (selector & 0xFFFF), 0x389E0000 | offset)
+        p.call("Gestalt")
+        p.expect(0, "public and Finder-private physical RAM queries are available")
+    p.emit(0x807E0B50)
+    p.nonzero("physical RAM reflects the configured guest allocation")
+    p.emit(0x809E0B54)
+    p.equal("Finder's built-in RAM value matches the actual public RAM capacity")
+    # OSDispatch 0x74 reports real allocatable temporary memory. Holding a
+    # near-maximum temporary handle must reduce the reported largest block.
+    p.emit(0x8060103C, 0x388000BE, 0x38A00074)
+    p.call("CallUniversalProc")
+    p._check(
+        0x28032000,
+        0x41810000,
+        "the largest-unused-block query reports usable temporary memory",
+    )
+    p.emit(0x907E0B40, 0x3863F000, 0x389E0B4C)
+    p.call("TempNewHandle")
+    p.nonzero("the reported temporary capacity is actually allocatable")
+    p.emit(0x907E0B44, 0xA87E0B4C)
+    p.expect(
+        0,
+        "allocating within reported capacity succeeds without a fabricated memory count",
+    )
+    p.emit(0x8060103C, 0x388000BE, 0x38A00074)
+    p.call("CallUniversalProc")
+    p.emit(0x809E0B40)
+    p._check(
+        0x7C032040,
+        0x41800000,
+        "the largest-unused-block query reflects live heap allocations",
+    )
+    p.emit(0x807E0B44)
+    p.call("DisposeHandle")
     message = b"PPC Finder services: passed"
     p.data[0x240 : 0x241 + len(message)] = bytes([len(message)]) + message
     p.emit(0x387E0240)
     p.call("DebugStr")
-    p.finish(destination, "PPC Finder Services Probe")
+    picture = struct.pack(">H4h", 34, 0, 0, 16, 16) + bytes.fromhex("001102ff001affff000000000031000000000010001000ff")
+    p.finish(
+        destination,
+        "PPC Finder Services Probe",
+        extra_resources=[(b"PICT", 1234, picture)],
+    )
+
+
+def check_date_formatting(p):
+    # Compare public date/time entry points with their resource-handle variants.
+    # The timestamp has its high bit set, as in Finder's actual Get Info call.
+    for plain, explicit, form, resource in (
+        ("IUDateString", "IUDatePString", 0, 0),
+        ("IUDateString", "IUDatePString", 1, 1),
+        ("IUDateString", "IUDatePString", 2, 1),
+        ("IUTimeString", "IUTimePString", 1, 0),
+    ):
+        p.emit(0x38600000 | resource)
+        p.call("IUGetIntl")
+        p.nonzero("date formatting uses the real System international resource")
+        p.emit(0x907E0B64)
+        p.emit(0x3C60E702, 0x60637E13, 0x38800000 | form, 0x38BE0E00)
+        p.call(plain)
+        p.emit(0x887E0E00)
+        p.nonzero("Get Info date and time formatting produces a Pascal string")
+        for handle in (0, 1):
+            p.emit(0x3C60E702, 0x60637E13, 0x38800000 | form, 0x38BE0F00)
+            p.emit(0x80DE0B64 if handle else 0x38C00000)
+            p.call(explicit)
+            p.emit(0x387E0E00, 0x389E0F00, 0x38A00001, 0x38C00001)
+            p.call("EqualString")
+            p.expect(1, "explicit and default locale handles preserve date/time formatting")
+
+
+def check_device_parameter_blocks(p):
+    # A genuine 68K OS patch records D1/A0, updates the PB and returns an error.
+    p.data[0xBC0:0xBD6] = bytes.fromhex("31410006217c12345678001c317cffd6001070d64e75")
+    p.data[0xB7F] = p.data[0xBB2] = 0xA5
+    p.data[0xB98:0xB9A] = struct.pack(">h", 1)  # Invalid positive driver reference.
+    for name, trap in (("PBControlSync", 0xA004), ("PBStatusSync", 0xA005)):
+        p.emit(0x38600000)
+        p.call(name)
+        p.expect(-50, "synchronous device calls reject a missing parameter block")
+        p.emit(0x3C60FFFF, 0x6063FFF0)
+        p.call(name)
+        p.expect(-50, "synchronous device calls reject a parameter block outside guest RAM")
+        p.emit(0x387E0B80)
+        p.call(name)
+        p.expect(-21, "the native Device Manager rejects an invalid driver reference")
+        p.emit(0xA87E0B90)
+        p.expect(-21, "native synchronous device errors update ioResult")
+        p.emit(0x38600000 | (trap & 0xFFFF), 0x38800000)
+        p.call("NGetTrapAddress")
+        p.emit(0x907E0B60, 0x387E0BC0, 0x38800000 | (trap & 0xFFFF), 0x38A00000)
+        p.call("NSetTrapAddress")
+        p.emit(0x387E0B80)
+        p.call(name)
+        p.expect(-42, "synchronous device imports invoke the real installed guest OS patch")
+        p.emit(0xA07E0B86)
+        p.expect(trap, "the installed patch receives the synchronous Control or Status trap word")
+        p.emit(0x807E0B9C)
+        p.expect(0x12345678, "the installed patch receives the actual parameter-block pointer in A0")
+        p.emit(0xA87E0B90)
+        p.expect(-42, "the guest driver's ioResult is preserved")
+        p.emit(0x807E0B60, 0x38800000 | (trap & 0xFFFF), 0x38A00000)
+        p.call("NSetTrapAddress")
+        p.emit(0x387E0B80)
+        p.call(name)
+        p.expect(-21, "restoring the native OS vector restores the actual driver fallback")
+        for offset in (0xB7F, 0xBB2):
+            p.emit(0x887E0000 | offset)
+            p.expect(0xA5, "device parameter-block calls preserve adjacent guest storage")
+
+
+def check_picture_controls(p):
+    # A real resource supplies the picture; drawing must reach the current port.
+    p.data[0xB10:0xB14] = bytes([255]) * 4
+    p.emit(0x386004D2)
+    p.call("GetPicture")
+    p.nonzero("load the original regression PICT resource")
+    p.emit(0x907E0B00)
+    for definition in (304, 305):
+        p.emit(
+            0x807E02C0,
+            0x389E0460,
+            0x38BE0310,
+            0x38C00001,
+            0x38E004D2,
+            0x39000000,
+            0x39200000,
+            0x39400000 | definition,
+            0x38000000,
+            0x90010038,
+        )
+        p.call("NewControl")
+        p.nonzero("create the actual CDEF 19 picture control used by Finder's About window")
+        p.emit(0x907E0B04)
+        p.call("GetCtlValue")
+        p.expect(0, "picture initialization consumes the resource ID and resets the value")
+        p.emit(
+            0x807E0B04,
+            0x38800000,
+            0x3CA07069,
+            0x60A56368,
+            0x38C00004,
+            0x38FE0B08,
+            0x391E0B0C,
+        )
+        p.call("GetControlData")
+        p.expect(0, "read the real borrowed picture handle through pich")
+        p.emit(0x807E0B08, 0x809E0B00)
+        p.equal("picture controls resolve their creation resource map")
+        p.emit(0x807E0B0C)
+        p.expect(4, "the picture handle tag has a four-byte guest ABI")
+        p.emit(0x807E02C0)
+        p.call("SetPort")
+        p.emit(0x807E0B04)
+        p.call("Draw1Control")
+        p.emit(0x38600019, 0x38800019, 0x38BE0B18)
+        p.call("GetCPixel")
+        p.emit(0xA07E0B18)
+        p.expect(0xFFFF, "picture drawing paints the fixture's red pixels into the window")
+        for offset in (0xB1A, 0xB1C):
+            p.emit(0xA07E0000 | offset)
+            p.expect(0, "PICT drawing preserves the actual green and blue components")
+        p.emit(0x807E0B04, 0x3C800019, 0x60840019)
+        p.call("TestControl")
+        p.expect(6, "pictures return their standard picture part code")
+        if definition == 305:
+            p.emit(0x807E0B04, 0x3C800019, 0x60840019, 0x38A00000)
+            p.call("TrackControl")
+            p.expect(
+                6,
+                "non-tracking pictures return immediately without waiting for a mouse release",
+            )
+        p.emit(0x807E0B04, 0x38800000, 0x3CA07069, 0x60A56368, 0x38C00003, 0x38FE0B00)
+        p.call("SetControlData")
+        p.expect(-50, "short picture handle writes are rejected")
+        for offset, result in ((0xB10, -50), (0xB14, 0), (0xB00, 0)):
+            p.emit(
+                0x807E0B04,
+                0x38800000,
+                0x3CA07069,
+                0x60A56368,
+                0x38C00004,
+                0x38FE0000 | offset,
+            )
+            p.call("SetControlData")
+            p.expect(
+                result,
+                "picture handle writes validate addresses and allow clearing or replacing borrowed content",
+            )
+            p.emit(
+                0x807E0B04,
+                0x38800000,
+                0x3CA07069,
+                0x60A56368,
+                0x38C00004,
+                0x38FE0B08,
+                0x391E0B0C,
+            )
+            p.call("GetControlData")
+            p.expect(0, "query picture content after a write")
+            p.emit(0x807E0B08)
+            if offset == 0xB14:
+                p.expect(0, "clearing picture content returns a null handle")
+            else:
+                p.emit(0x809E0B00)
+                p.equal("failed writes preserve, and valid writes restore, the original picture")
+        p.emit(0x807E0B04)
+        p.call("DisposeControl")
+        p.emit(0x807E0B00)
+        p.call("GetHandleSize")
+        p.expect(34, "disposing a control leaves its resource-owned picture intact")
 
 
 def check_progress_controls(p):
@@ -548,13 +1016,24 @@ def check_progress_controls(p):
         p.call("GetControlFeatures")
         p.expect(0, "query the CDEF 5 capabilities")
         p.emit(0x807E0B0C)
-        p.expect(0x48 if definition == 80 else 0, "only progress bars support idling and data access")
+        p.expect(
+            0x48 if definition == 80 else 0,
+            "only progress bars support idling and data access",
+        )
         if definition == 80:
             p.emit(0x38000001, 0x981E0B10)
             p.emit(0x807E0B04, 0x38800000, 0x3CA0696E, 0x60A56465, 0x38C00001, 0x38FE0B10)
             p.call("SetControlData")
             p.expect(0, "enable indeterminate progress")
-            p.emit(0x807E0B04, 0x38800000, 0x3CA0696E, 0x60A56465, 0x38C00001, 0x38FE0B11, 0x391E0B0C)
+            p.emit(
+                0x807E0B04,
+                0x38800000,
+                0x3CA0696E,
+                0x60A56465,
+                0x38C00001,
+                0x38FE0B11,
+                0x391E0B0C,
+            )
             p.call("GetControlData")
             p.expect(0, "retrieve the stored indeterminate flag")
             p.emit(0x887E0B11)
@@ -578,7 +1057,10 @@ def check_progress_controls(p):
     ):
         p.emit(0x807E0B04)
         p.call(operation)
-        p.expect(value, "the native Carbon constructor preserves the full signed 32-bit range")
+        p.expect(
+            value,
+            "the native Carbon constructor preserves the full signed 32-bit range",
+        )
     p.emit(0x807E0B04)
     p.call("DisposeControl")
 
@@ -610,12 +1092,28 @@ def check_object_accessors(p):
     p.routines.append((0x710, [0x8082079C, 0x38840001, 0x9082079C, 0x3860FFD6, 0x4E800020]))
     p.call("AEObjectInit")
     p.expect(0, "initialize real object accessor tables")
-    p.emit(0x3C60646F, 0x60636375, 0x3C806E75, 0x60846C6C, 0x38BE0700, 0x38C0FF85, 0x38E00000)
+    p.emit(
+        0x3C60646F,
+        0x60636375,
+        0x3C806E75,
+        0x60846C6C,
+        0x38BE0700,
+        0x38C0FF85,
+        0x38E00000,
+    )
     p.call("AEInstallObjectAccessor")
     p.expect(0, "install a genuine PPC object accessor with signed refcon")
     p.call("AEObjectInit")
     p.expect(0, "repeated initialization preserves installed accessors")
-    p.emit(0x3C60646F, 0x60636375, 0x3C806E75, 0x60846C6C, 0x38BE0680, 0x38DE0688, 0x38E00000)
+    p.emit(
+        0x3C60646F,
+        0x60636375,
+        0x3C806E75,
+        0x60846C6C,
+        0x38BE0680,
+        0x38DE0688,
+        0x38E00000,
+    )
     p.call("AEGetObjectAccessor")
     p.expect(0, "look up an exact application accessor")
     p.emit(0x807E0680, 0x389E0700)
@@ -624,16 +1122,39 @@ def check_object_accessors(p):
     p.expect(-123, "accessor reference constant has guest byte order")
     p.emit(0x807E0684)
     p.expect(0xA5A5A5A5, "accessor lookup preserves adjacent output storage")
-    p.emit(0x3C60646F, 0x60636375, 0x389E0600, 0x3CA0636F, 0x60A56E74, 0x3CC06E61, 0x60C66D65, 0x38FE0610, 0x391E0620)
+    p.emit(
+        0x3C60646F,
+        0x60636375,
+        0x389E0600,
+        0x3CA0636F,
+        0x60A56E74,
+        0x3CC06E61,
+        0x60C66D65,
+        0x38FE0610,
+        0x391E0620,
+    )
     p.call("AECallObjectAccessor")
     p.expect(-123, "propagate accessor errors through the mixed-mode callback")
-    for offset, value in ((0x780, 0x646F6375), (0x788, 0x636F6E74), (0x78C, 0x6E616D65), (0x798, -123)):
+    for offset, value in (
+        (0x780, 0x646F6375),
+        (0x788, 0x636F6E74),
+        (0x78C, 0x6E616D65),
+        (0x798, -123),
+    ):
         p.emit(0x807E0000 | offset)
         p.expect(value, "object accessor receives the real class, form and refcon")
     for offset, target in ((0x784, 0x600), (0x790, 0x610), (0x794, 0x620)):
         p.emit(0x807E0000 | offset, 0x389E0000 | target)
         p.equal("object accessor receives actual guest descriptor pointers")
-    p.emit(0x3C60646F, 0x60636375, 0x3C806E75, 0x60846C6C, 0x38BE0700, 0x38C00000, 0x38E00000)
+    p.emit(
+        0x3C60646F,
+        0x60636375,
+        0x3C806E75,
+        0x60846C6C,
+        0x38BE0700,
+        0x38C00000,
+        0x38E00000,
+    )
     p.call("AEInstallObjectAccessor")
     p.expect(0, "replace an accessor without duplicating its key")
     p.emit(0x38600000, 0x38800000, 0x38A00001, 0x38DE0640)
@@ -652,7 +1173,12 @@ def check_object_accessors(p):
         p.call("AEPutKeyPtr")
         p.expect(0, "populate the real wanted class and key form")
     for keyword, offset in ((0x66726F6D, 0x600), (0x73656C64, 0x610)):
-        p.emit(0x387E0640, 0x3C800000 | (keyword >> 16), 0x60840000 | (keyword & 0xFFFF), 0x38BE0000 | offset)
+        p.emit(
+            0x387E0640,
+            0x3C800000 | (keyword >> 16),
+            0x60840000 | (keyword & 0xFFFF),
+            0x38BE0000 | offset,
+        )
         p.call("AEPutKeyDesc")
         p.expect(0, "populate object specifier container and selector descriptors")
     p.emit(0x3C006F62, 0x60006A20, 0x901E0640, 0x387E0640, 0x38800000, 0x38BE0620)
@@ -666,10 +1192,26 @@ def check_object_accessors(p):
     p.call("AEDisposeDesc")
     p.expect(0, "release object specifier fields and record storage")
     p.data[0x660:0x668] = b"docuname"
-    p.emit(0x38600000, 0x38800000, 0x38BE0710, 0x38C00000, 0x38E00000, 0x39000000, 0x39200000)
+    p.emit(
+        0x38600000,
+        0x38800000,
+        0x38BE0710,
+        0x38C00000,
+        0x38E00000,
+        0x39000000,
+        0x39200000,
+    )
     p.call("AESetObjectCallbacks")
     p.expect(0, "install real token disposal callback")
-    p.emit(0x38600000, 0x38800000, 0x38A00000, 0x38C00000, 0x38E00000, 0x39000000, 0x39200000)
+    p.emit(
+        0x38600000,
+        0x38800000,
+        0x38A00000,
+        0x38C00000,
+        0x38E00000,
+        0x39000000,
+        0x39200000,
+    )
     p.call("AESetObjectCallbacks")
     p.expect(0, "nil callback arguments preserve previously installed functions")
     p.emit(0x387E0620)
@@ -680,7 +1222,15 @@ def check_object_accessors(p):
     p.emit(0x3C60646F, 0x60636375, 0x3C806E75, 0x60846C6C, 0x38A00000, 0x38C00000)
     p.call("AERemoveObjectAccessor")
     p.expect(0, "remove the application's real accessor record")
-    p.emit(0x3C60646F, 0x60636375, 0x3C806E75, 0x60846C6C, 0x38BE0680, 0x38DE0688, 0x38E00000)
+    p.emit(
+        0x3C60646F,
+        0x60636375,
+        0x3C806E75,
+        0x60846C6C,
+        0x38BE0680,
+        0x38DE0688,
+        0x38E00000,
+    )
     p.call("AEGetObjectAccessor")
     p.expect(-1723, "removed object accessor reports accessor-not-found")
     p.data[0x600:0x608] = b"null" + bytes(4)
@@ -694,7 +1244,12 @@ def check_file_icons(p, destination):
     artwork = bytes((i * 37 + 19) & 255 for i in range(128)) + bytes([255]) * 128
     for name, label in (("Icon Fixture A", 3), ("Icon Fixture B", 6)):
         write_fragment(
-            destination, name, b"icon fixture data", 0, extra_resources=[(b"ICN#", -16455, artwork)], include_cfrg=False
+            destination,
+            name,
+            b"icon fixture data",
+            0,
+            extra_resources=[(b"ICN#", -16455, artwork)],
+            include_cfrg=False,
         )
         sidecar = destination / ".AppleDouble" / name
         data = bytearray(sidecar.read_bytes())
@@ -725,6 +1280,48 @@ def check_file_icons(p, destination):
     for offset in (0xA80, 0xA83, 0xA90, 0xA93):
         p.emit(0x887E0000 | offset)
         p.expect(0xA5, "unaligned label output preserves adjacent bytes")
+    for enabled in (0, 1):
+        p.emit(0x38600000 | enabled)
+        p.call("SetDeepIconsEnabled")
+        p.expect(0, "change the deep icon setting")
+        p.emit(0x387E0AC0)
+        p.call("GetDeepIconsEnabled")
+        p.expect(0, "read the current deep icon setting")
+        p.emit(0x887E0AC0)
+        p.expect(enabled, "deep icon settings round trip")
+    p.emit(0x887E0AC1)
+    p.expect(0xA5, "the deep icon setting is a single guest byte")
+    p.emit(0xA87E09D0, 0x38800000)
+    p.call("SetCustomIconsEnabled")
+    p.expect(0, "disable custom artwork on the selected mounted volume")
+    p.emit(0xA87E09D0, 0x389E0AC0)
+    p.call("GetCustomIconsEnabled")
+    p.expect(0, "query the selected mounted volume's icon policy")
+    p.emit(0x887E0AC0)
+    p.expect(0, "the volume reports that custom icons are disabled")
+    p.emit(0x387E09D0, 0x389E0AA8, 0x38BE0AAC)
+    p.call("GetIconRefFromFile")
+    p.expect(0, "disabled custom artwork still resolves a file icon")
+    p.emit(0x807E0AA8, 0x809E0A8C)
+    p._check(0x7C032000, 0x40820000, "the disabled policy chooses a non-custom icon instead")
+    p.emit(0xA07E0AAC)
+    p.expect(6, "the file's Finder label survives disabling custom icons")
+    p.emit(0x807E0AA8)
+    p.call("ReleaseIconRef")
+    p.expect(0, "release the fallback icon ownership")
+    p.emit(0xA87E09D0, 0x38800001)
+    p.call("SetCustomIconsEnabled")
+    p.expect(0, "restore custom icon selection on the selected volume")
+    p.emit(0xA87E09D0, 0x389E0AC0)
+    p.call("GetCustomIconsEnabled")
+    p.expect(0, "read the restored volume policy")
+    p.emit(0x887E0AC0)
+    p.expect(1, "the volume reports that custom icons are enabled again")
+    p.emit(0x38608000, 0x389E0AC0)
+    p.call("GetCustomIconsEnabled")
+    p.expect(-35, "custom icon policy requires a mounted volume")
+    p.emit(0x887E0AC0)
+    p.expect(1, "a missing volume leaves the caller's setting untouched")
     p.emit(0x807E0A88, 0x389E0A98)
     p.call("GetIconRefOwners")
     p.expect(0, "query actual file-icon ownership")
@@ -825,7 +1422,7 @@ def check_file_icons(p, destination):
     p.emit(0x807E0A88)
     p.call("IsValidIconRef")
     p.expect(0, "last release destroys the anonymous file icon family")
-    p.data[0xA80:0xAC0] = bytes([0xA5]) * 64
+    p.data[0xA80:0xAC2] = bytes([0xA5]) * (0xAC2 - 0xA80)
 
 
 def check_icon_file_registration(p, destination):
@@ -865,7 +1462,16 @@ def check_icon_file_registration(p, destination):
     p.call("FSMakeFSSpec")
     p.expect(0, "locate the classic icon resource fixture")
     p.call("CurResFile")
-    p.emit(0x907E0C74, 0x3C605445, 0x60635354, 0x3C806963, 0x60846E31, 0x38BE0C20, 0x38C0BFB9, 0x38FE0C70)
+    p.emit(
+        0x907E0C74,
+        0x3C605445,
+        0x60635354,
+        0x3C806963,
+        0x60846E31,
+        0x38BE0C20,
+        0x38C0BFB9,
+        0x38FE0C70,
+    )
     p.call("RegisterIconRefFromResource")
     p.expect(0, "register actual classic icon artwork from its resource fork")
     p.call("CurResFile")

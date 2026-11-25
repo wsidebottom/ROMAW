@@ -17,6 +17,7 @@
 #define ROMAW_CARBON_COMPONENT_ENTRIES_H
 
 #include "rsys/component.h"
+#include "rsys/mixed_mode.h"
 
 static int carbon_component_call(ROMlib_carbon_ppc_frame* call, unsigned selector)
 {
@@ -27,11 +28,17 @@ static int carbon_component_call(ROMlib_carbon_ppc_frame* call, unsigned selecto
         output_index = 1;
         output_size = sizeof(INTEGER);
         break;
+    case 41: /* GetComponentIconSuite */
+        output_index = 1;
+        output_size = sizeof(uint32_t);
+        break;
     case 53: /* GetComponentResource */
+    case 56: /* GetComponentPublicResource */
         output_index = 3;
         output_size = sizeof(uint32_t);
         break;
     case 54: /* GetComponentIndString */
+    case 58: /* GetComponentPublicIndString */
         output_index = 1;
         output_size = sizeof(Str255);
         break;
@@ -96,6 +103,170 @@ CARBON_COMPONENT(GetComponentResource, 53)
 CARBON_COMPONENT(GetComponentIndString, 54)
 
 #undef CARBON_COMPONENT
+
+static int carbon_component_dispatch_reference(ROMlib_carbon_ppc_frame* call, const char* name, unsigned selector)
+{
+    if (!ROMlib_component_owns_token(call->words[0]) &&
+        (selector != 28 || !ROMlib_component_owns_token(call->words[1]))) {
+        ROMlib_carbon_reference original;
+        if (ROMlib_carbon_load_reference("InterfaceLib", name, &original))
+            return ROMlib_carbon_invoke_frame(original.function, call);
+    }
+    const bool capture = selector == 28;
+    const uint32_t info = capture ? 0xff8 : 0x3e8;
+    if (selector == 41 || selector == 56 || selector == 58)
+        return carbon_component_call(call, selector);
+    uint32_t result;
+    if (!ROMlib_carbon_call_toolbox_vector(0x0ea8, info, selector, call, &result))
+        return 0;
+    call->words[0] = capture ? result : (uint32_t)(int32_t)(int16_t)result;
+    return 1;
+}
+
+static int carbon_component_CaptureComponent(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_dispatch_reference(call, "CaptureComponent", 28);
+}
+
+static int carbon_component_UncaptureComponent(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_dispatch_reference(call, "UncaptureComponent", 29);
+}
+
+static int carbon_component_GetComponentIconSuite(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_dispatch_reference(call, "GetComponentIconSuite", 41);
+}
+
+static int carbon_component_GetComponentPublicResource(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_dispatch_reference(call, "GetComponentPublicResource", 56);
+}
+
+static int carbon_component_GetComponentPublicIndString(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_dispatch_reference(call, "GetComponentPublicIndString", 58);
+}
+
+static int carbon_component_invoke(ROMlib_carbon_ppc_frame* call, const char* name, bool storage, bool explicit_info)
+{
+    const unsigned first = storage ? 1 : 0;
+    const uint32_t params_address = call->words[first];
+    const uint32_t procedure = call->words[first + 1];
+    const Byte* params = ROMlib_carbon_try_guest_memory(params_address, 4, 0);
+    uint32_t info = explicit_info ? call->words[3] : 0;
+    bool ppc = true;
+
+    if (!params_address || !params || !procedure)
+        goto invalid;
+
+    const unsigned size = params[1];
+    params = ROMlib_carbon_try_guest_memory(params_address, 4 + size, 0);
+    if (!params || (size & 1))
+        goto invalid;
+
+    if (!explicit_info) {
+        const RoutineDescriptor* descriptor = ROMlib_carbon_try_guest_memory(procedure, sizeof *descriptor, 0);
+        if (!descriptor || descriptor->goMixedModeTrap != CWC(MIXED_MODE_TRAP) ||
+            descriptor->version != kRoutineDescriptorVersion || descriptor->routineCount ||
+            descriptor->selectorInfo || descriptor->routineDescriptorFlags)
+            goto fallback;
+        const RoutineRecord* routine = &descriptor->routineRecords[0];
+        if (routine->ISA != kPowerPCISA && routine->ISA != kM68kISA)
+            goto fallback;
+        ppc = routine->ISA == kPowerPCISA;
+        info = CL(routine->procInfo);
+    }
+
+    const unsigned convention = info & 15;
+    if (convention != kPascalStackBased && convention != kCStackBased)
+        goto fallback;
+
+    // ComponentParameters stores Pascal arguments in reverse order, with
+    // one-byte values in the high byte of their two-byte stack slots.
+    uint32_t arguments[13];
+    unsigned count = 0;
+    uint32_t widths = info >> kStackParameterPhase;
+    for (uint32_t fields = widths; fields; fields >>= 2) {
+        if (!(fields & 3))
+            goto invalid;
+        ++count;
+    }
+    if (storage && (!count || (widths & 3) != kFourByteCode))
+        goto invalid;
+    if (storage)
+        arguments[0] = call->words[0];
+
+    unsigned remaining = size;
+    for (unsigned index = first; index < count; ++index) {
+        const unsigned width = (widths >> (2 * index)) & 3;
+        const unsigned bytes = width == kFourByteCode ? 4 : 2;
+        if (remaining < bytes)
+            goto invalid;
+        remaining -= bytes;
+        const Byte* value = params + 4 + remaining;
+        if (width == kOneByteCode)
+            arguments[index] = (int8_t)value[0];
+        else if (width == kTwoByteCode) {
+            uint16_t word;
+            memcpy(&word, value, sizeof word);
+            arguments[index] = (int16_t)CW(word);
+        }
+        else {
+            uint32_t word;
+            memcpy(&word, value, sizeof word);
+            arguments[index] = CL(word);
+        }
+    }
+    if (remaining)
+        goto invalid;
+
+    uint32_t result;
+    if (ppc) {
+        const void* entry = ROMlib_carbon_try_guest_memory(procedure, 8, 0);
+        if (!entry)
+            goto invalid;
+        if (!ROMlib_carbon_invoke_callback((void*)entry, arguments, count, &result))
+            return 0;
+    }
+    else {
+        ROMlib_carbon_ppc_frame forwarded = {0};
+        if (count > NELEM(forwarded.words))
+            goto fallback;
+        memcpy(forwarded.words, arguments, count * sizeof arguments[0]);
+        const int called = convention == kPascalStackBased
+                               ? ROMlib_carbon_invoke_pascal(procedure, info, &forwarded, &result)
+                               : ROMlib_carbon_invoke_mixed_upp(procedure, info, &forwarded, &result);
+        if (!called)
+            return 0;
+    }
+    call->words[0] = result;
+    return 1;
+
+fallback: {
+        ROMlib_carbon_reference original;
+        if (ROMlib_carbon_load_reference("InterfaceLib", name, &original))
+            return ROMlib_carbon_invoke_frame(original.function, call);
+    }
+invalid:
+    call->words[0] = paramErr;
+    return 1;
+}
+
+static int carbon_component_CallComponentFunction(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_invoke(call, "CallComponentFunction", false, false);
+}
+
+static int carbon_component_CallComponentFunctionWithStorage(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_invoke(call, "CallComponentFunctionWithStorage", true, false);
+}
+
+static int carbon_component_CallComponentFunctionWithStorageProcInfo(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_component_invoke(call, "CallComponentFunctionWithStorageProcInfo", true, true);
+}
 
 static int carbon_component_message(ROMlib_carbon_ppc_frame* call, int16_t selector, unsigned layout)
 {

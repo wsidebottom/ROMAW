@@ -340,6 +340,37 @@ typedef CMovePBRec* CMovePBPtr;
 
 typedef struct PACKED {
     COMMONFSQUEUEDEFS;
+    INTEGER ioDstVRefNum;
+    INTEGER reserved1;
+    PACKED_MEMBER(StringPtr, ioNewName);
+    PACKED_MEMBER(StringPtr, ioCopyName);
+    LONGINT ioNewDirID;
+    LONGINT reserved2[2];
+    LONGINT ioDirID;
+} CopyParam;
+
+typedef struct PACKED {
+    COMMONFSQUEUEDEFS;
+    LONGINT reserved1;
+    PACKED_MEMBER(StringPtr, ioDestNamePtr);
+    LONGINT reserved2;
+    LONGINT ioDestDirID;
+    LONGINT reserved3[2];
+    LONGINT ioSrcDirID;
+    INTEGER reserved4;
+    LONGINT ioFileID;
+} FIDParam;
+
+typedef struct PACKED {
+    COMMONFSQUEUEDEFS;
+    INTEGER ioRefNum;
+    INTEGER ioDenyModes;
+    uint32 reserved[5];
+    LONGINT ioDirID;
+} ForkAccessParam;
+
+typedef struct PACKED {
+    COMMONFSQUEUEDEFS;
     uint16_t filler1;
     INTEGER ioWDIndex;
     LONGINT ioWDProcID;

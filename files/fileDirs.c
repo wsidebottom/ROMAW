@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_PBMoveOrRename, ufsPBCatMove, ufsPBGetCatInfo, ufsPBOpenWD, ufsPBSetCatInfo
+  Functions: ROMlib_PBMoveOrRename, ROMlib_ufs_move_rename, ufsPBCatMove, ufsPBGetCatInfo, ufsPBOpenWD, ufsPBSetCatInfo
 
   Origin:    Existing repository source in executor/src/files; original attribution and provenance comments are
              preserved below.
@@ -60,8 +60,8 @@ A2(PUBLIC, OSErr, ufsPBSetCatInfo, CInfoPBPtr, pb, /* INTERNAL */
     return retval;
 }
 
-A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
-   BOOLEAN, a, LONGINT, dir, LONGINT, newdir, char*, newname, MoveOrRenameType, op)
+static OSErr move_or_rename(ParmBlkPtr pb, LONGINT dir, LONGINT newdir, char* newname,
+                            MoveOrRenameType op, const Byte* leaf)
 {
     ParamBlockRec npb;
     OSErr err;
@@ -70,6 +70,8 @@ A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
     char *rname, *rnew;
     int renamefailed;
     VCBExtra* vcbp;
+    char* replacement = NULL;
+    const bool moving = op == CatMove || op == MoveRename;
     struct stat sbuf;
     LONGINT dirid;
     ALLOCABEGIN
@@ -80,22 +82,53 @@ A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
     rnew = 0;
 
     if ((err = ROMlib_nami(pb, dir, NoIndex, &oldpathname, &oldfilename, &oldendname, TRUE, &vcbp, &sbuf)) == noErr) {
+        const bool directory = S_ISDIR(sbuf.st_mode);
+        if (op == MoveRename && !directory && !(sbuf.st_mode & S_IWUSR)) {
+            err = fLckdErr;
+            goto done;
+        }
         /* Renaming a mounted host root changes its guest label only. */
-        if (op != CatMove && !strcmp(oldpathname, vcbp->unixname)) {
+        if (!moving && !strcmp(oldpathname, vcbp->unixname)) {
             err = ROMlib_rename_host_volume(vcbp, (StringPtr)newname);
             goto done;
         }
         FIELD_ASSIGN_RAW(npb.ioParam.ioNamePtr, RM((StringPtr)newname));
         npb.ioParam.ioVRefNum = pb->ioParam.ioVRefNum;
-        if ((err = ROMlib_nami(&npb, newdir, NoIndex, &newpathname, &newfilename, &newendname, TRUE, (VCBExtra**)0,
-                               (struct stat*)0)) == noErr) {
-            if (op == CatMove) {
-                fullnewname = ALLOCA(newendname - newpathname + oldendname - oldfilename + 2); /* + '/' and null */
-                sprintf(fullnewname, "%s/%s", newpathname, oldfilename);
+        VCBExtra* destination_volume;
+        struct stat destination_info;
+        if ((err = ROMlib_nami(&npb, newdir, NoIndex, &newpathname, &newfilename, &newendname, TRUE,
+                               &destination_volume, moving ? &destination_info : NULL)) == noErr) {
+            if (moving) {
+                if (destination_volume != vcbp || !strcmp(oldpathname, vcbp->unixname)) {
+                    err = badMovErr;
+                    goto done;
+                }
+                if (!S_ISDIR(destination_info.st_mode)) {
+                    err = dirNFErr;
+                    goto done;
+                }
+                const size_t source_length = strlen(oldpathname);
+                if (directory && !strncmp(oldpathname, newpathname, source_length) &&
+                    (newpathname[source_length] == '/' || newpathname[source_length] == 0)) {
+                    err = badMovErr;
+                    goto done;
+                }
+                if (leaf) {
+                    replacement = ROMlib_newunixfrommac((char*)leaf + 1, leaf[0]);
+                    if (!replacement) {
+                        err = memFullErr;
+                        goto done;
+                    }
+                }
+                const char* filename = replacement ? replacement : oldfilename;
+                fullnewname = ALLOCA(strlen(newpathname) + strlen(filename) + 2);
+                sprintf(fullnewname, "%s/%s", newpathname, filename);
             }
             else
                 fullnewname = newpathname;
-            if (strcmp(oldpathname, fullnewname) != 0 && ROMlib_ufs_stat(fullnewname, &sbuf) != -1)
+            if (!strcmp(oldpathname, fullnewname))
+                goto done;
+            if (ROMlib_ufs_stat(fullnewname, &sbuf) != -1)
                 err = dupFNErr;
             else {
                 if (stat(oldpathname, &sbuf) != 0) {
@@ -118,18 +151,28 @@ A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
                     goto done;
                 }
                 free(resource);
+                if (moving)
+                    newfilename = strrchr(fullnewname, '/') + 1;
+                rnew = ROMlib_sidecar_rename_name(rname, fullnewname, newfilename);
+                if (!rnew) {
+                    err = memFullErr;
+                    goto done;
+                }
                 boolean_t data_present = Ustat(oldpathname, &sbuf) == 0;
                 renamefailed = data_present ? Urename(oldpathname, fullnewname) : 0;
-                if (renamefailed == 0) {
+                if (!renamefailed) {
+                    renamefailed = ROMlib_sidecar_move(rname, rnew);
+                    if (renamefailed && data_present) {
+                        const int sidecar_error = errno;
+                        if (Urename(fullnewname, oldpathname))
+                            warning_unexpected("could not restore data fork after sidecar move failure");
+                        errno = sidecar_error;
+                    }
+                }
+                if (!renamefailed) {
                     ROMlib_dbm_delete_inode(vcbp, ST_INO(sbuf));
                     dirid = 0;
                     ROMlib_dbm_store(vcbp, fullnewname, &dirid, TRUE);
-                    if (op == CatMove) {
-                        newfilename = strrchr(fullnewname, '/') + 1;
-                        newendname = fullnewname + strlen(fullnewname) + 1;
-                    }
-                    rnew = ROMlib_sidecar_rename_name(rname, fullnewname, newfilename);
-                    renamefailed = ROMlib_sidecar_move(rname, rnew);
                     /* TODO: eventually put a call to ROMlib_fcbrename here, but that requires
 					   us to know the parent id number, something we don't know right now. */
                 }
@@ -139,6 +182,7 @@ A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
         }
     }
 done:
+    free(replacement);
     if (oldpathname)
         free(oldpathname);
     if (newpathname)
@@ -149,6 +193,18 @@ done:
         free(rnew);
     return err;
     ALLOCAEND
+}
+
+A6(PUBLIC, OSErr, ROMlib_PBMoveOrRename, ParmBlkPtr, pb, /* INTERNAL */
+   BOOLEAN, a, LONGINT, dir, LONGINT, newdir, char*, newname, MoveOrRenameType, op)
+{
+    return move_or_rename(pb, dir, newdir, newname, op, NULL);
+}
+
+OSErr ROMlib_ufs_move_rename(CopyParam* pb)
+{
+    return move_or_rename((ParmBlkPtr)pb, CL(pb->ioDirID), CL(pb->ioNewDirID), (char*)PPR(pb->ioNewName),
+                          MoveRename, PPR(pb->ioCopyName));
 }
 
 A2(PUBLIC, OSErr, ufsPBCatMove, CMovePBPtr, pb, /* INTERNAL */
