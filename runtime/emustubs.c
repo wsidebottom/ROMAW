@@ -697,6 +697,13 @@ STUB(FontDispatch)
     return do_selector_block(fontdispatch_block, EM_D0 & 0xFFFF, FontDispatch);
 }
 
+STUB(DragManagerDispatch)
+{
+    /* Give Mixed Mode callers a distinct original vector. An installed
+       classic Drag Manager can still patch this trap. */
+    return _Unimplemented(ignoreme, ignoreme2);
+}
+
 PRIVATE ptocblock_t resource_dispatch_ptoc[] = {
     PTOCBLOCK(ReadPartialResource),  /* 0x1 */
     PTOCBLOCK(WritePartialResource), /* 0x2 */

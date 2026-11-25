@@ -186,6 +186,7 @@ extern syn68k_addr_t _Pack15(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _CommToolboxDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _OSDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _FontDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
+extern syn68k_addr_t _DragManagerDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _HighLevelFSDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _ResourceDispatch(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _MenuDispatch(syn68k_addr_t ignoreme, void** ignoreme2);

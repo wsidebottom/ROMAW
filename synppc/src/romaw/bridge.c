@@ -7698,6 +7698,40 @@ PRIVATE void* ppc_mixed_68k_pascal_target(ppc_context* ctx, uint32 descriptor, u
     return code && *code != (uint16)CWC(MIXED_MODE_TRAP) ? code : NULL;
 }
 
+static int ppc_drag_manager_dispatch(ppc_context* ctx, ROMlib_ppc_registers* r,
+                                     const ROMlib_carbon_ppc_frame* argument_frame)
+{
+    static const struct {
+        uint16 selector;
+        uint32 proc_info;
+        const char* name;
+    } entries[] = {
+        {0x0d, 0x3fe8, "TrackDrag"},
+        {0x23, 0x03d8, "WaitMouseMoved"},
+        {0x27, 0x3ffe8, "SetDragImage"},
+    };
+    for (unsigned i = 0; i < NELEM(entries); ++i) {
+        if (entries[i].selector != (uint16)r->gpr[5] || entries[i].proc_info != r->gpr[4])
+            continue;
+        const ROMlib_carbon_export* entry = ROMlib_carbon_find_export(entries[i].name, 2);
+        if (!entry || !(entry->signature & ROMLIB_CARBON_PPC_FRAME))
+            return -1;
+        ROMlib_carbon_ppc_frame call = {0};
+        for (unsigned arg = 0, widths = r->gpr[4] >> 8; widths; ++arg, widths >>= 2)
+            if (!ppc_pascal_argument(ctx, r, argument_frame, 6, arg, &call.words[arg]))
+                return -1;
+        const ROMlib_ppc_registers* saved_caller = ctx->native_caller;
+        ctx->native_caller = r;
+        const int ok = ((ROMlib_carbon_frame_entry)entry->function)(&call);
+        ctx->native_caller = saved_caller;
+        r->gpr[3] = call.words[0];
+        return ok ? 1 : -1;
+    }
+    snprintf(ctx->error, sizeof ctx->error, "Unsupported Drag Manager selector 0x%04x (ProcInfo 0x%08x)",
+             (unsigned)(uint16)r->gpr[5], (unsigned)r->gpr[4]);
+    return -1;
+}
+
 PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_registers* r,
                               const ROMlib_carbon_ppc_frame* argument_frame)
 {
@@ -7720,6 +7754,8 @@ PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_reg
         return 0;
     target = r->gpr[3];
     info = r->gpr[4];
+    if (target && target == (uint32)(uintptr_t)toolstuff[0x3ed].orig && cfm_architecture(ctx) == kPowerPCArch)
+        return ppc_drag_manager_dispatch(ctx, r, argument_frame);
     /* Carbon calls the live _ExitToShell vector. Reaching the original
        trap ends the guest first so PPC fragment terminators can run. */
     if (!info && target && target == (uint32)(uintptr_t)toolstuff[0x1f4].orig &&
