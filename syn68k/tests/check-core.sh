@@ -773,7 +773,7 @@ EOF
           "$obj/tests/publication.exe"
         fi
         objects=()
-        for name in mmu040 mmu040-memory native040-code ea; do
+        for name in mmu040 mmu040-memory cache040 native040-code ea; do
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" -ffunction-sections -fdata-sections \
             '-DSYN68K_EA_MAPPED(context)=1' -DRUNTIME -DNONDIRECT \
             -c "syn68k/src/runtime/$name.c" -o "$obj/tests/runtime-$name.o"
@@ -788,7 +788,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram; do
           fixture=native040-test
           extra=()
           case $group in
@@ -802,6 +802,8 @@ EOF
             control) fixture=native040-control-test ;;
             registers) fixture=native040-registers-test ;;
             flat) fixture=native040-flat-test ;;
+            cache) fixture=cache040-test; extra=(-DCACHE040_NATIVE_TEST) ;;
+            cache_ram) fixture=cache040-native-ram-test ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -810,7 +812,7 @@ EOF
           objects+=("$obj/tests/$group.o")
         done
         "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" syn68k/tests/native040-runner.c \
-          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate -o "$obj/tests/$executable"
+          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain -o "$obj/tests/$executable"
         "$obj/tests/$executable"
       done
     )

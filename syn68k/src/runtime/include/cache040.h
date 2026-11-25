@@ -41,6 +41,9 @@ enum Syn68kCache040Fault {
 typedef struct {
     enum Syn68kCache040Fault fault;
     uint32_t bus_address, value;
+    /* Successful operand bytes, including a CB store committed to its new
+       line before a victim-push failure. WT counts completed external beats;
+       its cache update can already be visible when the external write fails. */
     unsigned completed;
     /* Push failures retain the complete memory-addressed line for format-7
        delivery. A single dirty word uses size 4; otherwise size 16. */

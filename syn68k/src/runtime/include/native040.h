@@ -17,6 +17,7 @@
 #ifndef SYN68K_NATIVE040_H
 #define SYN68K_NATIVE040_H
 #include "mmu040-memory.h"
+#include "cache040.h"
 
 typedef struct {
     uint16_t high;
@@ -88,8 +89,22 @@ enum Syn68kNative040Operation {
     NATIVE040_FLAT_SPAN,
     NATIVE040_SPAN,
     NATIVE040_STOP,
+    NATIVE040_CACHE_ACCESS,
+    NATIVE040_CACHE_MAINTAIN,
     NATIVE040_COUNT
 };
+
+/* Physical cache calls carry only live invocation pointers. Permanent RAM can
+   bypass callbacks inside the closed kernel, including TM=0 victim pushes. */
+typedef struct {
+    Syn68kCache040* cache;
+    const Syn68kCache040Bus* bus;
+    Syn68kNative040RAM ram;
+    uint32_t address, value, attributes, cacr;
+    unsigned fc, size, writing, no_allocate;
+    unsigned caches, scope, page_shift, push;
+    Syn68kCache040Access access;
+} Syn68kNative040Cache;
 
 typedef void (*Syn68kNative040Entry)(void*);
 /* Lazily publish the build-time verified code image; NULL preserves fallback. */

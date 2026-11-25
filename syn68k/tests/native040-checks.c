@@ -18,6 +18,39 @@
 
 #include "native040.h"
 #include <assert.h>
+#include <stdlib.h>
+
+/* Emitted cache groups must remain inside the published code image. */
+Syn68kCache040Access __wrap_syn68k_cache040_access(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                   uint32_t address, unsigned fc, unsigned size, int writing,
+                                                   uint32_t value, uint32_t attributes, uint32_t cacr, int no_allocate)
+{
+    (void)cache;
+    (void)bus;
+    (void)address;
+    (void)fc;
+    (void)size;
+    (void)writing;
+    (void)value;
+    (void)attributes;
+    (void)cacr;
+    (void)no_allocate;
+    abort();
+}
+
+Syn68kCache040Access __wrap_syn68k_cache040_maintain(Syn68kCache040* cache, const Syn68kCache040Bus* bus,
+                                                     unsigned caches, unsigned scope, uint32_t address,
+                                                     unsigned page_shift, int push)
+{
+    (void)cache;
+    (void)bus;
+    (void)caches;
+    (void)scope;
+    (void)address;
+    (void)page_shift;
+    (void)push;
+    abort();
+}
 
 static void invoke(enum Syn68kNative040Operation op, Syn68kNative040MMU* frame)
 {

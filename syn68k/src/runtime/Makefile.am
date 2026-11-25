@@ -43,7 +43,7 @@ AM_CFLAGS = -DRUNTIME
 
 DIST_SOURCES = 68k.defines.scm 68k.scm alloc.c backpatch.c block.c fpu.c ea.c jit-x64.c jit-memory.c \
                mmu040.c mmu040-memory.c cache040.c mapped-cpu.c native040-code.c native040-mmu.c native040-fpu.c native040-ea.c \
-               native040-control.c native040-registers.c native040-flat.c flat-memory.c \
+               native040-control.c native040-registers.c native040-flat.c native040-cache.c flat-memory.c \
                blockinfo.c callback.c checksum.c deathqueue.c destroyblock.c \
                fpsp.c fpsp-adapter.S \
 	       diagnostics.c hash.c i486-cleanup.pl \
@@ -181,6 +181,7 @@ generated/native040.h: $(srcdir)/../../tools/build-native040.py \
                       $(srcdir)/native040-control.c $(srcdir)/include/native040-control.h $(srcdir)/include/control040.h \
                       $(srcdir)/native040-registers.c $(srcdir)/include/native040-registers.h \
                       $(srcdir)/native040-flat.c $(srcdir)/include/native040-flat.h \
+                      $(srcdir)/native040-cache.c $(srcdir)/cache040.c $(srcdir)/include/cache040.h \
                       $(srcdir)/include/trap.h \
                       $(srcdir)/mmu040.c $(srcdir)/mmu040-memory.c \
                       $(srcdir)/include/native040.h $(srcdir)/include/mmu040.h \

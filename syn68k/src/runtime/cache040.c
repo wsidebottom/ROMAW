@@ -50,9 +50,19 @@ static int push_line(Syn68kCache040Line* line, const Syn68kCache040Bus* bus, uns
     return 1;
 }
 
+static void store_line(Syn68kCache040Line* line, uint32_t address, const unsigned char* bytes, unsigned size, int dirty)
+{
+    for (unsigned i = 0; i < size; ++i) {
+        unsigned offset = (address & 15) + i;
+        line->bytes[offset] = bytes[i];
+        if (dirty)
+            line->dirty |= 1u << (offset >> 2);
+    }
+}
+
 static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040Bus* bus, unsigned bank,
                                      uint32_t address, unsigned size, uint32_t attributes, unsigned fc, unsigned way,
-                                     unsigned char* requested, Syn68kCache040Access* result)
+                                     unsigned char* requested, const unsigned char* store, Syn68kCache040Access* result)
 {
     Syn68kCache040Line* line = &cache->lines[bank][(address >> 4) & 63][way];
     Syn68kCache040Line old = *line, fresh = {.address = address & ~15u, .valid = 1};
@@ -88,6 +98,10 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
             *line = old;
         return 0;
     }
+    /* Table 4-4 D3: a copyback write miss updates the incoming line before
+       pushing its victim. The new dirty data survives a failed old push. */
+    if (store)
+        store_line(&fresh, address, store, size, 1);
     *line = fresh;
     /* The requested fill precedes the victim push. The fresh line remains
        installed if the old push faults; the result owns the captured victim. */
@@ -101,6 +115,8 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                                          uint32_t cacr, int no_allocate)
 {
     Syn68kCache040Access result = {0};
+    if (writing)
+        result.value = value & (size == 4 ? UINT32_MAX : (1u << (size * 8)) - 1);
     unsigned char bytes[4];
     for (unsigned i = 0; i < size; ++i)
         bytes[i] = value >> ((size - i - 1) * 8);
@@ -133,10 +149,18 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                     way = cache->replacement[bank] & 3;
                 unsigned char read_data[4];
                 line = fill_line(cache, bus, bank, physical, chunk, attributes, fc, way,
-                                 writing ? read_data : bytes + result.completed, &result);
+                                 writing ? read_data : bytes + result.completed, writing ? bytes + result.completed : 0,
+                                 &result);
                 cache->replacement[bank] = (cache->replacement[bank] + count) & 3;
-                if (result.fault)
+                if (result.fault) {
+                    if (writing && result.fault == CACHE040_PUSH_FAULT)
+                        result.completed += chunk;
                     return result;
+                }
+                if (line && writing) {
+                    result.completed += chunk;
+                    continue;
+                }
                 if (!line && !writing) {
                     result.completed += chunk;
                     continue;
@@ -150,13 +174,13 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                 bytes[result.completed + i] = line->bytes[(physical & 15) + i];
         }
         else if (line && writing && mode == 1) {
-            for (unsigned i = 0; i < chunk; ++i) {
-                unsigned offset = (physical & 15) + i;
-                line->bytes[offset] = bytes[result.completed + i];
-                line->dirty |= 1u << (offset >> 2);
-            }
+            store_line(line, physical, bytes + result.completed, chunk, 1);
         }
         else {
+            /* V6/D6 update all requested cache bytes before the WT bus
+               transfers. A failed transfer retains that cache update. */
+            if (line && writing)
+                store_line(line, physical, bytes + result.completed, chunk, 0);
             unsigned done = 0;
             while (done < chunk) {
                 unsigned beat = width(physical + done, chunk - done), ignored = 0;
@@ -171,9 +195,6 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                     result.bus_address = physical + done;
                     return result;
                 }
-                if (line && writing)
-                    for (unsigned i = 0; i < beat; ++i)
-                        line->bytes[(physical + done + i) & 15] = bytes[result.completed + i];
                 done += beat;
                 result.completed += beat;
             }
@@ -184,8 +205,6 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
     if (!writing)
         for (unsigned i = 0; i < size; ++i)
             result.value = (result.value << 8) | bytes[i];
-    else
-        result.value = value & (size == 4 ? UINT32_MAX : (1u << (size * 8)) - 1);
     return result;
 }
 

@@ -5,6 +5,49 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef CACHE040_NATIVE_TEST
+#include "native040.h"
+
+static Syn68kCache040Access emitted_access(Syn68kCache040* c, const Syn68kCache040Bus* b, uint32_t address, unsigned fc,
+                                           unsigned size, int writing, uint32_t value, uint32_t attributes,
+                                           uint32_t cacr, int no_allocate)
+{
+    Syn68kNative040Cache packet = {.cache = c,
+                                   .bus = b,
+                                   .address = address,
+                                   .fc = fc,
+                                   .size = size,
+                                   .writing = writing,
+                                   .value = value,
+                                   .attributes = attributes,
+                                   .cacr = cacr,
+                                   .no_allocate = no_allocate};
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_CACHE_ACCESS);
+    assert(entry);
+    entry(&packet);
+    return packet.access;
+}
+
+static Syn68kCache040Access emitted_maintain(Syn68kCache040* c, const Syn68kCache040Bus* b, unsigned caches,
+                                             unsigned scope, uint32_t address, unsigned page_shift, int push)
+{
+    Syn68kNative040Cache packet = {.cache = c,
+                                   .bus = b,
+                                   .address = address,
+                                   .caches = caches,
+                                   .scope = scope,
+                                   .page_shift = page_shift,
+                                   .push = push};
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_CACHE_MAINTAIN);
+    assert(entry);
+    entry(&packet);
+    return packet.access;
+}
+
+#define syn68k_cache040_access emitted_access
+#define syn68k_cache040_maintain emitted_maintain
+#endif
+
 static unsigned char ram[0x80000];
 static Syn68kCache040 cache;
 static unsigned cases, reads, writes, inhibit_beat;
@@ -16,6 +59,9 @@ static struct {
 } log_entries[2048];
 
 static unsigned entries;
+static const Syn68kCache040Line* observed_line;
+static uint32_t observed_address, observed_value;
+static unsigned observed_size, observed_dirty, observed_writes;
 
 static void observe(uint32_t address, unsigned size, unsigned fc, unsigned burst, unsigned beat, unsigned way,
                     unsigned writing)
@@ -55,6 +101,14 @@ static int physical_write(void* opaque, uint32_t address, const unsigned char* d
     observe(address, size, fc, burst, beat, way, 1);
     assert(size == 1 || size == 2 || size == 4);
     assert(!(address & (size - 1)));
+    if (observed_line) {
+        assert(observed_line->valid && observed_line->address == (observed_address & ~15u) &&
+               observed_line->dirty == observed_dirty);
+        for (unsigned i = 0; i < observed_size; ++i)
+            assert(observed_line->bytes[(observed_address & 15) + i] ==
+                   (unsigned char)(observed_value >> ((observed_size - i - 1) * 8)));
+        ++observed_writes;
+    }
     if (address == write_failure || (uint64_t)address + size > sizeof ram)
         return 0;
     memcpy(ram + address, data, size);
@@ -69,6 +123,8 @@ static void fixture(void)
     reads = writes = entries = 0;
     inhibit_beat = 99;
     read_failure = write_failure = UINT32_MAX;
+    observed_line = NULL;
+    observed_writes = 0;
     for (unsigned i = 0; i < sizeof ram; ++i)
         ram[i] = (i * 13 + (i >> 8) * 7) & 255;
 }
@@ -445,6 +501,100 @@ static void replacement_push_faults(void)
     ++cases;
 }
 
+static void write_callback_order(void)
+{
+    for (unsigned copyback = 0; copyback < 2; ++copyback)
+        for (unsigned offset = 0; offset <= 12; ++offset)
+            for (unsigned size = 1; size <= 4; size *= 2)
+                for (unsigned dirty = 0; dirty < 2; ++dirty) {
+                    unsigned beats = copyback                 ? (dirty ? 4 : 1)
+                                     : !(offset & (size - 1)) ? 1
+                                     : size == 2              ? 2
+                                     : (offset & 1)           ? 3
+                                                              : 2;
+                    for (unsigned failed = 0; failed <= beats; ++failed) {
+                        fixture();
+                        unsigned address = (copyback ? 0x11040 : 0x10040) + offset;
+                        unsigned prefix = size;
+                        if (copyback) {
+                            for (unsigned way = 0; way < 4; ++way) {
+                                Syn68kCache040Line* line = &cache.lines[0][4][way];
+                                line->address = 0x10040 + way * 0x400;
+                                line->valid = 1;
+                                memcpy(line->bytes, ram + line->address, 16);
+                            }
+                            cache.lines[0][4][0].dirty = dirty ? 3 : 1;
+                            for (unsigned i = 0; i < 16; ++i)
+                                cache.lines[0][4][0].bytes[i] = 0xe0 + i;
+                            if (failed)
+                                write_failure = 0x10040 + (failed - 1) * 4;
+                        }
+                        else {
+                            assert(!read_at(0x10040, 5, 4, 0).fault);
+                            cache.lines[0][4][0].dirty = dirty;
+                            if (failed) {
+                                prefix = failed == 1 ? 0 : (offset & 1) ? (failed == 2 ? 1 : 3) : 2;
+                                write_failure = address + prefix;
+                            }
+                        }
+                        unsigned char original[16];
+                        memcpy(original, ram + (address & ~15u), 16);
+                        observed_line = &cache.lines[0][4][0];
+                        observed_address = address;
+                        observed_value = 0x76543210;
+                        observed_size = size;
+                        observed_dirty = copyback ? 0 : dirty;
+                        if (copyback)
+                            for (unsigned i = 0; i < size; ++i)
+                                observed_dirty |= 1u << ((offset + i) >> 2);
+                        unsigned old_writes = writes;
+                        Syn68kCache040Access r = syn68k_cache040_access(
+                            &cache, &bus, address, 5, size, 1, observed_value, copyback ? 0x20 : 0, 0x80000000, 0);
+                        assert(r.fault ==
+                               (failed ? copyback ? CACHE040_PUSH_FAULT : CACHE040_OPERAND_FAULT : CACHE040_OK));
+                        assert(r.completed == (copyback ? size : prefix) &&
+                               observed_writes == (failed ? failed : beats) && writes == old_writes + observed_writes);
+                        unsigned mask = size == 4 ? UINT32_MAX : (1u << (size * 8)) - 1;
+                        assert(r.value == (observed_value & mask));
+                        for (unsigned i = 0; i < 16; ++i) {
+                            unsigned changed = !copyback && i >= offset && i < offset + prefix;
+                            unsigned byte = changed ? (unsigned char)(observed_value >> ((size - (i - offset) - 1) * 8))
+                                                    : original[i];
+                            assert(ram[(address & ~15u) + i] == byte);
+                        }
+                        if (copyback && failed)
+                            for (unsigned i = 0; i < 16; ++i)
+                                assert(r.push_data[i] == 0xe0 + i);
+                        ++cases;
+                    }
+                }
+    for (unsigned failed_line = 0; failed_line < 2; ++failed_line) {
+        fixture();
+        for (unsigned set = 4; set <= 5; ++set)
+            for (unsigned way = 0; way < 4; ++way) {
+                Syn68kCache040Line* line = &cache.lines[0][set][way];
+                line->address = 0x10000 + set * 16 + way * 0x400;
+                line->valid = 1;
+                line->dirty = 1;
+                memcpy(line->bytes, ram + line->address, 16);
+            }
+        /* The first cache access advances the bank-wide replacement counter,
+           so the second line replaces way one in its different set. */
+        write_failure = failed_line ? 0x10450 : 0x10040;
+        Syn68kCache040Access r =
+            syn68k_cache040_access(&cache, &bus, 0x1104f, 5, 4, 1, 0x76543210, 0x20, 0x80000000, 0);
+        assert(r.fault == CACHE040_PUSH_FAULT && r.completed == (failed_line ? 4u : 1u) && r.value == 0x76543210 &&
+               resident(0, 0x11040)->bytes[15] == 0x76);
+        Syn68kCache040Line* next = resident(0, 0x11050);
+        if (failed_line)
+            assert(next && next->bytes[0] == 0x54 && next->bytes[1] == 0x32 && next->bytes[2] == 0x10 &&
+                   next->dirty == 1);
+        else
+            assert(!next);
+        ++cases;
+    }
+}
+
 int main(void)
 {
     hit_and_allocation();
@@ -455,6 +605,7 @@ int main(void)
     counters_and_partial_operands();
     aliases_and_no_allocate();
     replacement_push_faults();
+    write_callback_order();
     printf("%u physical 68040 cache allocation/policy/burst/fault/push/scope cases passed\n", cases);
     return 0;
 }

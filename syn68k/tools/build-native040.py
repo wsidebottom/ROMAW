@@ -68,6 +68,8 @@ ROOTS = (
     "flat_span",
     "span",
     "stop",
+    "cache_access",
+    "cache_maintain",
 )
 
 
@@ -124,6 +126,8 @@ def main():
     for name in (
         "mmu040",
         "mmu040-memory",
+        "cache040",
+        "native040-cache",
         "native040-mmu",
         "native040-fpu",
         "native040-ea",

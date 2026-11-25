@@ -5,6 +5,53 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Native physical cache kernels: CPU binding pending (2026-11-25)
+
+The closed native image now includes cache-access and cache-maintenance roots
+on Windows and Linux x64. Normal physical RAM reads, fills, copyback stores
+and victim pushes execute inside that image. Alternate-space accesses retain
+checked callbacks, including FC=0 requests that must not be confused with
+TM=0 victim pushes. Packets retain live caller-owned cache/bus/RAM pointers;
+existing native operation numbers and packet layouts are unchanged.
+
+All thirteen emitted kernel groups pass on both ABIs. The new groups include
+2,166 cache-policy/burst/fault/scope cases and 299 permanent-RAM, push,
+alternate-space and bounds cases per ABI. Link-time guards abort calls to the
+original C cache-access/maintenance functions, and image extraction rejects
+live runtime imports. Linux boundaries run under ASan/UBSan. The Windows
+regression image matches the CPU archive's generated image byte for byte.
+
+The specification audit corrected cache-before-bus write ordering (table 4-4,
+D3/V6/D6). Copyback write allocation now installs the new dirty operand before
+the old victim push; write-through hits update their complete cache portion
+before external beats. A push failure retains the new cached store and counts
+its completed operand bytes. A write-through failure retains the cache update
+and reports only completed external beats. The previous implementation failed
+all four targeted callback observations. The maintained suite adds 473
+callback-visible success/fault and cross-line completion regressions.
+
+These entry points do not yet bind mapped CPU cache instructions or ordinary
+mapped operands. Locked/MOVE16/snoop operations, exception/table traffic and
+cache-push frame delivery remain part of the CPU integration work. See the
+[cache component contract](cache040.md).
+
+The corrected image passes the complete FPU-native group (1,153,398 reported
+cases), 8,107,168 MMU stream/recovery cases, 101,224 control-flow/RTE cases and
+100,906 flat MOVE16 cases. Cold/warm AOT passes 3,618,920 recovery cases per
+run: 73 cold images, 1,262,191 warm hits and zero warm compilations. Stable
+identity and malformed-cache fallback pass. These AOT regressions cover the
+existing CPU paths; guest cache instructions still await CPU binding.
+
+ROMAW was rebuilt from committed application base `0bab4a94` with this CPU
+overlay and staged at `build/68040-cache-native-stage/bin`. The complete audit
+at `build/68040-cache-native-source-audit.json` verifies 178 CPU inputs, twelve
+fixtures and all 74 staged files. The bundle is promoted to
+`build/68040-current/bin`, preserving its predecessor at
+`build/68040-pre-cache-native-bin-20261125`. Help exits zero with 7,669 output
+bytes. Isolated Browser/Speedometer 68K startups reach WaitNextEvent with
+30,883/76,938 native entries, no live checkpoint and no win_exception;
+Speedometer makes one FPU query. These are startup checks.
+
 ## Physical cache component: binding in progress (2026-11-25)
 
 `cache040.c` adds caller-owned physical data/instruction banks with 64 sets,
