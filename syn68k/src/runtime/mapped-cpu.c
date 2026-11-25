@@ -360,8 +360,25 @@ static int forced_exception(const Syn68kIntegerStep* record)
            (record->format == 2 && record->vector >= 5 && record->vector <= 7);
 }
 
+static int descriptor_lockup(const Syn68kMMU040Access* access)
+{
+    return access->cache_exception && access->cache_table && access->cache.fault == CACHE040_DESCRIPTOR_LOCKUP &&
+           access->translation.fault == MMU040_PHYSICAL_ABORT;
+}
+
+static void halt_cpu(Syn68kMappedCPU* cpu, enum Syn68kMappedHalt reason)
+{
+    cpu->halted = reason;
+    cpu->stopped = 0;
+}
+
 static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
 {
+    if (descriptor_lockup(&result->step.access)) {
+        halt_cpu(cpu, SYN68K_HALT_DESCRIPTOR_LOCKUP);
+        result->reason = SYN68K_MAPPED_HALTED;
+        return;
+    }
     result->reason = SYN68K_MAPPED_EXCEPTION;
     cpu->pc = result->step.exception_pc;
 }
@@ -399,7 +416,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         return 0;
     *result = (Syn68kMappedRun){.reason = SYN68K_MAPPED_BAD_REQUEST};
     if (!cpu || !cpu->memory || !cpu->memory->mmu || cpu->native > 1 || cpu->stopped > 1 ||
-        (cpu->stopped && cpu->movem_pending))
+        (unsigned)cpu->halted > SYN68K_HALT_DOUBLE_FAULT || (cpu->stopped && cpu->movem_pending))
         return 0;
 #ifndef GENERATE_X64_CODE
     if (cpu->native)
@@ -409,6 +426,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
     while (result->completed < budget) {
         result->step = (Syn68kIntegerStep){.next = cpu->pc};
         result->opcode = 0;
+        if (cpu->halted) {
+            result->reason = SYN68K_MAPPED_HALTED;
+            return 1;
+        }
         if (cpu->stopped) {
             result->interrupt_level = pending_interrupt();
             result->reason = result->interrupt_level ? SYN68K_MAPPED_INTERRUPT : SYN68K_MAPPED_STOPPED;
@@ -620,6 +641,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             result->step.fault_address = cpu->pc;
         }
         if (result->step.vector) {
+            if (descriptor_lockup(&result->step.access)) {
+                exception(cpu, result);
+                return 1;
+            }
             result->step.stopped = 0;
             if (result->step.move16.state == 5) {
                 Syn68kMOVE16Writeback* line = &result->step.move16;
@@ -753,11 +778,17 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
     return 1;
 }
 
-static int delivery_fault(const Syn68kIntegerStep* record, Syn68kMappedDelivery* result, Syn68kMMU040Access access,
-                          int stacking)
+static int delivery_fault(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, Syn68kMappedDelivery* result,
+                          Syn68kMMU040Access access, int stacking)
 {
     result->reason =
         record->vector == 2 || record->vector == 3 ? SYN68K_DELIVERY_DOUBLE_FAULT : SYN68K_DELIVERY_ACCESS_FAULT;
+    if (descriptor_lockup(&access)) {
+        halt_cpu(cpu, SYN68K_HALT_DESCRIPTOR_LOCKUP);
+        result->reason = SYN68K_DELIVERY_HALTED;
+    }
+    else if (result->reason == SYN68K_DELIVERY_DOUBLE_FAULT)
+        halt_cpu(cpu, SYN68K_HALT_DOUBLE_FAULT);
     result->stacking = stacking;
     result->access = access;
     return 0;
@@ -788,7 +819,7 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
         uint32 value = values[i];
         Syn68kMMU040Access access = exception_access(cpu, EM_A7 + offsets[i], sizes[i], 1, &value);
         if (access.translation.fault != MMU040_OK || access.bus_error)
-            return delivery_fault(record, result, access, 1);
+            return delivery_fault(cpu, record, result, access, 1);
     }
     if (format == 7) {
         uint16 ssw = 0;
@@ -884,7 +915,7 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
             }
             Syn68kMMU040Access access = exception_access(cpu, EM_A7 + offset, 4, 1, &value);
             if (access.translation.fault != MMU040_OK || access.bus_error)
-                return delivery_fault(record, result, access, 1);
+                return delivery_fault(cpu, record, result, access, 1);
         }
     }
     return 1;
@@ -925,9 +956,14 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     if (!result)
         return 0;
     *result = (Syn68kMappedDelivery){.reason = SYN68K_DELIVERY_BAD_REQUEST};
-    if (!cpu || !cpu->memory || !cpu->memory->mmu || !record || record->vector < 2 || record->vector > 255 ||
-        interrupt_level > 7 || (interrupt_level && (record->vector != 24 + interrupt_level || record->format)))
+    if (!cpu || !cpu->memory || !cpu->memory->mmu || !record || (unsigned)cpu->halted > SYN68K_HALT_DOUBLE_FAULT ||
+        record->vector < 2 || record->vector > 255 || interrupt_level > 7 ||
+        (interrupt_level && (record->vector != 24 + interrupt_level || record->format)))
         return 0;
+    if (cpu->halted) {
+        result->reason = SYN68K_DELIVERY_HALTED;
+        return 1;
+    }
     if ((!record->forced_trace && record->forced_trace_pc) ||
         (record->forced_trace &&
          (record->forced_trace != 1 || (record->forced_trace_pc & 1) || !forced_exception(record) ||
@@ -972,7 +1008,7 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     uint32 target = 0;
     Syn68kMMU040Access access = exception_access(cpu, cpu_state.vbr + record->vector * 4, 4, 0, &target);
     if (access.translation.fault != MMU040_OK || access.bus_error) {
-        delivery_fault(record, result, access, 0);
+        delivery_fault(cpu, record, result, access, 0);
         return 1;
     }
     cpu->pc = target;

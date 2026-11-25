@@ -650,6 +650,7 @@ static void exception_delivery_failures(void)
                 Syn68kMappedDelivery delivery;
                 assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery));
                 assert(delivery.reason == (vector <= 3 ? SYN68K_DELIVERY_DOUBLE_FAULT : SYN68K_DELIVERY_ACCESS_FAULT));
+                assert(cpu.halted == (vector <= 3 ? SYN68K_HALT_DOUBLE_FAULT : SYN68K_HALT_NONE));
                 assert(delivery.stacking == (failed != 4));
                 assert(delivery.access.fc == 5 && delivery.access.bus_error && delivery.access.request == address);
                 assert(cpu.pc == 0x10000 && EM_A7 == 0x20074);
@@ -803,6 +804,7 @@ static void fetch_frame_guards(void)
         Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
         Syn68kMappedDelivery delivery;
         assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery));
+        assert(cpu.halted == SYN68K_HALT_DOUBLE_FAULT);
         assert(delivery.reason == SYN68K_DELIVERY_DOUBLE_FAULT && delivery.stacking == (field < 16) &&
                delivery.access.request == logical);
         assert(writes == (field < 16 ? field + 1 : 16) && cpu.pc == 0x10000 && EM_A7 == 0x20100 - 60);

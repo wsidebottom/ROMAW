@@ -5,6 +5,59 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Descriptor-lockup and double-fault halts (2026-11-26)
+
+Mapped instruction execution now latches a distinct descriptor-lockup halt
+when a table search hits a disabled data-cache tag. It reports HALTED with the
+failed access snapshot before constructing a guest access-fault frame, applying
+store-retirement certificates or scheduling trace. Descriptor lockups during
+exception stack/vector accesses also halt and retain completed bus effects.
+Double-fault delivery keeps its DOUBLE_FAULT result and latches a separate
+halt reason. Subsequent run and exception-entry calls are inert despite IRQ7,
+STOP, PC changes or descriptor/cache repairs. Zero-budget run calls retain
+BUDGET without releasing the halt. Invalid halt values fail before effects.
+
+The embedding owns hardware reset and reinitializes the mapped CPU and its
+architectural state together; the new regression resets the same CPU instance.
+This is a halt/reinitialization contract, not a new reset-vector or pin model.
+Existing STOP wakeup and ordinary recoverable exception behavior are preserved.
+The new 8,154-case matrix covers all descriptor levels, four cache ways, clean
+and dirty tags, privilege/master banks, trace, instruction fetch, scalar/FPU
+reads and writes, MOVEM, PTEST, FSAVE/FRESTORE, RTE, exception stack/vector
+lockups, double faults and normal enabled-cache/miss controls. Full snapshots
+prove that halted calls do not change CPU/MMU/cache/RAM state or callbacks,
+compile native code or execute native entries. The pre-fix archive fails the
+same fixture. Cold AOT emits four images with 861 hits; fresh-process warm
+replay has 865 hits and zero compilations.
+
+The rebuilt native memory/cache image is byte-identical to the preceding
+validated image, retaining its sixteen-group Windows/Linux x64 kernel proof;
+this increment changes only CPU runner/delivery state and its public header.
+The grouped cache/reference, FPU, MMU, flat MOVE16 and full AOT gates all pass.
+They include 1,153,398 reported native FPU cases, 8,107,168 mapped stream/recovery
+cases, 101,224 control-flow cases and two 50,453-case flat MOVE16 runs. Full AOT
+passes 3,618,920 recovery cases per process, with 1,262,191 hits and zero
+compilations on warm replay; the existing cache-op/push/store and new halt
+matrices also pass cold/warm replay. Source identity, malformed-cache fallback
+and publication checks pass.
+
+ROMAW was rebuilt from application base `dc2e152e` using the exact tested CPU
+archive. The 74-file `build/68040-halt-stage/bin` bundle is promoted to
+`build/68040-current/bin`; its predecessor is retained at
+`build/68040-pre-halt-bin-20261126`. The full audit at
+`build/68040-halt-output/68040-halt-source-audit.json` verifies 179 CPU inputs,
+21 fixtures, four identical CPU archives and all staged hashes. CPU build ID is
+`260074b0e506f9d59e1ba7467758f7fc5cab64ead2677d186761e234bcfd4f55`;
+archive SHA256 is
+`532ba38d8852bd8fc36a3eb9ec001c839e29bd04d54016b4560b5400593a763d`.
+Help returns zero with 7,669 bytes. Browser reaches WaitNextEvent after 30,954
+native entries; 68K Speedometer reaches its startup loop after 77,165 with one
+FPU capability query. Both have null native checkpoints and no Windows
+exception. These are startup checks, not complete interactive workflows.
+
+Write-allocate fills, additional compound continuations, MOVE16/snoop, full
+CAS/CAS2 sequencing and the remaining FPU saved-state/restart work remain.
+
 ## Store-generated cache-push recovery (2026-11-26)
 
 Store retirement now separates the failed physical cache push from its original

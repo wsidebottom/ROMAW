@@ -26,8 +26,11 @@ enum Syn68kMappedStop {
     SYN68K_MAPPED_INTERRUPT,
     SYN68K_MAPPED_UNSUPPORTED,
     SYN68K_MAPPED_BAD_REQUEST,
-    SYN68K_MAPPED_STOPPED
+    SYN68K_MAPPED_STOPPED,
+    SYN68K_MAPPED_HALTED
 };
+
+enum Syn68kMappedHalt { SYN68K_HALT_NONE, SYN68K_HALT_DESCRIPTOR_LOCKUP, SYN68K_HALT_DOUBLE_FAULT };
 
 typedef struct {
     /* Zero-initialize before setting pc/memory. CM state survives budget stops;
@@ -44,6 +47,9 @@ typedef struct {
        Eligible interrupts are reported without consuming their pending bit;
        accepted exception entry clears this latch. Reset owners clear it. */
     unsigned stopped;
+    /* Sticky until the embedding performs a CPU reset and reinitializes this
+       instance. IRQs and exception entry cannot release a hardware halt. */
+    enum Syn68kMappedHalt halted;
 } Syn68kMappedCPU;
 
 typedef struct {
@@ -72,6 +78,11 @@ typedef struct {
    instead, retaining the stopped latch until accepted exception entry. Traced
    STOP reports trace without stopping, irrespective of the newly loaded trace
    bits. Zero budget preserves a stopped CPU and still reports BUDGET.
+   Descriptor lockup reports HALTED with its access snapshot instead of an
+   exception to deliver. A halted CPU reports HALTED before checking interrupts
+   or fetching instructions, with no bus effects. Zero budget still reports
+   BUDGET. Reset owners must reinitialize this instance and architectural state;
+   clearing a cache line or changing PC alone does not release the halt.
    Unsupported legitimate instructions stop explicitly instead of being simulated
    as successful NOPs.
    Invalid arguments return zero; a zero budget performs no bus transfers. */
@@ -82,7 +93,8 @@ enum Syn68kMappedDeliveryStop {
     SYN68K_DELIVERY_ACCESS_FAULT,
     SYN68K_DELIVERY_DOUBLE_FAULT,
     SYN68K_DELIVERY_UNSUPPORTED,
-    SYN68K_DELIVERY_BAD_REQUEST
+    SYN68K_DELIVERY_BAD_REQUEST,
+    SYN68K_DELIVERY_HALTED
 };
 
 typedef struct {
@@ -100,8 +112,10 @@ typedef struct {
    guest RTE returns through both frames. Access/address, illegal, privilege,
    format and FPU numeric/preinstruction exceptions do not use this marker.
    Access failures retain completed writes and report the failing transfer;
-   the embedding CPU must resolve delivery faults and halt on double faults
-   before executing another instruction. Format 7 accepts opcode-fetch faults
+   descriptor lockup latches the CPU halt and reports HALTED. A double fault
+   retains DOUBLE_FAULT and latches the halt as well. Further exception entries
+   report HALTED without touching state or buses; only embedding reset releases
+   either halt. Format 7 accepts opcode-fetch faults
    and reads certified by the stream runner to have unchanged data/CCR/SR/FPU
    results apart from FPU non-null entry, restored speculative EA updates and
    no attempted stores. External operand/descriptor callback changes to An or

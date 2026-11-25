@@ -19,7 +19,14 @@ Exception stack/vector accesses do not allocate on misses; hits retain the
 page's caching mode. Descriptor accesses are aligned longwords with
 write-through/no-allocation behavior. A descriptor hit with DE clear returns
 `CACHE040_DESCRIPTOR_LOCKUP`, representing the documented halt condition without
-spinning inside the host. No physical cycle is issued for that result.
+spinning inside the host. No physical cycle is issued for that result. Mapped
+instruction execution and exception-stack/vector accesses latch
+`SYN68K_HALT_DESCRIPTOR_LOCKUP` and report HALTED. Subsequent execution and
+exception entry do not touch state or buses, including with IRQ7 pending;
+repairing descriptors or changing PC does not resume the CPU. Double faults
+also latch the halt while retaining their DOUBLE_FAULT diagnostic result.
+The embedding owns reset and reinitializes the mapped CPU with architectural
+reset state. This latch does not implement reset-vector bus cycles or pin timing.
 
 Locked operands force cache-inhibited serialized traffic and push/invalidate
 matching D-cache lines, including hits while DE is clear. A disabled-cache
@@ -118,7 +125,7 @@ PD0-3 through physical MOVES and executes RTE; the CPU never silently performs
 those cleanup writes.
 
 Write-allocate fill faults, additional compound continuations, MOVE16/snoop
-transactions and descriptor-lockup halt handling remain work. Capturing a physical push
+transactions remain work. Capturing a physical push
 alone does not certify retirement of its triggering instruction.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a
@@ -133,6 +140,8 @@ callers must rebuild. Other native packet layouts are unchanged.
 
 `Syn68kIntegerStep` now includes a cache-restart certificate; stepping clients
 must rebuild. This does not add a native invocation-packet field.
+`Syn68kMappedCPU` additionally retains a halt reason and reports new HALTED
+run/delivery results; mapped execution clients must rebuild and initialize it.
 
 Run `bash syn68k/tests/check-core.sh cache040` for the ordinary Windows and
 Linux ASan/UBSan component matrices. `native040` adds emitted cache and RAM
