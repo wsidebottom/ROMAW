@@ -9,7 +9,8 @@ enum Syn68kCache040Traffic {
     CACHE040_EXCEPTION,
     CACHE040_DESCRIPTOR,
     CACHE040_LOCKED,
-    CACHE040_LOCKED_CONTINUE /* A write chunk that does not end the RMW pair. */
+    CACHE040_LOCKED_CONTINUE, /* A write chunk that does not end the RMW pair. */
+    CACHE040_MOVE16           /* TT=1 for operand beats; a push still has TT/TM=0. */
 };
 
 enum Syn68kCache040CycleKind { CACHE040_OPERAND, CACHE040_PUSH };
@@ -91,7 +92,7 @@ void syn68k_cache040_init(Syn68kCache040* cache);
    CM is taken from attributes bits 6:5; CACR bit
    31 enables data and bit 15 instruction caching. no_allocate retains normal
    hit behavior but prevents allocation on a miss (exception/table traffic).
-   MOVE16 and snoop transactions are not yet bound. */
+   Snoop transactions are not yet bound. MOVE16 has a separate line API. */
 Syn68kCache040Access syn68k_cache040_access(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
                                             unsigned size, int writing, uint32_t value, uint32_t attributes,
                                             uint32_t cacr, int no_allocate);
@@ -104,6 +105,16 @@ Syn68kCache040Access syn68k_cache040_access(Syn68kCache040*, const Syn68kCache04
 Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
                                               unsigned size, int writing, uint32_t value, uint32_t attributes,
                                               uint32_t cacr, int no_allocate, enum Syn68kCache040Traffic traffic);
+/* One nonallocating MOVE16 half. Low EA bits 1:0 are ignored; bits 3:2
+   select the first longword of the wrapped burst. bytes are in memory order.
+   Reads publish only after the entire line succeeds; writes latch all input
+   before callbacks. A write hit invalidates without pushing. Failed writes
+   retain the whole line in push_data for PD recovery, independently of their
+   OPERAND fault kind. completed counts line bytes; cycle retains the last bus
+   beat even on success. A cached read has no bus cycle (burst remains zero).
+   A NULL cache explicitly selects an uncached physical line transaction. */
+Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
+                                            int writing, unsigned char bytes[16], uint32_t attributes, uint32_t cacr);
 /* Physical CINV/CPUSH selection: caches 0=neither, 1=data, 2=instruction, 3=both;
    scope 1=line, 2=page, 3=all. page_shift is 12 or 13. Operations also affect
    disabled caches. A failed push retains captured data in the result; earlier

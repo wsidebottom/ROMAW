@@ -22,7 +22,8 @@ runner delivers the completed forced exception first, then its pending T1 trace
 before entering the forced handler. Access faults do not acquire this latch.
 
 Physical MOVE16 write faults retire normal address updates once and retain next
-PC, WB1/TT=1/SIZE=line and memory-aligned PD0-3. Guest cleanup writes the whole
+PC, SSW.TT=1/SIZE=line and memory-aligned PD0-3. WB1S is invalid (zero),
+as required by UM section 8.4.6.3. Guest cleanup writes the whole
 line without rereading source data. Entry T1 retains CT. Certified ATC aborts
 instead retain original PC/registers and WB2/PD0-3; software chooses retry or
 captured-line cleanup plus PC/register advance and trace emulation. Malformed
@@ -30,7 +31,12 @@ records are rejected before CPU or bus effects. See the current status
 checkpoint for validation and exact-source/binary audit details. MOVE16 read
 faults now use a separate certified abort: original PC/registers, line-sized read
 status and original source burst address, with no pending writeback. Guest
-repair/RTE repeats the complete source read. A true block/cache bus remains work.
+repair/RTE repeats the complete source read. Both halves now use a nonallocating
+physical line bus with a latched MMU translation. Physical beat callbacks stay
+checked; normal cache/MMU/RAM work executes inside the emitted native image.
+Malformed line diagnostics (cycle, progress, physical address or captured data)
+are rejected before frame writes. The documented same-register postincrement
+write-protection erratum invalidates a dirty cached source without writing it.
 
 ## MOVEM store continuation
 
@@ -219,9 +225,10 @@ entries with zero compilations. Native FPU helper-exclusion checks remain in
 
 ## Remaining work
 
-Further active-stack/double-fault variants, MOVE16 block transfer/writeback
-continuations and the constructed user-mode throwaway-RTE fault case require
-further work.
+Further active-stack/double-fault variants, compound descriptor-push
+continuations after consumed MOVE16 source reads and the constructed user-mode
+throwaway-RTE fault case require further work. Ordinary MOVE16 line abort,
+PD cleanup, source-push recovery and retry now use the physical line bus.
 Locked-store restrictions remain unchanged. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
 still required; these writeback regressions do not establish complete 68040 or

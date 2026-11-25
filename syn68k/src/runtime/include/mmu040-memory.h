@@ -98,6 +98,7 @@ typedef struct Syn68kMMU040Native {
     const uint32_t* flat_code_pages;
     unsigned flat_page_shift;
     void (*flat_write)(uint32_t address, unsigned size);
+    Syn68kMMU040Access (*move16)(Syn68kMMU040Memory*, uint32_t, unsigned, int, unsigned char[16]);
 } Syn68kMMU040Native;
 
 /* Byte, word and longword operands; addresses wrap modulo 2^32. Chunks stop at
@@ -116,6 +117,14 @@ Syn68kMMU040Access syn68k_mmu040_write(Syn68kMMU040Memory* memory, uint32_t logi
                                        uint32_t value);
 Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, unsigned size,
                                            uint32_t value);
+/* MOVE16 line half with one latched translation/FC/attribute set. bytes use
+   memory-address order. Read output is unchanged until all four beats succeed;
+   write input is captured before translation callbacks. Success reports a
+   complete size/completed=16 line. On failure, the scalar access describes the
+   failing longword (size=4, completed=0); cache.completed retains burst progress.
+   cache.cycle has the last bus beat; burst=0 on a successful cache-hit read. */
+Syn68kMMU040Access syn68k_mmu040_move16(Syn68kMMU040Memory*, uint32_t logical, unsigned fc, int writing,
+                                        unsigned char bytes[16]);
 /* Cache-aware translation/PTEST without an operand transfer. Ordinary PTEST
    diagnostic failures update MMUSR; physical cache failures preserve it and
    remain visible in the returned cache result. */

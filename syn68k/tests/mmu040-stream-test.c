@@ -3461,6 +3461,36 @@ static void guest_move16_line_writebacks(void)
                                                 .pc = 0x10000, .memory = &memory, .native = native_execution};
                                             Syn68kMappedRun run;
                                             assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                            if (fault && failed) {
+                                                /* Descriptor changes during a physical line cannot abort a
+                                                   latched half. They affect the next translation instead. */
+                                                assert(run.reason == (trace & 2 ? SYN68K_MAPPED_EXCEPTION
+                                                                                : SYN68K_MAPPED_BUDGET) &&
+                                                       run.step.vector == (trace & 2 ? 9u : 0u) && cpu.pc == next &&
+                                                       status() == sr && watched_read_attempts == 1);
+                                                assert(EM_A0 == a0 + (form < 2 || form == 4 ? 16 : 0) &&
+                                                       EM_A1 == a1 + (form == 4 && !alias ? 16 : 0));
+                                                for (unsigned i = 0; i < 16; ++i)
+                                                    assert(ram[destination_physical + i] == i + 1);
+                                                cpu.pc = 0x10000;
+                                                EM_A0 = a0;
+                                                EM_A1 = a1;
+                                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                unsigned read_abort = alias && fault == 2;
+                                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                                       run.step.move16.state == (read_abort ? 6u : 4u) &&
+                                                       run.step.access.request ==
+                                                           ((read_abort ? source : destination) & ~3u) &&
+                                                       !run.step.access.bus_error &&
+                                                       run.step.access.writing == !read_abort && cpu.pc == 0x10000 &&
+                                                       EM_A0 == a0 && EM_A1 == a1);
+                                                if (!read_abort)
+                                                    for (unsigned i = 0; i < 4; ++i)
+                                                        assert(run.step.move16.data[i] ==
+                                                               0x01020304u + i * 0x04040404u);
+                                                ++cases;
+                                                continue;
+                                            }
                                             unsigned state = fault ? 4 : trace & 2 ? 3 : 2;
                                             assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
                                                    run.step.format == 7 && run.step.move16.state == state &&
@@ -3496,7 +3526,7 @@ static void guest_move16_line_writebacks(void)
                                                                             0x4e7b,
                                                                             0x3001,
                                                                             0x242f,
-                                                                            fault ? 32 : 40,
+                                                                            fault ? 32 : 20,
                                                                             0x0282,
                                                                             0xffff,
                                                                             0xfff0,
@@ -3541,20 +3571,20 @@ static void guest_move16_line_writebacks(void)
                                             Syn68kMappedDelivery delivery;
                                             assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
                                             unsigned frame = 0x20100 - 60, fc = privileged ? 5 : 1;
-                                            assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && EM_A7 == frame &&
-                                                   mapped_value(frame, 2) == sr &&
-                                                   mapped_value(frame + 2, 4) == (fault ? 0x10000 : next) &&
-                                                   mapped_value(frame + 8, 4) ==
-                                                       (!fault && (trace & 2) ? 0x10000 : 0) &&
-                                                   mapped_value(frame + 12, 2) == (0x68 | fc |
-                                                                                   (fault       ? 0x400
-                                                                                    : trace & 2 ? 0x2000
-                                                                                                : 0)) &&
-                                                   mapped_value(frame + 20, 4) == (destination & ~3u) &&
-                                                   mapped_value(frame + (fault ? 16 : 18), 2) == (0xe8 | fc) &&
-                                                   !mapped_value(frame + (fault ? 18 : 16), 2) &&
-                                                   !mapped_value(frame + 14, 2) &&
-                                                   mapped_value(frame + (fault ? 32 : 40), 4) == (destination & ~3u));
+                                            assert(
+                                                delivery.reason == SYN68K_DELIVERY_COMPLETE && EM_A7 == frame &&
+                                                mapped_value(frame, 2) == sr &&
+                                                mapped_value(frame + 2, 4) == (fault ? 0x10000 : next) &&
+                                                mapped_value(frame + 8, 4) == (!fault && (trace & 2) ? 0x10000 : 0) &&
+                                                mapped_value(frame + 12, 2) == (0x68 | fc |
+                                                                                (fault       ? 0x400
+                                                                                 : trace & 2 ? 0x2000
+                                                                                             : 0)) &&
+                                                mapped_value(frame + 20, 4) == (destination & ~3u) &&
+                                                mapped_value(frame + (fault ? 16 : 18), 2) == (fault ? 0xe8 | fc : 0) &&
+                                                !mapped_value(frame + (fault ? 18 : 16), 2) &&
+                                                !mapped_value(frame + 14, 2) &&
+                                                mapped_value(frame + (fault ? 32 : 40), 4) == (destination & ~3u));
                                             for (unsigned i = 0; i < 4; ++i)
                                                 assert(mapped_value(frame + 44 + i * 4, 4) ==
                                                        0x01020304u + i * 0x04040404u);
@@ -3593,7 +3623,7 @@ static void guest_move16_line_writebacks(void)
                                             fail_physical = UINT32_MAX;
                                             ++cases;
                                         }
-    printf("%u MOVE16 captured-line/WB1/WB2/CT/retry/skip/guest-RTE cases passed\n", cases - initial_cases);
+    printf("%u MOVE16 captured-line/PD/WB2/CT/retry/skip/guest-RTE cases passed\n", cases - initial_cases);
 }
 
 static void move16_line_record_guards(void)
@@ -3845,13 +3875,38 @@ static void guest_move16_read_recovery(void)
                                             .pc = 0x10000, .memory = &memory, .native = native_execution};
                                         Syn68kMappedRun run;
                                         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                        if (fault && failed) {
+                                            /* Read beats retain their original translation. A same-page
+                                               destination translates separately after the complete read. */
+                                            unsigned next = 0x10000 + (form == 4 ? 4 : 6);
+                                            assert(move16_reads == 4 && move16_writes == (alias ? 0u : 4u));
+                                            assert(run.reason == (alias || (trace & 2) ? SYN68K_MAPPED_EXCEPTION
+                                                                                       : SYN68K_MAPPED_BUDGET) &&
+                                                   run.step.vector == (alias       ? 2u
+                                                                       : trace & 2 ? 9u
+                                                                                   : 0u) &&
+                                                   cpu.pc == (alias ? 0x10000 : next));
+                                            if (alias) {
+                                                assert(run.step.move16.state == 4);
+                                                for (unsigned i = 0; i < 4; ++i)
+                                                    assert(run.step.move16.data[i] == 0x01020304u + i * 0x04040404u);
+                                            }
+                                            else
+                                                for (unsigned i = 0; i < 16; ++i)
+                                                    assert(ram[move16_destination_physical + i] == i + 1);
+                                            cpu_state = before;
+                                            cpu.pc = 0x10000;
+                                            move16_reads = move16_writes = 0;
+                                            scalar = source & ~3u;
+                                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                        }
                                         assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
                                                run.step.format == 7 && cpu.pc == 0x10000 && !run.completed &&
                                                run.step.move16.state == 6 &&
                                                run.step.move16.address == (source & ~3u) &&
                                                run.step.access.request == scalar && !run.step.access.writing &&
                                                run.step.access.bus_error == !fault && !move16_writes &&
-                                               move16_reads == failed + !fault && status() == sr &&
+                                               move16_reads == (fault ? 0 : failed + 1) && status() == sr &&
                                                !memcmp(before.regs, cpu_state.regs, sizeof before.regs) &&
                                                !memcmp(&before.fpu, &cpu_state.fpu, sizeof before.fpu));
                                         fail_physical = UINT32_MAX;

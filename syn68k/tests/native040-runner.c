@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: main; imports fourteen regression entry points.
+  Functions: main; imports eighteen regression entry points.
 
   Origin:    Original ARDI Executor emitted 68040 regression adapter.
 
@@ -32,6 +32,9 @@ int native040_cache_traffic_check(void);
 int native040_mmu_cache_check(void);
 int native040_mmu_cache_op_check(void);
 
+int native040_cache_move16_check(void);
+int native040_mmu_move16_check(void);
+
 int main(void)
 {
     int status;
@@ -41,8 +44,9 @@ int main(void)
         (status = native040_control_check()) || (status = native040_registers_check()) ||
         (status = native040_flat_check()) || (status = native040_cache_check()) ||
         (status = native040_cache_ram_check()) || (status = native040_cache_traffic_check()) ||
-        (status = native040_mmu_cache_check()) || (status = native040_mmu_cache_op_check()))
+        (status = native040_mmu_cache_check()) || (status = native040_mmu_cache_op_check()) ||
+        (status = native040_cache_move16_check()) || (status = native040_mmu_move16_check()))
         return status;
-    puts("All sixteen emitted 68040 kernel groups passed");
+    puts("All eighteen emitted 68040 kernel groups passed");
     return 0;
 }

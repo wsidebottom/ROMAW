@@ -92,6 +92,7 @@ enum Syn68kNative040Operation {
     NATIVE040_CACHE_ACCESS,
     NATIVE040_CACHE_MAINTAIN,
     NATIVE040_MEMORY_CACHE_MAINTAIN,
+    NATIVE040_BUS_MOVE16,
     NATIVE040_COUNT
 };
 
@@ -106,6 +107,7 @@ typedef struct {
     unsigned caches, scope, page_shift, push;
     Syn68kCache040Access access;
     enum Syn68kCache040Traffic traffic;
+    unsigned char line[16];
 } Syn68kNative040Cache;
 
 typedef void (*Syn68kNative040Entry)(void*);

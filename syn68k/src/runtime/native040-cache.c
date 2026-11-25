@@ -70,6 +70,11 @@ static const Syn68kCache040Bus* bind_bus(Syn68kNative040Cache* packet, NativeCac
 __attribute__((used, noinline)) void native040_cache_access(Syn68kNative040Cache* packet)
 {
     NativeCache binding;
+    if (packet->traffic == CACHE040_MOVE16 && packet->size == 16) {
+        packet->access = syn68k_cache040_move16(packet->cache, bind_bus(packet, &binding), packet->address, packet->fc,
+                                                packet->writing, packet->line, packet->attributes, packet->cacr);
+        return;
+    }
     packet->access = syn68k_cache040_transfer(packet->cache, bind_bus(packet, &binding), packet->address, packet->fc,
                                               packet->size, packet->writing, packet->value, packet->attributes,
                                               packet->cacr, packet->no_allocate, packet->traffic);

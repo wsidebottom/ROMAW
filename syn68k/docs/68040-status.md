@@ -5,6 +5,87 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVE16 physical line integration (2026-11-26)
+
+Mapped MOVE16 now uses a separate nonallocating physical line entry. Each read
+and write half translates once, latches physical address and storage attributes,
+and starts a four-longword wrapped burst at EA[3:2], ignoring EA[1:0]. A callback
+changing a PTE and flushing the ATC affects the next translation, including the
+separate destination half; it cannot remap the remaining physical beats.
+
+Cacheable source hits use cached data. Inhibited dirty source hits push then
+invalidate before the operand read. Destination hits invalidate without pushing;
+misses never allocate. DE=0 bypasses existing tags. Replacement and the data-miss
+bypass latch follow the modeled cache policy. Read output publishes only after
+the complete half succeeds; writes snapshot all input before descriptor or data
+callbacks. TT=1 operands remain distinct from TT/TM=0 cache pushes. The cache
+active guard spans the complete half and rejects same-object callback reentry.
+The documented same-register postincrement write-protection erratum discards a
+dirty cached source while retaining its captured PD data for guest recovery.
+
+The emitted image adds a typed line-bus root and a line packet on its cache
+entry. Normal MMU walks, history changes, cache selection and RAM transfers run
+inside that closed image on Windows and Linux x64; callbacks and fault-frame
+handling remain checked. The packet ABI changed, so the CPU archive and ROMAW
+were rebuilt together. MOVE16's shared integer instruction dispatcher remains
+C; these tests establish emitted memory/cache execution, not a new native
+integer opcode emitter.
+
+Physical write faults retain all PD0-3 words and retire normal address updates
+once. WB1S is now zero, as required by MC68040UM 8.4.6.3; SSW.TT=1 identifies the
+pending line. ATC write faults instead retain WB2's line tag and original
+PC/registers. Read aborts retain the original source address and no pending
+write. Line metadata admission checks physical progress, cycle identity,
+attributes and every captured byte. Dirty inhibited source-push faults retain
+the physical push frame; guest physical MOVES cleanup and RTE retry complete
+the original instruction. Pending T1 follows completed cleanup once.
+
+Regression matrices cover 10,344 physical line cases, 802 MMU/latch/RAM cases
+and 96,333 mapped CPU/cache/frame/guest-cleanup/trace cases. Both reference and
+emitted physical fixtures cover partial failures and callback input mutation;
+the mapped fixture checks all five forms, independent critical words, cache
+states/modes, user/supervisor functions, source-push failures, malformed records
+and the write-protection erratum. Link guards reject original C MMU/cache line
+calls during native initial execution. The guest-code AOT sentinel shares the
+mapped bus; MOVE16 memory work uses the emitted kernel in both JIT and AOT.
+
+All eighteen emitted kernel groups pass on Windows x64 and Linux x64 with
+sanitized boundaries. Both generated images verify 45 roots without live
+imports or writable globals. The grouped cache/reference, FPU, MMU, flat MOVE16
+and full cold/warm AOT gates pass: 1,153,398 reported FPU cases, 8,107,168 stream/
+recovery cases, 101,224 control-flow cases and two 50,453-case flat MOVE16 runs.
+The final handlers use the guaranteed FA field for physical MOVE16 cleanup,
+independently of invalid WB1S. After those two test-offset refinements, affected
+stream groups pass again in both execution modes, and all 3,618,920 mapped
+recovery cases pass cold and warm; warm replay has 1,262,191 hits and zero
+compilations. The 96,333-case mapped line fixture passes ordinary/cold/warm;
+cold replay emits three images with two hits, and warm replay has five hits
+with zero compilations. Other cache/recovery and malformed-artifact gates pass.
+
+ROMAW was rebuilt from application base `dc2e152e` with the exact tested CPU
+archive. The 74-file bundle at `build/68040-move16-stage/bin` is promoted to
+`build/68040-current/bin`; the previous bundle is retained at
+`build/68040-pre-move16-bin-20261126`. The complete audit at
+`build/68040-move16-output/68040-move16-source-audit.json` verifies 179 CPU inputs,
+154 fixture files, four identical CPU archives and all staged files. It records
+the exact two test-offset changes after the full gate and their focused and
+cold/warm revalidation. CPU build ID is
+`ac6f97b622b45d64a2db58d7cdc0100575566db6c74ef74cffb5f2baabd028d1`;
+archive SHA256 is
+`e7a26c477424136ba41ab41f031b00747b8cd42079d6782e42cd8182dd44e51d`.
+Help returns zero with 7,669 bytes. Browser reaches WaitNextEvent after 30,951
+native entries; 68K Speedometer reaches its startup loop after 77,160 with one
+FPU capability query. Both have null native checkpoints and no Windows
+exception. These are startup checks, not complete interactive workflows.
+
+Remaining work includes snoop integration, further compound and locked
+continuations, full CAS/CAS2 sequencing and FPU busy/FPSP saved-state/restart
+work. Destination descriptor-push failures after externally consumed MOVE16
+source data still need continuation certification. This does not establish
+silicon bus timing, ROMAW-wide paged pointers, Mac OS boot or complete
+interactive FPU application compatibility. Capability advertisement remains
+unchanged.
+
 ## Copyback allocation-fault recovery (2026-11-26)
 
 A failed copyback write allocation now retains its original logical store in

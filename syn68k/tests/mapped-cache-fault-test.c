@@ -473,7 +473,7 @@ static void malformed(unsigned mode)
             record.access.cache.cycle.way = 4;
             break;
         case 9:
-            record.access.cache.cycle.traffic = 5;
+            record.access.cache.cycle.traffic = (enum Syn68kCache040Traffic)(CACHE040_MOVE16 + 1);
             break;
         case 10:
             record.access.cache.cycle.lock_end = 1;

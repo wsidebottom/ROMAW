@@ -282,3 +282,14 @@ __attribute__((used, noinline)) Syn68kMMU040Access native040_bus_write_rmw(Syn68
     NativeMemory bound;
     return syn68k_mmu040_write_rmw(native040_bind_memory(&frame, &bound), address, fc, size, value);
 }
+
+__attribute__((used, noinline)) Syn68kMMU040Access native040_bus_move16(Syn68kMMU040Memory* memory, uint32_t address,
+                                                                        unsigned fc, int writing,
+                                                                        unsigned char bytes[16])
+{
+    Syn68kNative040MMU frame = {.memory = memory};
+    if (memory && memory->native)
+        frame.ram = memory->native->ram;
+    NativeMemory bound;
+    return syn68k_mmu040_move16(native040_bind_memory(&frame, &bound), address, fc, writing, bytes);
+}

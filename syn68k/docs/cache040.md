@@ -75,7 +75,15 @@ The failed victim's captured data remains separate from the new cached operand.
 
 The caller must serialize concurrent use of a cache object. Its active guard
 rejects recursive execution of that same object from a physical callback.
-Multimaster snooping and MOVE16 transactions are not yet bound by this component.
+Multimaster snooping remains unbound. MOVE16 uses a separate nonallocating line
+entry: each half latches a translation, starts at EA[3:2], and wraps four physical
+longwords within the line. The bus reports TT=1 operand traffic separately from
+TT/TM=0 dirty pushes. Cacheable source hits use cached bytes; inhibited dirty
+source hits push/invalidate first. Destination hits invalidate without a push;
+misses never allocate. DE=0 bypasses existing tags. All source bytes publish
+only after a complete read, and the write snapshots its input before callbacks.
+Checked and emitted entries share this contract, including permanent RAM and
+mixed RAM/callback transfers. The same-object active guard spans the entire half.
 An optional MMU memory binding now routes normal operands, instruction fetch,
 table traffic and exception entry through these policies. Physical cache-fault
 metadata remains separate from the logical operand. Mapped CINV/CPUSH now
@@ -141,7 +149,7 @@ Guest logical MOVES drains WB2/WB3 before RTE; accepted final stores retain thei
 CCR/EA/FPU work, while MOVEM and early pure FPU stores keep their existing replay
 certificates. Numeric FPU exceptions still precede trace.
 
-Additional compound continuations and MOVE16/snoop transactions remain work. Capturing a physical push
+Additional compound continuations and snoop transactions remain work. Capturing a physical push
 alone does not certify retirement of its triggering instruction.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a
@@ -151,8 +159,10 @@ globals. A valid permanent, nonwrapping RAM window permits emitted byte access
 inside that window. Out-of-window and alternate-space requests use checked
 callbacks; host exceptions must be caught before returning through native frames.
 All packet pointers are live invocation bindings, not persisted guest-code data.
-Cache storage, bus, result and native cache packets grew for traffic metadata;
-callers must rebuild. Other native packet layouts are unchanged.
+Cache storage, bus and result grew for traffic metadata, and the native cache
+packet now carries a 16-byte MOVE16 line. `Syn68kMMU040Native` also adds its typed
+line-bus entry. Callers must rebuild these internal interfaces together.
+Other native packet layouts are unchanged.
 
 `Syn68kIntegerStep` now includes a cache-restart certificate; stepping clients
 must rebuild. This does not add a native invocation-packet field.

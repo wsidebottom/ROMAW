@@ -321,38 +321,82 @@ static uint32 move16(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68
     /* Each burst starts at the longword selected by its own EA and wraps
        within the line. Keep holding-register slots in memory-address order. */
     uint32 line[4];
-    for (unsigned i = 0; i < 4; ++i) {
-        unsigned word = ((source >> 2) + i) & 3;
-        line[word] = syn68k_ea_read_memory(context, source_line + word * 4, 4);
-        if (context->error) {
-            uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
-            if (step && context->memory)
-                step->move16 = (Syn68kMOVE16Writeback){.address = source & ~3u,
-                                                       .next = pc + length,
-                                                       .source = source,
-                                                       .destination = destination,
-                                                       .command = (opcode & 63) | (other << 6),
-                                                       .state = 5};
-            return next;
+    unsigned char bytes[16];
+    unsigned read_cached = 0;
+    uint32 source_physical = 0;
+    if (context->memory) {
+        unsigned fc = cpu_state.sr & SR_SUPERVISOR_BIT ? 5 : 1;
+        context->access = syn68k_mmu040_move16(context->memory, source, fc, 0, bytes);
+        if (context->access.translation.fault != MMU040_OK || context->access.bus_error) {
+            context->error = 2;
+            context->fault_address = context->access.logical;
+        }
+        else {
+            source_physical = context->access.translation.physical;
+            read_cached = context->access.cache.completed == 16 && !context->access.cache.cycle.burst;
+            for (unsigned word = 0; word < 4; ++word)
+                line[word] = (uint32)bytes[word * 4] << 24 | (uint32)bytes[word * 4 + 1] << 16 |
+                             (uint32)bytes[word * 4 + 2] << 8 | bytes[word * 4 + 3];
         }
     }
-    for (unsigned i = 0; i < 4; ++i) {
-        unsigned word = ((destination >> 2) + i) & 3;
-        syn68k_ea_write_memory(context, destination_line + word * 4, 4, line[word]);
-        if (context->error) {
-            uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
-            if (step && context->memory) {
-                step->move16 = (Syn68kMOVE16Writeback){.address = destination & ~3u,
-                                                       .next = pc + length,
-                                                       .source = source,
-                                                       .destination = destination,
-                                                       .command = (opcode & 63) | (other << 6),
-                                                       .state = 1};
-                for (unsigned j = 0; j < 4; ++j)
-                    step->move16.data[j] = line[j];
-            }
-            return next;
+    else
+        for (unsigned i = 0; i < 4; ++i) {
+            unsigned word = ((source >> 2) + i) & 3;
+            line[word] = syn68k_ea_read_memory(context, source_line + word * 4, 4);
+            if (context->error)
+                break;
         }
+    if (context->error) {
+        uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
+        if (step && context->memory)
+            step->move16 = (Syn68kMOVE16Writeback){.address = source & ~3u,
+                                                   .next = pc + length,
+                                                   .source = source,
+                                                   .destination = destination,
+                                                   .command = (opcode & 63) | (other << 6),
+                                                   .state = 5};
+        return next;
+    }
+    if (context->memory) {
+        unsigned fc = cpu_state.sr & SR_SUPERVISOR_BIT ? 5 : 1;
+        context->access = syn68k_mmu040_move16(context->memory, destination, fc, 1, bytes);
+        if (context->access.translation.fault != MMU040_OK || context->access.bus_error) {
+            context->error = 2;
+            context->fault_address = context->access.logical;
+            /* UMAD item 6: a write-protected same-register MOVE16 loses its
+               dirty cached source even though the write never reaches memory. */
+            if (mode == 4 && reg == other && read_cached &&
+                context->access.translation.fault == MMU040_WRITE_PROTECTED && context->memory->cache) {
+                Syn68kCache040* cache = context->memory->cache->state;
+                if (!cache->active)
+                    for (unsigned way = 0; way < 4; ++way) {
+                        Syn68kCache040Line* entry = &cache->lines[0][(source_physical >> 4) & 63][way];
+                        if (entry->valid && entry->dirty && entry->address == (source_physical & ~15u))
+                            entry->valid = 0;
+                    }
+            }
+        }
+    }
+    else
+        for (unsigned i = 0; i < 4; ++i) {
+            unsigned word = ((destination >> 2) + i) & 3;
+            syn68k_ea_write_memory(context, destination_line + word * 4, 4, line[word]);
+            if (context->error)
+                break;
+        }
+    if (context->error) {
+        uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
+        if (step && context->memory) {
+            step->move16 = (Syn68kMOVE16Writeback){.address = destination & ~3u,
+                                                   .next = pc + length,
+                                                   .source = source,
+                                                   .destination = destination,
+                                                   .command = (opcode & 63) | (other << 6),
+                                                   .state = 1};
+            for (unsigned j = 0; j < 4; ++j)
+                step->move16.data[j] = line[j];
+        }
+        return next;
     }
     if (!context->memory)
         syn68k_invalidate_checked_write(destination_line, 16);

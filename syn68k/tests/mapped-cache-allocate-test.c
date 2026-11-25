@@ -606,25 +606,22 @@ static void invalid_metadata(unsigned mode)
     }
 }
 
-static void move16_guard(unsigned mode)
+static void move16_nonallocation(unsigned mode)
 {
     Syn68kMappedCPU cpu = setup(mode);
     bind(mode, 0, 2, 0x9040);
     EM_A0 = 0xc000;
+    put(0xc000, 4, 0x12345678);
     put(0x8000, 2, 0xf600);
     put(0x8002, 4, 0x9040);
     fail_line = 0x9040;
     fail_beat = 0;
     Syn68kMappedRun run;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-    assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && cpu.pc == 0x8000);
-    assert(run.step.access.cache.fault == CACHE040_FILL_FAULT && !run.step.move16.state);
-    CPUState state = cpu_state;
-    unsigned count = callbacks;
-    Syn68kMappedDelivery delivery;
-    assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-    assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && callbacks == count &&
-           !memcmp(&state, &cpu_state, sizeof state) && EM_A0 == 0xc000);
+    assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1 && cpu.pc == 0x8006);
+    assert(armed && source_reads == 4 && !pushes && EM_A0 == 0xc010 && get(0x9040, 4) == 0x12345678);
+    for (unsigned way = 0; way < 4; ++way)
+        assert(cache.lines[0][4][way].valid && cache.lines[0][4][way].dirty == 15);
     ++cases;
 }
 
@@ -639,7 +636,7 @@ int main(int argc, char** argv)
         numeric(mode);
         page_prefix(mode);
         invalid_metadata(mode);
-        move16_guard(mode);
+        move16_nonallocation(mode);
     }
     printf("%u copyback allocation/frame/WB2/guest-cleanup/trace cases passed; emitted=%llu hits=%llu\n", cases,
            (unsigned long long)(syn68k_native_compile_count() - compiled),

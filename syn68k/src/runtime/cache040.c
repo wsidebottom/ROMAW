@@ -292,6 +292,83 @@ Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040* cache, const Syn68
     return result;
 }
 
+Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040* cache, const Syn68kCache040Bus* bus, uint32_t address,
+                                            unsigned fc, int writing, unsigned char bytes[16], uint32_t attributes,
+                                            uint32_t cacr)
+{
+    Syn68kCache040Access result = {0};
+    if (!bus || (!bus->read && !bus->read_cycle) || (!bus->write && !bus->write_cycle) || !bytes ||
+        (cache && cache->active) || (fc != 1 && fc != 5) || (writing != 0 && writing != 1))
+        return (Syn68kCache040Access){.fault = CACHE040_BAD_REQUEST};
+    unsigned char held[16];
+    if (writing)
+        for (unsigned i = 0; i < 16; ++i)
+            held[i] = bytes[i];
+    if (cache) {
+        cache->active = 1;
+        cache->traffic = CACHE040_MOVE16;
+    }
+    unsigned enabled = cache && (cacr & 0x80000000u), mode = (attributes >> 5) & 3;
+    Syn68kCache040Line* line = enabled ? lookup(cache, 0, address) : 0;
+    if (enabled && !line)
+        cache->bypass_data_miss = 0;
+    if (enabled && mode < 2)
+        cache->replacement[0] = (cache->replacement[0] + (!writing ? 2 : mode == 1)) & 3;
+    if (line && writing)
+        line->valid = 0;
+    else if (line && mode >= 2) {
+        unsigned way = (unsigned)(line - cache->lines[0][(address >> 4) & 63]);
+        int pushed = push_line(cache, line, bus, way, &result);
+        line->valid = 0;
+        if (!pushed)
+            goto done;
+    }
+    else if (line) {
+        for (unsigned i = 0; i < 16; ++i)
+            held[i] = line->bytes[i];
+        result.completed = 16;
+        goto publish;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        unsigned word = (((address >> 2) & 3) + i) & 3, inhibit = 0;
+        uint32_t physical = (address & ~15u) + word * 4;
+        Syn68kCache040Cycle cycle = {.attributes = attributes,
+                                     .fc = fc,
+                                     .burst = 16,
+                                     .beat = i,
+                                     .kind = CACHE040_OPERAND,
+                                     .traffic = CACHE040_MOVE16};
+        result.cycle = cycle;
+        if (enabled && !mode && writing)
+            cache->replacement[0] = (cache->replacement[0] + 1) & 3;
+        int ok = writing ? write_bus(bus, physical, held + word * 4, 4, &cycle)
+                         : read_bus(bus, physical, held + word * 4, 4, &cycle, &inhibit);
+        if (!ok) {
+            result.fault = CACHE040_OPERAND_FAULT;
+            result.bus_address = physical;
+            if (writing) {
+                result.push_address = address & ~3u;
+                result.push_size = 16;
+                result.push_word = word;
+                for (unsigned byte = 0; byte < 16; ++byte)
+                    result.push_data[byte] = held[byte];
+            }
+            goto done;
+        }
+        result.completed += 4;
+    }
+publish:
+    if (!writing)
+        for (unsigned i = 0; i < 16; ++i)
+            bytes[i] = held[i];
+done:
+    if (cache) {
+        cache->traffic = CACHE040_NORMAL;
+        cache->active = 0;
+    }
+    return result;
+}
+
 Syn68kCache040Access syn68k_cache040_maintain(Syn68kCache040* cache, const Syn68kCache040Bus* bus, unsigned caches,
                                               unsigned scope, uint32_t address, unsigned page_shift, int push)
 {

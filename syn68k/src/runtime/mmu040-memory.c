@@ -45,7 +45,7 @@ static int cache_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
         *inhibit = 0;
         return 1;
     }
-    const Syn68kCache040Bus* bus = memory->cache->bus;
+    const Syn68kCache040Bus* bus = memory->cache ? memory->cache->bus : 0;
     if (bus) {
         if (bus->read_cycle)
             return bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit);
@@ -71,7 +71,7 @@ static int cache_write(void* opaque, uint32_t address, const unsigned char* byte
         binding->raw_abort |= status < 0;
         return status > 0;
     }
-    const Syn68kCache040Bus* bus = memory->cache->bus;
+    const Syn68kCache040Bus* bus = memory->cache ? memory->cache->bus : 0;
     if (bus) {
         if (bus->write_cycle)
             return bus->write_cycle(bus->opaque, address, bytes, size, cycle);
@@ -352,6 +352,67 @@ Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t 
     return transfer(memory, logical, fc, size, 1, 1, &value);
 }
 
+Syn68kMMU040Access syn68k_mmu040_move16(Syn68kMMU040Memory* memory, uint32_t logical, unsigned fc, int writing,
+                                        unsigned char bytes[16])
+{
+#if !defined(SYN68K_NATIVE040_TEMPLATE)
+    if (memory && memory->native && memory->native->move16)
+        return memory->native->move16(memory, logical, fc, writing, bytes);
+#endif
+    uint32_t first = logical & ~3u;
+    Syn68kMMU040Access result = {.logical = first, .request = first, .fc = fc, .size = 4, .writing = !!writing};
+    result.translation.fault = MMU040_BAD_REQUEST;
+    if (!memory || !memory->mmu || !bytes || (fc != 1 && fc != 5) || (writing != 0 && writing != 1) ||
+        memory->aligned_transfers > 1 || !valid_cache(memory) ||
+        (memory->cache && (memory->cache->state->active || memory->cache->traffic != CACHE040_NORMAL)) ||
+        (memory->native && memory->native->flat) || (!memory->cache && (writing ? !memory->write : !memory->read)))
+        return result;
+    unsigned char held[16];
+    if (writing) {
+        for (unsigned i = 0; i < 16; ++i)
+            held[i] = bytes[i];
+        result.value = (uint32_t)held[(first & 15)] << 24 | (uint32_t)held[(first & 15) + 1] << 16 |
+                       (uint32_t)held[(first & 15) + 2] << 8 | held[(first & 15) + 3];
+        if (memory->native && memory->native->write_attempted)
+            *memory->native->write_attempted = 1;
+    }
+    Syn68kMMU040Access translated = syn68k_mmu040_memory_translate(memory, first, fc, writing, 0);
+    result.translation = translated.translation;
+    result.cache = translated.cache;
+    result.cache_table = translated.cache_table;
+    result.cache_exception = translated.cache_exception;
+    if (result.translation.fault != MMU040_OK)
+        return result;
+    CacheMemory binding = {.memory = memory};
+    Syn68kCache040Bus bus = cache_bus(&binding);
+    result.cache =
+        syn68k_cache040_move16(memory->cache ? memory->cache->state : 0, &bus, result.translation.physical, fc, writing,
+                               held, result.translation.attributes, memory->cache ? *memory->cache->cacr : 0);
+    if (result.cache.fault) {
+        result.cache_exception = 1;
+        if (result.cache.fault == CACHE040_BAD_REQUEST) {
+            result.translation.fault = MMU040_BAD_REQUEST;
+            return result;
+        }
+        result.bus_error = 1;
+        if (result.cache.fault == CACHE040_OPERAND_FAULT) {
+            result.logical = result.request = (first & ~15u) | (result.cache.bus_address & 15);
+            result.translation.physical = result.cache.bus_address;
+            if (writing) {
+                unsigned word = result.cache.bus_address & 15;
+                result.value = (uint32_t)held[word] << 24 | (uint32_t)held[word + 1] << 16 |
+                               (uint32_t)held[word + 2] << 8 | held[word + 3];
+            }
+        }
+        return result;
+    }
+    if (!writing)
+        for (unsigned i = 0; i < 16; ++i)
+            bytes[i] = held[i];
+    result.size = result.completed = 16;
+    return result;
+}
+
 int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
 {
     if (!access || !ssw || !access->cache_exception || access->cache.fault != CACHE040_PUSH_FAULT ||
@@ -362,7 +423,7 @@ int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access* access, uint16_t* ssw
     const Syn68kCache040Cycle* cycle = &push->cycle;
     if ((push->push_size != 4 && push->push_size != 16) || (push->push_address & (push->push_size - 1)) ||
         push->interrupt_level || cycle->kind != CACHE040_PUSH || cycle->fc || cycle->attributes || cycle->way > 3 ||
-        (unsigned)cycle->traffic > CACHE040_LOCKED_CONTINUE || cycle->lock_end ||
+        (unsigned)cycle->traffic > CACHE040_MOVE16 || cycle->lock_end ||
         cycle->locked != (cycle->traffic == CACHE040_LOCKED || cycle->traffic == CACHE040_LOCKED_CONTINUE))
         return 0;
     if (push->push_size == 16) {

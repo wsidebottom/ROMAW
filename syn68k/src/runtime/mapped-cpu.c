@@ -220,6 +220,33 @@ static int replay_store_fault(const Syn68kIntegerStep* record)
            (push || access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))));
 }
 
+/* New line packets retain a scalar failing-word diagnostic for the frame
+   interface. Verify its independent physical burst progress and PD snapshot. */
+static int move16_cycle_fault(const Syn68kIntegerStep* record)
+{
+    const Syn68kMMU040Access* access = &record->access;
+    const Syn68kCache040Access* cache = &access->cache;
+    if (!access->cache_exception || cache->fault != CACHE040_OPERAND_FAULT)
+        return 1; /* Legacy uncached diagnostic or an ATC fault. */
+    const Syn68kCache040Cycle* cycle = &cache->cycle;
+    if (access->cache_table || access->translation.fault != MMU040_OK || !access->bus_error || cache->completed > 12 ||
+        (cache->completed & 3) || cycle->traffic != CACHE040_MOVE16 || cycle->kind != CACHE040_OPERAND ||
+        cycle->burst != 16 || cycle->beat != cache->completed / 4 || cycle->way > 3 || cycle->locked ||
+        cycle->lock_end || cache->interrupt_level || cycle->fc != access->fc ||
+        cycle->attributes != access->translation.attributes || cache->bus_address != access->translation.physical ||
+        (access->request & 15) != ((record->move16.address + cache->completed) & 15))
+        return 0;
+    if (access->writing) {
+        if (cache->push_size != 16 || cache->push_word != ((cache->bus_address >> 2) & 3) ||
+            cache->push_address != ((cache->bus_address & ~15u) | (record->move16.address & 15)))
+            return 0;
+        for (unsigned byte = 0; byte < 16; ++byte)
+            if (cache->push_data[byte] != (unsigned char)(record->move16.data[byte / 4] >> (24 - (byte & 3) * 8)))
+                return 0;
+    }
+    return 1;
+}
+
 /* MOVE16's bus callback boundary still reports the failing aligned scalar.
    Its format-7 offer separately retains the original line request and PD0-3. */
 static int move16_write_fault(const Syn68kIntegerStep* record, int candidate)
@@ -233,10 +260,11 @@ static int move16_write_fault(const Syn68kIntegerStep* record, int candidate)
         record->store_link_displacement || record->fpu_vector || record->fpu_ea || record->movem_state ||
         record->restartable_read || record->stopped || (record->exception_pc & 1) || (line->next & 1) ||
         (line->address & 3) || !access->writing || access->rmw || access->size != 4 || access->completed ||
-        access->cache.fault == CACHE040_FILL_FAULT || (access->request & 3) || access->logical != access->request ||
-        record->fault_address != access->logical || (access->fc != 1 && access->fc != 5) ||
-        (access->request & ~15u) != (line->address & ~15u) || access->value != line->data[(access->request >> 2) & 3] ||
-        !syn68k_mmu040_access_ssw(access, &ssw) || (access->bus_error && (ssw & 0x400)))
+        access->cache.fault == CACHE040_FILL_FAULT || !move16_cycle_fault(record) || (access->request & 3) ||
+        access->logical != access->request || record->fault_address != access->logical ||
+        (access->fc != 1 && access->fc != 5) || (access->request & ~15u) != (line->address & ~15u) ||
+        access->value != line->data[(access->request >> 2) & 3] || !syn68k_mmu040_access_ssw(access, &ssw) ||
+        (access->bus_error && (ssw & 0x400)))
         return 0;
     if (candidate) {
         unsigned mode = (line->command >> 3) & 7;
@@ -271,8 +299,8 @@ static int move16_read_fault(const Syn68kIntegerStep* record, int candidate)
         access->size != 4 || access->completed || (access->request & 3) || access->logical != access->request ||
         record->fault_address != access->logical || (access->fc != 1 && access->fc != 5) ||
         (access->request & ~15u) != (line->address & ~15u) || line->data[0] || line->data[1] || line->data[2] ||
-        line->data[3] || !syn68k_mmu040_access_ssw(access, &ssw) || (access->bus_error && (ssw & 0x400)) ||
-        record->next != record->exception_pc)
+        line->data[3] || !move16_cycle_fault(record) || !syn68k_mmu040_access_ssw(access, &ssw) ||
+        (access->bus_error && (ssw & 0x400)) || record->next != record->exception_pc)
         return 0;
     if (candidate) {
         unsigned mode = (line->command >> 3) & 7;
@@ -910,7 +938,7 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
                 int physical = record->move16.state != 4;
                 value = offset == 8 && record->move16.state == 3 ? record->move16.trace_pc
                         : offset == 12                           ? (uint32)ssw << 16
-                        : offset == 16                           ? (0xe8 | record->access.fc) << (physical ? 0 : 16)
+                        : offset == 16                           ? (physical ? 0 : (0xe8 | record->access.fc) << 16)
                         : offset == 20 || offset == (physical ? 40u : 32u) ? record->move16.address
                         : offset >= 44                                     ? record->move16.data[(offset - 44) / 4]
                                                                            : 0;
