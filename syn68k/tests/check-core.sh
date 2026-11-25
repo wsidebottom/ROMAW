@@ -404,6 +404,7 @@ EOF
       root=$(cd "$(dirname "$0")/../.." && pwd)
       cd "$root"
       cc=${CC:-x86_64-w64-mingw32-gcc}
+      mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
       mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay"
