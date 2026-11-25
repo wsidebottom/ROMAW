@@ -6466,6 +6466,17 @@ PUBLIC int ROMlib_carbon_reference_function(const char* library, const char* nam
     return 0;
 }
 
+static int ppc_matches_reference_vector(ppc_context* ctx, uint32 vector, const ROMlib_carbon_reference* reference,
+                                        uint32 code_offset)
+{
+    if (!reference || !reference->function || code_offset >= reference->code_size)
+        return 0;
+    const uint32* target = vector ? ppc_memory(ctx, vector, 8, FALSE) : NULL;
+    const uint32* anchor = reference->function;
+    const uint32 code = CL(anchor[0]) - reference->code_offset + code_offset;
+    return target && CL(target[0]) == code && target[1] == anchor[1];
+}
+
 PUBLIC int ROMlib_ppc_completion(void* proc, void* pb)
 {
     ppc_context* ctx = ppc_active_context;
@@ -7169,6 +7180,22 @@ PRIVATE int ppc_definition_resource_prefix(ppc_context* ctx, uint32 descriptor)
            (!memcmp(prefix + 4, "WDEF", 4) || !memcmp(prefix + 4, "CDEF", 4));
 }
 
+static void ppc_sync_saved_menu_icon(ppc_context* ctx, uint32 vector, const uint32* args)
+{
+    ROMlib_carbon_reference menus;
+    if (!ROMlib_carbon_probe_reference("MenusLib", "HideMenuBar", &menus) || menus.code_offset != 0x1c80 ||
+        menus.code_size != 0x162a4 || !ppc_matches_reference_vector(ctx, vector, &menus, 0x3558))
+        return;
+    MenuHandle menu = ppc_classic_menu_handle(ctx, args[0]);
+    if (!menu)
+        return;
+    const uint8 type = args[2];
+    Handle icon = type && type <= 5 && args[3] ? ppc_memory(ctx, args[3], sizeof *icon, FALSE) : NULL;
+    /* Stock MDEF drawing also needs the icon attached by the saved worker.
+       Both managers borrow the original handle. */
+    ROMlib_set_menu_item_icon(menu, (int16)args[1], icon ? type : 0, icon);
+}
+
 /* Entry from an actual 68K JSR or patched A-line vector to an AAFE routine
    descriptor. selectorInfo carries the dispatch convention and selector size;
    prepared records describe the selected target with that selector omitted. */
@@ -7317,6 +7344,8 @@ PUBLIC int ROMlib_ppc_mixed_entry(uint32 descriptor, uint32* return_address)
     memcpy(saved, cpu_state.regs, sizeof saved);
     if (!ppc_invoke_callback(ctx, vector, args, n, &answer))
         return 0;
+    if (!answer && n == 4 && info == 0x36e0 && dispatch == kD0DispatchedPascalStackBased && selector == 6)
+        ppc_sync_saved_menu_icon(ctx, vector, args);
     memcpy(cpu_state.regs, saved, sizeof saved);
     if (menu_bar_hook) {
         EM_A7 = cursor;
@@ -8082,15 +8111,11 @@ PUBLIC int ROMlib_carbon_toolbox_vector_matches(uint32_t address, const ROMlib_c
                                                uint32_t code_offset)
 {
     ppc_context* ctx = ppc_active_context;
-    if (!ctx || ctx->error[0] || (address & 3) || address < 0xe00 || address >= 0x1e00 || !reference ||
-        !reference->function || code_offset >= reference->code_size)
+    if (!ctx || ctx->error[0] || (address & 3) || address < 0xe00 || address >= 0x1e00)
         return 0;
     const uint32* slot = ppc_memory(ctx, address, sizeof *slot, FALSE);
     const uint32 vector = slot ? ppc_callback_vector(ctx, CL(*slot)) : 0;
-    const uint32* target = vector ? ppc_memory(ctx, vector, 8, FALSE) : NULL;
-    const uint32* anchor = reference->function;
-    const uint32 code = CL(anchor[0]) - reference->code_offset + code_offset;
-    return target && CL(target[0]) == code && target[1] == anchor[1];
+    return ppc_matches_reference_vector(ctx, vector, reference, code_offset);
 }
 
 PUBLIC int ROMlib_carbon_call_toolbox_vector(uint32_t address, uint32_t info, uint32_t selector,
