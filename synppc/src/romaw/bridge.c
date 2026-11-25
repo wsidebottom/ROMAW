@@ -6241,7 +6241,8 @@ PUBLIC OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4])
         return ppc_update_display_notifications(ctx, selector, args);
     if (selector == 0x51f) {
         uint32* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
-        return ppc_dm_get_display_id((GDHandle)MR(args[0]), output, (Boolean)args[2]);
+        /* The Pascal trap has already decoded the stack words to host order. */
+        return ppc_dm_get_display_id((GDHandle)SYN68K_TO_US_CHECK0(args[0]), output, (Boolean)args[2]);
     }
     if (selector == 0x520) {
         HIDDEN_GDHandle* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
