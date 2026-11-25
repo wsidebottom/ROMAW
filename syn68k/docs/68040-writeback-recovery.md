@@ -216,7 +216,7 @@ coverage adds 1,479,936 cases, including zero-byte faults at every lane and
 one/two/three-byte prefixes. Numeric sources include finite, quiet-NaN and
 masked signaling-NaN values; enabled signaling NaNs suppress stores before a
 fault can occur. A focused 1,052-case guard group checks callback effects and
-malformed offers. The combined stream matrix contains 6,440,676 cases;
+malformed offers. The combined stream matrix contains 8,107,168 cases;
 control-flow/RTE coverage adds 101,224 cases. Malformed partial
 writeback records cover both physical and ATC faults without changing CPU state
 or accessing the bus on rejection. Within the total, a focused 2,508,032-case
@@ -232,9 +232,21 @@ certification and live-SP RTE recovery, as detailed in the MMU integration notes
 `bash syn68k/tests/check-core.sh aot-x64` also runs the physical matrix and
 record guards through cold and warm persistent native code. The warm run must
 restore cached code without new compilations. The combined replay/physical
-writeback fixture has 2,785,674 cases per run; its warm run restores 1,261,837
+writeback fixture has 3,618,920 cases per run; its warm run restores 1,262,191
 entries with zero compilations. Native FPU helper-exclusion checks remain in
 `bash syn68k/tests/check-core.sh fpu-native`.
+
+The mapped unaligned locked fixture adds 32,857 cases across checked execution,
+native checked memory and a native RAM window that excludes operand storage.
+CAS.W/L and CAS2.W/L exercise every unaligned line offset, natural physical
+subcycle failures, disjoint second-page protection/missing faults and 32-bit
+address wrap. Guest handlers drain WB1/WB2 plus an independent CAS2 tail,
+restore DFC and registers, and return through deferred trace. Locked operand
+reads remain counted after the fault, and any attempted cleanup reread fails.
+The matrix includes 22 malformed-record checks with unchanged CPU/MMU/cache/RAM
+state and no bus activity. The grouped MMU and cold/warm AOT runners include
+this fixture. These are writeback recovery tests; they do not establish all
+normal page-crossing bus behavior.
 
 ## Remaining work
 
@@ -242,7 +254,13 @@ Further active-stack/double-fault variants, compound descriptor-push
 continuations after consumed MOVE16 source reads and the constructed user-mode
 throwaway-RTE fault case require further work. Ordinary MOVE16 line abort,
 PD cleanup, source-push recovery and retry now use the physical line bus.
-Locked-store restrictions remain unchanged. General busy-frame, encoding,
+Compound locked cache-push faults after a partial operand remain outside the
+certified continuation contract. Normal misaligned page-crossing accesses still
+need the first-page repetition required by MC68040UM section 4.1; checked/native
+agreement alone does not establish that external bus behavior. A 64-case local
+probe reproduces the missing repetition with both raw callbacks and disabled
+cache bindings, checked and emitted execution, both page sizes and read/write
+accesses. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
 still required; these writeback regressions do not establish complete 68040 or
 paged Toolbox compatibility.

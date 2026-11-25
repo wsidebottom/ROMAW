@@ -322,6 +322,45 @@ static unsigned pending_interrupt(void)
     return 0;
 }
 
+/* A locked write can stop only between its naturally aligned physical beats.
+   The logical writeback remains the original full scalar. Cached diagnostics
+   must independently describe the exact failed bus beat and LOCKE boundary. */
+static int locked_store_progress(const Syn68kIntegerStep* record)
+{
+    const Syn68kMMU040Access* access = &record->access;
+    if (!record->store_locked)
+        return 1;
+    if (access->completed >= access->size)
+        return 0;
+    unsigned position = 0;
+    while (position < access->completed) {
+        uint32 address = access->request + position;
+        unsigned left = access->size - position;
+        position += (address & 1) || left < 2 ? 1 : (address & 2) || left < 4 ? 2 : 4;
+    }
+    if (position != access->completed)
+        return 0;
+    if (!access->bus_error || access->cache.fault == CACHE040_PUSH_FAULT)
+        return 1; /* ATC and physical-push validators retain their own contracts. */
+    if (!access->cache_exception)
+        return access->cache.fault == CACHE040_OK;
+    const Syn68kCache040Access* cache = &access->cache;
+    const Syn68kCache040Cycle* cycle = &cache->cycle;
+    uint32 address = access->request + position;
+    unsigned left = access->size - position;
+    unsigned width = (address & 1) || left < 2 ? 1 : (address & 2) || left < 4 ? 2 : 4;
+    unsigned end = !record->store_tail_valid && position + width == access->size;
+    return cache->fault == CACHE040_OPERAND_FAULT && !access->cache_table && !cache->interrupt_level &&
+           cycle->kind == CACHE040_OPERAND && cycle->locked == 1 && cycle->lock_end == end && !cycle->burst &&
+           !cycle->beat && cycle->way < 4 &&
+           (cycle->traffic == CACHE040_LOCKED || cycle->traffic == CACHE040_LOCKED_CONTINUE) &&
+           cycle->fc == access->fc && (cycle->attributes & 0x60) == 0x40 &&
+           (cycle->attributes & ~0x60u) == (access->translation.attributes & ~0x60u) &&
+           cache->completed <= access->completed &&
+           cache->bus_address == (uint32)(access->translation.physical + cache->completed) &&
+           (cache->bus_address & 0xfff) == (address & 0xfff);
+}
+
 static int scalar_store_fault(const Syn68kIntegerStep* record)
 {
     const Syn68kMMU040Access* access = &record->access;
@@ -329,7 +368,8 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
     uint16 push_ssw;
     int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     /* Producers finish nonmemory work or capture LINK's deferred assignments.
-       Only locked transfers retain the stricter alignment/progress contract. */
+       Writeback slots retain the full operand, including unaligned locked
+       writes whose earlier physical subcycles have already completed. */
     return record->vector == 2 && record->format == 7 && record->store_state && record->store_state <= 3 &&
            !record->restartable_read && record->store_locked <= 1 && access->rmw == record->store_locked &&
            (!record->store_link_displacement ||
@@ -342,19 +382,16 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
             (!record->movem_state && (record->store_tail_fc == 1 || record->store_tail_fc == 5) &&
              ((record->store_tail_valid == 1 && !record->store_locked && access->size == 4 &&
                record->store_state >= 2) ||
-              (record->store_tail_valid == 2 && record->store_locked && (access->size == 2 || access->size == 4) &&
-               !(record->store_tail_address & (access->size - 1)))))) &&
-           !(record->store_next & 1) && access->writing && (access->completed < access->size || push) &&
+              (record->store_tail_valid == 2 && record->store_locked && (access->size == 2 || access->size == 4))))) &&
+           !(record->store_next & 1) && access->writing == 1 && (access->completed < access->size || push) &&
            access->logical == (uint32)(access->request + access->completed) &&
-           (access->size == 1 || access->size == 2 || access->size == 4) &&
-           (!(access->request & (access->size - 1)) || !record->store_locked) &&
+           (access->size == 1 || access->size == 2 || access->size == 4) && locked_store_progress(record) &&
            syn68k_mmu040_operand_status(access, &ssw) &&
            ((access->fc == 1 || access->fc == 5) ||
             (!record->store_locked && !record->fpu_vector && !record->store_tail_valid && access->bus_error &&
              (ssw & 0x18) == 0x10)) &&
            !(access->bus_error && (ssw & 0x400)) &&
-           (!access->completed ||
-            (!record->store_locked && (push || access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
+           (!access->completed || push || access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)));
 }
 
 /* T0 also traces pipeline-serializing instructions; comparing PCs cannot

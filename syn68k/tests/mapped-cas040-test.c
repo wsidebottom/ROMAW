@@ -56,7 +56,7 @@ static int cycle_read(void* opaque, uint32_t a, unsigned char* bytes, unsigned n
     *inhibit = 0;
     int ok = physical_read(opaque, a, bytes, n, c->attributes, c->fc);
     record(a, bytes, n, 0, c);
-    if (capturing && c->kind == CACHE040_OPERAND && a >= 0x9000 && a < 0x9100) {
+    if (c->kind == CACHE040_OPERAND && c->locked && a >= 0x9000 && a < 0x9100) {
         ++operand_reads;
         if (protect && operand_reads == protect) {
             put(protected_pte, 4, protected_value);

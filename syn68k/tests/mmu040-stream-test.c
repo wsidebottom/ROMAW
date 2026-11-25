@@ -5567,15 +5567,19 @@ static void locked_writeback_guards(void)
                 Syn68kMappedRun run;
                 Syn68kMappedDelivery delivery;
                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.store_state == 1 &&
+                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.store_state == 2 &&
                        run.step.store_tail_valid == 2 && run.step.store_locked == 1 && run.step.access.rmw &&
-                       run.step.access.writing && cpu.pc == 0x10000 && watched_read_attempts == 1 &&
+                       run.step.access.writing && cpu.pc == 0x10006 && watched_read_attempts == 1 &&
                        watched_tail_reads == 1 && !watched_successes && !watched_tail_successes);
-                CPUState before = cpu_state;
-                unsigned old_reads = reads, old_writes = writes;
+                supervisor = 1;
+                put32(pte(0x10000), 0xc001);
+                put32(pte(0x20000), 0x18001);
+                put32(physical(cpu_state.vbr + 8), 0x10040);
                 assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-                assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == old_reads && writes == old_writes &&
-                       !memcmp(&before, &cpu_state, sizeof before));
+                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040);
+                unsigned frame = EM_A7;
+                assert(mapped_value(frame + 32, 4) == run.step.store_tail_address &&
+                       mapped_value(frame + 36, 4) == run.step.store_tail);
                 ++cases;
             }
     for (unsigned kind = 2; kind <= 3; ++kind) {
@@ -5586,13 +5590,12 @@ static void locked_writeback_guards(void)
         Syn68kMappedRun run;
         Syn68kMappedDelivery delivery;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-        assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.store_state < 2 &&
-               cpu.pc == 0x10000 && status() == 0x201f && !watched_successes);
-        CPUState before = cpu_state;
-        unsigned old_reads = reads, old_writes = writes;
+        assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 && run.step.store_state == 2 &&
+               cpu.pc == 0x10004 && status() == 0x2014 && !watched_successes);
+        put32(physical(cpu_state.vbr + 8), 0x10040);
         assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-        assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == old_reads && writes == old_writes &&
-               !memcmp(&before, &cpu_state, sizeof before));
+        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040);
+        assert(mapped_value(EM_A7 + 40, 4) == 0x28000 + lane);
         ++cases;
     }
     locked_write_setup(0, 1, 0, 2, 0, 0, 31);
@@ -5670,7 +5673,7 @@ static void locked_writeback_record_guards(void)
             record.access.size = 1;
             break;
         case 11:
-            record.store_tail_address += 2;
+            record.access.writing = 2;
             break;
         case 12:
             record.store_tail_fc = 2;
@@ -7261,6 +7264,8 @@ static void partial_writeback_record_guards(void)
                 break;
             case 7:
                 record.store_locked = record.access.rmw = 1;
+                record.access.request = 0x28000;
+                record.access.logical = 0x28002; /* Aligned long cannot finish only two bytes. */
                 break;
             case 8:
                 record.access.writing = 0;
