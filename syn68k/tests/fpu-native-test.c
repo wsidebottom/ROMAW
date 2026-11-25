@@ -311,7 +311,7 @@ static void scalar_destination_checks(void)
 static unsigned conditional_checks(void)
 {
     static const unsigned counters[] = {0, 1, 2, 0x7fff, 0x8000, 0xffff};
-    unsigned cases = 0;
+    unsigned cases = 0, prefetch_exits = 0;
     for (unsigned kind = 0; kind < 7; ++kind)
         for (unsigned encoded = 0; encoded < (kind < 2 ? 32U : 1U); ++encoded) {
             unsigned opcode = kind == 0   ? 0xf280 | encoded
@@ -359,6 +359,21 @@ static unsigned conditional_checks(void)
                             assert(result.vector == 7); // A taken FTRAPcc remains an exceptional exit.
                             continue;
                         }
+                        syn68k_fpu_trace_result(&result, before.sr, 0x1000);
+                        if (kind <= 2 && (displacement & 1)) {
+                            // An odd speculative branch target is exceptional even
+                            // when its condition is false or its counter expires.
+                            assert(result.vector == 3 && result.format == 2 && result.exception_pc == 0x1000);
+                            cpu_state = before;
+                            observed_selector = 0;
+                            capture_selector = 1;
+                            assert(syn68k_x64_execute(code) == 0x7654);
+                            capture_selector = 0;
+                            assert(observed_selector == 11 && !memcmp(&before, &cpu_state, sizeof before));
+                            ++prefetch_exits;
+                            continue;
+                        }
+                        assert(!result.vector);
                         CPUState expected = cpu_state;
                         cpu_state = before;
                         forbidden = 1;
@@ -410,6 +425,7 @@ static unsigned conditional_checks(void)
     printf(
         "%u direct FPU branch/counter/byte/untaken-trap/FPCC/boundary cases passed; normal paths reject semantic helpers\n",
         cases);
+    printf("%u odd speculative FPU branch targets reached checked exits before CPU commits\n", prefetch_exits);
     return cases;
 }
 
