@@ -56,6 +56,9 @@ def make_probe(destination):
         "ModalDialog",
         "DisposeWindow",
         "GetMainDevice",
+        "NewGWorld",
+        "GetGWorldDevice",
+        "DisposeGWorld",
         "PPCOpenSync",
         "PPCCloseSync",
         "LMGetEventQueue",
@@ -229,6 +232,19 @@ def make_probe(destination):
     p.equal("repeated ownership retains the same application layer")
     p.data[0x300:0x308] = struct.pack(">4h", 50, 50, 100, 150)
     p.data[0x310:0x315] = b"\x04Test"
+    # Finder uses InterfaceLib to get the device for its drag image.
+    p.emit(0x387E02D8, 0x38800020, 0x38BE0300, 0x38C00000, 0x80FE02D0, 0x39000002)
+    p.call("NewGWorld")
+    p.expect(0, "allocate a drag image that uses the existing screen device")
+    p.emit(0x807E02D8)
+    p.call("GetGWorldDevice")
+    p.emit(0x809E02D0)
+    p.equal("the direct InterfaceLib import returns the drag image's graphics device")
+    p.emit(0x807E02D8)
+    p.call("DisposeGWorld")
+    p.emit(0x38600000)
+    p.call("GetGWorldDevice")
+    p.expect(0, "a missing GWorld has no graphics device")
     p.emit(0x38600000, 0x389E0300, 0x38BE0310, 0x38C00001, 0x38E00000, 0x3900FFFF, 0x39200001, 0x39400000)
     p.call("NewCWindow")
     p.nonzero("create a real native color window")

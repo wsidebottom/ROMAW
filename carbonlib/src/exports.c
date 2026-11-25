@@ -7688,7 +7688,7 @@ static const ROMlib_carbon_export exports[] = {
      (UINT64_C(4) << 3) | (UINT64_C(5) << 6) | (UINT64_C(4) << 9) | (UINT64_C(4) << 12) | (UINT64_C(5) << 15), 0x1c1,
      "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY},
     {"GetGWorld", ROMlib_carbon_get_gworld, PTR2(0), 0xab0c4},
-    {"GetGWorldDevice", ROMlib_carbon_gworld_device, PTR1(5), 0xab3c8},
+    {"GetGWorldDevice", ROMlib_carbon_gworld_device, PTR1(5), 0xab3c8, "InterfaceLib"},
     {"GetGWorldPixMap", ROMlib_carbon_gworld_pixmap, PTR1(5), 0xab508},
     {"GetPixBaseAddr", ROMlib_carbon_pix_base_addr, PTR1(5), 0xab304},
     {"GetPixelsState", ROMlib_carbon_pixels_state, PTR1(4), 0xab28c},
