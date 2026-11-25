@@ -17,7 +17,22 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' 'aot-x64' 'configured-header' 'control-register' 'fpsp' 'fpu' 'fpu-native' 'generator-dependency' 'jit-x64-benchmark' 'jit-x64' 'mmu040' 'native040' 'rte' 'threaded-dispatch'
+    printf '%s\n' 'aot-x64' 'cache040' 'configured-header' 'control-register' 'fpsp' 'fpu' 'fpu-native' 'generator-dependency' 'jit-x64-benchmark' 'jit-x64' 'mmu040' 'native040' 'rte' 'threaded-dispatch'
+    ;;
+  cache040)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      output="$root/syn68k/obj/tests/cache040"
+      mkdir -p "$output"
+      sources=("$root/syn68k/src/runtime/cache040.c" "$root/syn68k/tests/cache040-test.c")
+      flags=(-std=gnu17 -g -Wall -Wextra -Werror -I"$root/syn68k/src/runtime/include")
+      "${CC:-x86_64-w64-mingw32-gcc}" "${flags[@]}" -O2 "${sources[@]}" -o "$output/cache040-test.exe"
+      "$output/cache040-test.exe"
+      gcc "${flags[@]}" -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
+        "${sources[@]}" -o "$output/cache040-test"
+      ASAN_OPTIONS=detect_leaks=1 "$output/cache040-test"
+    )
     ;;
   configured-header)
     (

@@ -5,6 +5,50 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Physical cache component: binding in progress (2026-11-25)
+
+`cache040.c` adds caller-owned physical data/instruction banks with 64 sets,
+four ways, 16-byte lines, per-longword dirty bits and independent two-bit
+replacement counters. The reference is
+[MC68040UM chapter 4](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf).
+The component handles critical-word-first fills, write-through/no-allocation,
+copyback allocation, cache-inhibited data aliases, disabled-cache bypass and
+explicit physical line/page/all invalidation or push selection. It does not
+invalidate instruction data automatically after data-cache writes.
+
+Fill failures discard clean victims and restore dirty victims. A trailing fill
+fault can satisfy the original operand without allocating a line. The first
+beat's cache-inhibit response prevents allocation; later responses are ignored.
+Successful fills precede victim copyback. Push faults retain the complete
+memory-addressed victim for subsequent exception delivery, while preserving
+completed bus writes and maintenance prefixes. No CPU fault frame is delivered
+by this component itself.
+
+`bash syn68k/tests/check-core.sh cache040` groups 1,693 Windows cases and the
+same Linux ASan/UBSan cases. Tests observe backing RAM, transfer order, all
+sets/ways and replacement states, byte/word/long alignment, dirty-word masks,
+fill/inhibit/error cases, maintenance scopes and push failures. The component
+is included in the runtime archive; native-kernel publication and mapped CPU
+binding remain work. In particular, locked/MOVE16/snoop transactions, exception
+traffic classification and cache-push frame delivery still need integration.
+This checkpoint does not claim working mapped CINV/CPUSH or a complete cache.
+The archive-linked cache fixture also passes all 1,693 cases. Grouped validation
+passes 8,107,168 MMU stream/recovery, 101,224 control-flow/RTE and 100,906 flat
+MOVE16 cases. Complete cold/warm AOT passes 3,618,920 recovery cases per run:
+73 cold images, 1,262,191 warm hits and zero warm compilations. Stable identity
+and malformed-cache fallback pass. The emitted kernel is unchanged; the cache
+component is not yet part of that image.
+
+ROMAW was rebuilt from committed application base `49f26a6f` with this CPU
+overlay and staged at `build/68040-cache-storage-stage/bin`. The audit at
+`build/68040-cache-storage-source-audit.json` verifies 177 CPU inputs, nine
+fixtures and all 74 staged files. The bundle is promoted to
+`build/68040-current/bin`, preserving its predecessor at
+`build/68040-pre-cache-storage-bin-20261125`. Help exits zero with 7,669 output
+bytes. Isolated Browser/Speedometer 68K startups reach WaitNextEvent with
+30,864/76,933 native entries, no live checkpoint and no win_exception;
+Speedometer makes one FPU query. These are startup checks.
+
 ## MOVE16 read-fault recovery (2026-11-25)
 
 Mapped MOVE16 data-read faults now offer a certified abort without retiring PC

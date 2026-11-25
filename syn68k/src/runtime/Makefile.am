@@ -42,7 +42,7 @@ dce_fixup=@dce_fixup@
 AM_CFLAGS = -DRUNTIME
 
 DIST_SOURCES = 68k.defines.scm 68k.scm alloc.c backpatch.c block.c fpu.c ea.c jit-x64.c jit-memory.c \
-               mmu040.c mmu040-memory.c mapped-cpu.c native040-code.c native040-mmu.c native040-fpu.c native040-ea.c \
+               mmu040.c mmu040-memory.c cache040.c mapped-cpu.c native040-code.c native040-mmu.c native040-fpu.c native040-ea.c \
                native040-control.c native040-registers.c native040-flat.c flat-memory.c \
                blockinfo.c callback.c checksum.c deathqueue.c destroyblock.c \
                fpsp.c fpsp-adapter.S \
@@ -59,7 +59,7 @@ DIST_SOURCES = 68k.defines.scm 68k.scm alloc.c backpatch.c block.c fpu.c ea.c ji
 	       include/mapping.h include/profile.h \
 	       include/rangetree.h include/translate.h \
 	       include/trap.h include/ea.h include/mmu040.h \
-               include/mmu040-memory.h include/mapped-cpu.h include/fpu.h include/integer.h include/native040.h \
+               include/mmu040-memory.h include/cache040.h include/mapped-cpu.h include/fpu.h include/integer.h include/native040.h \
                include/native040-ea.h include/native040-memory.h include/fpu_convert.h include/fpu-captured.h \
                include/control040.h include/native040-control.h include/native040-registers.h include/native040-flat.h
 
@@ -77,7 +77,7 @@ all: libsyn68k.a
 	$(CC) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c $(LOCAL_INCLUDES) $< -o $@
 
 OBJS =	block.o diagnostics.o hash.o rangetree.o translate.o alloc.o ea.o jit-x64.o jit-memory.o \
-        mmu040.o mmu040-memory.o mapped-cpu.o native040-code.o \
+        mmu040.o mmu040-memory.o cache040.o mapped-cpu.o native040-code.o \
 	blockinfo.o trap.o destroyblock.o callback.o init.o flat-memory.o interrupt.o	\
 	profile.o deathqueue.o checksum.o	\
 	backpatch.o						\
