@@ -228,6 +228,8 @@ int ROMlib_carbon_toolbox_vector_matches(uint32_t address, const ROMlib_carbon_r
 /* Read the shared Carbon ownership count or release one owner. An output of
    zero after release delegates final disposal to the caller. */
 int ROMlib_carbon_window_owners(uint32_t window, int change, uint32_t* owners, uint32_t* status);
+/* Release metadata held by an initialized WindowsLib after a native close. */
+void ROMlib_carbon_window_closed(uint32_t window);
 int ROMlib_carbon_windows_set_bounds(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_windows_move_structure(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_windows_get_content_color(ROMlib_carbon_ppc_frame* call);

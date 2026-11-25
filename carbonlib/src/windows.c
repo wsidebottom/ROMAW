@@ -8,7 +8,8 @@
   Functions: ROMlib_carbon_set_port_window_port, ROMlib_carbon_set_window_standard_state,
              ROMlib_carbon_set_window_user_state, ROMlib_carbon_window_from_port, ROMlib_carbon_window_hilited,
              ROMlib_carbon_clear_window_title, ROMlib_carbon_control_property, ROMlib_carbon_window_port,
-             ROMlib_carbon_window_port_bounds, ROMlib_carbon_window_owners, ROMlib_carbon_windows_move_structure,
+             ROMlib_carbon_window_port_bounds, ROMlib_carbon_window_owners, ROMlib_carbon_window_closed,
+             ROMlib_carbon_windows_move_structure,
              ROMlib_carbon_windows_set_bounds, ROMlib_carbon_windows_get_content_color,
              ROMlib_carbon_windows_set_content_color,
              ROMlib_carbon_window_activation, ROMlib_carbon_window_group,
@@ -127,6 +128,18 @@ static int window_result(ROMlib_carbon_ppc_frame* call, int32_t status)
 {
     call->words[0] = (uint32_t)status;
     return 1;
+}
+
+void ROMlib_carbon_window_closed(uint32_t window)
+{
+    ROMlib_carbon_reference ref;
+    if (ROMlib_carbon_probe_reference("WindowsLib", "RecalculateAllWindowTitleWidths", &ref) &&
+        ref.code_offset == 0x2488 && ref.code_size == 0x1cd10 && ref.toc && !ref.toc_offset &&
+        ref.toc_size == 0x27ec && cfp_toc(&ref, 0x241c)) {
+        /* WindowsLib removes the hash entry and releases its collection before
+           freeing the window. The native CloseWindow path owns the rest. */
+        cfp_private(&ref, 0x2150, &window, 1, NULL);
+    }
 }
 
 static int windows_metadata_record(const ROMlib_carbon_reference* ref, uint32_t window, uint32_t* record)

@@ -53,6 +53,7 @@
 #include "rsys/romaw.h"
 #include "rsys/options.h"
 #include "rsys/launch.h"
+#include "carbonlib/include/carbonlib.h"
 
 PUBLIC BOOLEAN ROMlib_dirtyvariant = FALSE;
 
@@ -647,6 +648,7 @@ static void close_window_in_layer(WindowPtr w)
     if (MR(CurDeactive) == w)
         HIDDEN_RAW_SET(CurDeactive_H, 0);
     WINDCALL((WindowPtr)w, wDispose, 0);
+    ROMlib_carbon_window_closed(US_TO_SYN68K(w));
 }
 
 P1(PUBLIC pascal trap, void, CloseWindow, WindowPtr, w)
