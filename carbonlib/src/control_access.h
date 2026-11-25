@@ -92,8 +92,19 @@ static int carbon_GetTabContentRect(ROMlib_carbon_ppc_frame* call)
 
 static int carbon_GetBevelButtonMenuHandle(ROMlib_carbon_ppc_frame* call)
 {
-    Byte* output = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], 4, 1) : NULL;
-    return control_tag_access(call, "GetBevelButtonMenuHandle", 0, TICK("mhnd"), 4, output, false);
+    if (!call->words[0] || !call->words[1] ||
+        !ROMlib_carbon_try_guest_memory(call->words[0], sizeof(HIDDEN_ControlPtr), 0) ||
+        !ROMlib_carbon_try_guest_memory(call->words[1], sizeof(uint32_t), 1))
+        return carbon_control_result(call, paramErr);
+
+    /* The live Control Manager distinguishes unsupported menu tags from an
+       empty menu. The CDEF's direct read cannot make that distinction. */
+    const ROMlib_carbon_ppc_frame arguments = {
+        .words = {call->words[0], 0, TICK("mhnd"), sizeof(uint32_t), call->words[1], 0},
+    };
+    uint32_t result;
+    return ROMlib_carbon_call_toolbox_vector(0x17cc, 0xffba8, 0x13, &arguments, &result) &&
+           carbon_control_result(call, (int16_t)result);
 }
 
 /* Both Appearance re-exports set the CDEF's two-byte icon transform. */
