@@ -14,6 +14,7 @@
              ROMlib_menu_item_count,
              ROMlib_menu_item_enabled, ROMlib_set_menu_item_command,
              ROMlib_menu_item_property, ROMlib_menu_restore_bar, ROMlib_menu_show_bar,
+             ROMlib_menu_sync_item_removal, ROMlib_menu_sync_saved_insert,
              ROMlib_mbdfcall, ROMlib_mentosix, ROMlib_menu_event, ROMlib_menucall, ROMlib_menuhelper, ROMlib_mitemtop,
              ROMlib_prepare_quit_menu_key, ROMlib_set_menu_item_key_glyph, ROMlib_set_menu_item_modifiers,
              ROMlib_set_menu_item_enabled, ROMlib_set_menu_item_refcon, ROMlib_set_menu_item_refcon2,
@@ -520,6 +521,22 @@ static menu_shortcut* detach_menu_tail(MenuHandle menu, INTEGER after)
             link = &entry->next;
     }
     return tail;
+}
+
+PUBLIC void ROMlib_menu_sync_saved_insert(MenuHandle menu, INTEGER after, int inserted, int old_count,
+                                         uint32_t old_flags)
+{
+    change_menu_shortcuts(menu, after, inserted);
+    /* The saved manager already maintains the classic enableFlags word. */
+    for (int index = MAX(after + 1, 32 - inserted); index < 32 && index <= old_count; ++index)
+        ROMlib_set_menu_item_enabled(menu, index + inserted, (old_flags & (UINT32_C(1) << index)) != 0);
+}
+
+PUBLIC void ROMlib_menu_sync_item_removal(MenuHandle menu, INTEGER item, boolean_t first_extended_enabled)
+{
+    change_menu_shortcuts(menu, item, -1);
+    if (item < 32)
+        ROMlib_set_menu_item_enabled(menu, 31, first_extended_enabled);
 }
 
 PUBLIC int ROMlib_menu_item_count(MenuHandle menu)
@@ -1163,13 +1180,12 @@ P2(PUBLIC pascal trap, void, DelMenuItem, MenuHandle, mh, /* IMIV-56 */
             if (Munger((Handle)mh, (char*)stashstring - (char*)STARH(mh), (Ptr)0, SIZEOFMEXT + U(stashstring[0]),
                        (Ptr) "", 0) < 0)
                 return;
-            change_menu_shortcuts(mh, item, -1);
             if (item < 32) {
                 unchangedmask = (UINT32_C(1) << item) - 1;
                 HxX(mh, enableFlags) =
                     CL(((Hx(mh, enableFlags) >> 1) & ~unchangedmask) | (Hx(mh, enableFlags) & unchangedmask));
-                ROMlib_set_menu_item_enabled(mh, 31, item32_enabled);
             }
+            ROMlib_menu_sync_item_removal(mh, item, item32_enabled);
         }
         dirtymenusize(mh);
     }

@@ -7,6 +7,7 @@
 
   Functions: ROMlib_carbon_canonical_cf_callbacks, ROMlib_carbon_call_cfm, ROMlib_carbon_call_romaw_service,
              ROMlib_carbon_call_original_toolbox_trap, ROMlib_carbon_call_register_vector, ROMlib_carbon_call_toolbox_vector,
+             ROMlib_carbon_toolbox_vector_matches,
              ROMlib_carbon_dispose_descriptor, ROMlib_carbon_find_symbol, ROMlib_carbon_guest_memory, ROMlib_carbon_invoke_callback,
              ROMlib_carbon_native_ppc_callback, ROMlib_carbon_timezone_storage,
              ROMlib_carbon_invoke_frame, ROMlib_carbon_invoke_mixed_upp, ROMlib_carbon_invoke_pascal,
@@ -8075,6 +8076,21 @@ static OSErr ppc_update_folder_notifications(ppc_context* ctx, uint32 procedure,
     entry->refcon = refcon;
     *tail = entry;
     return noErr;
+}
+
+PUBLIC int ROMlib_carbon_toolbox_vector_matches(uint32_t address, const ROMlib_carbon_reference* reference,
+                                               uint32_t code_offset)
+{
+    ppc_context* ctx = ppc_active_context;
+    if (!ctx || ctx->error[0] || (address & 3) || address < 0xe00 || address >= 0x1e00 || !reference ||
+        !reference->function || code_offset >= reference->code_size)
+        return 0;
+    const uint32* slot = ppc_memory(ctx, address, sizeof *slot, FALSE);
+    const uint32 vector = slot ? ppc_callback_vector(ctx, CL(*slot)) : 0;
+    const uint32* target = vector ? ppc_memory(ctx, vector, 8, FALSE) : NULL;
+    const uint32* anchor = reference->function;
+    const uint32 code = CL(anchor[0]) - reference->code_offset + code_offset;
+    return target && CL(target[0]) == code && target[1] == anchor[1];
 }
 
 PUBLIC int ROMlib_carbon_call_toolbox_vector(uint32_t address, uint32_t info, uint32_t selector,

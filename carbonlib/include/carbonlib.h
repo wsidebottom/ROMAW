@@ -222,6 +222,9 @@ int ROMlib_carbon_reference_function(const char* library, const char* name, ROMl
 
 /* Probe an optional companion which the guest may load on its first call. */
 int ROMlib_carbon_probe_reference(const char* library, const char* name, ROMlib_carbon_reference* reference);
+/* Compare a live Toolbox vector with a code offset in an already linked PEF. */
+int ROMlib_carbon_toolbox_vector_matches(uint32_t address, const ROMlib_carbon_reference* reference,
+                                       uint32_t code_offset);
 /* Read the shared Carbon ownership count or release one owner. An output of
    zero after release delegates final disposal to the caller. */
 int ROMlib_carbon_window_owners(uint32_t window, int change, uint32_t* owners, uint32_t* status);

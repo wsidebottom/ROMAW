@@ -77,6 +77,48 @@ static MenuHandle carbon_menu_handle(uint32_t address)
     return (MenuHandle)master;
 }
 
+static int menu_uses_saved_edit(uint32_t slot, uint32_t code_offset)
+{
+    ROMlib_carbon_reference menus;
+    return ROMlib_carbon_probe_reference("MenusLib", "HideMenuBar", &menus) && menus.code_offset == 0x1c80 &&
+           menus.code_size == 0x162a4 && ROMlib_carbon_toolbox_vector_matches(slot, &menus, code_offset);
+}
+
+static int carbon_InsertMenuItem(ROMlib_carbon_ppc_frame* call)
+{
+    if (!menu_uses_saved_edit(0x0e98, 0x5c84))
+        return carbon_vector_InsertMenuItem(call);
+    MenuHandle menu = carbon_menu_handle(call->words[0]);
+    const int count = ROMlib_menu_item_count(menu);
+    const int16_t after = call->words[2];
+    if (count < 0 || after < 0 || after >= count)
+        return carbon_vector_InsertMenuItem(call);
+    const uint32_t flags = MI_ENABLE_FLAGS(menu);
+    if (!carbon_vector_InsertMenuItem(call))
+        return 0;
+    const int inserted = ROMlib_menu_item_count(menu) - count;
+    if (inserted > 0)
+        ROMlib_menu_sync_saved_insert(menu, after, inserted, count, flags);
+    return 1;
+}
+
+static int carbon_DeleteMenuItem(ROMlib_carbon_ppc_frame* call)
+{
+    if (!menu_uses_saved_edit(0x1348, 0x5e6c))
+        return carbon_vector_DeleteMenuItem(call);
+    MenuHandle menu = carbon_menu_handle(call->words[0]);
+    const int count = ROMlib_menu_item_count(menu);
+    const int16_t item = call->words[1];
+    if (item <= 0 || item > count)
+        return carbon_vector_DeleteMenuItem(call);
+    const boolean_t first_extended_enabled = ROMlib_menu_item_enabled(menu, 32);
+    if (!carbon_vector_DeleteMenuItem(call))
+        return 0;
+    if (ROMlib_menu_item_count(menu) == count - 1)
+        ROMlib_menu_sync_item_removal(menu, item, first_extended_enabled);
+    return 1;
+}
+
 enum { menu_invalid = -5623, menu_attributes_mask = 0xfffff, menu_attributes_with_side_effects = 0x0d };
 
 static int menu_result(ROMlib_carbon_ppc_frame* call, uint32 status)
