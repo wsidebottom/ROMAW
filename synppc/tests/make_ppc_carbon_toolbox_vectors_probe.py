@@ -7492,6 +7492,8 @@ def control_manager_operations(probe):
         call("GetControlData", [pane, 0, tag, 2, data, count], -30591)
         word(20, 0xA5317EC4, "short pane procedure reads leave the destination intact")
         word(16, 4, "short pane procedure reads report the complete size")
+    p.emit(0x38600000)  # The range comparison used the callback counter as scratch.
+    save(32)
     call("IdleControls", [window])
     word(32, 1, "IdleControls invokes the registered pane callback")
     call("SetKeyboardFocus", [window, pane, 9])
