@@ -38,7 +38,7 @@ typedef struct {
      BSR/JSR target instead restarts after certified rollback of its SP update. */
     uint32_t store_next, store_trace_pc;
     unsigned store_ccr, store_state;
-    /* 1: indexed/PC-relative MOVEM read continuation, including restart fetch faults;
+    /* 1: MOVEM read continuation, including restart fetch faults;
        2: successful RTE restored CM/EA. */
     uint32_t movem_ea;
     unsigned movem_state;

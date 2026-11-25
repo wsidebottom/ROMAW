@@ -2403,6 +2403,373 @@ static void guest_partial_read_restarts(void)
                         }
 }
 
+static unsigned movem_fixture_physical(unsigned logical, unsigned boundary)
+{
+    return logical < boundary ? 0x10000 + page_size - (boundary - logical) : 0x14000 + logical - boundary;
+}
+
+static unsigned movem_fixture_value(unsigned logical, unsigned size, unsigned boundary)
+{
+    unsigned result = 0;
+    for (unsigned i = 0; i < size; ++i)
+        result = result << 8 | ram[movem_fixture_physical(logical + i, boundary)];
+    return result;
+}
+
+static unsigned movem_prefix_setup(unsigned page8k, unsigned privileged, unsigned kind, unsigned size, unsigned phase,
+                                   unsigned mutation, unsigned* opcode, unsigned* length)
+{
+    fixture(page8k, privileged);
+    memset(&cpu_state, 0, sizeof cpu_state);
+    syn68k_fpu_reset();
+    cpu_state.usp = 0x20e00;
+    cpu_state.isp = 0x20100;
+    cpu_state.msp = 0x20200;
+    for (unsigned i = 0; i < 16; ++i)
+        cpu_state.regs[i].ul.n = 0x11220000 + i;
+    EM_A7 = privileged ? cpu_state.isp : cpu_state.usp;
+    EM_A0 = kind == 2 || kind == 4 ? 0x20020 : 0x20040;
+    EM_D2 = 0;
+    set_status((privileged ? 0x2000 : 0) | 17);
+    const unsigned eas[] = {0x10, 0x18, 0x28, 0x39, 0x30, 0x38};
+    *opcode = (size == 2 ? 0x4c80 : 0x4cc0) | eas[kind];
+    *length = kind < 2 ? 4 : kind == 3 ? 8 : 6;
+    code_word(0x10000, *opcode);
+    code_word(0x10002, 3);
+    if (kind == 2)
+        code_word(0x10004, 32);
+    else if (kind == 3) {
+        code_word(0x10004, 2);
+        code_word(0x10006, 0x0040);
+    }
+    else if (kind == 4) {
+        code_word(0x10004, 0x2915); // ([A0],D2.L), with D2 zero.
+        put32(physical(0x20020), 0x20040);
+        put32(physical(0x20060), 0x20080);
+    }
+    else if (kind == 5) {
+        code_word(0x10004, 0x4040);
+        put32(pte(0x4000), (privileged ? 0x18000 : 0x10000) | 1);
+    }
+    put32(physical(0x20040), 0x11223344);
+    put32(physical(0x20044), 0x55667788);
+    put32(physical(0x20080), 0xaabbccdd);
+    put32(physical(0x20084), 0xdeadbeef);
+    unsigned failed = physical(phase == 2 ? 0x20020 : phase == 1 ? 0x10004 : 0x10002);
+    fail_physical = failed;
+    if (mutation && mutation <= 12) {
+        read_callback_kind = 1;
+        read_callback_address = failed;
+        read_callback_register = mutation - 1;
+        read_callback_mask = mutation == 12 ? 1 : 0x10;
+    }
+    else if (mutation <= 22 && mutation) {
+        replay_read_physical = failed;
+        replay_read_mutation = mutation - 12;
+    }
+    else if (mutation == 23) {
+        trace_read_physical = failed;
+        trace_read_sr = 0x8000;
+    }
+    return failed;
+}
+
+static void guest_movem_prefix_restarts(void)
+{
+    static unsigned char expected_ram[sizeof ram];
+    unsigned initial = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned kind = 0; kind < 6; ++kind)
+                for (unsigned size = 2; size <= 4; size += 2)
+                    for (unsigned phase = 0; phase < (kind < 2 ? 1U : kind == 4 ? 3U : 2U); ++phase)
+                        for (unsigned mutation = 0; mutation < 24; ++mutation) {
+                            unsigned opcode, length;
+                            movem_prefix_setup(page8k, privileged, kind, size, phase, mutation, &opcode, &length);
+                            Syn68kIntegerStep component;
+                            assert(syn68k_integer_step(0x10000, &memory, &component));
+                            assert(component.vector == 2 && component.format == 7 && !component.movem_state);
+                            CPUState expected = cpu_state;
+                            memcpy(expected_ram, ram, sizeof ram);
+                            unsigned expected_reads = reads;
+                            movem_prefix_setup(page8k, privileged, kind, size, phase, mutation, &opcode, &length);
+                            Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                            Syn68kMappedRun run;
+                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                   run.step.format == 7 && !run.step.movem_state &&
+                                   run.step.restartable_read == !mutation &&
+                                   !memcmp(&expected, &cpu_state, sizeof expected) &&
+                                   !memcmp(expected_ram, ram, sizeof ram) && reads == expected_reads && !writes);
+                            fail_physical = UINT32_MAX;
+                            unsigned before_reads = reads, before_writes = writes;
+                            Syn68kMappedDelivery delivery;
+                            if (mutation) {
+                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == before_reads &&
+                                       writes == before_writes && !memcmp(&expected, &cpu_state, sizeof expected));
+                            }
+                            else {
+                                supervisor = 1;
+                                put32(pte(0x10000), 0xc001);
+                                put32(pte(0x20000), 0x18001);
+                                cpu_state.vbr = 0x20000;
+                                put32(physical(cpu_state.vbr + 8), 0x10040);
+                                unsigned next_base = kind == 2 || kind == 4 ? 0x20060 : 0x20080;
+                                const unsigned handler[] = {0x207c, next_base >> 16, next_base & 65535, 0x4e73};
+                                for (unsigned i = 0; i < sizeof handler / sizeof *handler; ++i)
+                                    code_word(0x10040 + 2 * i, handler[i]);
+                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                                       !(mapped_value(0x20100 - 60 + 12, 2) & 0xf000));
+                                assert(syn68k_mapped_cpu_run(&cpu, 2, &run));
+                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 && !cpu.movem_pending);
+                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                unsigned first = kind == 3 || kind == 5 ? 0x11223344 : 0xaabbccdd;
+                                unsigned second = kind == 3 || kind == 5 ? 0x55667788 : 0xdeadbeef;
+                                if (size == 2) {
+                                    second = (int32)(int16)first;
+                                    first = (int32)(int16)(first >> 16);
+                                }
+                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 + length &&
+                                       EM_D0 == first && EM_D1 == second && !cpu.movem_pending &&
+                                       EM_A0 == (kind == 1 ? 0x20080 + 2 * size : next_base) &&
+                                       status() == ((privileged ? 0x2000 : 0) | 17));
+                            }
+                            ++cases;
+                        }
+    printf("%u MOVEM pre-operand mask/extension/pointer restart and callback guards passed\n", cases - initial);
+}
+
+/* CM restores the calculated EA and repeats the complete live register list
+   (MC68040UM 8.4.6.7), including partial postincrement and overwritten An. */
+static void guest_nonindexed_movem_restarts(void)
+{
+    const unsigned ccrs[] = {0, 15, 16, 31};
+    unsigned initial = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned kind = 0; kind < 5; ++kind)
+                for (unsigned reg = 0; reg < (kind < 3 ? 8U : 1U); ++reg)
+                    for (unsigned size = 2; size <= 4; size += 2)
+                        for (unsigned list = 0; list < 3; ++list)
+                            for (unsigned completed = 0; completed < size; ++completed)
+                                for (unsigned aligned = 0; aligned < 2; ++aligned)
+                                    for (unsigned physical_fault = 0; physical_fault < 2; ++physical_fault)
+                                        for (unsigned trace = 0; trace < 4; ++trace)
+                                            for (unsigned c = 0; c < sizeof ccrs / sizeof *ccrs; ++c) {
+                                                if (privileged && kind < 3 && reg == 7 && (completed & 1))
+                                                    continue; // This fixture delivers through an even supervisor SP.
+                                                fixture(page8k, privileged);
+                                                memory.aligned_transfers = aligned;
+                                                memset((void*)cpu_state.interrupt_pending, 0,
+                                                       sizeof cpu_state.interrupt_pending);
+                                                cpu_state.usp = 0x20e00;
+                                                cpu_state.isp = 0x20100;
+                                                cpu_state.msp = 0x20200;
+                                                for (unsigned i = 0; i < 16; ++i)
+                                                    cpu_state.regs[i].ul.n = 0x11220000 + i;
+                                                EM_A7 = privileged ? cpu_state.isp : cpu_state.usp;
+                                                cpu_state.fpu.null_state = reg & 1;
+                                                cpu_state.fpu.fpiar = 0x12345678;
+                                                unsigned mask = list == 0   ? 3
+                                                                : list == 1 ? reg == 7 ? 0x8001 : 3u << (8 + reg)
+                                                                            : 0xffff;
+                                                unsigned count = list == 2 ? 16 : 2;
+                                                unsigned prefix = list == 2 ? 8 + reg % 7 : 1;
+                                                unsigned boundary = (kind == 3 ? 0x4000 : 0x28000) + page_size;
+                                                unsigned operand = boundary - prefix * size - completed;
+                                                unsigned fault_pte = pte(boundary), root = privileged ? 0x6000 : 0x3000;
+                                                put32(pte(operand), 0x10001);
+                                                put32(fault_pte, 0x14001);
+                                                for (unsigned i = 0; i < count; ++i) {
+                                                    unsigned value =
+                                                        size == 2 ? 0x8000 | (i + 1) * 0x123 : 0x90100000 + i * 0x10101;
+                                                    for (unsigned j = 0; j < size; ++j)
+                                                        ram[movem_fixture_physical(operand + i * size + j, boundary)] =
+                                                            value >> ((size - 1 - j) * 8);
+                                                }
+                                                unsigned ea = kind == 0   ? 0x10 + reg
+                                                              : kind == 1 ? 0x18 + reg
+                                                              : kind == 2 ? 0x28 + reg
+                                                              : kind == 3 ? 0x38
+                                                                          : 0x39;
+                                                unsigned opcode = (size == 2 ? 0x4c80 : 0x4cc0) | ea;
+                                                unsigned opcode_physical = physical(0x10000);
+                                                code_word(0x10000, opcode);
+                                                code_word(0x10002, mask);
+                                                if (kind < 3)
+                                                    EM_AREG(reg) = operand - (kind == 2 ? 32 : 0);
+                                                unsigned length = kind < 2 ? 4 : kind == 4 ? 8 : 6;
+                                                if (kind == 2 || kind == 3)
+                                                    code_word(0x10004, kind == 2 ? 32 : operand);
+                                                if (kind == 4) {
+                                                    code_word(0x10004, operand >> 16);
+                                                    code_word(0x10006, operand);
+                                                }
+                                                unsigned sr = (privileged ? 0x2000 : 0) | trace << 14 | ccrs[c];
+                                                set_status(sr);
+                                                M68kReg partial[16];
+                                                memcpy(partial, cpu_state.regs, sizeof partial);
+                                                unsigned at = 0;
+                                                for (unsigned bit = 0; bit < 16; ++bit)
+                                                    if (mask & (1u << bit)) {
+                                                        if (at < prefix && !(kind == 1 && bit == 8 + reg)) {
+                                                            unsigned value = movem_fixture_value(operand + at * size,
+                                                                                                 size, boundary);
+                                                            partial[bit].ul.n = size == 2 && (value & 0x8000)
+                                                                                    ? value | 0xffff0000
+                                                                                    : value;
+                                                        }
+                                                        ++at;
+                                                    }
+                                                if (kind == 1)
+                                                    partial[8 + reg].ul.n = boundary - completed;
+                                                if (physical_fault)
+                                                    fail_physical = 0x14000;
+                                                else
+                                                    put32(fault_pte, 0);
+                                                watched_physical = movem_fixture_physical(operand, boundary);
+                                                watched_tail_physical = 0x14000;
+                                                watched_tail_reads = 0;
+                                                Syn68kMappedCPU cpu = {
+                                                    .pc = 0x10000, .memory = &memory, .native = native_execution};
+                                                Syn68kMappedRun run;
+                                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                if (run.step.movem_state != 1)
+                                                    fprintf(stderr,
+                                                            "Missing MOVEM CM mode=%u reg=%u list=%u native=%u\n", kind,
+                                                            reg, list, native_execution);
+                                                assert(
+                                                    run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                                    run.step.format == 7 && run.step.movem_state == 1 &&
+                                                    run.step.movem_ea == operand &&
+                                                    run.step.access.request == boundary - completed &&
+                                                    run.step.access.logical == boundary &&
+                                                    run.step.access.completed == completed &&
+                                                    run.step.access.value == movem_fixture_value(boundary - completed,
+                                                                                                 completed, boundary) &&
+                                                    run.step.access.size == size && status() == sr &&
+                                                    !memcmp(partial, cpu_state.regs, sizeof partial) &&
+                                                    watched_read_attempts == 1 && watched_tail_reads == physical_fault);
+                                                fail_physical = UINT32_MAX;
+                                                supervisor = 1;
+                                                put32(pte(0x10000), 0xc001);
+                                                put32(pte(0x20000), 0x18001);
+                                                unsigned table_page = root & ~(page_size - 1);
+                                                put32(pte(0x30000), table_page | 1);
+                                                unsigned target = 0x30000 + fault_pte - table_page;
+                                                const unsigned repair[] = {0x23fc,         1,     0x4001, target >> 16,
+                                                                           target & 65535, 0xf518};
+                                                unsigned cursor = 0x10040;
+                                                for (unsigned i = 0; i < sizeof repair / sizeof *repair; ++i) {
+                                                    code_word(cursor, repair[i]);
+                                                    cursor += 2;
+                                                }
+                                                unsigned budget = 3;
+                                                if (kind < 3 && reg != 7) {
+                                                    code_word(cursor, 0x207c | reg << 9);
+                                                    code_word(cursor + 2, 0x7654);
+                                                    code_word(cursor + 4, 0x3200 | reg);
+                                                    cursor += 6;
+                                                    ++budget;
+                                                }
+                                                else if (kind < 3 && reg == 7 && !privileged) {
+                                                    const unsigned change_usp[] = {0x2f0e, 0x2c7c, 0x7654,
+                                                                                   0x3207, 0x4e66, 0x2c5f};
+                                                    for (unsigned i = 0; i < sizeof change_usp / sizeof *change_usp;
+                                                         ++i) {
+                                                        code_word(cursor, change_usp[i]);
+                                                        cursor += 2;
+                                                    }
+                                                    budget += 4;
+                                                }
+                                                code_word(cursor, 0x4e73);
+                                                cpu_state.vbr = 0x20000;
+                                                put32(physical(cpu_state.vbr + 8), 0x10040);
+                                                Syn68kMappedDelivery delivery;
+                                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+                                                unsigned frame = EM_A7;
+                                                unsigned frame_physical = privileged && kind < 3 && reg == 7
+                                                                              ? movem_fixture_physical(frame, boundary)
+                                                                              : physical(frame);
+                                                assert(physical_value(frame_physical + 8, 4) == operand &&
+                                                       (physical_value(frame_physical + 12, 2) & 0xf000) == 0x1000);
+                                                assert(syn68k_mapped_cpu_run(&cpu, budget, &run));
+                                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 &&
+                                                       cpu.movem_pending && cpu.movem_ea == operand && status() == sr);
+                                                if (!completed && !aligned && !trace && !c && list == 1)
+                                                    for (unsigned field = 0; field < (length > 4 ? 3U : 2U); ++field) {
+                                                        unsigned data_reads = watched_read_attempts;
+                                                        fail_physical = opcode_physical + field * 2;
+                                                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                        assert(run.reason == SYN68K_MAPPED_EXCEPTION &&
+                                                               run.step.vector == 2 && run.step.movem_state == 1 &&
+                                                               run.step.movem_ea == operand &&
+                                                               !run.step.restartable_read &&
+                                                               run.step.access.request == 0x10000 + field * 2 &&
+                                                               run.step.access.size ==
+                                                                   (field == 2 && kind == 4 ? 4U : 2U) &&
+                                                               run.step.access.fc == (privileged ? 6U : 2U) &&
+                                                               watched_read_attempts == data_reads);
+                                                        fail_physical = UINT32_MAX;
+                                                        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0,
+                                                                                             &delivery));
+                                                        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                                                               !cpu.movem_pending);
+                                                        assert(syn68k_mapped_cpu_run(&cpu, budget, &run));
+                                                        assert(run.reason == SYN68K_MAPPED_BUDGET &&
+                                                               cpu.movem_pending && cpu.pc == 0x10000 &&
+                                                               cpu.movem_ea == operand && status() == sr);
+                                                        ++cases;
+                                                    }
+                                                CPUState expected = cpu_state;
+                                                at = 0;
+                                                for (unsigned bit = 0; bit < 16; ++bit)
+                                                    if (mask & (1u << bit)) {
+                                                        unsigned value =
+                                                            movem_fixture_value(operand + at * size, size, boundary);
+                                                        if (!(kind == 1 && bit == 8 + reg))
+                                                            expected.regs[bit].ul.n = size == 2 && (value & 0x8000)
+                                                                                          ? value | 0xffff0000
+                                                                                          : value;
+                                                        ++at;
+                                                    }
+                                                if (kind == 1)
+                                                    expected.regs[8 + reg].ul.n = operand + count * size;
+                                                unsigned first_reads = watched_read_attempts,
+                                                         tail_reads = watched_tail_reads, before_writes = writes;
+                                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                if (run.step.vector != (trace & 2 ? 9U : 0U) ||
+                                                    cpu.pc != 0x10000 + length)
+                                                    fprintf(
+                                                        stderr,
+                                                        "MOVEM resume mode=%u reg=%u list=%u trace=%u native=%u PC=%x vector=%u\n",
+                                                        kind, reg, list, trace, native_execution, cpu.pc,
+                                                        run.step.vector);
+                                                assert(run.reason == (trace & 2 ? SYN68K_MAPPED_EXCEPTION
+                                                                                : SYN68K_MAPPED_BUDGET) &&
+                                                       run.step.vector == (trace & 2 ? 9U : 0U) &&
+                                                       cpu.pc == 0x10000 + length && !cpu.movem_pending &&
+                                                       status() == sr &&
+                                                       !memcmp(expected.regs, cpu_state.regs, sizeof expected.regs) &&
+                                                       !memcmp(&expected.fpu, &cpu_state.fpu, sizeof expected.fpu) &&
+                                                       expected.usp == cpu_state.usp && expected.isp == cpu_state.isp &&
+                                                       expected.msp == cpu_state.msp &&
+                                                       watched_read_attempts == first_reads + 1 &&
+                                                       watched_tail_reads == tail_reads + 1 && writes == before_writes);
+                                                if (trace & 2)
+                                                    assert(run.step.format == 2 &&
+                                                           run.step.exception_pc == 0x10000 + length &&
+                                                           run.step.fault_address == 0x10000);
+                                                ++cases;
+                                            }
+    memory.aligned_transfers = 0;
+    printf("%u nonindexed MOVEM CM/partial-register/postincrement/stack-overlap/guest-RTE cases passed\n",
+           cases - initial);
+}
+
 static void guest_movem_read_continuations(void)
 {
     for (unsigned page8k = 0; page8k < 2; ++page8k)
@@ -5676,6 +6043,8 @@ int main(int argc, char** argv)
             guest_control_branches();
             guest_integer_traces();
             guest_stop_streams();
+            guest_movem_prefix_restarts();
+            guest_nonindexed_movem_restarts();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -5737,6 +6106,8 @@ int main(int argc, char** argv)
             guest_call_writebacks();
             call_replay_guards();
             guest_partial_read_restarts();
+            guest_movem_prefix_restarts();
+            guest_nonindexed_movem_restarts();
             guest_movem_read_continuations();
             movem_fetch_record_guards();
             guest_fpu_read_restarts();

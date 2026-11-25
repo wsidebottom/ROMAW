@@ -5,6 +5,35 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVEM read recovery checkpoint (2026-11-25)
+
+Mapped MOVEM loads now retain CM/saved-EA continuation for every legal read
+addressing mode, including indirect, postincrement, displacement and absolute
+forms. Postincrement resumes from the saved EA even when partial execution or
+the guest handler changed the base register. Faults before the first operand
+instead permit ordinary restart only when the full register/state checkpoint
+and callback guards certify it; they do not invent CM metadata.
+
+This follows the general CM restart rule in
+[MC68040UM section 8.4.6.7](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf):
+operand transfers repeat from the saved EA. Section 8.4.6.2 specifically discusses
+indexed and PC-relative EA restoration. This checkpoint extends the earlier
+implementation's addressing-mode restriction; historical entries below describe
+their respective earlier checkpoints.
+
+The private Windows CPU build passes. Focused checks pass 469,376 nonindexed
+MOVEM continuation cases and 8,448 pre-operand restart/callback guard cases across
+both dispatch and memory-bus bindings. They cover partial scalar/page accesses,
+postincrement, base-register replacement, stack/frame overlap, guest repair/RTE,
+trace retirement and repeated opcode/mask/extension fetch faults on continuation.
+These checks do not constitute hardware capture validation.
+
+Full grouped MMU and cold/warm AOT reruns remain pending, as do the matching
+ROMAW rebuild, smoke checks and staging. The promoted bundle remains the STOP
+checkpoint described below; it does not contain this MOVEM change. MOVEM/MOVE16
+store recovery and the other remaining 68040 compatibility work remain open.
+Work is paused at this source checkpoint at the user's request.
+
 ## Mapped STOP suspension and wakeup (2026-11-25)
 
 The mapped backend implements STOP with a persistent stopped latch. Privilege

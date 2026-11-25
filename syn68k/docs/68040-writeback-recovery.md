@@ -15,6 +15,20 @@ non-null entry or changing other certified state denies replay without undoing
 its effects. Guest cleanup completes one WB1/WB2 scalar; RTE then reexecutes the
 whole instruction and repeats earlier writes. No continuation bit is introduced.
 
+## MOVEM read continuation checkpoint
+
+MOVEM load operand faults offer CM and the original EA for all legal read
+addressing modes. Replay repeats the operand list from that EA, including
+postincrement, while retaining the architectural effects already visible at the
+fault. Further instruction-fetch faults retain the same continuation. Mask,
+extension or indirect-pointer faults before operand execution can instead earn
+ordinary restart only with unchanged general registers and the full state and
+callback guards. They carry no CM/saved-EA continuation.
+
+The 2026-11-25 focused checks pass; full grouped MMU/AOT validation and the
+matching ROMAW rebuild/staging are pending. See the current checkpoint in
+[68040-status.md](68040-status.md) for scope and validation counts.
+
 ## Read restart certification
 
 Generic read restart restores speculative An updates only when operand and

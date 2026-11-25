@@ -504,8 +504,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (result->step.vector == 2 && result->step.format == 7 && !result->step.access.writing &&
                 (!result->step.access.rmw || result->step.access.fc == 1 || result->step.access.fc == 5) &&
                 syn68k_mmu040_access_ssw(&result->step.access, &read_ssw) && (opcode & 0xFFC0) != 0xF600 &&
-                !((opcode & 0xFB80) == 0x4880 && (opcode & 0x38) >= 0x10) && !bus.write_attempted &&
-                !bus.callback_state_changed && unchanged_results(&before, opcode, opcode == 0x4e73 ? 16 : 8)) {
+                !result->step.movem_state && !bus.write_attempted && !bus.callback_state_changed &&
+                unchanged_results(&before, opcode,
+                                  opcode == 0x4e73 || ((opcode & 0xfb80) == 0x4880 && (opcode & 0x38) >= 0x10) ? 16
+                                                                                                               : 8)) {
                 for (unsigned i = 8; i < 16; ++i)
                     cpu_state.regs[i] = before.regs[i];
                 result->step.restartable_read = 1;

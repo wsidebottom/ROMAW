@@ -404,6 +404,8 @@ static uint32 move_multiple(uint32 pc, unsigned opcode, Syn68kEAContext* context
         return integer_exception(step, context, 2, pc, context->fault_address, 7);
     context->pc += 2;
     uint32 initial = EM_AREG(reg), address = initial;
+    if (mode == 3 && context->resume_ea)
+        address = *context->resume_ea;
     if (mode != 3 && mode != 4) {
         Syn68kEA ea = syn68k_effective_address(context, opcode & 63, size, !load, 0);
         if (context->error)
@@ -428,7 +430,7 @@ static uint32 move_multiple(uint32 pc, unsigned opcode, Syn68kEAContext* context
             }
             if (context->error) {
                 uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
-                if (step && context->memory && load && (mode == 6 || (mode == 7 && (reg == 2 || reg == 3)))) {
+                if (step && context->memory && load) {
                     step->movem_state = 1;
                     step->movem_ea = calculated_ea;
                 }
@@ -1116,7 +1118,7 @@ int syn68k_integer_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* 
 {
     unsigned mode = (opcode >> 3) & 7, reg = opcode & 7;
     if (!memory || !result || (opcode & 0xFB80) != 0x4880 || !(opcode & 0x400) ||
-        !(mode == 6 || (mode == 7 && (reg == 2 || reg == 3))))
+        !(mode == 2 || mode == 3 || mode == 5 || mode == 6 || (mode == 7 && reg <= 3)))
         return 0;
     *result = (Syn68kIntegerStep){0};
     Syn68kEAContext context = {.pc = pc + 2, .memory = memory, .resume_ea = &ea};
