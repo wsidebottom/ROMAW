@@ -1082,7 +1082,11 @@ toolstuff_t toolstuff[0x400] = {
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
+#if defined(CYGWIN32) && defined(SDL) && defined(SYN68K)
+    {{_DisplayDispatch, -1}, (void*)0}, /* ABEB */
+#else
     {{_Unimplemented, -1}, (void*)0},
+#endif
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},
     {{_Unimplemented, -1}, (void*)0},

@@ -164,10 +164,7 @@ Each ID still has its own stored resource record and Resource Manager handle.
 The build and source distribution include the fragments as dependencies.
 
 Resource content retains its original provenance/copyright; extraction and
-format conversion do not relicense historical fonts or artwork. The existing
-ARDI System under `lib/ROMAWVolume/` remains a historical input. The installed
-fork used here also contains local icon/pattern additions recorded by the
-manifest; these were explicitly requested for integration.
+format conversion do not relicense historical fonts or artwork.
 
 Run `bash system/tests/check-toolbox.sh system-resource` in WSL. Windows runtime
 checks should also verify startup without any external System file and a

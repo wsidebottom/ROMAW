@@ -3582,13 +3582,13 @@ resource 'snth' (5) {
 resource 'vers' (1, purgeable) {
     0x07, 0x01, alpha, 0x75, 15,
     "7.0.1",
-    "ARDI 7.0.1 (20261018)"
+    "ROMAW 7.0.1 (20261018)"
 };
 
 resource 'vers' (2, purgeable) {
     0x07, 0x01, alpha, 0x75, 15,
     "7.0.1",
-    "ARDI System 7.0.1"
+    "ROMAW System 7.0.1"
 };
 
 resource 'wctb' (0) {

@@ -447,7 +447,7 @@ include_sources = include/rsys/component.h \
 
 # ICNS assets are compiled into obj/generated/*.inc, never in src/.
 
-EXTRA_DIST = tools/build_version.py windows/README.md $(system_resource_inputs) $(syserr_icon_inputs) tools/romaw/system_resources.py tools/romaw/font_suitcase.py $(font_inputs) resources/systemprefs.h \
+EXTRA_DIST = tools/build_version.py windows/README.md $(system_resource_inputs) tools/romaw/system_resources.py tools/romaw/font_suitcase.py $(font_inputs) resources/systemprefs.h \
              platform/os/cygwin32/ROMAW.rc platform/os/cygwin32/preferences.rc \
              platform/os/cygwin32/preferences_resource.h platform/os/cygwin32/preferences_winres.h bitmaps/ROMAW.icns \
              tools/romaw/icns_to_c.py \
@@ -461,7 +461,6 @@ EXTRA_DIST = tools/build_version.py windows/README.md $(system_resource_inputs) 
              bitmaps/wind_scroll_arrow_inactive.icns \
              bitmaps/wind_scroll_thumb.icns          \
              bitmaps/wind_zoom.icns
-
 EXTRA_DIST += $(packed_bitmap_inputs) tools/bitmaps.py
 
 other_sources = tools/romaw/build-host.h   \

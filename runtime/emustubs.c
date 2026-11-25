@@ -3295,6 +3295,56 @@ STUB(CodeFragment)
 }
 #endif
 
+#if defined(CYGWIN32) && defined(SDL) && defined(SYN68K)
+STUB(DisplayDispatch)
+{
+    const uint16 selector = EM_D0;
+    unsigned count;
+    switch (selector) {
+    case 0xffff:
+    case 0xfffe:
+        count = 0;
+        break;
+    case 2:
+    case 3:
+        count = 1;
+        break;
+    case 0x4e2:
+    case 0x414:
+    case 0x415:
+        count = 2;
+        break;
+    case 0x51f:
+    case 0x520:
+        count = 3;
+        break;
+    case 0x8e4:
+    case 0x7ef:
+    case 0x726:
+        count = 4;
+        break;
+    default:
+        return _Unimplemented(ignoreme, ignoreme2);
+    }
+
+    const syn68k_addr_t ret = POPADDR();
+    uint32 args[4] = {0};
+    while (count) {
+        const unsigned index = --count;
+        if ((selector == 0x51f || selector == 0x520) && index == 2)
+            args[index] = POPUB();
+        else if ((selector == 0x7ef && index == 2) || (selector == 0x726 && index == 3))
+            args[index] = POPUW();
+        else
+            args[index] = POPUL();
+    }
+    const OSErr result = ROMlib_ppc_display_dispatch(selector, args);
+    if (selector != 2 && selector != 3)
+        WRITEUW(EM_A7, result);
+    return ret;
+}
+#endif
+
 STUB(ThreadDispatch)
 {
     /* Universal Interfaces 2.2 Threads.h: YieldToThread and

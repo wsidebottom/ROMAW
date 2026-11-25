@@ -164,6 +164,30 @@ struct FolderWindow {
     int16_t image_volume = 0;
     uint32_t image_directory = 2;
     std::wstring image_title;
+    unsigned active_callbacks = 0;
+    bool delete_pending = false;
+};
+
+// DestroyWindow can reenter a window procedure before an outer callback returns.
+// Keep its state alive until every callback borrowing it has unwound.
+class FolderCallback {
+    FolderWindow* folder;
+
+  public:
+    explicit FolderCallback(FolderWindow* value) : folder(value)
+    {
+        if (folder)
+            ++folder->active_callbacks;
+    }
+
+    FolderCallback(const FolderCallback&) = delete;
+    FolderCallback& operator=(const FolderCallback&) = delete;
+
+    ~FolderCallback()
+    {
+        if (folder && --folder->active_callbacks == 0 && folder->delete_pending)
+            delete folder;
+    }
 };
 
 struct Operation {
@@ -4077,6 +4101,7 @@ bool change_outline(FolderWindow& folder, int row, int action)
 LRESULT CALLBACK list_proc(HWND w, UINT message_id, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data)
 {
     auto* f = reinterpret_cast<FolderWindow*>(data);
+    FolderCallback callback(f);
     if (message_id == WM_ERASEBKGND)
         // Erasure belongs inside the same view update as icons and labels.
         return 1;
@@ -4225,6 +4250,8 @@ LRESULT CALLBACK list_proc(HWND w, UINT message_id, WPARAM wp, LPARAM lp, UINT_P
 // for ordinary names and contrasting selection/drag-highlight backgrounds.
 void paint_labels(FolderWindow& folder, HDC dc)
 {
+    if (folder.closing)
+        return;
     int editing = ListView_GetEditControl(folder.list) ? ListView_GetNextItem(folder.list, -1, LVNI_FOCUSED) : -1;
     if (ListView_GetView(folder.list) != LV_VIEW_ICON) {
         int saved = SaveDC(dc);
@@ -4234,12 +4261,12 @@ void paint_labels(FolderWindow& folder, HDC dc)
         int columns = ListView_GetView(folder.list) == LV_VIEW_DETAILS ? Header_GetItemCount(header) : 1;
         RECT client;
         GetClientRect(folder.list, &client);
-        for (int index = 0; index < int(folder.items.size()); ++index) {
+        for (int index = 0; !folder.closing && index < int(folder.items.size()); ++index) {
             bool selected = ListView_GetItemState(folder.list, index, LVIS_SELECTED) != 0;
             auto background = label_background((folder.items[index].mac.flags >> 1) & 7, selected);
             auto brush = CreateSolidBrush(background);
             SetTextColor(dc, selected ? RGB(255, 255, 255) : RGB(0, 0, 0));
-            for (int column = 0; column < columns; ++column) {
+            for (int column = 0; !folder.closing && column < columns; ++column) {
                 if (index == editing && column == 0)
                     continue;
                 RECT bounds{}, visible{};
@@ -4250,6 +4277,8 @@ void paint_labels(FolderWindow& folder, HDC dc)
                 if (!IntersectRect(&visible, &bounds, &client))
                     continue;
                 classic::fill_rect(dc, &bounds, brush);
+                if (folder.closing)
+                    break;
                 wchar_t text[4096]{};
                 ListView_GetItemText(folder.list, index, column, text, std::size(text));
                 bounds.left += 2;
@@ -4273,12 +4302,14 @@ void paint_labels(FolderWindow& folder, HDC dc)
     SelectObject(dc, classic::small_font());
     RECT client;
     GetClientRect(folder.list, &client);
-    for (int i = 0; i < int(folder.items.size()); ++i) {
+    for (int i = 0; !folder.closing && i < int(folder.items.size()); ++i) {
         if (i == editing)
             continue;
         RECT bounds, visible;
         ListView_GetItemRect(folder.list, i, &bounds, LVIR_LABEL);
         bounds = classic::icon_label_bounds(dc, folder.items[i].name.c_str(), bounds, &client);
+        if (folder.closing)
+            break;
         if (!IntersectRect(&visible, &bounds, &client))
             continue;
         bool selected = ListView_GetItemState(folder.list, i, LVIS_SELECTED | LVIS_DROPHILITED) != 0;
@@ -4289,7 +4320,9 @@ void paint_labels(FolderWindow& folder, HDC dc)
                      [](const Label& left, const Label& right) { return left.selected < right.selected; });
     // Paint every background before any lettering. An adjacent long label must
     // not lose its glyphs to a selection rectangle painted afterward.
-    for (const auto& label : labels)
+    for (const auto& label : labels) {
+        if (folder.closing)
+            break;
         if (label.selected) {
             auto brush = CreateSolidBrush(label_background((folder.items[label.index].mac.flags >> 1) & 7, true));
             classic::fill_rect(dc, &label.bounds, brush);
@@ -4297,8 +4330,11 @@ void paint_labels(FolderWindow& folder, HDC dc)
         }
         else
             classic::fill_rect(dc, &label.bounds, reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
     SetBkMode(dc, TRANSPARENT);
     for (const auto& label : labels) {
+        if (folder.closing)
+            break;
         RECT bounds = label.bounds;
         COLORREF color = RGB(0, 0, 0);
         if (label.selected) {
@@ -4324,6 +4360,8 @@ void paint_folder_contents(HDC dc, void* context)
     classic::paint_icon_view(folder.list, dc, large ? folder.images : folder.small_images, images.data(), images.size(),
                              folder.desktop);
     paint_labels(folder, dc);
+    if (folder.closing)
+        return;
     if (folder.presentation.view == FolderView::list && !folder.search) {
         RECT client{};
         GetClientRect(folder.list, &client);
@@ -4344,9 +4382,11 @@ void paint_folder_contents(HDC dc, void* context)
 LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     auto* f = reinterpret_cast<FolderWindow*>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (msg == WM_NCCREATE)
+        f = static_cast<FolderWindow*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+    FolderCallback callback(f);
     try {
         if (msg == WM_NCCREATE) {
-            f = static_cast<FolderWindow*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
             classic::decorate(w, f->desktop);
             f->window = w;
             SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(f));
@@ -5087,7 +5127,7 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 ImageList_Destroy(f->small_images);
             SetWindowLongPtrW(w, GWLP_USERDATA, 0);
             if (f->window_owned)
-                delete f;
+                f->delete_pending = true;
             break;
         }
     }

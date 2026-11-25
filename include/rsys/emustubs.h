@@ -225,6 +225,8 @@ extern syn68k_addr_t _HFSRoutines(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _IMVI_MemoryDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _ComponentDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _GestaltValueDispatch(syn68k_addr_t, void**);
+extern syn68k_addr_t _DisplayDispatch(syn68k_addr_t, void**);
+extern OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4]);
 extern syn68k_addr_t _ThreadDispatch(syn68k_addr_t, void**);
 extern syn68k_addr_t _CodeFragment(syn68k_addr_t ignoreme, void** ignoreme2);
 extern syn68k_addr_t _MixedMode(syn68k_addr_t ignoreme, void** ignoreme2);
