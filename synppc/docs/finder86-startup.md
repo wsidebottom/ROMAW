@@ -138,6 +138,24 @@ real System resources; date/time variants accept explicit or default locale
 handles. The fixture compares formatted strings for short, long and abbreviated
 dates and time using a timestamp observed in Finder's Get Info flow.
 
+The Labels menu uses one-bit `cicn` resources with custom colour-table entries.
+Windows CopyMask maps these PixMap indices through their colour table, while
+plain one-bit BitMaps still use the port foreground/background colours. The
+pixel fixture checks a sparse colour-table entry and transparent mask pixels.
+
+Finder also calls `HMSetBalloons` around drag interactions. The PPC binding
+returns the existing Help Manager initialization error; it does not advertise
+working Balloon Help. The grouped fixture verifies that error and the disabled
+state for both requested settings.
+
+Drag hit testing invokes the loaded WindowsLib's original `GlobalFindWindow`
+entry, matching DragLib's dependency and including the initialized saved window
+layer tree. Native-only hosts retain the live FindWindow Toolbox vector.
+A bare `inDesk` result with no WindowPtr remains a valid target for application-wide
+handlers. The grouped fixture verifies the complete desktop callback lifecycle,
+sender attributes and final mouse coordinates using a temporary event callback;
+it restores the live event vector afterward.
+
 ## Validation
 
 Build from the repository root with the optimized Windows profile and matching

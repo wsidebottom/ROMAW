@@ -356,6 +356,7 @@ static boolean_t win32_copy_mask_indexed(BitMap* src_bogo_map, BitMap* mask_bogo
 {
     BitMap *src_bm, *mask_bm, *dst_bm;
     int src_bpp, mask_bpp, dst_bpp;
+    boolean_t indexed_source;
     int src_row_bytes, mask_row_bytes, dst_row_bytes;
     int src_width, src_height, mask_width, mask_height;
     int dst_width, dst_height;
@@ -373,6 +374,7 @@ static boolean_t win32_copy_mask_indexed(BitMap* src_bogo_map, BitMap* mask_bogo
     if (!src_bm || !mask_bm || !dst_bm)
         return FALSE;
 
+    indexed_source = IS_PIXMAP_PTR_P(src_bm);
     src_bpp = win32_copy_bitmap_bpp(src_bm);
     mask_bpp = win32_copy_bitmap_bpp(mask_bm);
     dst_bpp = win32_copy_bitmap_bpp(dst_bm);
@@ -381,8 +383,9 @@ static boolean_t win32_copy_mask_indexed(BitMap* src_bogo_map, BitMap* mask_bogo
         return FALSE;
 
     /* Preserve mask/clip handling while translating indices from labeled or
-     custom icon palettes into the destination palette. */
-    if (src_bpp != 1) {
+     custom icon palettes into the destination palette. A one-bit PixMap
+     still owns a colour table; only plain BitMaps use the port colours. */
+    if (indexed_source) {
         CTabHandle source_table = PPR(((PixMap*)src_bm)->pmTable);
         CTabHandle destination_table = PPR(((PixMap*)dst_bm)->pmTable);
         if (!source_table || !destination_table || (unsigned)CTAB_SIZE(source_table) > 255 ||
@@ -495,10 +498,12 @@ static boolean_t win32_copy_mask_indexed(BitMap* src_bogo_map, BitMap* mask_bogo
                 if (!win32_get_1bpp_pixel(mask_bm, mask_row_bytes, mask_base, mx, my))
                     continue;
 
-                if (src_bpp != 1) {
+                if (indexed_source) {
                     unsigned column = sx - CW(src_bm->bounds.left);
                     unsigned index = src_base[(sy - CW(src_bm->bounds.top)) * src_row_bytes + column * src_bpp / 8];
-                    if (src_bpp == 4)
+                    if (src_bpp == 1)
+                        index = (index >> (7 - (column & 7))) & 1;
+                    else if (src_bpp == 4)
                         index = (index >> ((column & 1) ? 0 : 4)) & 15;
                     pixel = color_map[index];
                 }

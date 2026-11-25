@@ -7,7 +7,8 @@
 #   Classes:   Probe, imported fixture builder.
 #
 #   Functions: make_probe, check_object_accessors, check_file_icons, check_picture_controls, check_progress_controls;
-#              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting; script entry point.
+#              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting, check_label_icon, check_desktop_drag;
+#              script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
 #
@@ -81,6 +82,9 @@ def make_probe(destination):
         "NSetTrapAddress",
         "NewControl",
         "GetPicture",
+        "GetCIcon",
+        "PlotCIcon",
+        "DisposeCIcon",
         "GetCtlValue",
         "Draw1Control",
         "TestControl",
@@ -104,6 +108,20 @@ def make_probe(destination):
         "AEDisposeDesc",
     ]
     imports = [("InterfaceLib", name, 2) for name in names]
+    imports += [
+        ("DragLib", name, 2)
+        for name in (
+            "NewDrag",
+            "DisposeDrag",
+            "TrackDrag",
+            "InstallTrackingHandler",
+            "InstallReceiveHandler",
+            "RemoveTrackingHandler",
+            "RemoveReceiveHandler",
+            "GetDragAttributes",
+            "GetDragMouse",
+        )
+    ]
     imports += [("PrivateInterfaceLib", name, 2) for name in ("RequestVolumeNotification", "DeclineVolumeNotification")]
     imports.append(("PrivateInterfaceLib", "NewDesktopLayerOwner", 2))
     imports.append(("PrivateInterfaceLib", "SysZoneFloatSizes", 2))
@@ -615,6 +633,7 @@ def make_probe(destination):
     p.call("SetWindowProxyIcon")
     p.expect(-50, "null proxy icons return paramErr")
     check_picture_controls(p)
+    check_label_icon(p)
     check_progress_controls(p)
     p.emit(0x807E02C0)
     p.call("DisposeWindow")
@@ -773,6 +792,7 @@ def make_probe(destination):
         p.call("HMGetBalloons")
         p.expect(0, "unavailable Balloon Help remains disabled")
     check_date_formatting(p)
+    check_desktop_drag(p)
     check_device_parameter_blocks(p)
     check_file_icons(p, destination)
     for selector, offset in ((0x72616D20, 0xB50), (0x7272616D, 0xB54)):
@@ -814,12 +834,104 @@ def make_probe(destination):
     p.data[0x240 : 0x241 + len(message)] = bytes([len(message)]) + message
     p.emit(0x387E0240)
     p.call("DebugStr")
+    # Original one-bit colour icon, with a sparse palette entry at index one.
+    label_icon = bytearray(82)
+    struct.pack_into(">H4h", label_icon, 4, 0x8002, 0, 0, 2, 8)
+    struct.pack_into(">II", label_icon, 18, 72 << 16, 72 << 16)
+    struct.pack_into(">HHH", label_icon, 32, 1, 1, 1)
+    struct.pack_into(">H4h", label_icon, 54, 2, 0, 0, 2, 8)
+    label_icon += bytes.fromhex("aa00aa00")
+    label_icon += struct.pack(">IHHHHHH", 1, 0, 0, 1, 0xFFFF, 0, 0)
+    label_icon += bytes.fromhex("ff00ff00")
     picture = struct.pack(">H4h", 34, 0, 0, 16, 16) + bytes.fromhex("001102ff001affff000000000031000000000010001000ff")
     p.finish(
         destination,
         "PPC Finder Services Probe",
-        extra_resources=[(b"PICT", 1234, picture)],
+        extra_resources=[(b"PICT", 1234, picture), (b"cicn", 1235, bytes(label_icon))],
     )
+
+
+def check_desktop_drag(p):
+    # Finish a desktop drag through the live event vector, without host input.
+    # Callbacks record the real messages, null WindowPtr and drag reference.
+    p.routines.extend(
+        [
+            (
+                0xD00,
+                [
+                    0x38000002,
+                    0xB0040000,
+                    0x38000140,
+                    0xB004000A,
+                    0x380001E0,
+                    0xB004000C,
+                    0x38000080,
+                    0xB004000E,
+                    0x38600001,
+                    0x4E800020,
+                ],
+            ),
+            (
+                0xD08,
+                [
+                    0x80E50000,
+                    0x39000001,
+                    0x7D081830,
+                    0x7CE74378,
+                    0x90E50000,
+                    0x90850004,
+                    0x90C50008,
+                    0x38600000,
+                    0x4E800020,
+                ],
+            ),
+            (0xD10, [0x38000001, 0x9004000C, 0x90640010, 0x90A40014, 0x38600000, 0x4E800020]),
+        ]
+    )
+    p.data[0xD60:0xD70] = struct.pack(">HIIhhH", 1, 0, 0, 300, 450, 0)
+    p.emit(0x387E0D20)
+    p.call("NewDrag")
+    p.expect(0, "create a real desktop drag")
+    for offset, info, output in ((0xD00, 0x3F90, 0xD44), (0xD08, 0x3FA0, 0xD48), (0xD10, 0xFE0, 0xD4C)):
+        p.emit(0x387E0000 | offset, 0x38800000 | info, 0x38A00001)
+        p.call("NewRoutineDescriptor")
+        p.nonzero("create a native callback descriptor for the desktop drag")
+        p.emit(0x907E0000 | output)
+    for name, offset in (("InstallTrackingHandler", 0xD48), ("InstallReceiveHandler", 0xD4C)):
+        p.emit(0x807E0000 | offset, 0x38800000, 0x38BE0D80)
+        p.call(name)
+        p.expect(0, "register an application-wide desktop handler")
+    p.emit(0x80600F80, 0x907E0D40, 0x807E0D44, 0x90600F80)
+    p.emit(0x807E0D20, 0x389E0D60, 0x38A00000)
+    p.call("TrackDrag")
+    p.expect(0, "a desktop drop is delivered to its real receive handler")
+    p.emit(0x807E0D40, 0x90600F80)
+    for offset, value in ((0xD80, 0x3E), (0xD84, 0), (0xD8C, 1), (0xD90, 0)):
+        p.emit(0x807E0000 | offset)
+        p.expect(value, "desktop tracking preserves the callback lifecycle and null desktop WindowPtr")
+    for offset in (0xD88, 0xD94):
+        p.emit(0x807E0000 | offset, 0x809E0D20)
+        p.equal("desktop callbacks receive the actual drag reference")
+    p.emit(0x807E0D20, 0x389E0D98)
+    p.call("GetDragAttributes")
+    p.expect(0, "read completed desktop drag attributes")
+    p.emit(0x807E0D98)
+    p.expect(6, "the desktop remains inside the sender application and sender surface")
+    p.emit(0x807E0D20, 0x389E0D98, 0x38BE0D9C)
+    p.call("GetDragMouse")
+    p.expect(0, "read the final desktop drop point")
+    p.emit(0x807E0D98)
+    p.expect((320 << 16) | 480, "the receiver sees the final mouse position")
+    for name, offset in (("RemoveTrackingHandler", 0xD48), ("RemoveReceiveHandler", 0xD4C)):
+        p.emit(0x807E0000 | offset, 0x38800000)
+        p.call(name)
+        p.expect(0, "remove only the fixture's desktop handler")
+    p.emit(0x807E0D20)
+    p.call("DisposeDrag")
+    p.expect(0, "dispose the completed desktop drag")
+    for offset in (0xD44, 0xD48, 0xD4C):
+        p.emit(0x807E0000 | offset)
+        p.call("DisposeRoutineDescriptor")
 
 
 def check_date_formatting(p):
@@ -988,6 +1100,26 @@ def check_picture_controls(p):
         p.emit(0x807E0B00)
         p.call("GetHandleSize")
         p.expect(34, "disposing a control leaves its resource-owned picture intact")
+
+
+def check_label_icon(p):
+    p.emit(0x807E02C0)
+    p.call("SetPort")
+    p.emit(0x387E0460)
+    p.call("EraseRect")
+    p.emit(0x386004D3)
+    p.call("GetCIcon")
+    p.nonzero("load an original one-bit colour icon with a custom palette")
+    p.emit(0x907E0B68, 0x7C641B78, 0x387E0460)
+    p.call("PlotCIcon")
+    for x, expected in ((20, (0xFFFF, 0, 0)), (22, (0xFFFF, 0xFFFF, 0xFFFF))):
+        p.emit(0x38600000 | x, 0x38800019, 0x38BE0B70)
+        p.call("GetCPixel")
+        for channel, value in enumerate(expected):
+            p.emit(0xA07E0000 | (0xB70 + channel * 2))
+            p.expect(value, "one-bit colour icons retain their palette and transparent mask pixels")
+    p.emit(0x807E0B68)
+    p.call("DisposeCIcon")
 
 
 def check_progress_controls(p):

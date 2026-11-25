@@ -61,13 +61,25 @@ static int carbon_WaitMouseMoved(ROMlib_carbon_ppc_frame* call)
     }
 }
 
-static int drag_window_at(Point point, uint32_t* window)
+static int drag_window_at(Point point, uint32_t* window, bool* present)
 {
     _Alignas(4) uint32_t found = 0;
-    const ROMlib_carbon_ppc_frame args = {.words = {drag_pack_point(point), US_TO_SYN68K(&found)}};
-    if (!drag_trap(0x12b0, 0x3e0, &args, NULL))
+    ROMlib_carbon_ppc_frame args = {.words = {drag_pack_point(point), US_TO_SYN68K(&found)}};
+    /* DragLib's original dependency searches the initialized saved layer tree.
+       Use its actual entry point; native-only hosts retain the live Toolbox trap. */
+    ROMlib_carbon_reference saved;
+    uint32_t part;
+    if (ROMlib_carbon_probe_reference("WindowsLib", "GlobalFindWindow", &saved)) {
+        if (!ROMlib_carbon_invoke_frame(saved.function, &args))
+            return 0;
+        part = args.words[0];
+    }
+    else if (!drag_trap(0x12b0, 0x3e0, &args, &part))
         return 0;
     *window = CL(found);
+    /* FindWindow reports the desktop as inDesk with a null WindowPtr.
+       Application-wide handlers must still receive its tracking and drop. */
+    *present = *window || (int16_t)part == inDesk;
     return 1;
 }
 
@@ -244,9 +256,9 @@ static int track_drag(ROMlib_carbon_ppc_frame* call, carbon_drag* drag)
     drag->attributes = 0;
     uint32_t sender = 0, window = 0;
     int cancelled = false, ignored, accepted = false;
-    bool entered_handler = false;
+    bool entered_handler = false, sender_present = false, window_present = false;
     drag_feedback feedback = {0};
-    int ok = drag_window_at(drag->origin, &sender) && drag_update_mouse(drag, &event, &cancelled);
+    int ok = drag_window_at(drag->origin, &sender, &sender_present) && drag_update_mouse(drag, &event, &cancelled);
     if (ok && !cancelled)
         ok = drag_feedback_begin(drag, &feedback);
     if (ok && !cancelled && !feedback.error) {
@@ -256,24 +268,26 @@ static int track_drag(ROMlib_carbon_ppc_frame* call, carbon_drag* drag)
     const ROMlib_carbon_ppc_frame wait = {.words = {mUpMask, US_TO_SYN68K(&event), 1, 0}};
     while (ok && !cancelled && !feedback.error) {
         uint32_t target;
-        ok = drag_window_at(drag->pinned, &target);
+        bool target_present;
+        ok = drag_window_at(drag->pinned, &target, &target_present);
         if (!ok)
             break;
         drag->attributes &= drag_left_sender;
-        if (target)
+        if (target_present)
             drag->attributes |= drag_inside_application;
-        if (target == sender && sender)
+        if (target_present && sender_present && target == sender)
             drag->attributes |= drag_inside_sender;
         else
             drag->attributes |= drag_left_sender;
-        if (target != window) {
-            if (window)
+        if (target != window || target_present != window_present) {
+            if (window_present)
                 ok = drag_notify(drag, window, drag_leave_window, &ignored);
             window = target;
-            if (ok && window)
+            window_present = target_present;
+            if (ok && window_present)
                 ok = drag_notify(drag, window, drag_enter_window, &ignored);
         }
-        if (ok && window)
+        if (ok && window_present)
             ok = drag_notify(drag, window, drag_in_window, &ignored);
         if (ok)
             ok = drag_feedback_update(drag, &feedback);
@@ -290,10 +304,10 @@ static int track_drag(ROMlib_carbon_ppc_frame* call, carbon_drag* drag)
     drag_image_hide(&feedback.overlay);
     if (ok && !cancelled && !feedback.error && CW(event.what) == mouseUp) {
         drag->up_modifiers = drag->modifiers;
-        if (window)
+        if (window_present)
             ok = drag_notify(drag, window, 0, &accepted);
     }
-    if (ok && window)
+    if (ok && window_present)
         ok = drag_notify(drag, window, drag_leave_window, &ignored);
     if (ok && entered_handler)
         ok = drag_notify(drag, window ? window : sender, drag_leave_handler, &ignored);

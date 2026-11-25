@@ -6503,6 +6503,8 @@ PRIVATE int ppc_call_vector(ppc_context* ctx, ROMlib_pef_image* image, uint32 ve
         fprintf(stderr, "trace: PPC fault lr=%08lx ctr=%08lx r0=%08lx r1=%08lx r2=%08lx r3=%08lx r12=%08lx\n",
                 (unsigned long)r.lr, (unsigned long)r.ctr, (unsigned long)r.gpr[0], (unsigned long)r.gpr[1],
                 (unsigned long)r.gpr[2], (unsigned long)r.gpr[3], (unsigned long)r.gpr[12]);
+        for (unsigned reg = 0; reg < 32; ++reg)
+            fprintf(stderr, "trace: fault r%u=%08lx\n", reg, (unsigned long)r.gpr[reg]);
         return 0;
     }
     if (result)
