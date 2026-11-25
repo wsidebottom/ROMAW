@@ -504,7 +504,7 @@ PUBLIC AuxCtlHandle ROMlib_live_control_aux(ControlHandle control)
         for (ControlHandle candidate = WINDOW_CONTROL_LIST(window); candidate; candidate = CTL_NEXT_CONTROL(candidate))
             if (candidate == control)
                 return aux;
-    return NULL;
+    return ROMlib_ppc_control_in_saved_window(control) ? aux : NULL;
 }
 
 PUBLIC OSErr ROMlib_set_control_supervisor(ControlHandle control, ControlHandle supervisor)

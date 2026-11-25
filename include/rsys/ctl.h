@@ -151,6 +151,7 @@ extern LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
 extern CTabHandle default_ctl_ctab;
 extern HIDDEN_AuxCtlHandle* lookup_aux_ctl(ControlHandle ctl);
 extern AuxCtlHandle ROMlib_live_control_aux(ControlHandle control);
+extern BOOLEAN ROMlib_ppc_control_in_saved_window(ControlHandle control);
 
 enum ROMlib_control_range_field { control_value, control_minimum, control_maximum, control_view_size };
 

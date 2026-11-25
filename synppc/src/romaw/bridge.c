@@ -18,6 +18,7 @@
              ROMlib_ppc_callback, ROMlib_ppc_callback_failed, ROMlib_ppc_code_fragment, ROMlib_ppc_completion,
              ROMlib_ppc_begin_launch, ROMlib_ppc_request_system,
              ROMlib_ppc_component_entry, ROMlib_ppc_display_dispatch, ROMlib_ppc_event_loop_entered, ROMlib_ppc_gestalt,
+             ROMlib_ppc_control_in_saved_window,
              ROMlib_ppc_mixed_entry,
              ROMlib_ppc_mixed_entry_error, ROMlib_ppc_set_aot, ROMlib_ppc_set_jit, ROMlib_ppc_set_system
 
@@ -6464,6 +6465,50 @@ PUBLIC int ROMlib_carbon_reference_function(const char* library, const char* nam
         snprintf(ctx->error, sizeof ctx->error, "Native Carbon requires a real reference function: %s:%s",
                  library ? library : "?", name ? name : "?");
     return 0;
+}
+
+static const ControlRecord* ppc_read_control(ppc_context* ctx, uint32 address)
+{
+    const uint32* handle = address ? ppc_memory(ctx, address, sizeof *handle, FALSE) : NULL;
+    return handle && *handle ? ppc_memory(ctx, CL(*handle), sizeof(ControlRecord), FALSE) : NULL;
+}
+
+static uint32 ppc_next_control(ppc_context* ctx, uint32 address)
+{
+    const ControlRecord* record = ppc_read_control(ctx, address);
+    return record ? CL((uint32)(uintptr_t)PP_RAW(record->nextControl)) : 0;
+}
+
+PUBLIC BOOLEAN ROMlib_ppc_control_in_saved_window(ControlHandle control)
+{
+    ppc_context* ctx = ppc_active_context;
+    ROMlib_carbon_reference reference;
+    if (!ctx || !control ||
+        !ROMlib_carbon_probe_reference("WindowsLib", "IsValidWindowPtr", &reference))
+        return FALSE;
+    const uint32 target = US_TO_SYN68K(control);
+    const ControlRecord* record = ppc_read_control(ctx, target);
+    if (!record)
+        return FALSE;
+    uint32 owner = CL((uint32)(uintptr_t)PP_RAW(record->contrlOwner));
+    const WindowRecord* window = owner ? ppc_memory(ctx, owner, sizeof *window, FALSE) : NULL;
+    uint32 valid;
+    if (!window || !ppc_invoke_callback(ctx, US_TO_SYN68K(reference.function), &owner, 1, &valid) || !valid)
+        return FALSE;
+
+    /* A native control can belong to a window in the original manager's
+       layer tree. Confirm that the live owner still links its control. */
+    uint32 candidate = CL((uint32)(uintptr_t)PP_RAW(window->controlList));
+    uint32 ahead = candidate;
+    while (candidate) {
+        if (candidate == target)
+            return TRUE;
+        candidate = ppc_next_control(ctx, candidate);
+        ahead = ppc_next_control(ctx, ppc_next_control(ctx, ahead));
+        if (candidate && candidate == ahead)
+            return FALSE;
+    }
+    return FALSE;
 }
 
 static int ppc_matches_reference_vector(ppc_context* ctx, uint32 vector, const ROMlib_carbon_reference* reference,
