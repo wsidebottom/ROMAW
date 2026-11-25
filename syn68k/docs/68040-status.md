@@ -5,20 +5,27 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Paused validation checkpoint (2026-11-25)
+## Resumed validation checkpoint (2026-11-25)
 
 The branch/call candidate at `ac8295fd` remains unpromoted. On resumption,
 all 175 recorded CPU inputs matched the tested and release snapshots. The
 remaining RTE run passed 101,224 control-flow cases and 7,087,172 mapped
-stream/MMU/FPU/handler/RTE/delivery-fault cases. The subsequent `fpu-native`
-run failed in `fpu-native-test.c:36`: an unexpected semantic tail for command
-`0001`, selector `11`. Diagnose that failure before rerunning FPU validation
-and the pending combined `aot-x64` group. The sequential run stopped before
-AOT; no new complete validation or candidate promotion is claimed.
+stream/MMU/FPU/handler/RTE/delivery-fault cases. Two FPU fixtures still treated
+odd speculative branch targets as normal execution. The register/predicate
+fixture now checks 4,608 exceptional exits separately while 12,004 normal
+predicate cases retain helper rejection. The flat compiled fixture now projects
+component results through dispatch exception handling; all 23,700 flat cases
+pass with CPU, memory and callback comparisons intact. These are test changes;
+the runtime sources and candidate binaries are unchanged. The full FPU rerun
+passed, including 159,050 mapped predicate cases, 50,970 mapped frame cases,
+the flat matrix and checked-store coherence in both modes. The combined
+`aot-x64` group is running and must finish before candidate promotion.
 
 The last fully validated promoted bundle remains the `e64711ea` build in
-`build/68040-current/bin`. Work is paused at the user's request; the wider
-68040 completion scope below remains unfinished.
+`build/68040-current/bin`. Work has resumed; the wider 68040 completion scope
+below remains unfinished. A separate trace probe confirms missing mapped T1
+and serializing integer trace coverage (80 failures in 112 cases); an isolated
+prototype passes that probe but has not yet received grouped validation.
 
 ## Implemented execution
 
@@ -177,8 +184,8 @@ the embedding memory implementation; the operand boundary is not a cycle model.
 - General busy-frame continuation, including FPSP-generated internal states
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
-- Remaining mapped access-error continuations: other integer store decoders,
-  including call/PEA/LINK stacks; nonindexed MOVEM
+- Remaining mapped access-error continuations: supervisor stack overlap and
+  further call effective-address variants; nonindexed MOVEM
   restart; MOVEM/MOVE16 stores; and the constructed user-mode throwaway-RTE
   case. Supported scalar/FPU/locked writebacks already populate format-7 slots;
   this is no longer an address-only fault model. Saved-EA MOVEM
@@ -537,8 +544,8 @@ displacements, both page sizes, aligned physical prefixes and ATC faults. Guest
 handlers preserve their general-register scratch state and DFC. Flat dispatch
 and compiled FPU paths pass 352 trace/prefetch cases in cold and warm AOT runs.
 Combined control-register, MMU and native040 checks pass. MMU validation reports
-7,087,172 mapped stream cases. Full RTE, FPU-native and combined cold/warm AOT
-validation remain unfinished. A matching candidate bundle has been rebuilt and
+7,087,172 mapped stream cases. Full RTE and FPU-native checks also pass;
+combined cold/warm AOT validation remains unfinished. A matching candidate bundle has been rebuilt and
 passes Windows help, Browser startup and Speedometer's 68K startup; promotion
 to the current bundle awaits the remaining checks. Supervisor stack overlap,
 further EA variants and the broader compatibility work remain separate
