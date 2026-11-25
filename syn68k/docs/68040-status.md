@@ -5,7 +5,54 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Latest validated bundle: partial cached-read diagnostics (2026-11-26)
+## Latest validated bundle: captured FRESTORE frames (2026-11-26)
+
+FRESTORE acquires the header once and decodes resumed operands and the saved
+instruction PC from the captured frame image. It no longer resamples WBTEMP,
+ETEMP, FPTEMP or FPIAR after committing restored state. Changing or failing
+callbacks cannot substitute a second operand or introduce a late read fault.
+Null and idle frames retain their direct path.
+
+The new fixture passes 137,088 cases across checked/native CPU and memory,
+both page sizes, short and busy frames, combined E1/E3 stages, rounding and
+precision settings, postincrement, volatile callbacks and genuine body faults.
+Within that total, 1,152 cases run guest descriptor repair or physical-fault
+return, RTE and retry. Literal register results supplement immutable-image
+comparisons. The exact fixture rejects the previous archive and a header-only
+repair, establishing that operand capture is required too.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. The FPU runner reports 1,290,486 cases; MMU recovery retains 8,107,168
+stream cases. Basic saved-state checks and 146 Motorola FPSP cases also pass
+in both dispatch modes, with FPSP tested at two load addresses. The new AOT
+fixture emits three bodies cold and restores all
+three with zero compilation warm. Existing mapped recovery warm replay retains
+1,262,191 hits without compilation. The closed memory image is byte-identical
+to the previous checkpoint: its twenty Windows/Linux kernel groups and 45
+verified roots per ABI remain covered by that source-matched evidence.
+
+ROMAW was rebuilt with the exact tested CPU archive. Its 74-file bundle at
+`build/68040-frestore-capture-stage/bin` is promoted to `build/68040-current/bin`;
+the previous bundle is preserved at
+`build/68040-pre-frestore-capture-bin-20261126`. The audit at
+`build/68040-frestore-capture-output/68040-frestore-capture-source-audit.json`
+matches 179 CPU inputs, 160 fixtures and four identical CPU archives. CPU build
+ID is `3eba57521957a82ba7a919a41fd64802773d033b8e16dd54ddd90b5ddebfc294`;
+archive SHA256 is
+`cb71803606789731f6d577806a7ce32ed196b80ec2ce0fe5328820f6088860ff`.
+Help returns zero with 7,669 bytes. Browser and 68K Speedometer reach their
+startup loops after 30,950 and 77,160 native entries, respectively, with null
+checkpoints and no Windows exception. Speedometer issues one FPU query.
+
+The broader goal remains active. Compound descriptor/locked cache-push
+continuations, further active-stack/double-fault variants, physical instruction
+prefetch, snoop integration and FPU busy/FPSP saved-state, encoding and
+special-value audits still require work. A separate probe reproduces a zero
+pending-vector state after restoring an FPSP-completed frame with no enabled
+exception; its subsequent vector-1 dispatch remains under investigation.
+These regressions do not establish full 68040 or paged Toolbox compatibility.
+
+## Partial cached-read diagnostics (2026-11-26)
 
 Cached reads now retain the successful operand prefix on a later physical,
 fill or victim-push fault. The MMU appends that prefix to its earlier completed

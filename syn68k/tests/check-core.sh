@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16" "$fixture/cas" "$fixture/unaligned-lock" "$fixture/rte-user"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16" "$fixture/cas" "$fixture/unaligned-lock" "$fixture/rte-user" "$fixture/restore-capture"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -500,6 +500,11 @@ EOF
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_effective_address -o "$fixture/frame-test.exe"
       "$fixture/frame-test.exe" "$(wslpath -m "$fixture/frame")" 0
       "$fixture/frame-test.exe" "$(wslpath -m "$fixture/frame")" 1
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/restore-capture-test.exe"
+      "$fixture/restore-capture-test.exe" "$(wslpath -m "$fixture/restore-capture")" 0
+      "$fixture/restore-capture-test.exe" "$(wslpath -m "$fixture/restore-capture")" 1
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/flat-fpu-native-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_fpu_finish_captured,--wrap=syn68k_fpu_finish_destination,--wrap=syn68k_fpu_finish_frame \
@@ -796,6 +801,10 @@ EOF
         -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_fpu_finish_captured,--wrap=syn68k_fpu_finish_frame \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_effective_address -o syn68k/obj/tests/mapped-fpu-frame-test.exe
       syn68k/obj/tests/mapped-fpu-frame-test.exe
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o syn68k/obj/tests/mapped-fpu-restore-capture-test.exe
+      syn68k/obj/tests/mapped-fpu-restore-capture-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
         syn68k/tests/flat-fpu-native-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_fpu_finish_captured,--wrap=syn68k_fpu_finish_destination,--wrap=syn68k_fpu_finish_frame \

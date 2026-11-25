@@ -173,6 +173,33 @@ are checked, including live trace/CCR changes after operand capture. Normal
 cases also verify load sign extension and preserved Dn upper bytes. Additional
 active-stack EA cases remain part of the wider exception/addressing audit.
 
+## Captured FRESTORE frames
+
+Busy FRESTORE now retains its initial header and reads the remaining frame
+words into a local image. WBTEMP, ETEMP, FPTEMP and the saved instruction PC
+are decoded from that image during resumption. A changing callback cannot
+supply a second value for a field that was already acquired, and there is no
+additional guest read after the restored FPU state commits. Null and idle
+frames retain their existing direct path.
+
+The 137,088-case fixture covers null/idle, software/unimplemented and short
+or busy E1/E3 frame families, including combined stages and the busy conversion
+marker. Checked/native CPU and memory combinations exercise both page sizes,
+postincrement, an existing pending frame, all defined rounding/precision
+settings, changing or failing second-read callbacks, physical faults at every
+frame word, and invalid second-page mappings. Genuine body faults preserve
+the FPU state and address register. Another 1,152 cases within that total use
+real guest descriptor repair or physical-fault return, RTE and a successful
+FRESTORE retry. Aligned frame words make each expected logical word a single
+physical transfer; ordinary misaligned page replay retains its separate bus
+contract.
+
+The immutable-image reference runs are supplemented by literal FP0 results.
+The previous CPU archive fails the volatile-header case. A header-only fix
+still fails the volatile arithmetic-operand case, so suppressing the header
+reread alone does not establish capture. Grouped FPU and cold/warm AOT runners
+include the fixture; its warm run must restore code without compilation.
+
 ## RTE after a user-mode throwaway prefix
 
 Format-1 processing commits its popped frame, SR and selected stack before

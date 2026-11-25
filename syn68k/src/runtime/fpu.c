@@ -883,6 +883,18 @@ static void multiple_registers(FPUContext* context, unsigned extension)
     }
 }
 
+/* Interpret the already acquired frame image without another guest access. */
+static uint32 frame_read_u32(const uint8* bytes)
+{
+    return (uint32)bytes[0] << 24 | (uint32)bytes[1] << 16 | (uint32)bytes[2] << 8 | bytes[3];
+}
+
+static floatx80 frame_read_extended(const uint8* bytes)
+{
+    return (floatx80){.high = frame_read_u32(bytes) >> 16,
+                      .low = (uint64)frame_read_u32(bytes + 4) << 32 | frame_read_u32(bytes + 8)};
+}
+
 /* Captured frame exits retain the evaluated EA and initial restore header. */
 static void state_frame(FPUContext* context)
 {
@@ -953,7 +965,9 @@ static void state_frame(FPUContext* context)
             uint8 restored[100];
             size = frame == 0x41600000 ? 100 : 52;
             span(context, ea.address, size);
-            for (unsigned i = 0; i < size; i += 4) {
+            for (unsigned i = 0; i < 4; ++i)
+                restored[i] = frame >> ((3 - i) * 8);
+            for (unsigned i = 4; i < size; i += 4) {
                 uint32 value = read_value(context, ea.address + i, 4);
                 for (unsigned j = 0; j < 4; ++j)
                     restored[i + j] = value >> ((3 - j) * 8);
@@ -1029,7 +1043,7 @@ static void state_frame(FPUContext* context)
             if (move_out && !pending)
                 cpu_state.fpu.frame_size = 0;
             if (writeback && !pending) {
-                floatx80 wb = read_extended(context, ea.address + 0x18);
+                floatx80 wb = frame_read_extended(restored + 0x18);
                 uint64 low = (uint64)(restored[0x3c] & 3) << 62;
                 low |= !!(restored[0x3d] & 0x80);
                 unsigned precision = writeback_operation == 0x24 || writeback_operation == 0x27 ? 96
@@ -1048,14 +1062,14 @@ static void state_frame(FPUContext* context)
             }
             if (((stages & 4) || (size == 100 && restored[8] == 0xfe)) && valid_arithmetic && !pending) {
                 context->restoring = 1;
-                context->restored_source = read_extended(context, ea.address + size - 12);
-                context->restored_target = read_extended(context, ea.address + size - 24);
+                context->restored_source = frame_read_extended(restored + size - 12);
+                context->restored_target = frame_read_extended(restored + size - 24);
                 context->restored_source_exponent =
                     operand_frame_exponent(context->restored_source, restored[size - 40]);
                 context->restored_target_exponent =
                     operand_frame_exponent(context->restored_target, restored[size - 32]);
                 context->source_tag = restored[size - 40] & 0xf0;
-                context->start = size == 100 ? read_value(context, ea.address + 0x28, 4) : cpu_state.fpu.fpiar;
+                context->start = size == 100 ? frame_read_u32(restored + 0x28) : cpu_state.fpu.fpiar;
                 cpu_state.fpu.frame_size = 0;
                 arithmetic(context, operation == 5 ? (command & ~127u) | 4 : command);
             }
