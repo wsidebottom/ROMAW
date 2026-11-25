@@ -208,8 +208,16 @@ static void matrix(unsigned native_mode)
                                             if (writing)
                                                 assert(result.value == (size == 2 ? 0xbeef : 0xdeadbeef));
                                             else {
-                                                if (fail || atc)
+                                                if (fail || atc) {
                                                     assert(value == 0xdeadbeef);
+                                                    unsigned begin = fail && !list[fail - 1].pass ? 0 : first_replay;
+                                                    unsigned end = fail ? fail - 1 : first_replay * 2;
+                                                    uint32_t expected = 0;
+                                                    for (unsigned i = begin; i < end; ++i)
+                                                        for (unsigned j = 0; j < list[i].size; ++j)
+                                                            expected = expected << 8 | (0x20 + (i + 1) * 8 + j);
+                                                    assert(result.value == expected);
+                                                }
                                                 else {
                                                     uint32_t expected = 0;
                                                     for (unsigned i = first_replay; i < length; ++i)

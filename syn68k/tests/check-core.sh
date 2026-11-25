@@ -849,7 +849,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross read_prefix; do
           fixture=native040-test
           extra=()
           case $group in
@@ -871,6 +871,7 @@ EOF
             cache_move16) fixture=cache040-move16-test; extra=(-DCACHE040_NATIVE_TEST) ;;
             mmu_move16) fixture=mmu040-move16-test; extra=(-DMMU040_MOVE16_NATIVE -DMMU040_MOVE16_GROUPED) ;;
             pagecross) fixture=mmu040-pagecross-test; extra=(-DMMU040_PAGECROSS_NATIVE -DMMU040_PAGECROSS_GROUPED) ;;
+            read_prefix) fixture=mmu040-read-prefix-test; extra=(-DPARTIAL_NATIVE -DPARTIAL_NATIVE_GROUPED) ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -891,7 +892,7 @@ EOF
       cd "$root"
       output=${MMU040_CACHE_OBJ:-syn68k/obj/tests/mmu040-cache}
       mkdir -p "$output"
-      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test; do
+      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test mmu040-read-prefix-test; do
         sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
                  syn68k/src/runtime/cache040.c "syn68k/tests/$fixture.c")
         "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \

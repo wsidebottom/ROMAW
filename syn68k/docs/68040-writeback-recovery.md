@@ -220,9 +220,31 @@ read samples, faults at every transfer in either pass, second-page invalid and
 protected descriptors, both page sizes, privilege levels and RMW intent. Raw
 operand, naturally aligned bus, disabled-cache and enabled serialized-cache
 bindings are covered. The standalone Windows comparison runs 10,120 checked and
-emitted cases. The nineteen-group Windows/Linux kernel runner executes the
+emitted cases. The twenty-group Windows/Linux kernel runner executes the
 native matrix with guards against host semantic helpers. The existing operand
 suite adds first-pass/replay fault coverage and now contains 148,065 cases.
+
+## Partial cached-read diagnostics
+
+Physical cache reads now retain the successful operand prefix in `value` on
+an operand, fill or victim-push failure. The MMU result combines that prefix
+with its earlier completed chunks. Only bytes counted by `completed` belong
+to the diagnostic value; incomplete internal fill bytes and poisoned failed
+callback buffers are excluded. On a page-crossing replay, the diagnostic
+prefix belongs to the current pass. The public read destination still commits
+only when the whole operand succeeds. Write diagnostics retain the original
+width-limited operand.
+
+The independent 2,342-case matrix uses literal natural-beat widths, every
+line offset and physical size, cache-hit prefixes followed by physical or
+fill faults, and dirty-victim push failures. Both cache and logical-memory
+interfaces are checked, including user/supervisor data and instruction
+spaces where applicable. Four baseline checked/native runs on Windows and
+Linux reject the missing prefix. The twenty-group emitted-kernel runner
+executes the matrix with host semantic helpers forbidden; the reference
+cache/MMU batch runs checked Windows and Linux ASan/UBSan cases. The existing
+5,060-case page-crossing matrix also checks the precise diagnostic prefix at
+failures in both passes.
 
 ## Transfer and frame contract
 

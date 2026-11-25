@@ -73,7 +73,10 @@ enum Syn68kCache040Fault {
 
 typedef struct {
     enum Syn68kCache040Fault fault;
-    uint32_t bus_address, value;
+    uint32_t bus_address;
+    /* Width-limited write operand, or the successfully completed read prefix
+       in low bits and memory order. Incomplete internal fill data is excluded. */
+    uint32_t value;
     /* Successful operand bytes, including a CB store committed to its new
        line before a victim-push failure. WT counts completed external beats;
        its cache update can already be visible when the external write fails. */

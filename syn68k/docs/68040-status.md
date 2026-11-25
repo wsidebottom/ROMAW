@@ -5,7 +5,51 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Latest validated bundle: RTE user-stack faults (2026-11-26)
+## Latest validated bundle: partial cached-read diagnostics (2026-11-26)
+
+Cached reads now retain the successful operand prefix on a later physical,
+fill or victim-push fault. The MMU appends that prefix to its earlier completed
+chunks. Only bytes counted by `completed` appear in the diagnostic value;
+incomplete internal fills and poisoned failed callback data are excluded.
+Page-crossing replay reports the current pass's prefix. Failed public reads
+leave their output unchanged, and write diagnostics retain the original
+width-limited operand.
+
+The new independent matrix passes 2,342 cases per checked/emitted pass. It
+covers physical widths, natural beats and every line offset, cache-hit
+prefixes, fill/push failures, both memory interfaces and applicable function
+codes. Its exact fixture rejects the previous kernel in four checked/native
+Windows/Linux runs. The existing 5,060-case page-crossing matrix now verifies
+the diagnostic prefix at faults in both passes. All twenty emitted-kernel
+groups pass on both ABIs with 45 verified roots and no runtime imports.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. Coverage retains 8,107,168 recovery-stream cases, 36,097 unaligned locked
+cases and the 7,232-case RTE matrix from `9cd945c2`. Each mapped AOT recovery
+process passes 3,618,920 cases; warm replay records 1,262,191 hits with zero
+compilations. The RTE warm fixture also restores its body without compilation.
+
+ROMAW was rebuilt with the exact tested CPU archive. Its 74-file bundle at
+`build/68040-read-prefix-stage/bin` is promoted to `build/68040-current/bin`;
+the previous bundle is retained at `build/68040-pre-read-prefix-bin-20261126`.
+The audit at `build/68040-read-prefix-output/68040-read-prefix-source-audit.json`
+verifies 179 CPU inputs, 159 fixtures and four identical CPU archives. CPU
+build ID is `5b85299b75c425b2c6891dd981455cf45c4be074628701714d39663785de4df3`;
+archive SHA256 is
+`28961dbb9c4cb76cba101af7035cb91b2b1933e4586fe9617c013661b85c233b`.
+Help returns zero with 7,669 bytes. Browser and 68K Speedometer reach their
+startup loops after 30,943 and 77,158 native entries, respectively,
+with null native checkpoints and no Windows exception. Speedometer issues
+one FPU capability query. These checks establish startup behavior.
+
+The broader goal remains active: compound descriptor and locked cache-push
+continuations, further active-stack/double-fault variants, physical instruction
+prefetch, snoop integration and FPU busy/FPSP saved-state, encoding and
+special-value audits still require work. ROMAW-wide paged pointers and full
+68040 compatibility are not established by these regressions. Earlier
+checkpoint details follow.
+
+## RTE user-stack faults (2026-11-26)
 
 RTE now delivers an access fault after a format-1 frame has committed a user
 SR and selected USP. The completed prefix and callback effects remain live.

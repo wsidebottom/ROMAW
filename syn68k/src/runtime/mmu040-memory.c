@@ -303,6 +303,9 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
             if (access.fault) {
                 result.cache = access;
                 result.cache_exception = 1;
+                if (!writing)
+                    for (unsigned i = 0; i < access.completed; ++i)
+                        result.value = (result.value << 8) | ((access.value >> ((access.completed - i - 1) * 8)) & 255);
                 result.completed += access.completed;
                 result.logical = logical + result.completed;
                 result.bus_error = access.fault != CACHE040_BAD_REQUEST;

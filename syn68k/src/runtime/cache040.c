@@ -178,7 +178,7 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         if (descriptor && !enabled && line) {
             result.fault = CACHE040_DESCRIPTOR_LOCKUP;
             result.bus_address = physical;
-            return result;
+            goto complete;
         }
         if (locked && !enabled && line)
             cache->bypass_data_miss = 1;
@@ -190,7 +190,7 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         if (ordinary && mode >= 2 && line && !bank) {
             if (!push_line(cache, line, bus, way, &result)) {
                 line->valid = 0;
-                return result;
+                goto complete;
             }
             line->valid = 0;
             line = 0;
@@ -211,7 +211,7 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                 if (result.fault) {
                     if (writing && result.fault == CACHE040_PUSH_FAULT)
                         result.completed += chunk;
-                    return result;
+                    goto complete;
                 }
                 if (line && writing) {
                     result.completed += chunk;
@@ -250,7 +250,7 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
                     result.fault = CACHE040_OPERAND_FAULT;
                     result.bus_address = physical + done;
                     result.cycle = cycle;
-                    return result;
+                    goto complete;
                 }
                 done += beat;
                 result.completed += beat;
@@ -259,8 +259,9 @@ static Syn68kCache040Access access_inner(Syn68kCache040* cache, const Syn68kCach
         }
         result.completed += chunk;
     }
+complete:
     if (!writing)
-        for (unsigned i = 0; i < size; ++i)
+        for (unsigned i = 0; i < result.completed; ++i)
             result.value = (result.value << 8) | bytes[i];
     return result;
 }
