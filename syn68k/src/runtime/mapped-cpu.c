@@ -220,28 +220,18 @@ static int instruction_traced(uint16 entry_sr, unsigned flow)
     return (entry_sr & 0x8000) || ((entry_sr & 0x4000) && flow);
 }
 
-static int mmu_moves_trace_opcode(unsigned opcode)
+static int serializing_trace_opcode(unsigned opcode)
 {
     return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
-           (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0);
-}
-
-static int control_flow_opcode(unsigned opcode)
-{
-    return (opcode >> 12) == 6 || (opcode & 0xf0f8) == 0x50c8 || (opcode & 0xffc0) == 0x4e80 ||
-           (opcode & 0xffc0) == 0x4ec0 || opcode == 0x4e73 || opcode == 0x4e74 || opcode == 0x4e75 || opcode == 0x4e77;
+           (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0) ||
+           opcode == 0x4e71 || (opcode & 0xfff0) == 0x4e60 || (opcode & 0xffc0) == 0x46c0 || opcode == 0x007c ||
+           opcode == 0x027c || opcode == 0x0a7c || ((opcode & 0xf9c0) == 0x08c0 && (opcode & 0x0600));
 }
 
 static int unconditional_flow_opcode(unsigned opcode)
 {
     return (opcode & 0xff00) == 0x6100 || (opcode & 0xffc0) == 0x4e80 || (opcode & 0xffc0) == 0x4ec0 ||
            opcode == 0x4e73 || opcode == 0x4e74 || opcode == 0x4e75 || opcode == 0x4e77;
-}
-
-static int linear_stack_store_opcode(unsigned opcode)
-{
-    return (opcode & 0xfff8) == 0x4e50 || (opcode & 0xfff8) == 0x4808 ||
-           ((opcode & 0xffc0) == 0x4840 && (opcode & 0x30));
 }
 
 static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
@@ -353,10 +343,9 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             if (!handled)
                 handled = syn68k_integer_step_decoded(cpu->pc, opcode, &memory, &result->step);
         }
-        unsigned trace_flow = handled && (mmu_moves_trace_opcode(opcode) || unconditional_flow_opcode(opcode) ||
+        unsigned trace_flow = handled && (serializing_trace_opcode(opcode) || unconditional_flow_opcode(opcode) ||
                                           result->step.flow_changed);
-        unsigned trace_scope =
-            trace_flow || (handled && (linear_stack_store_opcode(opcode) || control_flow_opcode(opcode)));
+        unsigned trace_scope = handled;
         if (!handled) {
             Syn68kFPUStep fp;
             int fpu_handled = 0;
@@ -414,6 +403,11 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                     }
                 }
             }
+            else if (opcode == 0x4e76 && !cpu_state.ccv) {
+                // Untaken TRAPV completes normally and participates in T1.
+                result->step.next = cpu->pc + 2;
+                trace_scope = 1;
+            }
             else {
                 unsigned vector = opcode >> 12 == 10 ? 10 : opcode >> 12 == 15 ? 11 : 0;
                 uint32 pc = cpu->pc;
@@ -421,13 +415,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 if ((opcode & 0xFFF0) == 0x4E40)
                     vector = 32 + (opcode & 15), pc += 2;
                 else if (opcode == 0x4E76) {
-                    if (cpu_state.ccv)
-                        vector = 7, pc += 2, format = 2;
-                    else {
-                        cpu->pc += 2;
-                        ++result->completed;
-                        continue;
-                    }
+                    vector = 7, pc += 2, format = 2;
                 }
                 else if (!vector &&
                          ((opcode & 0xFFF8) == 0x4848 || opcode_map_index[opcode] == opcode_map_index[0x4AFC]))

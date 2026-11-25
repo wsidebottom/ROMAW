@@ -1585,7 +1585,11 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
                                 Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
                                 Syn68kMappedRun run;
                                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                assert(run.reason == SYN68K_MAPPED_BUDGET);
+                                assert(run.reason == (trace & 2 ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                       run.step.vector == (trace & 2 ? 9U : 0U));
+                                if (trace & 2)
+                                    assert(run.step.format == 2 && run.step.exception_pc == cpu.pc &&
+                                           run.step.fault_address == 0x10000);
                                 unsigned expected_pc = cpu.pc, expected_sr = status();
                                 unsigned expected_data = scalar_store_value(operand, size);
                                 M68kReg expected_regs[16];
@@ -3398,6 +3402,7 @@ static void guest_locked_writebacks(void)
                                     for (unsigned c = 0; c < sizeof ccrs / sizeof *ccrs; ++c)
                                         for (unsigned fault_kind = 0; fault_kind < 3; ++fault_kind) {
                                             unsigned sr = trace << 14 | ccrs[c];
+                                            unsigned traced = !!(trace & 2) || ((trace & 1) && kind);
                                             unsigned pair = kind >= 4 && !which;
                                             unsigned callback = pair && fault_kind == 2;
                                             locked_write_setup(page8k, privileged, kind, mode, lane, sample, sr);
@@ -3410,7 +3415,12 @@ static void guest_locked_writebacks(void)
                                             Syn68kMappedRun run;
                                             assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
                                             unsigned next = 0x10000 + (kind >= 4 ? 6 : kind ? 4 : 2);
-                                            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == next);
+                                            assert(run.reason ==
+                                                       (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                                   run.step.vector == (traced ? 9U : 0U) && cpu.pc == next);
+                                            if (traced)
+                                                assert(run.step.format == 2 && run.step.exception_pc == next &&
+                                                       run.step.fault_address == 0x10000);
                                             unsigned expected_sr = status(), expected_a0 = EM_A0;
                                             unsigned expected_a1 = EM_A1, expected_d2 = EM_D2, expected_d3 = EM_D3;
                                             unsigned expected_first = physical_value(0x10000 + lane, size);
@@ -3436,7 +3446,7 @@ static void guest_locked_writebacks(void)
                                             cpu.pc = 0x10000;
                                             assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
                                             assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
-                                                   run.step.store_state == (trace & 2 ? 3U : 2U) &&
+                                                   run.step.store_state == (traced ? 3U : 2U) &&
                                                    run.step.store_locked == 1 && run.step.access.rmw &&
                                                    run.step.access.writing && cpu.pc == next &&
                                                    status() == expected_sr && EM_A0 == expected_a0 &&
@@ -3506,7 +3516,7 @@ static void guest_locked_writebacks(void)
                                             assert(mapped_value(frame + 2, 4) == next &&
                                                    mapped_value(frame + 12, 2) ==
                                                        ((fault_kind == 2 ? 0 : 0x400) | 0x200 | size_bits | fc |
-                                                        (trace & 2 ? 0x2000 : 0)) &&
+                                                        (traced ? 0x2000 : 0)) &&
                                                    mapped_value(frame + (fault_kind == 2 ? 18 : 16), 2) ==
                                                        (0x80 | size_bits | fc));
                                             if (pair)
@@ -3518,12 +3528,12 @@ static void guest_locked_writebacks(void)
                                                            expected_second);
                                             assert(syn68k_mapped_cpu_run(&cpu, pair ? 11 : 8, &run));
                                             assert(run.reason ==
-                                                       (trace & 2 ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                                       (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
                                                    cpu.pc == next && status() == expected_sr && EM_A0 == expected_a0 &&
                                                    EM_A1 == expected_a1 && watched_read_attempts == 1 &&
                                                    watched_tail_reads == (kind >= 4) && watched_successes == 1 &&
                                                    watched_tail_successes == (kind >= 4));
-                                            if (trace & 2) {
+                                            if (traced) {
                                                 assert(run.step.vector == 9 && run.step.format == 2 &&
                                                        run.step.fault_address == 0x10000);
                                                 put32(physical(cpu_state.vbr + 36), 0x10080);
@@ -5397,6 +5407,81 @@ static void guest_fpu_mmu_traces(void)
     syn68k_fpu_reset();
 }
 
+/* MC68040UM 8.2.6: T1 applies to normal completion; these T0 classes
+   serialize the pipeline even though their next PC is linear. */
+static void guest_integer_traces(void)
+{
+    const struct {
+        unsigned opcode, extension, words, serial, privileged;
+    } forms[] = {{0x4e71, 0, 1, 1, 0}, {0x7001, 0, 1, 0, 0},      {0x027c, 0xffff, 2, 1, 1}, {0x007c, 0, 2, 1, 1},
+                 {0x0a7c, 0, 2, 1, 1}, {0x46fc, 0x2000, 2, 1, 1}, {0x46c0, 0, 1, 1, 1},      {0x4e60, 0, 1, 1, 1},
+                 {0x4e68, 0, 1, 1, 1}, {0x4e76, 0, 1, 0, 0},      {0x08c0, 0, 2, 0, 0}};
+
+    unsigned initial = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned f = 0; f < sizeof forms / sizeof *forms; ++f)
+                for (unsigned trace = 0; trace < 4; ++trace)
+                    for (unsigned live = 0; live < 5; ++live) {
+                        fixture(page8k, privileged);
+                        set_status((privileged ? 0x2000 : 0) | trace << 14 | 17);
+                        cpu_state.usp = 0x20080;
+                        EM_D0 = 0x2000;
+                        EM_A0 = 0x20040;
+                        code_word(0x10000, forms[f].opcode);
+                        if (forms[f].words == 2)
+                            code_word(0x10002, forms[f].extension);
+                        if (live < 4) {
+                            trace_read_physical = physical(0x10000);
+                            trace_read_sr = live << 14;
+                        }
+                        unsigned expected_sr = (privileged ? 0x2000 : 0) | (live < 4 ? live : trace) << 14 | 17;
+                        M68kReg expected_regs[16];
+                        memcpy(expected_regs, cpu_state.regs, sizeof expected_regs);
+                        Syn68kFPUState expected_fpu = cpu_state.fpu;
+                        unsigned expected_usp = cpu_state.usp;
+                        unsigned denied = forms[f].privileged && !privileged;
+                        unsigned vector = denied ? 8 : (trace & 2) || ((trace & 1) && forms[f].serial) ? 9 : 0;
+                        unsigned next = denied ? 0x10000 : 0x10000 + forms[f].words * 2;
+                        if (!denied) {
+                            if (forms[f].opcode == 0x7001) {
+                                expected_regs[0].ul.n = 1;
+                                expected_sr &= ~15u;
+                            }
+                            else if (forms[f].opcode == 0x08c0) {
+                                expected_regs[0].ul.n |= 1;
+                                expected_sr |= 4;
+                            }
+                            else if (forms[f].opcode == 0x46fc || forms[f].opcode == 0x46c0)
+                                expected_sr = 0x2000;
+                            else if (forms[f].opcode == 0x4e60)
+                                expected_usp = EM_A0;
+                            else if (forms[f].opcode == 0x4e68)
+                                expected_regs[8].ul.n = expected_usp;
+                        }
+                        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                        Syn68kMappedRun run;
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                        if (run.step.vector != vector || cpu.pc != next || status() != expected_sr)
+                            fprintf(stderr,
+                                    "Integer trace op=%04x entry=%u live=%u user=%u vectors=%u/%u PC=%x/%x SR=%x/%x\n",
+                                    forms[f].opcode, trace, live, !privileged, run.step.vector, vector, cpu.pc, next,
+                                    status(), expected_sr);
+                        assert(run.step.vector == vector && cpu.pc == next && status() == expected_sr);
+                        assert(run.reason == (vector ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET));
+                        assert(run.completed == !vector);
+                        if (vector)
+                            assert(run.step.format == (vector == 9 ? 2 : 0) && run.step.exception_pc == next &&
+                                   run.step.fault_address == (vector == 9 ? 0x10000 : 0));
+                        assert(!memcmp(expected_regs, cpu_state.regs, sizeof expected_regs) &&
+                               !memcmp(&expected_fpu, &cpu_state.fpu, sizeof expected_fpu) &&
+                               cpu_state.usp == expected_usp && !writes);
+                        assert(trace_read_physical == UINT32_MAX);
+                        ++cases;
+                    }
+    printf("%u integer T1/serializing-T0/entry-SR/privilege cases passed\n", cases - initial);
+}
+
 int main(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -5417,6 +5502,7 @@ int main(int argc, char** argv)
             moves_streams();
             stack_store_completions();
             guest_control_branches();
+            guest_integer_traces();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -5471,6 +5557,7 @@ int main(int argc, char** argv)
             moves_streams();
             stack_store_completions();
             guest_control_branches();
+            guest_integer_traces();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();

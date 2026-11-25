@@ -5,6 +5,44 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Mapped integer trace retirement (2026-11-25)
+
+T1 now applies after every normally completed mapped integer instruction,
+using the instruction-entry SR rather than callback-modified live trace bits.
+The T0 serializing class includes NOP, SR changes, MOVE USP and CAS/CAS2 in
+addition to the existing MMU/MOVES and control-transfer classes. CAS requires
+a nonzero size encoding; immediate BSET remains an ordinary linear instruction.
+Untaken TRAPV now uses shared retirement instead of bypassing trace handling.
+Privilege, access and address errors retain priority over normal trace.
+
+Queued CAS/CAS2 stores retain their T0 trace condition through format-7 CT,
+guest writeback cleanup and RTE. TAS receives T1 tracing but does not join the
+T0 class. The regression's normal reference runs now check architectural trace
+exceptions instead of requiring a budget exit after a traced instruction.
+CPU, memory, callback, frame and guest-recovery comparisons remain intact.
+
+The focused fixture passes 3,520 cases across both dispatch and memory bindings,
+including user privilege failures, opcode-fetch callbacks changing live SR,
+untaken TRAPV and BSET's T0 negative case. The full MMU group passes 7,090,692
+mapped stream/recovery cases and 101,224 control-flow/RTE cases. Complete
+cold/warm AOT passes 3,110,682 recovery cases per run: 64 cold images,
+1,262,171 warm hits and zero warm compilations. Source identity remains stable.
+The AOT harness also creates its fixture parent directory in fresh snapshots.
+
+ROMAW was relinked from application base `e062e3db` with the exact tested CPU
+archive. All 175 CPU inputs and four fixtures match the maintained, tested and
+application snapshots. The local audit is `build/68040-trace-source-audit.json`.
+The matching bundle is staged at `build/68040-trace-stage/bin`; promotion to
+`build/68040-current/bin` verifies all 74 packaged files byte for byte. The prior
+bundle is retained at `build/68040-pre-trace-bin-20261125`.
+Windows help passed; Browser and Speedometer's 68K startup reached WaitNextEvent
+after 30,947 and 76,931 native entries with no live native checkpoint. Speedometer
+made one FPU capability query. These remain startup checks rather than complete
+FPU application workflows.
+
+STOP/cache support, forced-exception tracing and the remaining compatibility
+work below are not established by these normal-retirement checks.
+
 ## Resumed validation checkpoint (2026-11-25)
 
 The branch/call candidate at `ac8295fd` has completed its missing gates. On resumption,
@@ -207,10 +245,10 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   case. Supported scalar/FPU/locked writebacks already populate format-7 slots;
   this is no longer an address-only fault model. Saved-EA MOVEM
   restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.
-- Integer trace coverage beyond the explicit FPU/MMU paths, including the
-  serializing integer instructions and taken control transfers listed in
-  MC68040UM 8.2.6. Scalar-store trace tests cover ordinary linear candidates
-  and serializing MOVES; they do not establish T0 coverage for CAS/CAS2.
+- Remaining trace audit, including forced exceptions, mapped STOP/cache
+  support and the broader flat integer frontend. Normal mapped T1 and the
+  supported serializing T0 classes now include CAS/CAS2 writeback/RTE checks;
+  these do not establish the unsupported instruction classes.
 - Reserved-encoding and effective-address legality audit, additional boundary
   and special-value arithmetic vectors, and real application FPU workflows.
 - Broader privileged/control-register, MMU/cache and exception audit. Integer
