@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault" "$fixture/cache-store" "$fixture/halt" "$fixture/allocate" "$fixture/move16" "$fixture/cas"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -552,6 +552,11 @@ EOF
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16 -o "$fixture/move16-test.exe"
       "$fixture/move16-test.exe" "$(wslpath -m "$fixture/move16")"
       "$fixture/move16-test.exe" "$(wslpath -m "$fixture/move16")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-cas040-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$fixture/cas-test.exe"
+      "$fixture/cas-test.exe" "$(wslpath -m "$fixture/cas")"
+      "$fixture/cas-test.exe" "$(wslpath -m "$fixture/cas")"
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -964,6 +969,7 @@ EOF
         syn68k/tests/mmu040-operands-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/mmu040-operands-test.exe"
       "$output/mmu040-operands-test.exe"
+      "$output/mmu040-operands-test.exe" --cas-native
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" "${warnings[@]}" -g -O2 "${includes[@]}" \
         -std=gnu11 -Isyn68k/obj/src/include -Isyn68k/src/include \
         syn68k/tests/mmu040-flow-test.c syn68k/obj/src/runtime/libsyn68k.a \
@@ -1006,6 +1012,11 @@ EOF
         syn68k/tests/mapped-cache-move16-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16 -o "$output/move16-test.exe"
       "$output/move16-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-cas040-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$output/cas-test.exe"
+      "$output/cas-test.exe"
     )
     ;;
   threaded-dispatch)

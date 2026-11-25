@@ -5,6 +5,87 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## CAS/CAS2 termination and compare-register aliases (2026-11-26)
+
+Mapped compare/exchange now follows MC68040UM 7.4.5 on comparison failure:
+CAS writes back its read value, while CAS2 writes back only its second read
+operand. Compare-register updates and subtraction flags remain visible. The
+successful CAS2 first write uses private LOCKED_CONTINUE traffic; all its beats
+retain LOCK without LOCKE. The final write, including the mismatch writeback,
+asserts LOCKE only on its final physical chunk. The caller's cache binding is
+not mutated. Both the mapped and generated legacy decoders now honor the PRM's
+shared-compare-register rule: operand 1 takes precedence if Dc1 and Dc2 are the
+same register. Ordinary flat bus policy is unchanged.
+
+The bus rule follows the processor-specific
+[MC68040UM section 7.4.5](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf).
+Its explicit second-operand CAS2 writeback differs from the destination-1 note
+in the generic
+[M68000 Programmer's Reference Manual CAS2 entry](https://www.nxp.com/docs/en/reference-manual/M68000PRM.pdf).
+The model selects the processor manual for that bus detail and the PRM for the
+unambiguous compare-register alias rule. This is a documented specification
+choice, not a hardware measurement.
+
+Aligned failures of those terminating writes use the existing retired-store
+certificate. Physical and ATC faults preserve the captured old value on a
+mismatch, or the captured update on success; a successful CAS2 first-write
+fault also captures its independent second store. The guest repairs descriptors
+when needed, drains the slots through original-function-code MOVES and returns
+with RTE. Compare-register results, flags, address updates, full FPU state and
+pending T0/T1 trace survive without another operand read. Checked and emitted
+memory paths share the sequencing; this does not add a native integer opcode
+emitter.
+
+The 31,035-case fixture covers byte/word/long CAS and word/long CAS2, every line
+offset, all cache modes, DE settings, empty/clean/dirty tags, both privilege
+levels and comparison outcomes. It checks physical beat widths and order,
+original-value mismatch writes, cache push/invalidation, final-only LOCKE,
+register/update/address aliases. Identical-address updates check deterministic
+runtime behavior; the PRM leaves overlapping memory updates undefined. Aligned
+physical, protected-page and invalid-page write failures cover both successful
+CAS2 write positions and its mismatch termination. Guest handlers preserve DFC
+and their scratch registers; the fixture checks cleanup data and excludes
+operand rereads. Link guards exclude original C MMU/cache transfer functions during
+native initial execution. The final fixture rejects the previous CPU archive
+because its failed CAS emits no terminating write. It separately rejects the
+initial CAS update at the corrected shared-register result. A separate 384-case
+matrix checks the ISA alias rule through flat execution, the shared component
+and the MMU, using both interpreter and x64 JIT entry paths.
+
+Ordinary and cold/warm standalone runs pass; warm replay restores eight images
+without compilation. The final CPU archive retains the byte-identical emitted
+MMU/cache image from the eighteen-group Windows/Linux checkpoint, with all 45
+verified roots and their unchanged source inputs. The grouped cache/reference,
+FPU, MMU, flat MOVE16 and full AOT gates pass. Reported coverage includes
+1,153,398 FPU cases, 81,056 operand/differential cases plus the 384-case variant
+with x64 JIT flat entry, 8,107,168 stream/recovery cases, 101,224 control-flow
+cases and both 50,453-case flat MOVE16 runs. Full cold/warm AOT passes 3,618,920
+mapped recovery cases per process; warm replay reports 1,262,191 hits and zero
+compilations. The new 31,035-case fixture and existing MOVE16, allocation,
+cache-op, push/fill, store and halt fixtures also pass cold/warm replay. Stable
+identity, malformed-artifact fallback and publication checks pass.
+
+ROMAW was rebuilt from application base `dc2e152e` with the exact tested CPU
+archive. The 74-file bundle at `build/68040-cas-final-stage/bin` is promoted to
+`build/68040-current/bin`; the previous MOVE16 bundle is retained at
+`build/68040-pre-cas-bin-20261126`. The complete audit at
+`build/68040-cas-final-output/68040-cas-final-source-audit.json` verifies 179 CPU
+inputs, 155 fixture files, four identical CPU archives and all staged files.
+It also records the retained negative-oracle archives and the unchanged emitted
+kernel's earlier eighteen-group proof. CPU build ID is
+`528e56be405522011198065b1ba44c8cacb0e28e6768ada68c854c136b079b77`;
+archive SHA256 is
+`bab6a114fb368fa3c38a7f762a0a53f5e31bf82b66b7127027fbecc319399fea`.
+Help returns zero with 7,669 bytes. Browser reaches WaitNextEvent after 30,951
+native entries; 68K Speedometer reaches its startup loop after 77,160 with one
+FPU capability query. Both have null native checkpoints and no Windows
+exception. These remain startup checks, not full interactive FPU workflows.
+
+Further work includes unaligned locked-store fault certification, snoop and
+compound bus continuations, and FPU busy/FPSP saved-state/restart compatibility.
+The bus owner still supplies atomicity across the complete locked sequence.
+Pin timing and ROMAW-wide guest paging are not established by this checkpoint.
+
 ## MOVE16 physical line integration (2026-11-26)
 
 Mapped MOVE16 now uses a separate nonallocating physical line entry. Each read

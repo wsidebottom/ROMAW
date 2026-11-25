@@ -38,6 +38,19 @@ Malformed line diagnostics (cycle, progress, physical address or captured data)
 are rejected before frame writes. The documented same-register postincrement
 write-protection erratum invalidates a dirty cached source without writing it.
 
+## CAS/CAS2 termination
+
+The mapped 68040 always ends a completed CAS comparison with a write cycle.
+A mismatch writes the value just read; CAS2 mismatch writes only its second
+read operand. Shared compare-register failures retain memory operand 1 in that
+register in both the mapped and generated legacy decoders. Faults in these terminating writes retire the compare-register
+results and captured flags, retaining the old value in WB1/WB2 for guest MOVES
+cleanup. They do not repeat either operand read. A successful CAS2 first write
+retains LOCK without LOCKE and captures its second update if it faults. The
+final write and mismatch termination assert LOCKE only on their final physical
+beat. These certificates remain restricted to aligned locked stores. Normal
+unaligned transfers are tested separately from fault continuation admission.
+
 ## MOVEM store continuation
 
 MOVEM store faults retain CM and their original EA, plus the full failed scalar

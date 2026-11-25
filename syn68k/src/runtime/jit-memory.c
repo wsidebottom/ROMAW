@@ -314,8 +314,20 @@ static void write_access(Syn68kEAContext* context, Syn68kEA ea, unsigned size, u
         return;
     }
     if (locked && context->memory) {
-        context->access =
-            syn68k_mmu040_write_rmw(context->memory, ea.address, cpu_state.sr & 0x2000 ? 5 : 1, size, value);
+        /* A successful CAS2's first write must not release the locked sequence.
+           Keep this invocation's traffic private instead of mutating the board's
+           cache binding across callbacks. 1 is final; 2 is a nonfinal operand. */
+        Syn68kMMU040Memory* request = context->memory;
+        Syn68kMMU040Memory memory;
+        Syn68kMMU040Cache cache;
+        if (locked == 2 && request->cache) {
+            memory = *request;
+            cache = *memory.cache;
+            cache.traffic = CACHE040_LOCKED_CONTINUE;
+            memory.cache = &cache;
+            request = &memory;
+        }
+        context->access = syn68k_mmu040_write_rmw(request, ea.address, cpu_state.sr & 0x2000 ? 5 : 1, size, value);
         if (context->access.translation.fault != MMU040_OK || context->access.bus_error) {
             context->error = 2;
             context->fault_address = context->access.logical;
@@ -674,7 +686,7 @@ static int compare_swap(unsigned op, Syn68kEAContext* context, integer_flags* fl
         if (!difference)
             difference = arithmetic(flags, m2, EM_DREG(c2), size, 1, 0, 0, 0);
         if (!difference) {
-            write_access(context, first_ea, size, u1, 1);
+            write_access(context, first_ea, size, u1, 2);
             if (context->error) {
                 if (!step || !context->memory || context->error != 2 || !context->access.writing ||
                     !context->access.rmw)
@@ -689,8 +701,15 @@ static int compare_swap(unsigned op, Syn68kEAContext* context, integer_flags* fl
             return 1;
         }
         else {
-            write_operand(context, (Syn68kEA){.reg = c1}, size, m1);
+            /* PRM CAS2: Dc1 takes precedence when both compare registers alias. */
             write_operand(context, (Syn68kEA){.reg = c2}, size, m2);
+            write_operand(context, (Syn68kEA){.reg = c1}, size, m1);
+            /* MC68040UM 7.4.5: a failed CAS2 still terminates its locked
+               sequence by writing only the second value read. */
+            if (context->memory) {
+                write_access(context, second_ea, size, m2, 1);
+                return 1;
+            }
         }
     }
     else {
@@ -701,8 +720,12 @@ static int compare_swap(unsigned op, Syn68kEAContext* context, integer_flags* fl
         uint32 update = EM_DREG((extension >> 6) & 7);
         uint32 value = read_locked_operand(context, ea, size);
         uint32 difference = arithmetic(flags, value, EM_DREG(cmp), size, 1, 0, 0, 0);
-        if (difference)
+        if (difference) {
             write_operand(context, (Syn68kEA){.reg = cmp}, size, value);
+            /* The 68040 always ends CAS with a write, including mismatch. */
+            if (context->memory)
+                write_access(context, ea, size, value, 1);
+        }
         else
             write_access(context, ea, size, update, 1);
         return 1;

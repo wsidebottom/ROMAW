@@ -73,6 +73,15 @@ failure. `completed` includes copyback operand bytes already committed before
 a victim-push fault, while write-through counts only completed external beats.
 The failed victim's captured data remains separate from the new cached operand.
 
+Mapped CAS/CAS2 now preserve the 68040's terminating mismatch write: CAS
+rewrites its captured read value, while CAS2 rewrites only its second read
+operand. A successful CAS2 first store uses a private LOCKED_CONTINUE binding,
+so only the final store's final physical beat carries LOCKE. The instruction
+caller does not mutate the board's binding. Aligned write faults retain the
+normal captured writeback slots and guest cleanup contract; unaligned locked
+store continuations remain restricted. Bus ownership still supplies atomicity
+across the complete RMW sequence.
+
 The caller must serialize concurrent use of a cache object. Its active guard
 rejects recursive execution of that same object from a physical callback.
 Multimaster snooping remains unbound. MOVE16 uses a separate nonallocating line

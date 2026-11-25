@@ -305,14 +305,92 @@ static void locked_cases(void)
             }
 }
 
-int main(void)
+/* PRM CAS2 Dc fields: a shared compare register retains memory operand 1. */
+static void shared_compare_register(unsigned native)
 {
+    unsigned first_case = cases;
+    for (unsigned n = 2; n <= 4; n *= 2)
+        for (unsigned page8k = 0; page8k < 2; ++page8k)
+            for (unsigned privileged = 0; privileged < 2; ++privileged)
+                for (unsigned reg = 0; reg < 8; ++reg)
+                    for (unsigned first_equal = 0; first_equal < 2; ++first_equal) {
+                        fixture(page8k, privileged);
+                        unsigned original = 0xabcd8000, mask = n == 2 ? 65535 : UINT32_MAX;
+                        unsigned m1 = (original ^ !first_equal) & mask, m2 = (original ^ (1u << (n * 8 - 1))) & mask;
+                        unsigned pc = 0x10000, a = 0x20040, b = 0x20080;
+                        unsigned words[] = {n == 2 ? 0x0cfc : 0x0efc, 0x8000 | ((reg + 1) & 7) << 6 | reg,
+                                            0x9000 | ((reg + 2) & 7) << 6 | reg};
+                        for (unsigned pass = 0; pass < 3; ++pass) {
+                            state(first_equal ? 16 : 0, privileged);
+                            EM_A0 = a;
+                            EM_A1 = b;
+                            EM_DREG(reg) = original;
+                            uint32_t before[16];
+                            for (unsigned i = 0; i < 16; ++i)
+                                before[i] = EM_DREG(i);
+                            if (pass == 2) {
+                                for (unsigned i = 0; i < 3; ++i)
+                                    code_word(pc + i * 2, words[i]);
+                                for (unsigned i = 0; i < n; ++i) {
+                                    ram[physical(a + i)] = m1 >> ((n - i - 1) * 8);
+                                    ram[physical(b + i)] = m2 >> ((n - i - 1) * 8);
+                                }
+                            }
+                            else {
+                                for (unsigned i = 0; i < 3; ++i)
+                                    WRITEUW(pc + i * 2, words[i]);
+                                if (n == 2) {
+                                    WRITEUW(a, m1);
+                                    WRITEUW(b, m2);
+                                }
+                                else {
+                                    WRITEUL(a, m1);
+                                    WRITEUL(b, m2);
+                                }
+                            }
+                            if (pass == 0) {
+                                destroy_blocks(pc, 32);
+                                WRITEUW(pc + 6, 0x4ef9);
+                                WRITEUL(pc + 8, MAGIC_EXIT_EMULATOR_ADDRESS);
+                                uint64_t executions = syn68k_native_execution_count();
+                                interpret_code(hash_lookup_code_and_create_if_needed(pc));
+                                assert(native ? syn68k_native_execution_count() > executions
+                                              : syn68k_native_execution_count() == executions);
+                            }
+                            else {
+                                Syn68kIntegerStep step = {0};
+                                assert(syn68k_integer_operand_step(pc, words[0], pass == 2 ? &memory : NULL, &step));
+                                assert(!step.vector && step.next == pc + 6);
+                            }
+                            for (unsigned i = 0; i < 16; ++i)
+                                assert(EM_DREG(i) == (i == reg ? (original & ~mask) | m1 : before[i]));
+                            unsigned cmp = original & mask, operand = first_equal ? m2 : m1;
+                            unsigned result = (operand - cmp) & mask, sign = 1u << (n * 8 - 1);
+                            assert(!!cpu_state.ccc == (operand < cmp) && !cpu_state.ccnz == !result &&
+                                   !!cpu_state.ccn == !!(result & sign) &&
+                                   !!cpu_state.ccv == !!((operand ^ cmp) & (operand ^ result) & sign) &&
+                                   !!cpu_state.ccx == first_equal);
+                            ++cases;
+                        }
+                    }
+    printf("%u CAS2 shared-compare-register/flat/component/MMU cases passed (%s).\n", cases - first_case,
+           native ? "x64 JIT" : "interpreter");
+}
+
+int main(int argc, char** argv)
+{
+    assert(argc == 1 || (argc == 2 && !strcmp(argv[1], "--cas-native")));
     flat_ram = calloc(1, 0x40000);
     assert(flat_ram);
     ROMlib_offset = (uintptr_t)flat_ram;
     syn68k_set_memory_window(0x40000, 0, 0);
     uint32 vectors[64] = {0};
-    initialize_68k_emulator(NULL, 0, vectors, 0);
+    initialize_68k_emulator(NULL, argc == 2, vectors, 0);
+    if (argc == 2) {
+        shared_compare_register(1);
+        free(flat_ram);
+        return 0;
+    }
     const unsigned ops[] = {
         0x2010, 0x2080, 0x2018, 0x20C0, 0xD190, 0x9190, 0xB190, 0xC190, 0x8090, 0xB090, 0x5290, 0x4290, 0x4490, 0x4090,
         0x4690, 0x4A90, 0x4AD0, 0x56D0, 0xE2D0, 0x0390, 0x0690, 0xD188, 0x9188, 0xB188, 0x0AD0, 0x0CD0, 0x0ED0, 0x0CFC,
@@ -337,6 +415,7 @@ int main(void)
         for (unsigned i = 42; i < sizeof ops / sizeof *ops; ++i)
             for (unsigned count = 0; count < 64; ++count)
                 compare(ops[i], 8 + count, operand_pattern & 1, operand_pattern & 1);
+    shared_compare_register(0);
     printf("%u mapped scalar/complex differential and partial-fault cases passed.\n", cases);
     free(flat_ram);
     return 0;

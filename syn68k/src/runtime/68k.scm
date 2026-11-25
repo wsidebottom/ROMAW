@@ -3601,8 +3601,8 @@
 		     (assign ccv (<> 0 (& tmp4.ul (^ tmp mem2))))
 		     
 		     ; Update compare operands with memory operands
-		     (assign c1 mem1)
-		     (assign c2 mem2))))
+		     (assign c2 mem2)
+		     (assign c1 mem1))))
 	       
 	       ; First comparison failed
 	       (list
@@ -3615,8 +3615,8 @@
 		(assign ccv (<> 0 (& tmp4.ul (^ tmp mem1))))
 		
 		; Update compare operands with memory operands
-		(assign c1 mem1)
-		(assign c2 mem2)))
+		(assign c2 mem2)
+		(assign c1 mem1)))
 	   
 	   "}"
 	   ))))
