@@ -218,9 +218,7 @@ wait after four calls to the new C-to-Pascal helper, with no launch failure or
 Windows exception. IncrementAtomic was not hit before that checkpoint; the
 focused probes cover its execution. This is not a full interactive app test.
 
-Scoped formatting and the PowerShell check pass. The repository-wide check
-reports one concurrently edited Finder resource file needing formatting:
-`finder/resources/text_resources.r`. It is outside this change.
+Scoped formatting and the PowerShell check pass.
 
 The next groups bring the archive to eighty-one exports: eighteen QuickDraw
 record accessors, four A5-world globals and seventeen additional atomic helpers.

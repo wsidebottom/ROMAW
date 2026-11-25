@@ -1,12 +1,13 @@
 # ROMAW resources
 
 `system/catalog.r` and [`finder/resources/catalog.r`](../../finder/resources/catalog.r) are the authoritative Rez roots for
-251 embedded System resources and 323 editable Finder resources.
+251 embedded System resources and 251 editable Finder resources.
 Each root includes its interface, payload/text and artwork declarations.
 Types, signed IDs, names and attributes come directly from those declarations;
 there is no separate JSON catalog or original-payload checksum requirement.
-System and Finder remain distinct resource forks, including their colliding
-`vers` IDs 1 and 2.
+System and Finder remain distinct resource forks. Finder text resources retain
+only the seven column and sort names consumed by the native desktop; unused
+classic strings, application signatures and version resources are omitted.
 
 The four former Finder executable resources (`CDEF 128`, `WDEF 128`, `gest 128`
 and `hcsl 0`) have native implementations under `finder/guest/`. Their resource
@@ -29,8 +30,8 @@ frame's top and left coordinates. Pictures remain editable PNG files under
 
 `tools/resource_catalog.py` reads local includes, declaration headers, literal
 hexadecimal `data` bodies and external reads. `tools/rez_types.py` also encodes
-typed `STR `, `STR#`, `vers`, `ALRT`, `DLOG`, `DITL` and `clut` resources, plus Finder's
-Pascal-string `MACS` signature. Strings are editable text with MacRoman byte
+typed `STR `, `STR#`, `vers`, `ALRT`, `DLOG`, `DITL` and `clut` resources, plus
+Pascal-string `MACS` signatures. Strings are editable text with MacRoman byte
 escapes where needed. Dialogs expose rectangles, procedures, button states,
 item references and positioning; older dialogs may omit the position word.
 

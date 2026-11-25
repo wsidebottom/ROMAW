@@ -112,7 +112,7 @@ class ResourceCatalogTests(unittest.TestCase):
 
     def test_all_sources_resolve(self):
         total = 0
-        for scope, count in (("system", 251), ("finder", 323)):
+        for scope, count in (("system", 251), ("finder", 251)):
             manifest, directory = catalog.load_scope(
                 catalog.FINDER_DIRECTORY if scope == "finder" else catalog.DIRECTORY, scope
             )
@@ -121,7 +121,7 @@ class ResourceCatalogTests(unittest.TestCase):
             for entry in manifest["resources"]:
                 for name in entry.get("files", [entry.get("file")]):
                     self.assertTrue(catalog.resource_path(directory, name).is_file(), name)
-        self.assertEqual(total, 574)
+        self.assertEqual(total, 502)
         for name, path in {
             "application_manifest": ROOT / "platform/os/cygwin32/ROMAW.manifest",
             "label_menu": ROOT / "finder/resources/label-menu.r",
@@ -147,8 +147,6 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual(
             collisions,
             {
-                ("76657273", 1),
-                ("76657273", 2),
                 ("43444546", 128),
                 ("57444546", 128),
                 ("67657374", 128),
@@ -174,7 +172,7 @@ class ResourceCatalogTests(unittest.TestCase):
             before = (directory / "system/catalog.r").read_bytes()
             finder = directory / "finder/catalog.r"
             finder.write_text(finder.read_text() + "\ndata 'TEST' (1) { $\"12AB\" };\n")
-            self.assertEqual(len(catalog.load_scope(directory, "finder")[0]["resources"]), 324)
+            self.assertEqual(len(catalog.load_scope(directory, "finder")[0]["resources"]), 252)
             self.assertEqual((directory / "system/catalog.r").read_bytes(), before)
             self.assertEqual(len(catalog.load_scope(directory, "system")[0]["resources"]), 251)
 

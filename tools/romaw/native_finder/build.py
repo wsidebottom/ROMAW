@@ -69,9 +69,8 @@ def main():
     sys.path.insert(0, str(ROOT / "tools/romaw"))
     import system_resources
 
-    # finder7's dynamic View menu uses STR# 3000, strings 14..20. Keep the
-    # editable classic names authoritative; append native type/creator columns
-    # without shifting the classic sort indices or catalog view selectors.
+    # STR# 3000 retains the seven native column/sort names in classic order.
+    # Append native type/creator columns without changing the sort selectors.
     text_resources = read_rez(FINDER_RESOURCES / "text_resources.r")
     view_strings = next(
         entry["payload"] for entry in text_resources if entry["type_hex"] == b"STR#".hex() and entry["id"] == 3000
@@ -86,12 +85,12 @@ def main():
         offset += length
     if offset != len(view_strings):
         raise ValueError("Invalid Finder STR# 3000 presentation names")
-    if len(names) != 27:
+    if len(names) != 7:
         raise ValueError("Unexpected Finder STR# 3000 presentation names")
     (OUT / "view_menu.inc").write_text(
-        "/* Generated from Finder STR# 3000, columns 14..20. */\n"
+        "/* Generated from Finder STR# 3000, columns 1..7. */\n"
         "static const wchar_t *classic_view_columns[]={"
-        + ",".join("L" + json.dumps(name) for name in names[13:20] + ["Type", "Creator"])
+        + ",".join("L" + json.dumps(name) for name in names + ["Type", "Creator"])
         + "};\n"
     )
 
