@@ -73,8 +73,25 @@ int ROMlib_carbon_get_param_text(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+static DialogPtr carbon_managed_dialog(uint32_t address)
+{
+    DialogPtr dialog = address ? ROMlib_carbon_try_guest_memory(address, sizeof(WindowRecord), 0) : NULL;
+    return dialog && ROMlib_valid_window(dialog) && (WINDOW_KIND(dialog) == dialogKind || WINDOW_KIND(dialog) < 0)
+               ? dialog
+               : NULL;
+}
+
 int ROMlib_carbon_std_filter_proc(ROMlib_carbon_ppc_frame* call)
 {
+    DialogPtr dialog = carbon_managed_dialog(call->words[0]);
+    if (dialog) {
+        EventRecord* event = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *event, 0) : NULL;
+        INTEGER* item = call->words[2] ? ROMlib_carbon_try_guest_memory(call->words[2], sizeof *item, 1) : NULL;
+        call->words[0] = event && item && C_FrontWindow() == dialog
+                             ? (uint8_t)C_ROMlib_myfilt((DialogPeek)dialog, event, item)
+                             : 0;
+        return 1;
+    }
     _Alignas(4) uint32_t filter = 0;
     ROMlib_carbon_ppc_frame arguments = {0};
     arguments.words[0] = US_TO_SYN68K(&filter);
@@ -89,6 +106,40 @@ int ROMlib_carbon_std_filter_proc(ROMlib_carbon_ppc_frame* call)
         return 0;
     call->words[0] = (uint8_t)result;
     return 1;
+}
+
+static int carbon_set_dialog_option(ROMlib_carbon_ppc_frame* call, unsigned selector)
+{
+    DialogPtr dialog = carbon_managed_dialog(call->words[0]);
+    uint32_t result;
+    if (!dialog) {
+        const unsigned info = selector == 0x306 ? 0x7a8 : 0xba8;
+        if (!ROMlib_carbon_call_toolbox_vector(0x17a0, info, selector, call, &result))
+            return 0;
+    }
+    else if (selector == 0x304)
+        result = C_SetDialogDefaultItem(dialog, (int16_t)call->words[1]);
+    else if (selector == 0x305)
+        result = C_SetDialogCancelItem(dialog, (int16_t)call->words[1]);
+    else
+        result = C_SetDialogTracksCursor(dialog, (uint8_t)call->words[1]);
+    call->words[0] = (int16_t)result;
+    return 1;
+}
+
+int ROMlib_carbon_set_dialog_default_item(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_set_dialog_option(call, 0x304);
+}
+
+int ROMlib_carbon_set_dialog_cancel_item(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_set_dialog_option(call, 0x305);
+}
+
+int ROMlib_carbon_set_dialog_tracks_cursor(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_set_dialog_option(call, 0x306);
 }
 
 static int carbon_dialog_item_geometry(ROMlib_carbon_ppc_frame* call, bool resize)

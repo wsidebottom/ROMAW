@@ -7561,7 +7561,7 @@ def control_manager_operations(probe):
     p.emit(0x80630000)
     save(28)
     probe.call("BlockMoveData", [probe.raw(template), slot(base + 28), len(template)])
-    probe.call("NewDialog", [0, bounds, title, 0, 0, -1, 1, 0, value])
+    probe.call("NewDialog", [0, bounds, title, 1, 0, -1, 1, 0, value])
     p.nonzero("create a classic dialog with two edit fields")
     save(0)
     call("CountDITL", [window], 2)
@@ -11369,7 +11369,16 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     math_rows += [{"name": name, "original_library": "Math64Oracle"} for name, _ in wide_entries]
     file_entries, file_names = file_cases() if not (original_only or math_only) else ([], set())
     color_profiles = file_entries and write_color_profile_reference(destination)
-    interface_rows = vector_cases("interface_vectors.h", 178) if file_entries else []
+    interface_rows = vector_cases("interface_vectors.h", 175) if file_entries else []
+    if file_entries:
+        interface_rows.extend(
+            dict(name=name, vector=0x17A0, info=info, selector=selector, result="int16_t")
+            for name, info, selector in (
+                ("SetDialogDefaultItem", 0xBA8, 0x304),
+                ("SetDialogCancelItem", 0xBA8, 0x305),
+                ("SetDialogTracksCursor", 0x7A8, 0x306),
+            )
+        )
     manager_rows = vector_cases("manager_vectors.h", 135) if file_entries else []
     browser_control_rows = data_browser_control_cases() if file_entries else []
     native_names = file_names | {row["name"] for row in interface_rows + manager_rows}
