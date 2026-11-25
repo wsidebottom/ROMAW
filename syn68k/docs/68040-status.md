@@ -5,6 +5,21 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Paused validation checkpoint (2026-11-25)
+
+The branch/call candidate at `ac8295fd` remains unpromoted. On resumption,
+all 175 recorded CPU inputs matched the tested and release snapshots. The
+remaining RTE run passed 101,224 control-flow cases and 7,087,172 mapped
+stream/MMU/FPU/handler/RTE/delivery-fault cases. The subsequent `fpu-native`
+run failed in `fpu-native-test.c:36`: an unexpected semantic tail for command
+`0001`, selector `11`. Diagnose that failure before rerunning FPU validation
+and the pending combined `aot-x64` group. The sequential run stopped before
+AOT; no new complete validation or candidate promotion is claimed.
+
+The last fully validated promoted bundle remains the `e64711ea` build in
+`build/68040-current/bin`. Work is paused at the user's request; the wider
+68040 completion scope below remains unfinished.
+
 ## Implemented execution
 
 `src/runtime/fpu.c` provides checked F-line execution for the interpreter and
