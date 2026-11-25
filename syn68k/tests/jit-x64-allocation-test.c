@@ -60,6 +60,16 @@ int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
     return 0; // Publication fixtures never execute store-fault continuations.
 }
 
+int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
+{
+    abort(); // Publication fixtures never execute store-fault continuations.
+}
+
+int syn68k_mmu040_operand_status(const Syn68kMMU040Access* access, uint16_t* ssw)
+{
+    abort();
+}
+
 void syn68k_invalidate_checked_write(uint32 address, unsigned size)
 {
     abort();

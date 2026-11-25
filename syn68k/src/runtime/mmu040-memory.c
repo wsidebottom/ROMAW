@@ -423,3 +423,28 @@ int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
            (atc && access->completed ? 0x800 : 0);
     return 1;
 }
+
+/* Pending operand slots describe the logical transfer, independently of a
+   failed physical cache push. The push itself keeps its own SSW/PD snapshot. */
+int syn68k_mmu040_operand_status(const Syn68kMMU040Access* access, uint16_t* ssw)
+{
+    if (!ssw)
+        return 0;
+    if (syn68k_mmu040_access_ssw(access, ssw))
+        return 1;
+    uint16_t push_ssw;
+    if (!syn68k_mmu040_cache_push_ssw(access, &push_ssw) || access->writing > 1 || access->rmw > 1 ||
+        (access->size != 1 && access->size != 2 && access->size != 4) || access->completed > access->size ||
+        (!access->writing && access->completed == access->size) || access->cache.completed > access->completed ||
+        access->logical != (uint32_t)(access->request + access->completed) ||
+        (access->fc != 1 && access->fc != 2 && access->fc != 5 && access->fc != 6) ||
+        (access->writing && access->fc != 1 && access->fc != 5) ||
+        (access->rmw && (access->completed || (access->fc != 1 && access->fc != 5))))
+        return 0;
+    *ssw = access->fc |
+           (access->size == 1   ? 0x20
+            : access->size == 2 ? 0x40
+                                : 0) |
+           (access->writing ? 0 : 0x100) | (access->rmw ? 0x200 : 0);
+    return 1;
+}

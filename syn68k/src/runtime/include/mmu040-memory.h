@@ -135,5 +135,9 @@ int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access*, uint16_t* ssw);
    Returns zero without changing *ssw for success or unsupported metadata.
    CPU retirement and continuation/writeback certification remain separate. */
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw);
+/* Logical operand fields for retirement/WB2/WB3 validation, including the
+   operand that triggered a physical push. A push's actual stack SSW/FA/PD
+   must still come from its separate cache snapshot. */
+int syn68k_mmu040_operand_status(const Syn68kMMU040Access*, uint16_t* ssw);
 
 #endif

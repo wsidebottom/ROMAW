@@ -92,6 +92,22 @@ The guest completes the physical push before ordinary RTE/reexecution. The
 scalar SSW constructor still rejects pushes; `syn68k_mmu040_cache_push_ssw`
 validates the separate physical snapshot.
 
+Store-generated pushes use the same physical PD0-3 snapshot while keeping
+pending logical operands separate. A fully committed copyback scalar has no
+operand writeback; an incomplete scalar uses WB2. A captured following operand
+uses WB3 when WB2 is occupied, otherwise WB2. Logical slots retain their original
+FC, size, register-aligned value and address. WB1 remains invalid for the push.
+`syn68k_mmu040_operand_status` validates these logical fields independently of
+the physical push SSW; it must not substitute for the actual push status.
+
+The runner retires certified final stores and their owned CCR/EA/FPU work without
+repeating input reads. CT/CP retain the original trace or FPU EA. MOVEM instead
+keeps CM/EA for list replay. Early pure FPU stores retain the existing complete
+state certificate and original PC; partial writes can be repeated after cleanup.
+FSAVE clears captured frame state only on accepted retirement or successful
+reexecution, and a captured tail survives that clear. Deferred numeric FPU
+exceptions still precede trace when RTE completes push/writeback cleanup.
+
 Read-miss fills use the original logical operand address and size, with no
 pending writeback or push data. Existing read certificates restore only owned
 speculative address updates. MOVEM read fills retain CM and the original EA;
@@ -101,8 +117,8 @@ new rollback certificates while remaining live. The regression guest drains
 PD0-3 through physical MOVES and executes RTE; the CPU never silently performs
 those cleanup writes.
 
-Committed copyback stores, write-allocate fills, compound push continuations
-and descriptor-lockup halt handling remain work. Capturing a physical push
+Write-allocate fill faults, additional compound continuations, MOVE16/snoop
+transactions and descriptor-lockup halt handling remain work. Capturing a physical push
 alone does not certify retirement of its triggering instruction.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a

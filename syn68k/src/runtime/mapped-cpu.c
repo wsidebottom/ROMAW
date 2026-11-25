@@ -207,15 +207,17 @@ static int replay_store_fault(const Syn68kIntegerStep* record)
 {
     const Syn68kMMU040Access* access = &record->access;
     uint16 ssw;
+    uint16 push_ssw;
+    int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     return record->vector == 2 && record->format == 7 && record->store_state == 4 &&
            record->store_next == record->exception_pc && record->next == record->exception_pc &&
            record->fault_address == access->logical && !record->store_ccr && !record->store_trace_pc &&
            !(record->exception_pc & 1) && !record->movem_state && !record->fpu_vector && !record->store_tail_valid &&
            !record->store_locked && !record->restartable_read && access->writing && !access->rmw &&
-           access->completed < access->size && (access->size == 2 || access->size == 4) &&
+           (access->completed < access->size || push) && (access->size == 2 || access->size == 4) &&
            access->logical == (uint32)(access->request + access->completed) && (access->fc == 1 || access->fc == 5) &&
-           syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
-           (access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))));
+           syn68k_mmu040_operand_status(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+           (push || access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))));
 }
 
 /* MOVE16's bus callback boundary still reports the failing aligned scalar.
@@ -296,6 +298,8 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
 {
     const Syn68kMMU040Access* access = &record->access;
     uint16 ssw;
+    uint16 push_ssw;
+    int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     /* Producers finish nonmemory work or capture LINK's deferred assignments.
        Only locked transfers retain the stricter alignment/progress contract. */
     return record->vector == 2 && record->format == 7 && record->store_state && record->store_state <= 3 &&
@@ -312,17 +316,17 @@ static int scalar_store_fault(const Syn68kIntegerStep* record)
                record->store_state >= 2) ||
               (record->store_tail_valid == 2 && record->store_locked && (access->size == 2 || access->size == 4) &&
                !(record->store_tail_address & (access->size - 1)))))) &&
-           !(record->store_next & 1) && access->writing && access->completed < access->size &&
+           !(record->store_next & 1) && access->writing && (access->completed < access->size || push) &&
            access->logical == (uint32)(access->request + access->completed) &&
            (access->size == 1 || access->size == 2 || access->size == 4) &&
            (!(access->request & (access->size - 1)) || !record->store_locked) &&
-           syn68k_mmu040_access_ssw(access, &ssw) &&
+           syn68k_mmu040_operand_status(access, &ssw) &&
            ((access->fc == 1 || access->fc == 5) ||
             (!record->store_locked && !record->fpu_vector && !record->store_tail_valid && access->bus_error &&
              (ssw & 0x18) == 0x10)) &&
            !(access->bus_error && (ssw & 0x400)) &&
            (!access->completed ||
-            (!record->store_locked && (access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
+            (!record->store_locked && (push || access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))));
 }
 
 /* T0 also traces pipeline-serializing instructions; comparing PCs cannot
@@ -366,6 +370,8 @@ static int movem_fault(const Syn68kIntegerStep* record)
 {
     uint16 ssw;
     const Syn68kMMU040Access* access = &record->access;
+    uint16 push_ssw;
+    int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     /* Opcode, mask, full index and two long displacements occupy at most
        fourteen bytes. A split long extension can have a completed first half. */
     uint32 offset = access->request - record->exception_pc;
@@ -374,7 +380,7 @@ static int movem_fault(const Syn68kIntegerStep* record)
     int data = access->fc == 1 || access->fc == 5;
     if (record->vector != 2 || record->format != 7 || record->movem_state != 1 || record->store_state ||
         (record->exception_pc & 1) || access->rmw || (access->size != 2 && access->size != 4) ||
-        !syn68k_mmu040_access_ssw(access, &ssw))
+        !syn68k_mmu040_operand_status(access, &ssw))
         return 0;
     if (!access->writing)
         return instruction || data;
@@ -382,7 +388,7 @@ static int movem_fault(const Syn68kIntegerStep* record)
        WB1/WB2 before RTE repeats the list from the saved EA. */
     return data && !record->restartable_read && record->fault_address == access->logical &&
            access->logical == (uint32)(access->request + access->completed) && !(access->bus_error && (ssw & 0x400)) &&
-           (access->bus_error || !access->completed || !(access->logical & 0xfff));
+           (push || access->bus_error || !access->completed || !(access->logical & 0xfff));
 }
 
 static int cache_push_restart(const Syn68kIntegerStep* record);
@@ -468,8 +474,8 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 result->step.movem_ea = cpu->movem_ea;
             }
             uint16 push_ssw;
-            if (syn68k_mmu040_cache_push_ssw(&context.access, &push_ssw) && !bus.write_attempted &&
-                !bus.callback_state_changed && unchanged_results(&before, 0, 16)) {
+            if (!cpu->movem_pending && syn68k_mmu040_cache_push_ssw(&context.access, &push_ssw) &&
+                !bus.write_attempted && !bus.callback_state_changed && unchanged_results(&before, 0, 16)) {
                 result->step.next = cpu->pc;
                 result->step.cache_restart = 1;
             }
@@ -792,7 +798,9 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
          lanes; WB2 and WB3 data stay register aligned. A certified FPU store
          abort retains its original PC and one WB1/WB2, with no continuation bits.
          A MOVEM store instead retains CM and its original EA for list replay. */
-        syn68k_mmu040_access_ssw(&record->access, &ssw);
+        syn68k_mmu040_operand_status(&record->access, &ssw);
+        uint16 push_ssw = 0;
+        int physical_push = syn68k_mmu040_cache_push_ssw(&record->access, &push_ssw);
         int pending = record->store_state == 2 || record->store_state == 3 || record->store_state == 4 ||
                       (record->movem_state == 1 && record->access.writing);
         if (record->fpu_vector)
@@ -840,11 +848,24 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
                 else if (tail && offset == (wb1 ? 36U : 28U))
                     value = record->store_tail;
             }
-            if (record->cache_restart) {
+            if (physical_push) {
                 const Syn68kCache040Access* push = &record->access.cache;
-                uint16 push_ssw;
-                syn68k_mmu040_cache_push_ssw(&record->access, &push_ssw);
-                value = offset == 12 ? (uint32)push_ssw << 16 : offset == 20 || offset == 40 ? push->push_address : 0;
+                int operand = pending && record->access.completed < record->access.size;
+                if (offset != 8) {
+                    value =
+                        offset == 12   ? (uint32)(push_ssw | (ssw & 0xf000)) << 16 | (operand && tail ? tail_status : 0)
+                        : offset == 16 ? (operand ? wb_status
+                                          : tail  ? tail_status
+                                                  : 0)
+                                             << 16
+                        : offset == 20 || offset == 40 ? push->push_address
+                        : offset == 32 && operand      ? record->access.request
+                        : offset == 36 && operand      ? record->access.value
+                        : offset == (operand ? 24u : 32u) && tail
+                            ? (record->store_tail_valid == 2 ? record->store_tail_address : record->access.request + 4)
+                        : offset == (operand ? 28u : 36u) && tail ? record->store_tail
+                                                                  : 0;
+                }
                 if (offset >= 44)
                     for (unsigned byte = 0; byte < 4; ++byte)
                         value = (value << 8) | push->push_data[offset - 44 + byte];

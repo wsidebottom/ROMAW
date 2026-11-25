@@ -5,6 +5,67 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Store-generated cache-push recovery (2026-11-26)
+
+Store retirement now separates the failed physical cache push from its original
+logical operand. A complete copyback store already owns its cache bytes and
+needs no duplicate operand writeback. An incomplete store retains its full
+logical scalar in WB2. A captured tail uses WB3 when the current operand is
+pending, otherwise WB2. Both slots preserve original size, FC and register-aligned
+data; FA/WB1A and PD0-3 remain physical, and WB1 is invalid for a push.
+
+The shared logical-operand status API feeds CPU and FPU fault-offer validation.
+Final scalar, FPU/list/control and FSAVE stores retain completed flags/EA/FPU
+work and resume at the following instruction without repeating input reads.
+Early certified FPU stores instead reexecute at the original PC, retaining
+captured state and any pending operand. MOVEM keeps CM/EA with its documented
+list replay. CT/CP/CM and their EAs survive the physical-push frame overlay;
+FSAVE's captured tail remains valid after accepted saved-frame cleanup.
+
+The 27,795-case matrix passes checked/native callback/permanent-RAM modes,
+every byte offset and scalar width, copyback/inhibited mappings, user/supervisor
+FCs, single/line pushes, failed beats, CCRs, trace, MOVEM read/write, FPU moves,
+register/control lists and 52/100-byte FSAVE early/late failures. A callback
+input source confirms retirement never repeats its reads. Real guest MOVES
+drains physical PD first and logical WB2/WB3 next, preserving live EA fields.
+Enabled-inexact output cases retain the pending FPU frame and dispatch vector
+49 before trace. An adversarial U-clear/M-set page descriptor exercises a locked
+U-only descriptor-push failure with physical TM=0/LK and a distinct virtual
+store address, then repairs history through guest writeback. UM 3.2.1 prohibits
+that incoherent resident descriptor state; this checks deterministic recovery
+without establishing hardware behavior for it. Invalid progress/retirement
+metadata is rejected before effects.
+Cold AOT emits eight images with 1,272 hits; fresh-process warm replay reports
+1,280 hits and zero compilations.
+
+Grouped validation passes the cache/reference and emitted-kernel suites on
+Windows/Linux x64 (sixteen kernel groups per ABI), all 1,153,398 reported native
+FPU cases, 8,107,168 mapped stream/recovery cases, 101,224 mapped control-flow
+cases and both 50,453-case flat MOVE16 runs. Full cold/warm AOT passes
+3,618,920 recovery cases per process; warm replay has 1,262,191 hits and zero
+compilations. Existing cache-op and read-fill/push recovery matrices also pass.
+The isolated publication fixture uses fail-fast stubs for the new fault-status
+APIs; it never executes fault continuations.
+
+ROMAW was rebuilt from application base `dc2e152e` with the exact tested CPU
+archive, staged in `build/68040-cache-store-stage/bin`, and promoted to
+`build/68040-current/bin`. The prior bundle is retained at
+`build/68040-pre-cache-store-bin-20261126`. The source audit at
+`build/68040-cache-store-output/68040-cache-store-source-audit.json` verifies
+179 CPU inputs, twenty fixtures, four identical CPU archives and all 74 staged
+files. CPU build ID is
+`c1fc14ee212978afd5e5f843dee211a879c9c2f4411a8dce6abd952b072953ba`;
+archive SHA256 is
+`f8a2c10b7247800f256cfcc59c83f4bd893c3b436c11604e0c9d1460b5d19c35`.
+Help returns zero with 7,669 bytes. Browser reaches WaitNextEvent after 30,942
+native entries; the 68K Speedometer startup reaches its event loop after
+77,159, with one FPU capability query. Both checkpoints are null and report no
+Windows exception. These are startup checks, not full interactive workflows.
+
+Write-allocate fill faults, additional compound/bus continuations,
+descriptor-lockup halt, MOVE16/snoop integration, full CAS/CAS2 sequencing and
+the remaining FPU saved-state/restart work still require completion.
+
 ## Physical push frames and read-fill recovery (2026-11-25)
 
 Mapped execution now certifies unchanged unretired CPUSH/PTEST and ordinary

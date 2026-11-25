@@ -22,17 +22,21 @@
 
 /* Fault metadata only: the caller has finished all FPU/EA work and offers
    its last scalar transfer. WB1 retains the full operand after physical bus
-   subcycles; WB2 does so after a first-page ATC prefix. The stream runner
-   independently validates the offer. */
+   subcycles; WB2 does so after a first-page ATC prefix. A physical cache push
+   instead retains PD0-3 and may have already committed this operand in cache.
+   The stream runner independently validates progress and pending WB2/WB3. */
 static inline void syn68k_fpu_final_store_fault(Syn68kFPUStep* result, uint32_t next)
 {
     const Syn68kMMU040Access* access = &result->access;
     uint16_t ssw;
+    uint16_t push_ssw;
+    int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     if (result->vector == 2 && result->format == 7 && !(next & 1) && access->writing && !access->rmw &&
-        access->completed < access->size && access->logical == (uint32_t)(access->request + access->completed) &&
+        (access->completed < access->size || push) &&
+        access->logical == (uint32_t)(access->request + access->completed) &&
         (access->size == 1 || access->size == 2 || access->size == 4) && (access->fc == 1 || access->fc == 5) &&
-        syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
-        (!access->completed || access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))) {
+        syn68k_mmu040_operand_status(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+        (push || !access->completed || access->bus_error || ((ssw & 0x400) && !(access->logical & 0xfff)))) {
         result->store_next = next;
         result->store_state = 1;
     }
@@ -41,17 +45,20 @@ static inline void syn68k_fpu_final_store_fault(Syn68kFPUStep* result, uint32_t 
 /* An unfinished pure FPU store can offer abort/replay, never retirement.
    The runner must certify every architectural register before accepting it.
    WB1 retains a physical fault operand; WB2 retains an ATC fault operand.
-   Neither case introduces a continuation bit or changes the saved PC. */
+   A cache push retains PD0-3 and any incomplete logical operand in WB2.
+   No abort case introduces a continuation bit or changes the saved PC. */
 static inline void syn68k_fpu_replay_store_fault(Syn68kFPUStep* result)
 {
     const Syn68kMMU040Access* access = &result->access;
     uint16_t ssw;
+    uint16_t push_ssw;
+    int push = syn68k_mmu040_cache_push_ssw(access, &push_ssw);
     if (!result->store_state && result->vector == 2 && result->format == 7 && !(result->exception_pc & 1) &&
-        access->writing && !access->rmw && access->completed < access->size &&
+        access->writing && !access->rmw && (access->completed < access->size || push) &&
         (access->size == 2 || access->size == 4) &&
         access->logical == (uint32_t)(access->request + access->completed) && (access->fc == 1 || access->fc == 5) &&
-        syn68k_mmu040_access_ssw(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
-        (access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))))) {
+        syn68k_mmu040_operand_status(access, &ssw) && !(access->bus_error && (ssw & 0x400)) &&
+        (push || access->bus_error || ((ssw & 0x400) && (!access->completed || !(access->logical & 0xfff))))) {
         result->store_next = result->exception_pc;
         result->store_state = 2;
     }
