@@ -143,6 +143,11 @@ static ROMlib_window_metadata* auxiliary_metadata(AuxWinHandle aux)
 
 ROMlib_window_metadata* ROMlib_window_get_metadata(WindowPtr window)
 {
+    if (!window)
+        return NULL;
+    ROMlib_window_metadata* metadata = auxiliary_metadata(HIDDEN_NATIVE(*lookup_aux_win(window)));
+    if (metadata)
+        return metadata;
     void* layer = ROMlib_layer_parent(window);
     if (!layer)
         return NULL;
@@ -150,6 +155,16 @@ ROMlib_window_metadata* ROMlib_window_get_metadata(WindowPtr window)
     AuxWinHandle aux = HIDDEN_NATIVE(*lookup_aux_win(window));
     ROMlib_layer_swap(old_layer);
     return auxiliary_metadata(aux);
+}
+
+void ROMlib_window_extend_auxiliary_record(WindowPtr window)
+{
+    AuxWinHandle aux = HIDDEN_NATIVE(*lookup_aux_win(window));
+    if (!aux || GetHandleSize((Handle)aux) != sizeof(AuxWinRec))
+        return;
+    SetHandleSize((Handle)aux, ROMLIB_AUX_WINDOW_SIZE);
+    if (!MemError())
+        memset(STARH(aux) + 1, 0, ROMLIB_AUX_WINDOW_SIZE - sizeof(AuxWinRec));
 }
 
 void ROMlib_window_dispose_owned_colors(AuxWinHandle aux)

@@ -122,6 +122,7 @@ enum { ROMLIB_DIALOG_TRACKS_CURSOR = 0x8000, ROMLIB_DIALOG_CANCEL_ITEM = 0x7fff 
 #define ROMLIB_AUX_WINDOW_SIZE (sizeof(AuxWinRec) + sizeof(uint32) + sizeof(ROMlib_window_metadata))
 extern OSErr ROMlib_window_change_owners(WindowPtr window, int change, uint32* owners);
 extern ROMlib_window_metadata* ROMlib_window_get_metadata(WindowPtr window);
+extern void ROMlib_window_extend_auxiliary_record(WindowPtr window);
 extern void ROMlib_window_dispose_owned_colors(AuxWinHandle aux);
 #define WINDOW_GO_AWAY_FLAG_X(wp) (((WindowPeek)(wp))->goAwayFlag)
 #define WINDOW_SPARE_FLAG_X(wp) (((WindowPeek)(wp))->spareFlag)

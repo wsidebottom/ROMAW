@@ -1410,6 +1410,19 @@ PRIVATE LONGINT ppc_window_owner_count(uint32 address, uint32 output)
     return noErr;
 }
 
+static WindowPtr ppc_interface_new_window(Ptr storage, Rect* bounds, StringPtr title, BOOLEAN visible, INTEGER proc_id,
+                                         WindowPtr behind, BOOLEAN close_box, LONGINT refcon)
+{
+    /* The saved Dialog Manager reaches NewWindow through InterfaceLib. Use
+       the live trap so the Window Manager registers the dialog before its
+       CloseWindow routine tries to unlink and release it. */
+    WindowPtr window = NewWindow(storage, bounds, title, visible, proc_id, behind, close_box, refcon);
+    /* The native Dialog Manager keeps its options in the auxiliary record. */
+    if (window)
+        ROMlib_window_extend_auxiliary_record(window);
+    return window;
+}
+
 PRIVATE void ppc_window_dispose(uint32 address)
 {
     WindowPtr window =
@@ -4331,6 +4344,8 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
      accessors. The classic monochrome NewWindow entry violates that contract. */
     if (!strcmp(library, "CarbonLib") && binding.function == C_NewWindow)
         binding.function = C_NewCWindow;
+    if (!strcmp(library, "InterfaceLib") && binding.function == C_NewWindow)
+        binding.function = ppc_interface_new_window;
     if (!strcmp(library, "InterfaceLib") && binding.function == C_DisposeWindow) {
         binding.function = ppc_window_dispose;
         binding.magic = M1(0, 4);
