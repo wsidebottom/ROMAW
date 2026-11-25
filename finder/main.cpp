@@ -3,7 +3,7 @@
 
   Summary:   Native Finder UI, menus, desktop and folder windows, operation publication and host-shell integration.
 
-  Classes:   Declared: Item, FolderWindow, FolderCallback, Operation, InfoData, ClipboardView, SuitcaseView;
+  Classes:   Declared: DriveMetadata, Item, FolderWindow, FolderCallback, Operation, InfoData, ClipboardView, SuitcaseView;
              Used: Copies, History, DesktopIcons, DragImage, Search, HostClipboard.
 
   Functions: romaw_finder_main; UI command handlers and window procedures have internal linkage.
@@ -128,10 +128,23 @@ enum Command {
 
 unsigned special_cleanup_action = arrange_command;
 
+// A disconnected mapped drive can spend minutes inside Windows filesystem
+// calls. Publish immutable native metadata without retaining any UI objects.
+struct DriveMetadata {
+    MacFile mac;
+    FinderIcon custom{};
+    std::wstring stamp;
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    bool attributes_known = false;
+    std::atomic<bool> ready{false};
+    std::chrono::steady_clock::time_point completed;
+};
+
 struct Item {
     fs::path path;
     std::wstring name;
     MacFile mac;
+    std::shared_ptr<DriveMetadata> drive_metadata;
     ViewEntry details;
     // Roles: ordinary item, drive, ROMAW volume, Trash, mounted image. icon is a list index,
     // not an owned HICON; decoded handles are retained in the shared icon cache.
@@ -224,6 +237,9 @@ std::map<HICON, HICON> selected_icon_cache;
 std::map<std::wstring, std::wstring> icon_versions;
 std::unique_ptr<DesktopIcons> desktop_icons;
 uint64_t icon_generation = 0;
+std::map<fs::path, std::shared_ptr<DriveMetadata>> drive_metadata;
+std::map<fs::path, std::shared_ptr<DriveMetadata>> drive_snapshots;
+std::set<fs::path> published_drives;
 std::vector<HANDLE> children;
 FolderWindow* current_folder = nullptr;
 
@@ -307,6 +323,39 @@ std::wstring volume_display_name(const fs::path& root, std::wstring fallback)
     std::wstring result(count, L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, label, int(length), result.data(), count);
     return result;
+}
+
+std::shared_ptr<DriveMetadata> request_drive_metadata(const fs::path& path)
+{
+    auto& result = drive_metadata[path];
+    if (result && result->ready.load())
+        drive_snapshots[path] = result;
+    if (!result ||
+        (result->ready.load() && std::chrono::steady_clock::now() - result->completed >= std::chrono::seconds(30))) {
+        auto pending = std::make_shared<DriveMetadata>();
+        // Each drive has at most one outstanding read. A stalled network drive
+        // cannot delay another drive or require the UI to join it on shutdown.
+        std::thread([path, pending] {
+            try {
+                pending->attributes_known =
+                    GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &pending->attributes) != FALSE;
+                if (pending->attributes_known) {
+                    pending->mac = mac_file(path);
+                    custom_folder_icon(path, pending->custom);
+                    pending->stamp = icon_source_stamp(path, true);
+                }
+            }
+            catch (const std::exception&) {
+                // Optional malformed metadata must not hide the volume.
+            }
+            pending->completed = std::chrono::steady_clock::now();
+            pending->ready = true;
+        }).detach();
+        // Retain the last published snapshot while a refresh is in flight.
+        result = pending;
+        published_drives.erase(path);
+    }
+    return drive_snapshots[path];
 }
 
 // Drive icons used letter-based desktop keys before display aliases were
@@ -498,8 +547,9 @@ item_icon(Item& item)
     unsigned label = (item.mac.flags >> 1) & 7;
     auto key = item_icon_key(item);
     auto found = icon_cache.find(key);
-    auto version = icon_source_stamp(item.path, item.folder) + L"#" +
-                   std::to_wstring(desktop_icons ? desktop_icons->generation() : 0);
+    auto version = (item.special == 1 ? (item.drive_metadata ? item.drive_metadata->stamp : L"pending")
+                                      : icon_source_stamp(item.path, item.folder)) +
+                   L"#" + std::to_wstring(desktop_icons ? desktop_icons->generation() : 0);
     if (item.image_volume)
         version += L"#image-" + std::to_wstring(item.image_volume) + L"#" +
                    std::to_wstring(item.image_application_parent) + L"#" +
@@ -528,7 +578,9 @@ item_icon(Item& item)
         result = icon(data, label);
     if (item.special == 3)
         result = asset_icon(item.trash_full ? full_trash_asset : 3);
-    if (!result && item.folder && !item.image_volume && custom_folder_icon(item.path, data))
+    if (!result && item.special == 1 && item.drive_metadata && item.drive_metadata->custom.present)
+        result = icon(item.drive_metadata->custom, label);
+    if (!result && item.special != 1 && item.folder && !item.image_volume && custom_folder_icon(item.path, data))
         result = icon(data, label);
     if (!result && !item.mac.fork.empty() && (item.mac.flags & 0x400) &&
         finder_parse_custom_icon(item.mac.fork.data(), item.mac.fork.size(), &data))
@@ -781,8 +833,16 @@ void describe_item(Item& item, DocumentKinds& kinds)
     row.label = (item.mac.flags >> 1) & 7;
     row.kind = item_kind(item, kinds);
     WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (!item.image_volume && !item.path.empty() &&
-        GetFileAttributesExW(item.path.c_str(), GetFileExInfoStandard, &attributes)) {
+    bool have_attributes = false;
+    if (item.special == 1) {
+        if (item.drive_metadata) {
+            attributes = item.drive_metadata->attributes;
+            have_attributes = item.drive_metadata->attributes_known;
+        }
+    }
+    else if (!item.image_volume && !item.path.empty())
+        have_attributes = GetFileAttributesExW(item.path.c_str(), GetFileExInfoStandard, &attributes) != FALSE;
+    if (have_attributes) {
         item.attributes_known = true;
         row.modified =
             (uint64_t(attributes.ftLastWriteTime.dwHighDateTime) << 32) | attributes.ftLastWriteTime.dwLowDateTime;
@@ -948,12 +1008,17 @@ void refresh(FolderWindow& f)
         item.path = std::move(path);
         item.name = std::move(name);
         item.special = special;
-        item.folder = special == 3 || fs::is_directory(item.path);
+        item.folder = special == 1 || special == 3 || fs::is_directory(item.path);
         if (!special && item.folder) {
             auto attributes = GetFileAttributesW(item.path.c_str());
             item.can_expand = attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
         }
-        if (special != 3)
+        if (special == 1) {
+            item.drive_metadata = request_drive_metadata(item.path);
+            if (item.drive_metadata)
+                item.mac = item.drive_metadata->mac;
+        }
+        else if (special != 3)
             try {
                 item.mac = mac_file(item.path);
             }
@@ -4942,6 +5007,14 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         case WM_TIMER:
+            if (f->desktop && !folder_input_active()) {
+                bool changed = false;
+                for (const auto& [path, metadata] : drive_metadata)
+                    if (metadata->ready.load() && published_drives.insert(path).second)
+                        changed = true;
+                if (changed)
+                    refresh(*f);
+            }
             if (f->desktop)
                 spring_open_folder(false);
             if (f->desktop)

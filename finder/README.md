@@ -22,6 +22,12 @@ Finder-style copy dialog. Native C++ structures, Unicode paths, Windows controls
 and file APIs replace the existing Finder's guest-memory and Toolbox adapters.
 The classic `finder7/` tree is reference-only and is never built or launched by ROMAW.
 
+Desktop drive icons appear immediately with standard artwork. Drive-root
+metadata and custom artwork load independently in background threads, so a
+disconnected mapped drive cannot hold up desktop creation or icon refreshes.
+Completed results are published on the UI thread; each drive has at most one
+pending read and completed snapshots are reused for at least 30 seconds.
+
 The desktop uses ROMAW's `ppat` 17 (Blue Tiles), selected through
 `system/resources/system/catalog.r`. The build decodes the resource's
 indexed pixels and color table into an embedded native bitmap, preserving its
