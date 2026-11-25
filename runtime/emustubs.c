@@ -1148,7 +1148,7 @@ PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
     if (selector == 0x04 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
-        selector == 0x5a || selector == 0x5b || selector == 0x75 || selector == 0x7c)
+        selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x75 || selector == 0x7c)
         return TRUE;
     for (block = osdispatch_block; block->descriptorp; ++block)
         if (selector >= block->first && selector <= block->last)
@@ -1297,6 +1297,13 @@ STUB(OSDispatch)
     if (uw == 0x5b) {
         uint32 window = POPUL();
         WRITEUW(EM_A7, ROMlib_system_window_dispose(window ? SYN68K_TO_US(window) : NULL));
+        return retaddr;
+    }
+    if (uw == 0x63) {
+        /* MacDialogsLib compares this WindowPtr with the clicked dialog
+           before selecting it. WindowsLib uses it as the front repaint target. */
+        WindowPtr window = FrontWindow();
+        WRITEUL(EM_A7, window ? US_TO_SYN68K(window) : 0);
         return retaddr;
     }
     PUSHADDR(retaddr);

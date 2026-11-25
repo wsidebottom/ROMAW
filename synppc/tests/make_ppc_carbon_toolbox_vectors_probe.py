@@ -6546,6 +6546,11 @@ def application_operations(probe):
     probe.call("FrontWindow")
     p.emit(0x809E0000 | (base + 4))
     p.equal("FrontWindow visits the visible application window")
+    probe.arguments([0, 0xBE, 0x63], 0)
+    p.emit(0x8060103C)  # lwz r3, 0x103c(0), the live OSDispatch vector.
+    p.call("CallUniversalProc")
+    p.emit(0x809E0000 | (base + 4))
+    p.equal("OSDispatch 0x0063 returns the visible front window")
     probe.call("DisposeWindow", [window])
     call("IsValidWindowPtr", [window], 0)
 
