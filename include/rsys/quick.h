@@ -54,6 +54,7 @@ typedef enum { text_helper_draw, text_helper_measure } text_helper_action_t;
 
 extern LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, FontInfo* finfop, INTEGER* charlocp,
                            text_helper_action_t action);
+extern void ROMlib_QDTextBounds(INTEGER count, Ptr text, Rect* bounds);
 extern void DrawText_c_string(char* string);
 extern void nonspecial_rgn_to_special_rgn(const INTEGER* src, INTEGER* dst);
 extern void ROMlib_bltrgn(RgnHandle rh, unsigned char* patp, INTEGER mode, Rect* srcr, Rect* dstr);

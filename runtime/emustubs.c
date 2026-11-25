@@ -77,6 +77,7 @@
 
 #include "rsys/pstuff.h"
 #include "rsys/cquick.h"
+#include "rsys/quick.h"
 #include "rsys/ctl.h"
 #include "rsys/file.h"
 #include "rsys/time.h"
@@ -685,6 +686,14 @@ PRIVATE selectorblock_t fontdispatch_block[] = {
 
 STUB(FontDispatch)
 {
+    if ((EM_D0 & 0xFFFF) == 0x13) {
+        const syn68k_addr_t ret = POPADDR();
+        const uint32 bounds = POPUL();
+        const uint32 text = POPUL();
+        const INTEGER count = POPSW();
+        ROMlib_QDTextBounds(count, (Ptr)SYN68K_TO_US_CHECK0(text), (Rect*)SYN68K_TO_US_CHECK0(bounds));
+        return ret;
+    }
     return do_selector_block(fontdispatch_block, EM_D0 & 0xFFFF, FontDispatch);
 }
 

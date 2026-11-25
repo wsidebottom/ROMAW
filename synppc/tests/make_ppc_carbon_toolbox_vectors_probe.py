@@ -3432,6 +3432,19 @@ def theme_font_operations(probe):
     p.expect(0, "resolve the current port's font")
     p.emit(0xA07E0000 | (base + 8), 0xA09E0000 | (base + 32))
     p.equal("the current-port role reads the live size")
+    text = probe.far_raw(b"A")
+    ink = probe.far_raw(bytes(8))
+    probe.call("QDTextBounds", [1, text, ink])
+    probe.arguments([ink], 0)
+    p.emit(0xA8630000)
+    p._check(0x2C030000, 0x41800000, "bitmap text ink extends above the baseline")
+    probe.arguments([ink], 0)
+    p.emit(0xA8830006, 0xA8630002)
+    p._check(0x7C032000, 0x41800000, "bitmap text ink has positive width")
+    probe.call("QDTextBounds", [0, 0, ink])
+    probe.arguments([ink], 0)
+    p.emit(0x80830000, 0x80630004, 0x7C632378)
+    p.expect(0, "an empty text run clears the ink bounds")
     # Fill the Classic font cache and force it to evict entries while measuring.
     for size in range(8, 26):
         probe.call("TextSize", [size])
@@ -11528,6 +11541,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "GetPortTextSize",
                 "GetPortTextFace",
                 "FontMetrics",
+                "QDTextBounds",
             )
         )
         native_names.update(

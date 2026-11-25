@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_StdTxMeas, disable_text_printing, set_text_printing, text_helper, xStdTxMeas
+  Functions: ROMlib_QDTextBounds, ROMlib_StdTxMeas, disable_text_printing, set_text_printing, text_helper, xStdTxMeas
 
   Origin:    Existing repository source in executor/src/quickdraw; original attribution and provenance comments are
              preserved below.
@@ -249,15 +249,58 @@ A5(PRIVATE, void, charblit, BitMap*, fbmp, BitMap*, tbmp, /* INTERNAL */
 #define FIXEDONEHALF (1L << 15)
 #define FIXED(n) ((LONGINT)(n) << 16)
 
+/* Convert the ink in the source rectangle to baseline-relative coordinates. */
+static void measure_text_bitmap(const BitMap* bitmap, const Rect* src, const Rect* dst, Rect* bounds)
+{
+    const int width = RECT_WIDTH(src), height = RECT_HEIGHT(src);
+    const int x = CW(src->left) - CW(bitmap->bounds.left);
+    const int y = CW(src->top) - CW(bitmap->bounds.top);
+    const int pitch = BITMAP_ROWBYTES(bitmap);
+    const unsigned char* bits = PPR(bitmap->baseAddr);
+    if (width <= 0 || height <= 0 || RECT_WIDTH(dst) <= 0 || RECT_HEIGHT(dst) <= 0 || x < 0 || y < 0 ||
+        x + width > pitch * 8 || y + height > RECT_HEIGHT(&bitmap->bounds))
+        return;
+    int left = width, right = 0, top = height, bottom = 0;
+    for (int row = 0; row < height; ++row) {
+        const unsigned char* data = bits + (y + row) * pitch;
+        for (int col = 0; col < width; ++col) {
+            const unsigned bit = x + col;
+            if (data[bit / 8] & (0x80 >> (bit % 8))) {
+                left = MIN(left, col);
+                right = MAX(right, col + 1);
+                top = MIN(top, row);
+                bottom = row + 1;
+            }
+        }
+    }
+    if (left >= right)
+        return;
+    const int dx = CW(dst->left) - CW(PORT_PEN_LOC(thePort).h);
+    const int dy = CW(dst->top) - CW(PORT_PEN_LOC(thePort).v);
+    const int w = RECT_WIDTH(dst), h = RECT_HEIGHT(dst);
+    C_SetRect(bounds, dx + (int64)left * w / width, dy + (int64)top * h / height,
+              dx + ((int64)right * w + width - 1) / width, dy + ((int64)bottom * h + height - 1) / height);
+}
+
+static void render_text_bitmap(BitMap* bitmap, const Rect* src, const Rect* dst, Rect* ink)
+{
+    if (ink)
+        measure_text_bitmap(bitmap, src, dst, ink);
+    else
+        StdBits(bitmap, src, dst, PORT_TX_MODE(thePort) & 0x37, NULL);
+}
+
 /*
  * This is a mongrel routine.  Right now it's hand-crafted to do the work
  * of StdText and a xStdTxMeas, which is a helper routine that other
  * measurement routines call.
  */
 
-PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, FontInfo* finfop, INTEGER* charlocp,
-                           text_helper_action_t action)
+static LONGINT text_helper_impl(LONGINT n, Ptr textbufp, Point* nump, Point* denp, FontInfo* finfop, INTEGER* charlocp,
+                                text_helper_action_t action, Rect* ink)
 {
+    const boolean_t draw = action == text_helper_draw;
+    const boolean_t rasterize = draw || ink;
     Point num, den;
     unsigned char* p;
     FMInput fmi;
@@ -310,11 +353,11 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
     den.h = CW(denp->h);
     den.v = CW(denp->v);
     retval = 0;
-    if (action == text_helper_measure) {
+    if (!rasterize) {
         if (n < 0)
             n = 0;
     }
-    else {
+    else if (draw) {
         if (n <= 0)
             /*-->*/ return retval;
 
@@ -407,7 +450,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
     vOutput = Cx(WIDTHPTR->vOutput);
     hOutputInverse = FixRatio(1 << 8, hOutput);
 #if defined(CYGWIN32)
-    if (action == text_helper_draw && n <= 1024 && hOutput > 256 && hOutput == vOutput &&
+    if (rasterize && n <= 1024 && hOutput > 256 && hOutput == vOutput &&
         !(PORT_TX_FACE(thePort) & ~7)) {
         INTEGER saved_error = ResErr;
         C_GetFontName(CW(WIDTHPTR->fID), host_family);
@@ -424,7 +467,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
     space_extra = PORT_SP_EXTRA(thePort);
     spacewidth = (CL(WIDTHPTR->tabData[' ']) + space_extra - CL(WIDTHPTR->sExtra));
 
-    if (action == text_helper_draw) {
+    if (rasterize) {
         Point swapped_num;
         Point swapped_den;
 
@@ -447,9 +490,9 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
     rightitalicoffset = ((PORT_TX_FACE(thePort) & (int)italic) ? CB(fmop->ascent) / 2 - 1 : 0);
     leftitalicoffset = ((PORT_TX_FACE(thePort) & (int)italic) ? descent / 2 + 1 : 0);
 
-    if (action == text_helper_draw) {
+    if (rasterize) {
         if (strwidth <= 0)
-            /*-->*/ return 0;
+            goto restore_text_state;
 
         stylemap.rowBytes = CW((strwidth - Cx(fp->kernMax) + leftitalicoffset + rightitalicoffset + 31) / 32 * 4);
         stylemap.bounds.top = CW(CW(PORT_PEN_LOC(thePort).v) - CB(fmop->ascent));
@@ -499,7 +542,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
     leftmost = left >> 16;
     WIDTHPTR->tabData[' '] = CL(spacewidth);
     WIDTHPTR->sExtra = CL(space_extra);
-    if (action == text_helper_draw)
+    if (rasterize)
         ASSERT_SAFE(PPR(stylemap.baseAddr));
     for (ep = p + n; p != ep; p++) {
 #if defined(CYGWIN32)
@@ -516,7 +559,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
             if (CW(drect.left) < leftmost)
                 leftmost = CW(drect.left);
             drect.right = CW(CW(drect.left) + misintwidth);
-            if (action == text_helper_draw) {
+            if (rasterize) {
                 charblit(&fmap, bmp, &misrect, &drect, TRUE);
                 ASSERT_SAFE(PPR(stylemap.baseAddr));
             }
@@ -533,7 +576,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
             if (CW(drect.left) < leftmost)
                 leftmost = CW(drect.left);
             drect.right = CW(CW(drect.left) + CW(srect.right) - CW(srect.left));
-            if (action == text_helper_draw) {
+            if (rasterize) {
                 charblit(&fmap, bmp, &srect, &drect, TRUE);
                 ASSERT_SAFE(PPR(stylemap.baseAddr));
             }
@@ -553,7 +596,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
 #endif
     if (charlocp)
         *charlocp = CW((left - left_begin + 0xffff) >> 16);
-    if (action == text_helper_measure) {
+    if (!rasterize) {
         retval = (left - left_begin + 0xFFFF) >> 16;
     }
     else {
@@ -688,7 +731,7 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
             PP_RAW(reduced.baseAddr) = RM((Ptr)pixels);
             reduced.rowBytes = CW(pitch);
             reduced.bounds = drect;
-            StdBits(&reduced, &drect, &drect, PORT_TX_MODE(thePort) & 0x37, (RgnHandle)0);
+            render_text_bitmap(&reduced, &drect, &drect, ink);
         }
         else {
 #if defined(CYGWIN32)
@@ -704,13 +747,15 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
                 PP_RAW(host_bitmap.baseAddr) = RM((Ptr)host_pixels);
                 host_bitmap.rowBytes = CW(host_pitch);
                 host_bitmap.bounds = drect;
-                StdBits(&host_bitmap, &drect, &drect, PORT_TX_MODE(thePort) & 0x37, (RgnHandle)0);
+                render_text_bitmap(&host_bitmap, &drect, &drect, ink);
                 free(host_pixels);
             }
             else
 #endif
-                StdBits(bmp, &srect, &drect, PORT_TX_MODE(thePort) & 0x37, (RgnHandle)0);
+                render_text_bitmap(bmp, &srect, &drect, ink);
         }
+        if (!draw)
+            goto restore_text_state;
         ASSERT_SAFE(PPR(stylemap.baseAddr));
         if (PORT_TX_FACE(thePort) & (int)(outline | shadow)) {
             ASSERT_SAFE(PPR(stylemap.baseAddr));
@@ -723,11 +768,39 @@ PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, Fo
             CW(CW(drect.right) - (FixMul((LONGINT)rightitalicoffset << 16, (Fixed)hOutput << 8) >> 16));
         ASSERT_SAFE(PPR(stylemap.baseAddr));
     }
+restore_text_state:
     HSetState(PPR(fmop->fontHandle), fmopstate);
     HSetState((Handle)MR(WidthTabHandle), widthstate);
     RESUMERECORDING;
     ALLOCAEND
     return retval;
+}
+
+PUBLIC LONGINT text_helper(LONGINT n, Ptr textbufp, Point* nump, Point* denp, FontInfo* finfop, INTEGER* charlocp,
+                           text_helper_action_t action)
+{
+    return text_helper_impl(n, textbufp, nump, denp, finfop, charlocp, action, NULL);
+}
+
+PUBLIC void ROMlib_QDTextBounds(INTEGER count, Ptr text, Rect* bounds)
+{
+    if (!bounds)
+        return;
+    *bounds = (Rect){0};
+    if (!thePort || !text || count <= 0)
+        return;
+    /* The Classic bitmap implementation measures one line of Roman text. */
+    if (count >= 256)
+        count = 252;
+    Point numerator = {CWC(1), CWC(1)}, denominator = numerator;
+    QDProcsPtr procs = PORT_GRAF_PROCS(thePort);
+    if (procs && PP_RAW(procs->txMeasProc)) {
+        FontInfo info = {0};
+        const INTEGER width = CALLTXMEAS(count, text, &numerator, &denominator, &info);
+        C_SetRect(bounds, 0, -CW(info.ascent), width, CW(info.descent));
+    }
+    else
+        text_helper_impl(count, text, &numerator, &denominator, NULL, NULL, text_helper_measure, bounds);
 }
 
 PUBLIC boolean_t ROMlib_text_output_disabled_p;

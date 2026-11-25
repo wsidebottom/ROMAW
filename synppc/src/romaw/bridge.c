@@ -4337,6 +4337,9 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     }
     {
         const ROMlib_carbon_export* native = ROMlib_carbon_find_library_export(library, name, symbol_class);
+        if (!native && (!strcmp(library, "FontManager") || !strcmp(library, "InterfaceLib")) &&
+            !strcmp(name, "QDTextBounds"))
+            native = ROMlib_carbon_find_export(name, symbol_class);
         if (!native && !strcmp(library, "ControlsLib") && !strcmp(name, "IsValidControlHandle"))
             native = ROMlib_carbon_find_export(name, symbol_class);
         if (!native && !strcmp(library, "MenusLib")) {
