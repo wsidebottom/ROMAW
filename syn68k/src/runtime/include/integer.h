@@ -41,6 +41,10 @@ typedef struct {
      restart at the current privileged SP, retaining completed throwaway frames
      and callback effects. Other component stepping leaves it zero. */
     unsigned restartable_read;
+    /* Unretired push cleanup: 1 runner-certified result/EA rollback;
+       2 RTE restarts at its live privileged SP, retaining completed frames
+       and callback changes. Guest PD0-3 cleanup precedes reexecution. */
+    unsigned cache_restart;
     /* A scalar decoder can offer its completed flags/next PC without changing
      component-step fault semantics. Only the stream runner retires it (2).
      0: absent, 1: candidate, 2: retired store, 3: retired store/trace pending,

@@ -275,8 +275,12 @@ static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kInte
     uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
     uint16 ssw;
     if (step && context->memory && (cpu_state.sr & SR_SUPERVISOR_BIT) && context->access.fc == 5 &&
-        !context->access.writing && !context->access.rmw && syn68k_mmu040_access_ssw(&context->access, &ssw))
-        step->restartable_read = 1;
+        !context->access.writing && !context->access.rmw) {
+        if (syn68k_mmu040_access_ssw(&context->access, &ssw))
+            step->restartable_read = 1;
+        else if (syn68k_mmu040_cache_push_ssw(&context->access, &ssw))
+            step->cache_restart = 2; /* Keep the live SP after completed throwaway frames. */
+    }
     return next;
 }
 

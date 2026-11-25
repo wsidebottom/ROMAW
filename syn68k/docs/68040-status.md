@@ -5,6 +5,58 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Physical push frames and read-fill recovery (2026-11-25)
+
+Mapped execution now certifies unchanged unretired CPUSH/PTEST and ordinary
+read/fetch cache-push aborts. Format 7 retains the physical initial push address
+in FA/WB1A and all four memory-aligned PD words, including single-word pushes.
+SSW uses the push size and locked-cycle state, with TM=0 and invalid WB1/2/3.
+No hidden continuation flag or automatic physical cleanup is added. Guest
+MOVES drains the captured data before RTE reexecutes the original instruction;
+completed cache invalidations remain complete. Trace follows successful replay.
+
+Read-fill faults retain the original logical operand address/size with RW set,
+including user data and instruction fetches. Existing read certification restores
+owned speculative An updates while retaining physical callback/history effects.
+MOVEM read fills use CM/EA with earlier register loads retained. RTE fill
+and push faults restart at the live privileged SP, retaining completed
+throwaway frames and callback effects without restoring an earlier SP. Host callback changes deny rollback
+without discarding the changed state. Invalid physical snapshots or conflicting
+retirement metadata are rejected before touching CPU state or the bus.
+
+The new 14,559-case matrix passes checked and native callback/permanent-RAM
+modes, real guest MOVES cleanup/RTE, maintenance scopes, dirty masks, every
+line beat, ISP/MSP, trace, user data reads, MOVEM/RTE fills, instruction-fetch
+and locked descriptor-push faults, malformed snapshots and callback mutations.
+Cold AOT emits seven images with 571 hits; a fresh warm process reports 578
+hits and zero compilations. Second-needed-beat and cross-line read faults retain
+the original operand FA/size without publishing a successful prefix. RTE push
+cases retain the live SP after throwaway frames, including callback mutations. The descriptor cleanup guest executes PFLUSHA
+after draining its captured old PTE, allowing a fresh walk to publish U history.
+
+The corrected archive passes 1,153,398 reported FPU-native cases, 8,107,168
+MMU stream/recovery cases, 101,224 flow/RTE cases and 100,906 flat MOVE16
+cases. All sixteen emitted kernel groups pass on both ABIs. Grouped AOT
+passes 3,618,920 recovery cases per run with 73 cold emissions and 1,262,191
+warm hits; the existing 37,404-case cache-op replay and the new 14,559-case
+frame replay also pass with zero warm compilation. Build identity and malformed
+cache fallback pass. The audit at
+`build/68040-cache-frame-output/68040-cache-frame-source-audit.json` matches
+179 CPU inputs, eighteen fixtures and all 74 staged files.
+
+ROMAW is rebuilt from application base `dc2e152e` with the tested CPU overlay,
+and promoted from `build/68040-cache-frame-stage/bin` to
+`build/68040-current/bin`. The previous bundle is preserved at
+`build/68040-pre-cache-frame-bin-20261125`. Help exits zero with 7,669 bytes.
+Browser/Speedometer startups reach WaitNextEvent with 30,949/77,157 native
+entries, nil checkpoints, no win_exception and one Speedometer FPU query.
+These remain startup checks rather than a complete interactive FPU workflow.
+
+Committed-store and compound cache-push continuations, write-allocate fills,
+descriptor-lockup halt, MOVE16/snoop integration, full CAS/CAS2 sequencing and
+the remaining FPU busy-frame and mapped restart work remain required. This is
+an incremental integration checkpoint, not full 68040 completion.
+
 ## Mapped CINV/CPUSH and interruptible native maintenance (2026-11-25)
 
 Mapped CINV/CPUSH now decodes all cache selections and line/page/all scopes.

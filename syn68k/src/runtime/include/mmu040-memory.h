@@ -126,12 +126,14 @@ Syn68kMMU040Access syn68k_mmu040_memory_translate(Syn68kMMU040Memory*, uint32_t 
    it must not be interpreted as an ordinary logical operand writeback. */
 Syn68kMMU040Access syn68k_mmu040_cache_maintain(Syn68kMMU040Memory*, unsigned caches, unsigned scope, uint32_t physical,
                                                 int push);
-/* Basic format-7 SSW transfer fields from MC68040UM 8.4.6.2. Supplies MA, ATC,
-   LK, RW, SIZE and TT/TM, including alternate spaces; leaves continuation/trace/cache-push
-   state to the CPU. Alternate-space ATC records are inconsistent and rejected.
-   Returns zero (preserving *ssw) for success/bad requests, physical aborts and
-   cache fill/push/lockup results that require a distinct frame or halt path.
-   This is not a complete exception frame or restart/writeback protocol. */
+/* Physical push status is separate from a scalar operand. FA/WB1A use
+   cache.push_address, and all sixteen push_data bytes remain valid. */
+int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access*, uint16_t* ssw);
+/* Basic format-7 transfer fields: MA, ATC, LK, RW, SIZE and TT/TM. A read-miss
+   fill retains its original operand size and logical FA. Alternate-space ATC
+   records, write-allocate fills, pushes and lockups require a distinct path.
+   Returns zero without changing *ssw for success or unsupported metadata.
+   CPU retirement and continuation/writeback certification remain separate. */
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw);
 
 #endif

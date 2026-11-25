@@ -433,7 +433,7 @@ EOF
       mkdir -p "$root/build"
       fixture=$(mktemp -d "$root/build/aot-x64.XXXXXX")
       trap 'rm -rf -- "$fixture"' EXIT
-      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op"
+      mkdir "$fixture/unit" "$fixture/execution" "$fixture/mapped" "$fixture/mmu" "$fixture/source" "$fixture/control" "$fixture/destination" "$fixture/list" "$fixture/predicate" "$fixture/frame" "$fixture/flat" "$fixture/flat-compiled" "$fixture/flat-trace" "$fixture/control-replay" "$fixture/cached-cpu" "$fixture/cache-op" "$fixture/cache-fault"
       python3 syn68k/tests/jit-build-id-test.py
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/aot-x64-cache-test.c \
@@ -527,6 +527,11 @@ EOF
         -o "$fixture/cache-op-test.exe"
       "$fixture/cache-op-test.exe" "$(wslpath -m "$fixture/cache-op")"
       "$fixture/cache-op-test.exe" "$(wslpath -m "$fixture/cache-op")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-cache-fault-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/cache-fault-test.exe"
+      "$fixture/cache-fault-test.exe" "$(wslpath -m "$fixture/cache-fault")"
+      "$fixture/cache-fault-test.exe" "$(wslpath -m "$fixture/cache-fault")"
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -954,6 +959,11 @@ EOF
         syn68k/tests/mapped-cache-op-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/cache-op-test.exe"
       "$output/cache-op-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-cache-fault-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$output/cache-fault-test.exe"
+      "$output/cache-fault-test.exe"
     )
     ;;
   threaded-dispatch)

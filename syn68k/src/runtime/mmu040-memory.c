@@ -352,11 +352,48 @@ Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t 
     return transfer(memory, logical, fc, size, 1, 1, &value);
 }
 
+int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
+{
+    if (!access || !ssw || !access->cache_exception || access->cache.fault != CACHE040_PUSH_FAULT ||
+        (access->translation.fault != MMU040_OK && access->translation.fault != MMU040_PHYSICAL_ABORT) ||
+        (!access->bus_error && access->translation.fault != MMU040_PHYSICAL_ABORT))
+        return 0;
+    const Syn68kCache040Access* push = &access->cache;
+    const Syn68kCache040Cycle* cycle = &push->cycle;
+    if ((push->push_size != 4 && push->push_size != 16) || (push->push_address & (push->push_size - 1)) ||
+        push->interrupt_level || cycle->kind != CACHE040_PUSH || cycle->fc || cycle->attributes || cycle->way > 3 ||
+        (unsigned)cycle->traffic > CACHE040_LOCKED_CONTINUE || cycle->lock_end ||
+        cycle->locked != (cycle->traffic == CACHE040_LOCKED || cycle->traffic == CACHE040_LOCKED_CONTINUE))
+        return 0;
+    if (push->push_size == 16) {
+        if (cycle->burst != 16 || cycle->beat > 3 || push->push_word != cycle->beat ||
+            push->bus_address != (uint32_t)(push->push_address + cycle->beat * 4))
+            return 0;
+    }
+    else if (cycle->burst || cycle->beat || push->push_word != ((push->push_address >> 2) & 3) ||
+             push->bus_address != push->push_address)
+        return 0;
+    *ssw = (push->push_size == 16 ? 0x60 : 0) | (cycle->locked ? 0x200 : 0);
+    return 1;
+}
+
 int syn68k_mmu040_access_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
 {
     if (!access || !ssw || access->fc > 7 || (access->size != 1 && access->size != 2 && access->size != 4) ||
-        access->completed >= access->size || (access->cache.fault && access->cache.fault != CACHE040_OPERAND_FAULT))
+        access->completed >= access->size)
         return 0;
+    if (access->cache.fault && access->cache.fault != CACHE040_OPERAND_FAULT) {
+        const Syn68kCache040Cycle* cycle = &access->cache.cycle;
+        /* UM 8.4.6.2: a read-miss fill reports the original operand size,
+           not SIZE=line. Write allocation needs its own pending-store frame. */
+        if (access->cache.fault != CACHE040_FILL_FAULT || access->cache_table || !access->cache_exception ||
+            access->writing || access->rmw || !access->bus_error || access->translation.fault != MMU040_OK ||
+            cycle->kind != CACHE040_OPERAND || cycle->fc != access->fc || cycle->burst != 16 || cycle->beat > 3 ||
+            cycle->way > 3 || cycle->locked || cycle->lock_end || access->cache.interrupt_level ||
+            (access->cache.bus_address & 3) ||
+            (access->fc != 1 && access->fc != 2 && access->fc != 5 && access->fc != 6))
+            return 0;
+    }
     int atc;
     switch (access->translation.fault) {
     case MMU040_OK:

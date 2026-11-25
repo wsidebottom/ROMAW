@@ -84,9 +84,26 @@ push takes priority over an interrupt raised during its failed write beat.
 Normal maintenance, including interrupt sampling, executes in the closed native
 image; physical callbacks remain checked boundaries.
 
-Cache-push/fill frame delivery and descriptor-lockup halt handling remain work.
-Captured push data is retained separately, and the scalar SSW constructor
-rejects these physical faults rather than fabricating a scalar writeback.
+Mapped unretired CPUSH/PTEST and certified read/fetch push faults now deliver
+physical format-7 frames. FA and WB1A use the initial physical push address,
+not a later failed beat. PD0-3 retain all sixteen memory-aligned bytes even for
+a single dirty longword; WB1/2/3 are invalid, and LK follows the push cycle.
+The guest completes the physical push before ordinary RTE/reexecution. The
+scalar SSW constructor still rejects pushes; `syn68k_mmu040_cache_push_ssw`
+validates the separate physical snapshot.
+
+Read-miss fills use the original logical operand address and size, with no
+pending writeback or push data. Existing read certificates restore only owned
+speculative address updates. MOVEM read fills retain CM and the original EA;
+RTE fill/push faults restart at the current privileged frame, retaining
+completed throwaway frames and callback changes. Callback changes deny
+new rollback certificates while remaining live. The regression guest drains
+PD0-3 through physical MOVES and executes RTE; the CPU never silently performs
+those cleanup writes.
+
+Committed copyback stores, write-allocate fills, compound push continuations
+and descriptor-lockup halt handling remain work. Capturing a physical push
+alone does not certify retirement of its triggering instruction.
 
 The `NATIVE040_CACHE_ACCESS` and `NATIVE040_CACHE_MAINTAIN` entries accept a
 `Syn68kNative040Cache` packet. These roots and their reachable routines are
@@ -97,6 +114,9 @@ callbacks; host exceptions must be caught before returning through native frames
 All packet pointers are live invocation bindings, not persisted guest-code data.
 Cache storage, bus, result and native cache packets grew for traffic metadata;
 callers must rebuild. Other native packet layouts are unchanged.
+
+`Syn68kIntegerStep` now includes a cache-restart certificate; stepping clients
+must rebuild. This does not add a native invocation-packet field.
 
 Run `bash syn68k/tests/check-core.sh cache040` for the ordinary Windows and
 Linux ASan/UBSan component matrices. `native040` adds emitted cache and RAM
