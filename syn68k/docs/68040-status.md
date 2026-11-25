@@ -5,6 +5,45 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVE16 read-fault recovery (2026-11-25)
+
+Mapped MOVE16 data-read faults now offer a certified abort without retiring PC
+or address updates. The format-7 frame retains the original burst address,
+normal read transfer type and line size, with no pending write or push data.
+Guest repair/RTE repeats the complete source read, including successful partial
+reads, then performs destination writes and postincrements once. Entry trace is
+reported only after successful reexecution. Extension-fetch faults use ordinary
+instruction-read restart metadata. Callback changes to certified CPU/FPU state
+deny restart without rollback.
+
+This follows MC68040UM sections 7.4.2 and 8.4.6.2/4/7: the source operand is a
+line transfer, FA retains the initial access address, and read faults do not
+carry pending WB1/WB2 data. The physical bus still uses ordered scalar callbacks;
+this change does not introduce a physical cache or whole-burst callback API.
+
+An isolated baseline probe found unsupported exception delivery in all 81,920
+tested MOVE16 read-fault combinations. The corrected focused regression passes
+86,164 recovery and guard cases across both dispatch and bus bindings. It covers
+both page sizes, all stack modes, five forms, aliases, burst start words, physical
+and ATC faults at each word, guest descriptor repair/RTE, fresh source data on
+retry, postincrements and trace. Malformed records and callback mutations are
+checked before any delivery effects. A separate extension-fetch/partial-read/RTE
+probe passes 36 cases. Grouped validation passes 8,107,168 MMU stream/recovery,
+101,224 control-flow/RTE and 100,906 flat MOVE16 cases. Complete cold/warm AOT
+passes 3,618,920 recovery cases per run: 73 cold images, 1,262,191 warm hits
+and zero warm compilations. Stable identity and malformed-cache fallback pass.
+
+The rebuilt bundle is at `build/68040-move16-read-stage/bin`, using committed
+application base `dd45e595` plus the tested CPU overlay. Help exits zero with
+7,669 output bytes. Isolated Browser/Speedometer 68K startups reach WaitNextEvent
+with 30,864/76,931 native entries, no live checkpoint and no win_exception;
+Speedometer makes one FPU query. These are startup checks. The emitted native
+kernel image is byte-identical to the previously validated image. The complete
+audit at `build/68040-move16-read-source-audit.json` verifies 175 CPU inputs,
+eight fixtures and all 74 staged files. The bundle is promoted to
+`build/68040-current/bin`, preserving its predecessor at
+`build/68040-pre-move16-read-bin-20261125`.
+
 ## Forced-exception tracing (2026-11-25)
 
 The mapped runner now latches instruction-entry T1 for taken TRAP, TRAPV,
@@ -518,8 +557,7 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error work: further active-stack/call effective-address
-  and double-fault variants, MOVE16 read continuation and a physical block/cache
-  bus, and the
+  and double-fault variants, a physical block/cache bus, and the
   constructed user-mode throwaway-RTE case.
   Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
   use CM/saved-EA continuation as described in the current checkpoints above.

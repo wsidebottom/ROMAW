@@ -22,7 +22,9 @@
 
 /* MOVE16 keeps memory-addressed push-data slots. This host-side offer does
    not change a native invocation packet. The mapped runner finalizes state:
-   1 candidate, 2 physical write retired, 3 retired with CT, 4 ATC abort/retry. */
+   1 write candidate, 2 physical write retired, 3 retired with CT, 4 ATC write
+   abort/retry, 5 read candidate, 6 certified read abort/retry. Read offers carry
+   no push data; successful partial reads are repeated after guest repair/RTE. */
 typedef struct {
     uint32_t data[4], address, next, trace_pc;
     uint32_t source, destination;

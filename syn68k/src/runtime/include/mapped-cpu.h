@@ -166,6 +166,11 @@ typedef struct {
    WB2 and PD0-3; the guest can retry or drain the line, advance PC/postincrements
    and emulate pending trace. Callback result changes deny ATC certification
    without rollback. The operand bus remains an ordered scalar-transfer boundary.
+   Certified MOVE16 read aborts retain original PC/registers, line-sized normal
+   read status and the original burst address, with no pending write or push
+   data. Guest repair/RTE repeats the whole source line, including successful
+   partial reads, then performs destination writes and postincrements once.
+   Callback changes to certified state deny restart without rollback.
    MOVES supports ordinary and alternate-space scalar writebacks, preserving
    converted TM and alternate TT=2. Alternate spaces permit physical faults,
    without translation or additional tail writes. MOVES normal/deferred trace

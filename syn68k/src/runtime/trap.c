@@ -320,8 +320,17 @@ static uint32 move16(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68
     for (unsigned i = 0; i < 4; ++i) {
         unsigned word = ((source >> 2) + i) & 3;
         line[word] = syn68k_ea_read_memory(context, source_line + word * 4, 4);
-        if (context->error)
-            return integer_exception(step, context, 2, pc, context->fault_address, 7);
+        if (context->error) {
+            uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
+            if (step && context->memory)
+                step->move16 = (Syn68kMOVE16Writeback){.address = source & ~3u,
+                                                       .next = pc + length,
+                                                       .source = source,
+                                                       .destination = destination,
+                                                       .command = (opcode & 63) | (other << 6),
+                                                       .state = 5};
+            return next;
+        }
     }
     for (unsigned i = 0; i < 4; ++i) {
         unsigned word = ((destination >> 2) + i) & 3;

@@ -28,7 +28,9 @@ instead retain original PC/registers and WB2/PD0-3; software chooses retry or
 captured-line cleanup plus PC/register advance and trace emulation. Malformed
 records are rejected before CPU or bus effects. See the current status
 checkpoint for validation and exact-source/binary audit details. MOVE16 read
-faults and a true block/cache bus remain further work.
+faults now use a separate certified abort: original PC/registers, line-sized read
+status and original source burst address, with no pending writeback. Guest
+repair/RTE repeats the complete source read. A true block/cache bus remains work.
 
 ## MOVEM store continuation
 
