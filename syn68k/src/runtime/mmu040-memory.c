@@ -248,6 +248,16 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
         for (unsigned i = 0; i < size; ++i)
             bytes[i] = result.value >> ((size - i - 1) * 8);
     }
+    /* MC68040UM 4.1: a misaligned data operand spanning two pages accesses its
+       first-page portion twice, including serialized pages. The first pass is
+       internal; only the replayed data belongs to a completed read. Latch the
+       initial page extent so callback changes cannot create repeated replays. */
+    unsigned initial_mask = memory->mmu->tc & 0x4000 ? 8191 : 4095;
+    unsigned repeat_prefix = initial_mask + 1 - (logical & initial_mask);
+    /* Instruction-space reads belong to the aligned prefetch stream, not
+       the data unit's misaligned-operand replay (MC68040UM 7.3/7.4.3). */
+    if (repeat_prefix >= size || (fc & 3) == 2)
+        repeat_prefix = 0;
     while (result.completed < size) {
         result.logical = logical + result.completed;
         Syn68kMMU040Access translated = syn68k_mmu040_memory_translate(memory, result.logical, fc, writing || rmw, 0);
@@ -263,6 +273,8 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
         unsigned chunk = mask + 1 - (result.logical & mask);
         if (chunk > size - result.completed)
             chunk = size - result.completed;
+        if (repeat_prefix && chunk > repeat_prefix - result.completed)
+            chunk = repeat_prefix - result.completed;
         /* The uncached data memory unit issues only naturally aligned bus
            transfers (MC68040UM 7.3), including byte/word/byte for odd longs.
            Cache/device operand bindings may instead own this decomposition. */
@@ -301,21 +313,27 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
             if (!writing)
                 for (unsigned i = 0; i < chunk; ++i)
                     result.value = (result.value << 8) | ((access.value >> ((chunk - i - 1) * 8)) & 255);
-            result.completed += chunk;
-            continue;
         }
-        int ok = writing ? memory->write(memory->opaque, result.translation.physical, bytes + result.completed, chunk,
-                                         result.translation.attributes, fc)
-                         : memory->read(memory->opaque, result.translation.physical, bytes + result.completed, chunk,
-                                        result.translation.attributes, fc);
-        if (!ok) {
-            result.bus_error = 1;
-            return result;
+        else {
+            int ok = writing ? memory->write(memory->opaque, result.translation.physical, bytes + result.completed,
+                                             chunk, result.translation.attributes, fc)
+                             : memory->read(memory->opaque, result.translation.physical, bytes + result.completed,
+                                            chunk, result.translation.attributes, fc);
+            if (!ok) {
+                result.bus_error = 1;
+                return result;
+            }
+            if (!writing)
+                for (unsigned i = result.completed; i < result.completed + chunk; ++i)
+                    result.value = (result.value << 8) | bytes[i];
         }
-        if (!writing)
-            for (unsigned i = result.completed; i < result.completed + chunk; ++i)
-                result.value = (result.value << 8) | bytes[i];
         result.completed += chunk;
+        if (repeat_prefix && result.completed == repeat_prefix) {
+            repeat_prefix = 0;
+            result.completed = 0;
+            if (!writing)
+                result.value = 0;
+        }
     }
     if (!writing)
         *value = result.value;

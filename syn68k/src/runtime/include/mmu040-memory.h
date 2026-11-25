@@ -57,7 +57,10 @@ typedef struct {
 typedef struct {
     Syn68kMMU040Result translation;
     /* Address of the current chunk, including a failed translation or transfer.
-     completed counts only successful operand bytes, not descriptor traffic. */
+       completed counts successful operand bytes of the current pass, excluding
+       descriptor traffic and the discarded first-page pass of a crossing
+       operand. Successful writes in that initial pass remain externally visible
+       even when replay fails before completing the same bytes again. */
     uint32_t logical;
     unsigned completed;
     int bus_error;

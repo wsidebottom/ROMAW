@@ -173,6 +173,37 @@ are checked, including live trace/CCR changes after operand capture. Normal
 cases also verify load sign extension and preserved Dn upper bytes. Additional
 active-stack EA cases remain part of the wider exception/addressing audit.
 
+## Page-crossing replay
+
+The shared checked/emitted operand path repeats the first-page portion of an
+unaligned data word or longword before transferring its second-page portion. This
+also applies to serialized mappings, transparent translation, disabled
+translation and address wrap. The initial page extent is latched per operand;
+callback changes cannot create an unbounded replay loop. The requirement for
+two first-page accesses comes from MC68040UM section 4.1. Instruction-space
+requests retain their logical stream behavior; they do not use data replay.
+Physical aligned half-line instruction-prefetch sequencing remains a separate
+hardware-modeling boundary (MC68040UM sections 7.3 and 7.4.2).
+
+Successful reads assemble the replayed first-page data and the second-page data;
+a changing device callback cannot accidentally publish the discarded initial
+sample. A fault leaves the caller's read destination unchanged. `completed`
+describes logical progress in the current pass, rather than cumulative bus
+traffic. Writes from the initial pass remain externally visible even if replay
+faults before completing the same bytes again. Format-7 records still retain
+the original scalar request and full writeback value. The manual does not
+specify every failed-replay subcycle ordering; these tests establish the
+functional model's ordering, without new silicon measurements.
+
+The dedicated matrix checks 5,060 cases with literal bus sequences, changing
+read samples, faults at every transfer in either pass, second-page invalid and
+protected descriptors, both page sizes, privilege levels and RMW intent. Raw
+operand, naturally aligned bus, disabled-cache and enabled serialized-cache
+bindings are covered. The standalone Windows comparison runs 10,120 checked and
+emitted cases. The nineteen-group Windows/Linux kernel runner executes the
+native matrix with guards against host semantic helpers. The existing operand
+suite adds first-pass/replay fault coverage and now contains 148,065 cases.
+
 ## Transfer and frame contract
 
 `Syn68kMMU040Memory.aligned_transfers = 1` selects naturally aligned uncached
@@ -236,11 +267,11 @@ writeback fixture has 3,618,920 cases per run; its warm run restores 1,262,191
 entries with zero compilations. Native FPU helper-exclusion checks remain in
 `bash syn68k/tests/check-core.sh fpu-native`.
 
-The mapped unaligned locked fixture adds 32,857 cases across checked execution,
+The mapped unaligned locked fixture adds 36,097 cases across checked execution,
 native checked memory and a native RAM window that excludes operand storage.
 CAS.W/L and CAS2.W/L exercise every unaligned line offset, natural physical
-subcycle failures, disjoint second-page protection/missing faults and 32-bit
-address wrap. Guest handlers drain WB1/WB2 plus an independent CAS2 tail,
+subcycle failures in both initial and replayed first-page passes, disjoint
+second-page protection/missing faults and 32-bit address wrap. Guest handlers drain WB1/WB2 plus an independent CAS2 tail,
 restore DFC and registers, and return through deferred trace. Locked operand
 reads remain counted after the fault, and any attempted cleanup reread fails.
 The matrix includes 22 malformed-record checks with unchanged CPU/MMU/cache/RAM
@@ -255,12 +286,7 @@ continuations after consumed MOVE16 source reads and the constructed user-mode
 throwaway-RTE fault case require further work. Ordinary MOVE16 line abort,
 PD cleanup, source-push recovery and retry now use the physical line bus.
 Compound locked cache-push faults after a partial operand remain outside the
-certified continuation contract. Normal misaligned page-crossing accesses still
-need the first-page repetition required by MC68040UM section 4.1; checked/native
-agreement alone does not establish that external bus behavior. A 64-case local
-probe reproduces the missing repetition with both raw callbacks and disabled
-cache bindings, checked and emitted execution, both page sizes and read/write
-accesses. General busy-frame, encoding,
+certified continuation contract. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
 still required; these writeback regressions do not establish complete 68040 or
 paged Toolbox compatibility.

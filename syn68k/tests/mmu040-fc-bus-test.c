@@ -72,7 +72,7 @@ int main(void)
                 Syn68kMMU040Access access = syn68k_mmu040_read(&memory, base, fc, size, 0, &value);
                 assert(access.completed == size && !access.bus_error);
                 assert(value == (size == 1 ? 0x11u : size == 2 ? 0x1122u : 0x11223300u | fc));
-                assert(reads == (size == 4 ? 2u : 1u));
+                assert(reads == (size == 4 ? ((fc & 3) == 2 ? 2u : 3u) : 1u));
                 unsigned char expected[8][4];
                 memcpy(expected, banks, sizeof banks);
                 value = 0xA1B2C300 | fc;
@@ -80,7 +80,7 @@ int main(void)
                     expected[fc][i] = value >> ((size - i - 1) * 8);
                 access = syn68k_mmu040_write(&memory, base, fc, size, value);
                 assert(access.completed == size && !access.bus_error);
-                assert(writes == (size == 4 ? 2u : 1u));
+                assert(writes == (size == 4 ? ((fc & 3) == 2 ? 2u : 3u) : 1u));
                 assert(!memcmp(banks, expected, sizeof banks));
                 ++cases;
             }

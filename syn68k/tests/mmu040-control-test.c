@@ -271,7 +271,8 @@ static void stack_offsets_and_aliases(void)
                     uint32_t expected = op ? address + 4 : 0x10002;
                     for (unsigned i = 0; i < 4; ++i)
                         assert(ram[physical(address + i)] == ((expected >> ((3 - i) * 8)) & 255));
-                    assert(reads == 1 && writes == (offset + 4 > page_size ? 2u : 1u));
+                    /* A crossing store repeats its first-page portion before the second. */
+                    assert(reads == 1 && writes == (offset + 4 > page_size ? 3u : 1u));
                 }
     for (unsigned privileged = 0; privileged < 2; ++privileged) {
         fixture(0, privileged);

@@ -5,7 +5,7 @@
 #undef main
 
 static unsigned model_calls, layout, nbytes, pair, first, second, capture, rmw_reads, expected_reads, deny_reads;
-static unsigned fail_bus, fail_at, protect_at, protected_pte, protected_value, repair_value;
+static unsigned fail_bus, fail_skip, fail_at, protect_at, protected_pte, protected_value, repair_value;
 static Syn68kCache040Bus physical;
 Syn68kMMU040Result __real_syn68k_mmu040_translate(Syn68kMMU040*, const Syn68kMMU040Bus*, uint32_t, unsigned, int);
 
@@ -100,6 +100,19 @@ static unsigned beat_offset(unsigned a, unsigned beat)
     return pos;
 }
 
+/* This fixture uses 4-KiB pages. A three-byte first page uses two
+   natural beats; the one- and two-byte prefixes use one each. */
+static unsigned page_replay_reads(unsigned a)
+{
+    unsigned prefix = 4096 - (a & 4095);
+    return prefix >= nbytes ? 0 : prefix == 3 ? 2 : 1;
+}
+
+static unsigned replayed_beat(unsigned a, unsigned beat)
+{
+    return page_replay_reads(a) && beat_offset(a, beat) < 4096 - (a & 4095);
+}
+
 static int cycle_read(void* opaque, uint32_t a, unsigned char* bytes, unsigned n, const Syn68kCache040Cycle* c,
                       unsigned* inhibit)
 {
@@ -121,8 +134,12 @@ static int cycle_read(void* opaque, uint32_t a, unsigned char* bytes, unsigned n
 static int cycle_write(void* opaque, uint32_t a, const unsigned char* bytes, unsigned n, const Syn68kCache040Cycle* c)
 {
     if (capture && fail_bus && c->kind == CACHE040_OPERAND && c->locked && a == fail_at) {
-        fail_bus = 0;
-        return 0;
+        if (fail_skip)
+            --fail_skip;
+        else {
+            fail_bus = 0;
+            return 0;
+        }
     }
     return physical_write(opaque, backing(a), bytes, n, c->attributes, c->fc);
 }
@@ -189,8 +206,8 @@ static Syn68kMappedCPU fixture(unsigned mode, unsigned enabled, unsigned hit, un
                 memcpy(line->bytes, ram + backing(a), 16);
             }
     capture = 1;
-    rmw_reads = deny_reads = fail_bus = protect_at = 0;
-    expected_reads = beats(first) + (pair ? beats(second) : 0);
+    rmw_reads = deny_reads = fail_bus = fail_skip = protect_at = 0;
+    expected_reads = beats(first) + page_replay_reads(first) + (pair ? beats(second) + page_replay_reads(second) : 0);
     cpu_state.vbr = 0x7000;
     put(0x7008, 4, 0x8100);
     put(0x7024, 4, 0x8200);
@@ -382,128 +399,143 @@ static void exercise(unsigned mode)
                                 if (fault && layout != 1)
                                     continue;
                                 for (unsigned at = 0; at < (fault ? 2u : beats(target)); ++at)
-                                    for (unsigned user = 0; user < 2; ++user)
-                                        for (unsigned trace = 0; trace < 4; ++trace)
-                                            for (unsigned hit = 0; hit < 3; ++hit) {
-                                                unsigned m1 = 0x80008081 & mask(nbytes), m2 = 0x7fff7f42 & mask(nbytes);
-                                                Syn68kMappedCPU cpu = fixture(mode, 1, hit, user, m1, m2);
-                                                unsigned form = 2 + lane % 3,
-                                                         initial = first + (!pair && form == 4 ? nbytes : 0);
-                                                EM_A0 = initial;
-                                                EM_A1 = second;
-                                                EM_A2 = 0x12345678;
-                                                cpu_state.sr |= trace << 14;
-                                                cpu_state.ccx = 1;
-                                                cpu_state.dfc = 7;
-                                                unsigned sr = cpu_state.sr;
-                                                unsigned c1 = m1 ^ (condition == 1 ? mask(nbytes) : 0),
-                                                         c2 = m2 ^ (condition == 2 ? mask(nbytes) : 0);
-                                                EM_D0 = c1;
-                                                EM_D1 = c2;
-                                                EM_D2 = 0xa1b2c3d4;
-                                                EM_D3 = 0x55667788;
-                                                EM_D4 = 0xdeadbeef;
-                                                unsigned opcode = pair ? (nbytes == 2 ? 0x0cfc : 0x0efc)
-                                                                       : (nbytes == 2 ? 0x0cc0 : 0x0ec0) | form << 3;
-                                                put(0x8000, 2, opcode);
-                                                put(0x8002, 2, pair ? 0x8080 : 0x0080);
-                                                if (pair)
-                                                    put(0x8004, 2, 0x90c1);
-                                                unsigned prefix =
-                                                    fault ? (at ? 4096 - (target & 4095) : 0) : beat_offset(target, at);
-                                                if (!fault) {
-                                                    fail_bus = 1;
-                                                    fail_at = physical_address(target + prefix);
-                                                }
-                                                else {
-                                                    unsigned base =
-                                                        (target & 0xff000000) == 0x04000000 ? 0x3000 : 0x3400;
-                                                    protected_pte = base + (at ? 4 : 0);
-                                                    repair_value = get(protected_pte, 4);
-                                                    protected_value = fault == 1 ? repair_value | 4 : 0;
-                                                    protect_at = expected_reads;
-                                                }
-                                                unsigned value =
-                                                    condition
-                                                        ? (pair ? m2 : m1)
-                                                        : (pair && (condition || which) ? EM_D3 : EM_D2) & mask(nbytes);
-                                                unsigned expected = compare_flags(condition == 1 ? m1
-                                                                                  : pair         ? m2
-                                                                                                 : m1,
-                                                                                  condition == 1 ? c1
-                                                                                  : pair         ? c2
-                                                                                                 : c1,
-                                                                                  nbytes);
-                                                Syn68kMappedRun run;
-                                                unsigned called = model_calls;
-                                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                                capture = 0;
-                                                assert(mode ? model_calls == called : model_calls > called);
-                                                assert(!fail_bus && !protect_at && rmw_reads == expected_reads);
-                                                if (run.step.store_state < 2)
-                                                    fprintf(
-                                                        stderr,
-                                                        "locked mode=%u n=%u pair=%u layout=%u lane=%u cond=%u which=%u fault=%u at=%u state=%u prefix=%u/%u\n",
-                                                        mode, nbytes, pair, layout, lane, condition, which, fault, at,
-                                                        run.step.store_state, run.step.access.completed, prefix);
-                                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
-                                                       run.step.store_state == (trace ? 3u : 2u));
-                                                assert(run.step.access.completed == prefix &&
-                                                       run.step.access.request == target &&
-                                                       run.step.access.logical == (uint32_t)(target + prefix));
-                                                assert(run.step.access.value == value && run.step.access.rmw &&
-                                                       run.step.store_tail_valid == (tail ? 2u : 0u));
-                                                unsigned next = pair ? 0x8006 : 0x8004;
-                                                assert(cpu.pc == next && flags() == expected &&
-                                                       EM_A0 == first + (!pair && form == 3 ? nbytes : 0));
-                                                assert(EM_D0 == (condition ? m1 : c1) &&
-                                                       EM_D1 == (condition && pair ? m2 : c2));
-                                                if (!mode && nbytes == 4 && !pair && !layout && lane == 1 &&
-                                                    !condition && !fault && at == 1 && !user && !trace && !hit)
-                                                    malformed(&cpu, &run.step);
-                                                Syn68kFPUState fpu = cpu_state.fpu;
-                                                deny_reads = 1;
-                                                Syn68kMappedDelivery delivery;
-                                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-                                                if (delivery.reason != SYN68K_DELIVERY_COMPLETE || cpu.pc != 0x8100)
-                                                    fprintf(
-                                                        stderr,
-                                                        "entry mode=%u layout=%u lane=%u n=%u pair=%u fault=%u at=%u user=%u trace=%u hit=%u reason=%u pc=%x sp=%x\n",
-                                                        mode, layout, lane, nbytes, pair, fault, at, user, trace, hit,
-                                                        delivery.reason, cpu.pc, EM_A7);
-                                                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x8100);
-                                                unsigned frame = EM_A7, fc = user ? 1 : 5, sz = nbytes == 2 ? 0x40 : 0;
-                                                assert(visible(frame + 12, 2) ==
-                                                       (0x200 | sz | fc | (fault ? 0x400 : 0) |
-                                                        (fault && prefix ? 0x800 : 0) | (trace ? 0x2000 : 0)));
-                                                assert(visible(frame + 20, 4) == target &&
-                                                       visible(frame + (fault ? 32 : 40), 4) == target);
-                                                assert(visible(frame + (fault ? 16 : 18), 2) == (0x80 | sz | fc));
-                                                unsigned count = cleanup(fc, !fault, tail);
-                                                unsigned reads = rmw_reads;
-                                                assert(syn68k_mapped_cpu_run(&cpu, count, &run));
-                                                assert(run.reason ==
-                                                           (trace ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
-                                                       run.step.vector == (trace ? 9u : 0u) && cpu.pc == next);
-                                                assert(rmw_reads == reads && EM_A2 == 0x12345678 &&
-                                                       EM_D4 == 0xdeadbeef && cpu_state.dfc == 7 &&
-                                                       cpu_state.sr == sr && flags() == expected);
-                                                assert(!memcmp(&fpu, &cpu_state.fpu, sizeof fpu));
-                                                assert(visible(first, nbytes) ==
-                                                       (condition ? m1 : 0xa1b2c3d4 & mask(nbytes)));
-                                                if (pair)
-                                                    assert(visible(second, nbytes) ==
-                                                           (condition ? m2 : 0x55667788 & mask(nbytes)));
-                                                if (trace) {
-                                                    assert(run.step.fault_address == 0x8000);
+                                    for (unsigned occurrence = 0;
+                                         occurrence < 1u + (!fault && replayed_beat(target, at)); ++occurrence)
+                                        for (unsigned user = 0; user < 2; ++user)
+                                            for (unsigned trace = 0; trace < 4; ++trace)
+                                                for (unsigned hit = 0; hit < 3; ++hit) {
+                                                    unsigned m1 = 0x80008081 & mask(nbytes),
+                                                             m2 = 0x7fff7f42 & mask(nbytes);
+                                                    Syn68kMappedCPU cpu = fixture(mode, 1, hit, user, m1, m2);
+                                                    unsigned form = 2 + lane % 3,
+                                                             initial = first + (!pair && form == 4 ? nbytes : 0);
+                                                    EM_A0 = initial;
+                                                    EM_A1 = second;
+                                                    EM_A2 = 0x12345678;
+                                                    cpu_state.sr |= trace << 14;
+                                                    cpu_state.ccx = 1;
+                                                    cpu_state.dfc = 7;
+                                                    unsigned sr = cpu_state.sr;
+                                                    unsigned c1 = m1 ^ (condition == 1 ? mask(nbytes) : 0),
+                                                             c2 = m2 ^ (condition == 2 ? mask(nbytes) : 0);
+                                                    EM_D0 = c1;
+                                                    EM_D1 = c2;
+                                                    EM_D2 = 0xa1b2c3d4;
+                                                    EM_D3 = 0x55667788;
+                                                    EM_D4 = 0xdeadbeef;
+                                                    unsigned opcode = pair
+                                                                          ? (nbytes == 2 ? 0x0cfc : 0x0efc)
+                                                                          : (nbytes == 2 ? 0x0cc0 : 0x0ec0) | form << 3;
+                                                    put(0x8000, 2, opcode);
+                                                    put(0x8002, 2, pair ? 0x8080 : 0x0080);
+                                                    if (pair)
+                                                        put(0x8004, 2, 0x90c1);
+                                                    unsigned prefix = fault ? (at ? 4096 - (target & 4095) : 0)
+                                                                            : beat_offset(target, at);
+                                                    if (!fault) {
+                                                        fail_bus = 1;
+                                                        fail_skip = occurrence;
+                                                        fail_at = physical_address(target + prefix);
+                                                    }
+                                                    else {
+                                                        unsigned base =
+                                                            (target & 0xff000000) == 0x04000000 ? 0x3000 : 0x3400;
+                                                        protected_pte = base + (at ? 4 : 0);
+                                                        repair_value = get(protected_pte, 4);
+                                                        protected_value = fault == 1 ? repair_value | 4 : 0;
+                                                        protect_at = expected_reads;
+                                                    }
+                                                    unsigned value =
+                                                        condition ? (pair ? m2 : m1)
+                                                                  : (pair && (condition || which) ? EM_D3 : EM_D2) &
+                                                                        mask(nbytes);
+                                                    unsigned expected = compare_flags(condition == 1 ? m1
+                                                                                      : pair         ? m2
+                                                                                                     : m1,
+                                                                                      condition == 1 ? c1
+                                                                                      : pair         ? c2
+                                                                                                     : c1,
+                                                                                      nbytes);
+                                                    Syn68kMappedRun run;
+                                                    unsigned called = model_calls;
+                                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                    capture = 0;
+                                                    assert(mode ? model_calls == called : model_calls > called);
+                                                    assert(!fail_bus && !fail_skip && !protect_at &&
+                                                           rmw_reads == expected_reads);
+                                                    if (run.step.store_state < 2)
+                                                        fprintf(
+                                                            stderr,
+                                                            "locked mode=%u n=%u pair=%u layout=%u lane=%u cond=%u which=%u fault=%u at=%u state=%u prefix=%u/%u\n",
+                                                            mode, nbytes, pair, layout, lane, condition, which, fault,
+                                                            at, run.step.store_state, run.step.access.completed,
+                                                            prefix);
+                                                    assert(run.reason == SYN68K_MAPPED_EXCEPTION &&
+                                                           run.step.vector == 2 &&
+                                                           run.step.store_state == (trace ? 3u : 2u));
+                                                    assert(run.step.access.completed == prefix &&
+                                                           run.step.access.request == target &&
+                                                           run.step.access.logical == (uint32_t)(target + prefix));
+                                                    assert(run.step.access.value == value && run.step.access.rmw &&
+                                                           run.step.store_tail_valid == (tail ? 2u : 0u));
+                                                    unsigned next = pair ? 0x8006 : 0x8004;
+                                                    assert(cpu.pc == next && flags() == expected &&
+                                                           EM_A0 == first + (!pair && form == 3 ? nbytes : 0));
+                                                    assert(EM_D0 == (condition ? m1 : c1) &&
+                                                           EM_D1 == (condition && pair ? m2 : c2));
+                                                    if (!mode && nbytes == 4 && !pair && !layout && lane == 1 &&
+                                                        !condition && !fault && at == 1 && !user && !trace && !hit)
+                                                        malformed(&cpu, &run.step);
+                                                    if (occurrence)
+                                                        for (unsigned i = 0; i < 4096 - (target & 4095); ++i)
+                                                            assert(ram[backing(physical_address(target + i))] ==
+                                                                   ((value >> ((nbytes - i - 1) * 8)) & 255));
+                                                    Syn68kFPUState fpu = cpu_state.fpu;
+                                                    deny_reads = 1;
+                                                    Syn68kMappedDelivery delivery;
                                                     assert(
                                                         syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
-                                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
-                                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                                                    assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == next);
+                                                    if (delivery.reason != SYN68K_DELIVERY_COMPLETE || cpu.pc != 0x8100)
+                                                        fprintf(
+                                                            stderr,
+                                                            "entry mode=%u layout=%u lane=%u n=%u pair=%u fault=%u at=%u user=%u trace=%u hit=%u reason=%u pc=%x sp=%x\n",
+                                                            mode, layout, lane, nbytes, pair, fault, at, user, trace,
+                                                            hit, delivery.reason, cpu.pc, EM_A7);
+                                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                                                           cpu.pc == 0x8100);
+                                                    unsigned frame = EM_A7, fc = user ? 1 : 5,
+                                                             sz = nbytes == 2 ? 0x40 : 0;
+                                                    assert(visible(frame + 12, 2) ==
+                                                           (0x200 | sz | fc | (fault ? 0x400 : 0) |
+                                                            (fault && prefix ? 0x800 : 0) | (trace ? 0x2000 : 0)));
+                                                    assert(visible(frame + 20, 4) == target &&
+                                                           visible(frame + (fault ? 32 : 40), 4) == target);
+                                                    assert(visible(frame + (fault ? 16 : 18), 2) == (0x80 | sz | fc));
+                                                    unsigned count = cleanup(fc, !fault, tail);
+                                                    unsigned reads = rmw_reads;
+                                                    assert(syn68k_mapped_cpu_run(&cpu, count, &run));
+                                                    assert(run.reason == (trace ? SYN68K_MAPPED_EXCEPTION
+                                                                                : SYN68K_MAPPED_BUDGET) &&
+                                                           run.step.vector == (trace ? 9u : 0u) && cpu.pc == next);
+                                                    assert(rmw_reads == reads && EM_A2 == 0x12345678 &&
+                                                           EM_D4 == 0xdeadbeef && cpu_state.dfc == 7 &&
+                                                           cpu_state.sr == sr && flags() == expected);
+                                                    assert(!memcmp(&fpu, &cpu_state.fpu, sizeof fpu));
+                                                    assert(visible(first, nbytes) ==
+                                                           (condition ? m1 : 0xa1b2c3d4 & mask(nbytes)));
+                                                    if (pair)
+                                                        assert(visible(second, nbytes) ==
+                                                               (condition ? m2 : 0x55667788 & mask(nbytes)));
+                                                    if (trace) {
+                                                        assert(run.step.fault_address == 0x8000);
+                                                        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0,
+                                                                                             &delivery));
+                                                        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+                                                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                        assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == next);
+                                                    }
+                                                    ++cases;
                                                 }
-                                                ++cases;
-                                            }
                             }
                         }
                 }

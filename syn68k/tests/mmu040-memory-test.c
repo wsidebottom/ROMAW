@@ -29,7 +29,7 @@ static uint32_t failed_table;
 static struct {
     uint32_t physical, attributes;
     unsigned size, writing, fc;
-} operands[4];
+} operands[8];
 
 static uint32_t get32(uint32_t address)
 {
@@ -67,7 +67,7 @@ static int table_update(void* opaque, uint32_t address, uint32_t value, int lock
 
 static int operand(void* opaque, uint32_t physical, unsigned size, uint32_t attributes, int writing, unsigned fc)
 {
-    assert(opaque == ram && calls < 4 && size >= 1 && size <= 4);
+    assert(opaque == ram && calls < 8 && size >= 1 && size <= 4);
     operands[calls].physical = physical;
     operands[calls].size = size;
     operands[calls].fc = fc;
@@ -159,13 +159,15 @@ static void all_offsets(void)
                         success(access, size);
                         assert(access.request == logical && access.size == size &&
                                access.fc == (supervisor ? 5u : 1u) && access.writing == writing && !access.rmw);
-                        assert(calls == (first == size ? 1 : 2));
+                        assert(calls == (first == size ? 1 : 3));
                         assert(operands[0].physical == physical && operands[0].size == first &&
                                operands[0].writing == writing);
                         assert(operands[0].attributes == (supervisor ? 0x80u : 0) + (writing ? 16u : 0));
                         if (first != size) {
-                            assert(operands[1].physical == second && operands[1].size == size - first);
-                            assert(operands[1].attributes == (supervisor ? 0xa0u : 0x60u) + (writing ? 16u : 0));
+                            assert(operands[1].physical == physical && operands[1].size == first &&
+                                   operands[1].attributes == operands[0].attributes && operands[1].writing == writing);
+                            assert(operands[2].physical == second && operands[2].size == size - first);
+                            assert(operands[2].attributes == (supervisor ? 0xa0u : 0x60u) + (writing ? 16u : 0));
                         }
                         if (writing)
                             for (unsigned i = 0; i < size; ++i)
@@ -200,7 +202,7 @@ static void failures(void)
                 else if (failure == 3)
                     failed_table = pte + 4;
                 else
-                    fail_call = failure - 3; // First or second operand chunk.
+                    fail_call = failure == 4 ? 1 : 3; // Initial first page or second page after replay.
                 uint32_t value = 0xdeadbeef;
                 Syn68kMMU040Access access = writing ? syn68k_mmu040_write(&memory, 0x1ffff, 1, 2, 0x5678)
                                                     : syn68k_mmu040_read(&memory, 0x1ffff, 1, 2, 0, &value);
@@ -286,10 +288,11 @@ static void wrap_and_bad_requests(void)
                 Syn68kMMU040Access access = writing ? syn68k_mmu040_write(&memory, 0xffffffff, fc, 2, 0xabcd)
                                                     : syn68k_mmu040_read(&memory, 0xffffffff, fc, 2, 0, &value);
                 success(access, 2);
-                assert(!table_reads && !table_writes && calls == 2);
-                assert(operands[0].physical == 0xffffffff && operands[1].physical == 0);
-                assert(!operands[0].attributes && !operands[1].attributes);
-                assert(operands[0].fc == fc && operands[1].fc == fc);
+                unsigned last = (fc & 3) == 2 ? 1 : 2;
+                assert(!table_reads && !table_writes && calls == last + 1);
+                for (unsigned i = 0; i < last; ++i)
+                    assert(operands[i].physical == 0xffffffff && !operands[i].attributes && operands[i].fc == fc);
+                assert(operands[last].physical == 0 && !operands[last].attributes && operands[last].fc == fc);
                 assert(writing ? ram[0xffff] == 0xab && ram[0] == 0xcd : value == 0x1234);
             }
     for (unsigned bad = 0; bad < 10; ++bad) {
@@ -383,18 +386,37 @@ static void aligned_bus_transfers(void)
                    {2, 0, 1, {2}}, {2, 1, 2, {1, 1}},    {2, 2, 1, {2}},    {2, 3, 2, {1, 1}},
                    {4, 0, 1, {4}}, {4, 1, 3, {1, 2, 1}}, {4, 2, 2, {2, 2}}, {4, 3, 3, {1, 2, 1}}};
 
+    /* Literal page-cross bus orders, including the discarded initial pass. */
+    static const struct {
+        unsigned size, lane, count, widths[5], offsets[5];
+    } cross[] = {{2, 3, 3, {1, 1, 1}, {0, 0, 1}},
+                 {4, 1, 5, {1, 2, 1, 2, 1}, {0, 1, 0, 1, 3}},
+                 {4, 2, 3, {2, 2, 2}, {0, 0, 2}},
+                 {4, 3, 4, {1, 1, 2, 1}, {0, 0, 1, 3}}};
+
     for (unsigned page8k = 0; page8k < 2; ++page8k)
         for (unsigned supervisor = 0; supervisor < 2; ++supervisor)
             for (unsigned boundary = 0; boundary < 2; ++boundary)
-                for (unsigned v = 0; v < sizeof vectors / sizeof *vectors; ++v)
+                for (unsigned v = 0; v < sizeof vectors / sizeof *vectors; ++v) {
+                    unsigned count = vectors[v].count, widths[5] = {0}, offsets[5] = {0};
+                    memcpy(widths, vectors[v].widths, sizeof vectors[v].widths);
+                    for (unsigned i = 1; i < count; ++i)
+                        offsets[i] = offsets[i - 1] + widths[i - 1];
+                    if (boundary)
+                        for (unsigned i = 0; i < sizeof cross / sizeof *cross; ++i)
+                            if (cross[i].size == vectors[v].size && cross[i].lane == vectors[v].lane) {
+                                count = cross[i].count;
+                                memcpy(widths, cross[i].widths, sizeof widths);
+                                memcpy(offsets, cross[i].offsets, sizeof offsets);
+                            }
                     for (unsigned writing = 0; writing < 2; ++writing)
-                        for (unsigned fail = 0; fail <= vectors[v].count; ++fail) {
+                        for (unsigned fail = 0; fail <= count; ++fail) {
                             fixture(page8k);
                             memory.aligned_transfers = 1;
-                            unsigned size = vectors[v].size;
-                            unsigned page_size = page8k ? 8192 : 4096;
+                            unsigned size = vectors[v].size, page_size = page8k ? 8192 : 4096;
                             uint32_t logical = (boundary ? 0x1fffc : 0x20000 - page_size) + vectors[v].lane;
                             uint32_t physical[4];
+                            unsigned written[4] = {0};
                             for (unsigned i = 0; i < size; ++i) {
                                 uint32_t a = logical + i;
                                 physical[i] = a < 0x20000 ? (supervisor ? 0xa000 : 0x8000) + (a & (page_size - 1))
@@ -407,21 +429,21 @@ static void aligned_bus_transfers(void)
                             Syn68kMMU040Access access = writing
                                                             ? syn68k_mmu040_write(&memory, logical, fc, size, value)
                                                             : syn68k_mmu040_read(&memory, logical, fc, size, 0, &value);
-                            unsigned completed = 0;
-                            for (unsigned i = 0; i < (fail ? fail : vectors[v].count); ++i) {
-                                assert(operands[i].physical == physical[completed]);
-                                assert(operands[i].size == vectors[v].widths[i]);
+                            unsigned completed = fail ? offsets[fail - 1] : size;
+                            for (unsigned i = 0; i < (fail ? fail : count); ++i) {
+                                assert(operands[i].physical == physical[offsets[i]] && operands[i].size == widths[i]);
                                 assert(!(operands[i].physical & (operands[i].size - 1)));
                                 assert(operands[i].fc == fc && operands[i].writing == writing);
                                 if (!fail || i + 1 < fail)
-                                    completed += vectors[v].widths[i];
+                                    for (unsigned j = 0; j < widths[i]; ++j)
+                                        written[offsets[i] + j] = 1;
                             }
-                            assert(calls == (fail ? fail : vectors[v].count));
+                            assert(calls == (fail ? fail : count));
                             assert(access.completed == completed && access.bus_error == !!fail);
-                            assert(access.request == logical && access.size == size && access.fc == fc);
-                            assert(access.translation.fault == MMU040_OK);
+                            assert(access.request == logical && access.size == size && access.fc == fc &&
+                                   access.translation.fault == MMU040_OK);
                             if (fail) {
-                                uint16_t ssw = 0xffff;
+                                uint16_t ssw;
                                 assert(access.logical == logical + completed);
                                 assert(syn68k_mmu040_access_ssw(&access, &ssw));
                                 assert(ssw == (fc | (size == 1 ? 0x20 : size == 2 ? 0x40 : 0) | (writing ? 0 : 0x100)));
@@ -429,9 +451,9 @@ static void aligned_bus_transfers(void)
                             uint32_t prefix = 0;
                             for (unsigned i = 0; i < size; ++i) {
                                 if (i < completed)
-                                    prefix = (prefix << 8) | (0x51 + i);
+                                    prefix = prefix << 8 | (0x51 + i);
                                 unsigned expected =
-                                    writing && i < completed ? (0xfedcba98u >> ((size - i - 1) * 8)) & 255 : 0x51 + i;
+                                    writing && written[i] ? (0xfedcba98u >> ((size - i - 1) * 8)) & 255 : 0x51 + i;
                                 assert(ram[physical[i]] == expected);
                             }
                             assert(
@@ -440,6 +462,7 @@ static void aligned_bus_transfers(void)
                             assert(value == (writing || fail ? 0xfedcba98 : prefix));
                             ++cases;
                         }
+                }
     memory.aligned_transfers = 0;
 }
 

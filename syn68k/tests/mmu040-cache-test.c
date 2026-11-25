@@ -257,7 +257,8 @@ static void operands(void)
 static void page_chunks(void)
 {
     /* Logical operands remain byte/word/longword. The odd longword at 4ffd
-       must reach the cache as a three-byte physical page tail plus one byte. */
+       reaches the cache as a three-byte tail twice, then one byte on the
+       second page (MC68040UM 4.1). */
     for (unsigned offset = 0xffd; offset <= 0xfff; ++offset)
         for (unsigned writing = 0; writing < 2; ++writing)
             for (unsigned aligned = 0; aligned < 2; ++aligned) {
@@ -274,10 +275,10 @@ static void page_chunks(void)
                 uint32_t value = writing ? expected : 0;
                 Syn68kMMU040Access access = access_memory(0x4000 + offset, 5, 4, writing, 0, &value);
                 assert(!access.translation.fault && !access.bus_error && !access.cache.fault && access.completed == 4);
-                if (cache.replacement[0] != 2)
+                if (cache.replacement[0] != 3)
                     fprintf(stderr, "page offset=%x write=%u aligned=%u counter=%u\n", offset, writing, aligned,
                             cache.replacement[0]);
-                assert(cache.replacement[0] == 2);
+                assert(cache.replacement[0] == 3);
                 if (writing) {
                     push_all();
                     assert(get(0x8000 + offset, first) == expected >> ((4 - first) * 8));

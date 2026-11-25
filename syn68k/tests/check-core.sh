@@ -844,7 +844,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross; do
           fixture=native040-test
           extra=()
           case $group in
@@ -865,6 +865,7 @@ EOF
             mmu_cache_op) fixture=mmu040-cache-op-test; extra=(-DMMU040_CACHE_NATIVE) ;;
             cache_move16) fixture=cache040-move16-test; extra=(-DCACHE040_NATIVE_TEST) ;;
             mmu_move16) fixture=mmu040-move16-test; extra=(-DMMU040_MOVE16_NATIVE -DMMU040_MOVE16_GROUPED) ;;
+            pagecross) fixture=mmu040-pagecross-test; extra=(-DMMU040_PAGECROSS_NATIVE -DMMU040_PAGECROSS_GROUPED) ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -916,6 +917,18 @@ EOF
         syn68k/tests/mmu040-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/mmu040-test.exe"
       "$output/mmu040-test.exe"
+      for pagecross_cc in "${NATIVE_CC:-gcc}" "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}"; do
+        pagecross_flags=(-g -O1)
+        pagecross_exe="$output/pagecross.exe"
+        if [[ $pagecross_cc == "${NATIVE_CC:-gcc}" ]]; then
+          pagecross_flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer)
+          pagecross_exe="$output/pagecross"
+        fi
+        "$pagecross_cc" "${warnings[@]}" "${pagecross_flags[@]}" "${includes[@]}" \
+          syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c syn68k/src/runtime/cache040.c \
+          syn68k/tests/mmu040-pagecross-test.c -o "$pagecross_exe"
+        "$pagecross_exe"
+      done
       "${NATIVE_CC:-gcc}" "${warnings[@]}" -g -O1 \
         -fsanitize=address,undefined -fno-omit-frame-pointer "${includes[@]}" \
         syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c syn68k/src/runtime/cache040.c \

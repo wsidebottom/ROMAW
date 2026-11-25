@@ -1656,7 +1656,9 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
                                        run.step.access.bus_error == (fault == 1));
                                 unsigned source_read = forms[form].op == 0xd189 || forms[form].op == 0x9189 ||
                                                        forms[form].op == 0x20d9 || forms[form].op == 0x30d9;
-                                assert(watched_successes == !!completed && watched_read_attempts == forms[form].read &&
+                                unsigned visits = 1 + (boundary == 1 && completed);
+                                assert(watched_successes == !!completed * visits &&
+                                       watched_read_attempts == forms[form].read * visits &&
                                        watched_tail_reads == source_read && !watched_tail_successes);
                                 for (unsigned i = 0; i < size; ++i)
                                     assert(
@@ -1759,10 +1761,10 @@ static void guest_scalar_bus_writebacks(unsigned boundary, unsigned completed, i
                                            status() == expected_sr);
                                 }
                                 assert(scalar_store_value(operand, size) == expected_data &&
-                                       watched_successes == 1 + !!completed &&
-                                       watched_attempts == 1u + !!(fault == 1 || completed) && EM_D4 == 1 &&
-                                       watched_read_attempts == forms[form].read && watched_tail_reads == source_read &&
-                                       !watched_tail_successes);
+                                       watched_successes == (1 + !!completed) * visits &&
+                                       watched_attempts == (1u + !!(fault == 1 || completed)) * visits && EM_D4 == 1 &&
+                                       watched_read_attempts == forms[form].read * visits &&
+                                       watched_tail_reads == source_read && !watched_tail_successes);
                                 ++cases;
                             }
     memory.aligned_transfers = 0;
@@ -2200,15 +2202,18 @@ static void moves_faults(unsigned writing, int live_trace)
                                                 }
                                                 assert(moves_value(operand, size) == data &&
                                                        watched_tail_reads == (form == 5 ? (writing ? 1u : 2u) : 0u));
+                                                unsigned visits = 1 + boundary;
                                                 if (writing)
                                                     assert(EM_A0 == updated && EM_A1 == original[9].ul.n &&
                                                            EM_D0 == original[0].ul.n && EM_A7 == 0x20100 &&
                                                            EM_D4 == 1 && watched_read_attempts == 0 &&
-                                                           watched_attempts == 1u + !!(fault == 1 || completed) &&
-                                                           watched_successes == 1 + !!completed);
+                                                           watched_attempts ==
+                                                               (1u + !!(fault == 1 || completed)) * visits &&
+                                                           watched_successes == (1 + !!completed) * visits);
                                                 else
                                                     assert(!watched_attempts &&
-                                                           watched_read_attempts == 1u + !!(fault == 1 || completed));
+                                                           watched_read_attempts ==
+                                                               (1u + !!(fault == 1 || completed)) * visits);
                                                 ++cases;
                                             }
     memory.aligned_transfers = 0;
@@ -6002,8 +6007,10 @@ static void guest_fpu_bus_writebacks(unsigned exception, unsigned tail, enum FPU
                                             assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
                                                    run.step.store_state == (!exception && traced ? 3U : 2U) &&
                                                    cpu.pc == next && EM_A0 == expected_a0 && status() == expected_sr);
+                                            unsigned visits = 1 + (completed && physical_prefix != 2);
                                             assert(!memcmp(&expected_fpu, &cpu_state.fpu, sizeof expected_fpu) &&
-                                                   watched_successes == !!completed && !watched_tail_successes);
+                                                   watched_successes == !!completed * visits &&
+                                                   !watched_tail_successes);
                                             assert(write_mutated == !!mutation);
                                             assert(run.step.access.request == fault && run.step.access.size == size &&
                                                    run.step.access.completed == completed &&
@@ -6124,7 +6131,7 @@ static void guest_fpu_bus_writebacks(unsigned exception, unsigned tail, enum FPU
                                             assert(run.reason == (exception || traced ? SYN68K_MAPPED_EXCEPTION
                                                                                       : SYN68K_MAPPED_BUDGET) &&
                                                    cpu.pc == next && EM_A0 == expected_a0 && status() == expected_sr &&
-                                                   EM_D4 == 1 && watched_successes == 1 + !!completed &&
+                                                   EM_D4 == 1 && watched_successes == (1 + !!completed) * visits &&
                                                    watched_tail_successes == tail);
                                             assert(!memcmp(&expected_fpu, &cpu_state.fpu, sizeof expected_fpu));
                                             if (exception) {
@@ -6620,10 +6627,14 @@ static void guest_fpu_pure_bus_replays(enum FPUStoreKind kind, unsigned complete
                                     watched_tail_successes = 0;
                                     cpu.pc = 0x10000;
                                     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    unsigned visits = 1 + (completed && physical_bus != 2);
+                                    unsigned head_size = kind == FPU_STORE_LIST || kind == FPU_STORE_MOVE ? 2 : 4;
+                                    unsigned tail_visits = 1 + ((operand & (page_size - 1)) + head_size > page_size);
                                     assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
                                            run.step.store_state == 4 && cpu.pc == 0x10000 && EM_A0 == initial_a0 &&
-                                           status() == expected_sr && watched_successes == !!completed &&
-                                           watched_tail_successes == !!offset && !run.step.store_tail_valid &&
+                                           status() == expected_sr && watched_successes == !!completed * visits &&
+                                           watched_tail_successes == !!offset * tail_visits &&
+                                           !run.step.store_tail_valid &&
                                            !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
                                     unsigned value = 0;
                                     for (unsigned i = offset; i < offset + size; ++i)
@@ -6705,7 +6716,8 @@ static void guest_fpu_pure_bus_replays(enum FPUStoreKind kind, unsigned complete
                                            mapped_value(frame + (physical_bus ? 44 : 36), 4) == data);
                                     assert(syn68k_mapped_cpu_run(&cpu, 9 + (physical_bus ? 4 + (size == 2) : 0), &run));
                                     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 && EM_D4 == 1 &&
-                                           watched_successes == 1 + !!completed && watched_tail_successes == !!offset &&
+                                           watched_successes == (1 + !!completed) * visits &&
+                                           watched_tail_successes == !!offset * tail_visits &&
                                            !memcmp(&at_fault, &cpu_state.fpu, sizeof at_fault));
                                     for (unsigned i = 0; i < whole; ++i)
                                         assert(ram[fpu_store_physical(operand + i)] ==
@@ -6713,8 +6725,8 @@ static void guest_fpu_pure_bus_replays(enum FPUStoreKind kind, unsigned complete
                                     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
                                     assert(run.reason == (traced ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
                                            cpu.pc == next && EM_A0 == expected_a0 && status() == expected_sr &&
-                                           watched_successes == 2 + !!completed &&
-                                           watched_tail_successes == 2 * !!offset &&
+                                           watched_successes == (2 + !!completed) * visits &&
+                                           watched_tail_successes == 2 * !!offset * tail_visits &&
                                            !memcmp(&expected, &cpu_state.fpu, sizeof expected));
                                     if (traced)
                                         assert(run.step.vector == 9 && run.step.format == 2 &&
