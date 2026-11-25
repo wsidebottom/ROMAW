@@ -94,6 +94,11 @@ typedef struct {
 /* Enter an ordinary format-0/2/3 exception through the supervisor logical
    stack and vector buses. interrupt_level is zero for synchronous exceptions,
    or 1..7 for vector 24+level. Master IRQ entry preserves both stack frames.
+   A runner-marked completed forced exception under entry T1 enters its own
+   frame/vector first, then a format-2 trace frame before its handler executes.
+   The trace frame retains the forced handler PC and original instruction EA;
+   guest RTE returns through both frames. Access/address, illegal, privilege,
+   format and FPU numeric/preinstruction exceptions do not use this marker.
    Access failures retain completed writes and report the failing transfer;
    the embedding CPU must resolve delivery faults and halt on double faults
    before executing another instruction. Format 7 accepts opcode-fetch faults

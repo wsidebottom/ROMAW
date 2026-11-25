@@ -5,6 +5,38 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Forced-exception tracing (2026-11-25)
+
+The mapped runner now latches instruction-entry T1 for taken TRAP, TRAPV,
+TRAPcc, integer division/check exceptions and FTRAPcc. Delivery completes the
+forced exception frame and vector fetch first, then stacks a format-2 trace
+frame before executing the forced handler. That frame retains the handler PC
+and original instruction address; two guest RTEs restore the original context.
+Opcode callbacks changing live trace bits do not create or cancel the latch.
+T0 alone does not trace these forced exceptions. Illegal/privilege/access faults
+and FPU numeric/preinstruction exceptions retain their separate policies.
+
+The focused suite passes 11,972 cases across both dispatch and bus bindings,
+including all stack modes, malformed records, callback trace changes, delivery
+faults and interrupt priority. Grouped MMU validation passes 8,021,004 stream
+cases and 101,224 control-flow/RTE cases. Delivery faults retain completed frame
+writes and return the existing access-fault result; embedding code still owns
+double-fault recovery. Host step records grew; native packet layouts and the
+previously validated emitted kernel image are unchanged.
+
+The rebuilt bundle is at `build/68040-forced-trace-stage/bin`, using committed
+application base `f21a354f` with the tested CPU overlay. Help exits zero with
+7,669 output bytes. Isolated Browser/Speedometer 68K startups reach WaitNextEvent
+with 30,874/76,937 native entries, no live checkpoint and no win_exception.
+Speedometer makes one FPU query. These checks cover startup, not an FPU workflow.
+The exact-source audit covers 175 CPU inputs, eight fixtures and 74 staged files.
+Complete cold/warm AOT passes 3,575,838 recovery cases per run: 73 cold images,
+1,262,191 warm hits and zero warm compilations. Stable identity and malformed
+cache fallback pass. `build/68040-forced-trace-source-audit.json` records the
+complete validation and source/binary hashes. The 74-file bundle is promoted to
+`build/68040-current/bin`; its predecessor is preserved at
+`build/68040-pre-forced-trace-bin-20261125`.
+
 ## MOVE16 captured-line writebacks (2026-11-25)
 
 Mapped MOVE16 write faults now retain all four memory-aligned PD0-3 words.
@@ -486,11 +518,12 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
 - Remaining mapped access-error work: further active-stack/call effective-address
-  and double-fault variants, MOVE16 block transfer/writeback continuations, and the
+  and double-fault variants, MOVE16 read continuation and a physical block/cache
+  bus, and the
   constructed user-mode throwaway-RTE case.
   Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
   use CM/saved-EA continuation as described in the current checkpoints above.
-- Remaining trace audit, including forced exceptions, mapped cache
+- Remaining trace/exception-priority audit, mapped cache
   support and the broader flat integer frontend. Normal mapped T1 and the
   supported serializing T0 classes now include CAS/CAS2 writeback/RTE checks;
   these do not establish the unsupported instruction classes.

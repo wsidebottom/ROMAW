@@ -17,6 +17,10 @@ whole instruction and repeats earlier writes. No continuation bit is introduced.
 
 ## MOVE16 line cleanup
 
+Forced-exception tracing is separate from access-error cleanup: the mapped
+runner delivers the completed forced exception first, then its pending T1 trace
+before entering the forced handler. Access faults do not acquire this latch.
+
 Physical MOVE16 write faults retire normal address updates once and retain next
 PC, WB1/TT=1/SIZE=line and memory-aligned PD0-3. Guest cleanup writes the whole
 line without rereading source data. Entry T1 retains CT. Certified ATC aborts

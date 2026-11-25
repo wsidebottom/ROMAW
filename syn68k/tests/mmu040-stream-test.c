@@ -3779,6 +3779,278 @@ static void move16_line_record_guards(void)
     printf("%u MOVE16 malformed-line/callback-retention guards passed\n", cases - first);
 }
 
+static void forced_trace_streams(void)
+{
+    unsigned first = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned mode = 0; mode < 4; ++mode)
+            for (unsigned kind = 0; kind < 23; ++kind)
+                for (unsigned entry = 0; entry < 4; ++entry)
+                    for (unsigned live = 0; live < 4; ++live) {
+                        fixture(page8k, mode >= 2);
+                        syn68k_fpu_reset();
+                        unsigned op = kind < 16    ? 0x4e40 | kind
+                                      : kind == 16 ? 0x4e76
+                                      : kind == 17 ? 0x50fc
+                                      : kind == 18 ? 0x50fa
+                                      : kind == 19 ? 0x50fb
+                                      : kind == 20 ? 0x80c1
+                                      : kind == 21 ? 0x4181
+                                                   : 0xf27c;
+                        unsigned length = kind == 18 || kind == 22 ? 4 : kind == 19 ? 6 : 2;
+                        unsigned vector = kind < 16 ? 32 + kind : kind == 20 ? 5 : kind == 21 ? 6 : 7;
+                        unsigned format = kind < 16 ? 0 : 2;
+                        code_word(0x10000, op);
+                        code_word(0x10002, kind == 22 ? 15 : 0x1234);
+                        code_word(0x10004, 0x5678);
+                        EM_D0 = 5;
+                        EM_D1 = kind == 20 ? 0 : 4;
+                        unsigned stack = mode & 1 ? 0x20200 : 0x20100, user_sp = 0xdeadbe00;
+                        cpu_state.usp = user_sp;
+                        cpu_state.isp = 0x20100;
+                        cpu_state.msp = 0x20200;
+                        EM_A7 = mode >= 2 ? stack : user_sp;
+                        unsigned sr = mode << 12 | entry << 14 | 0x1f;
+                        set_status(sr);
+                        trace_read_physical = physical(0x10000);
+                        trace_bus_kind = 0;
+                        trace_read_sr = live << 14;
+                        supervisor = 1;
+                        put32(pte(0x10000), 0xc001);
+                        put32(pte(0x20000), 0x18001);
+                        code_word(0x10040, 0x4e73);
+                        code_word(0x100e0, 0x4e73);
+                        cpu_state.vbr = 0x20000;
+                        put32(physical(cpu_state.vbr + vector * 4), 0x10040);
+                        put32(physical(cpu_state.vbr + 36), 0x100e0);
+                        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                        Syn68kMappedRun run;
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                        unsigned traced = !!(entry & 2), saved_sr = status();
+                        if (run.step.vector != vector)
+                            fprintf(stderr, "force kind=%u opcode=%x vector=%u expected=%u\n", kind, op,
+                                    run.step.vector, vector);
+                        assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == vector &&
+                               run.step.format == format && run.step.exception_pc == 0x10000 + length &&
+                               run.step.forced_trace == traced &&
+                               run.step.forced_trace_pc == (traced ? 0x10000u : 0u) &&
+                               (saved_sr & 0xc000) == live << 14);
+                        CPUState expected = cpu_state;
+                        Syn68kMappedDelivery delivery;
+                        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                        unsigned forced_frame = stack - (format ? 12 : 8), trace_frame = forced_frame - 12;
+                        unsigned handler_sr = (saved_sr & 0x3fff) | 0x2000;
+                        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                               cpu.pc == (traced ? 0x100e0u : 0x10040u) &&
+                               EM_A7 == (traced ? trace_frame : forced_frame) && status() == handler_sr);
+                        assert(mapped_value(forced_frame, 2) == saved_sr &&
+                               mapped_value(forced_frame + 2, 4) == 0x10000 + length &&
+                               mapped_value(forced_frame + 6, 2) == (format << 12 | vector * 4));
+                        if (traced)
+                            assert(mapped_value(trace_frame, 2) == handler_sr &&
+                                   mapped_value(trace_frame + 2, 4) == 0x10040 &&
+                                   mapped_value(trace_frame + 6, 2) == 0x2024 &&
+                                   mapped_value(trace_frame + 8, 4) == 0x10000);
+                        assert(syn68k_mapped_cpu_run(&cpu, traced ? 2 : 1, &run));
+                        assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 + length &&
+                               status() == saved_sr && !memcmp(expected.regs, cpu_state.regs, sizeof expected.regs) &&
+                               !memcmp(&expected.fpu, &cpu_state.fpu, sizeof expected.fpu) &&
+                               cpu_state.usp == user_sp && cpu_state.isp == 0x20100 && cpu_state.msp == 0x20200);
+                        ++cases;
+                    }
+    printf("%u forced-exception/T1-entry/dual-frame/guest-RTE cases passed\n", cases - first);
+}
+
+static void forced_trace_record_guards(void)
+{
+    unsigned first = cases;
+    for (unsigned invalid = 0; invalid < 16; ++invalid) {
+        fixture(0, 1);
+        syn68k_fpu_reset();
+        code_word(0x10000, 0x4e40);
+        EM_A7 = cpu_state.isp = 0x20100;
+        set_status(0xa01f);
+        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+        Syn68kMappedRun run;
+        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+        assert(run.step.forced_trace == 1);
+        Syn68kIntegerStep record = run.step;
+        switch (invalid) {
+        case 0:
+            record.forced_trace = 2;
+            break;
+        case 1:
+            record.forced_trace = 0;
+            break;
+        case 2:
+            record.forced_trace_pc |= 1;
+            break;
+        case 3:
+            record.format = 7;
+            break;
+        case 4:
+            record.vector = 4;
+            break;
+        case 5:
+            record.vector = 48;
+            record.format = 3;
+            break;
+        case 6:
+            record.vector = 9;
+            record.format = 2;
+            break;
+        case 7:
+            record.vector = 8;
+            break;
+        case 8:
+            record.restartable_read = 1;
+            break;
+        case 9:
+            record.move16.state = 2;
+            break;
+        case 10:
+            record.movem_state = 1;
+            break;
+        case 11:
+            record.store_state = 2;
+            break;
+        case 12:
+            record.fpu_vector = 49;
+            break;
+        case 13:
+            record.store_tail_valid = 1;
+            break;
+        case 14:
+            record.store_locked = 1;
+            break;
+        case 15:
+            record.stopped = 1;
+            break;
+        }
+        CPUState before = cpu_state;
+        Syn68kMappedCPU before_cpu = cpu;
+        unsigned before_reads = reads, before_writes = writes;
+        Syn68kMappedDelivery delivery;
+        assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery));
+        assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == before_reads && writes == before_writes &&
+               !memcmp(&before, &cpu_state, sizeof before) && !memcmp(&before_cpu, &cpu, sizeof cpu));
+        ++cases;
+    }
+    printf("%u malformed forced-trace record guards passed\n", cases - first);
+}
+
+static void forced_trace_exclusions_and_delivery_faults(void)
+{
+    unsigned first = cases;
+    for (unsigned mode = 0; mode < 4; ++mode)
+        for (unsigned kind = 0; kind < 8; ++kind) {
+            if ((kind == 1 && mode >= 2) || (kind == 3 && mode < 2))
+                continue;
+            fixture(0, mode >= 2);
+            syn68k_fpu_reset();
+            unsigned op = kind == 0   ? 0x4afc
+                          : kind == 1 ? 0x4e70
+                          : kind == 2 ? 0xf638
+                          : kind == 3 ? 0x4e73
+                          : kind == 4 ? 0x4e40
+                          : kind == 5 ? 0x4e76
+                          : kind == 6 ? 0x51fc
+                                      : 0xf27c;
+            unsigned vector = kind == 0 ? 4 : kind == 1 ? 8 : kind == 2 ? 11 : kind == 3 ? 14 : kind == 4 ? 2 : 9;
+            unsigned format = kind == 4 ? 7 : kind >= 5 ? 2 : 0;
+            unsigned stack = mode & 1 ? 0x20200 : 0x20100;
+            cpu_state.usp = 0xdeadbe00;
+            cpu_state.isp = 0x20100;
+            cpu_state.msp = 0x20200;
+            EM_A7 = mode >= 2 ? stack : cpu_state.usp;
+            code_word(0x10000, op);
+            code_word(0x10002, 0);
+            if (kind == 3) {
+                code_word(stack, 0x201f);
+                put32(physical(stack + 2), 0x10080);
+                code_word(stack + 6, 0x4000);
+            }
+            if (kind == 4)
+                fail_physical = physical(0x10000);
+            set_status(mode << 12 | 0x801d); // V clear: TRAPV does not take its forced exception.
+            supervisor = 1;
+            put32(pte(0x10000), 0xc001);
+            put32(pte(0x20000), 0x18001);
+            cpu_state.vbr = 0x20000;
+            put32(physical(cpu_state.vbr + vector * 4), 0x10040);
+            Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+            Syn68kMappedRun run;
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == vector && run.step.format == format &&
+                   !run.step.forced_trace && !run.step.forced_trace_pc);
+            fail_physical = UINT32_MAX;
+            Syn68kMappedDelivery delivery;
+            assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+            assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040 &&
+                   EM_A7 == stack - (format == 7   ? 60
+                                     : format == 2 ? 12
+                                                   : 8));
+            ++cases;
+        }
+    for (unsigned stage = 0; stage < 4; ++stage) {
+        fixture(0, 1);
+        syn68k_fpu_reset();
+        code_word(0x10000, 0x4e40);
+        set_status(0xa01f);
+        EM_A7 = cpu_state.isp = 0x20100;
+        cpu_state.vbr = 0x20000;
+        put32(physical(cpu_state.vbr + 128), 0x10040);
+        put32(physical(cpu_state.vbr + 36), 0x100e0);
+        for (unsigned i = 0xc0; i < 0x100; ++i)
+            ram[0x18000 + i] = 0xa5;
+        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+        Syn68kMappedRun run;
+        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+        assert(run.step.forced_trace);
+        unsigned target = stage == 0 ? 0x200f8 : stage == 1 ? 0x20080 : stage == 2 ? 0x200ec : 0x20024;
+        if (stage & 1)
+            fail_physical = physical(target);
+        else
+            fail_write_physical = physical(target);
+        Syn68kMappedDelivery delivery;
+        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+        assert(delivery.reason == SYN68K_DELIVERY_ACCESS_FAULT && delivery.stacking == !(stage & 1) &&
+               delivery.access.request == target && delivery.access.writing == !(stage & 1) &&
+               EM_A7 == (stage < 2 ? 0x200f8u : 0x200ecu) && cpu.pc == (stage < 2 ? 0x10002u : 0x10040u));
+        if (stage)
+            assert(mapped_value(0x200f8, 2) == 0xa01f && mapped_value(0x200fa, 4) == 0x10002 &&
+                   mapped_value(0x200fe, 2) == 0x80);
+        if (stage == 3)
+            assert(mapped_value(0x200ec, 2) == 0x201f && mapped_value(0x200ee, 4) == 0x10040 &&
+                   mapped_value(0x200f2, 2) == 0x2024 && mapped_value(0x200f4, 4) == 0x10000);
+        fail_physical = fail_write_physical = UINT32_MAX;
+        ++cases;
+    }
+    fixture(0, 1);
+    syn68k_fpu_reset();
+    code_word(0x10000, 0x4e40);
+    set_status(0xa01f);
+    EM_A7 = cpu_state.isp = 0x20100;
+    cpu_state.vbr = 0x20000;
+    put32(physical(cpu_state.vbr + 128), 0x10040);
+    put32(physical(cpu_state.vbr + 36), 0x100e0);
+    stop_irq_address = physical(0x10000);
+    stop_irq_level = 3;
+    Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+    Syn68kMappedRun run;
+    Syn68kMappedDelivery delivery;
+    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    assert(run.step.forced_trace && cpu_state.interrupt_pending[3]);
+    assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x100e0 && EM_A7 == 0x200ec);
+    unsigned before_reads = reads;
+    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    assert(run.reason == SYN68K_MAPPED_INTERRUPT && run.interrupt_level == 3 && reads == before_reads);
+    cpu_state.interrupt_pending[3] = 0;
+    ++cases;
+    printf("%u forced-trace exclusions/delivery-fault/interrupt-priority cases passed\n", cases - first);
+}
+
 static void guest_movem_read_continuations(void)
 {
     for (unsigned page8k = 0; page8k < 2; ++page8k)
@@ -7060,6 +7332,9 @@ int main(int argc, char** argv)
             move16_burst_orders();
             guest_move16_line_writebacks();
             move16_line_record_guards();
+            forced_trace_streams();
+            forced_trace_record_guards();
+            forced_trace_exclusions_and_delivery_faults();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -7129,6 +7404,9 @@ int main(int argc, char** argv)
             move16_burst_orders();
             guest_move16_line_writebacks();
             move16_line_record_guards();
+            forced_trace_streams();
+            forced_trace_record_guards();
+            forced_trace_exclusions_and_delivery_faults();
             guest_movem_read_continuations();
             movem_fetch_record_guards();
             guest_fpu_read_restarts();

@@ -74,6 +74,10 @@ typedef struct {
     /* STOP requests suspension only after successful, untraced retirement. */
     unsigned stopped;
     Syn68kMOVE16Writeback move16;
+    /* Runner-owned T1 latch for a completed forced exception. Delivery enters
+       that exception first, then trace, before its handler executes. */
+    unsigned forced_trace;
+    uint32_t forced_trace_pc;
 } Syn68kIntegerStep;
 
 /* Internal MULU/MULS/DIVU/DIVS, MOVEM/MOVES/MOVEP, JSR/JMP/LEA/PEA and

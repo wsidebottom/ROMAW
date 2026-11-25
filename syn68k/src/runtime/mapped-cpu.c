@@ -270,6 +270,15 @@ static int unconditional_flow_opcode(unsigned opcode)
            opcode == 0x4e73 || opcode == 0x4e74 || opcode == 0x4e75 || opcode == 0x4e77;
 }
 
+/* These instructions execute and force an exception as their result.
+   Illegal, privileged, access/address and FPU numeric/preinstruction faults
+   do not belong here. T0 alone does not trace this exception flow. */
+static int forced_exception(const Syn68kIntegerStep* record)
+{
+    return (record->format == 0 && record->vector >= 32 && record->vector <= 47) ||
+           (record->format == 2 && record->vector >= 5 && record->vector <= 7);
+}
+
 static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
 {
     result->reason = SYN68K_MAPPED_EXCEPTION;
@@ -579,6 +588,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                     cpu_state.regs[i] = before.regs[i];
                 result->step.restartable_read = 1;
             }
+            if ((before.sr & 0x8000) && forced_exception(&result->step)) {
+                result->step.forced_trace = 1;
+                result->step.forced_trace_pc = cpu->pc;
+            }
             exception(cpu, result);
             return 1;
         }
@@ -713,6 +726,14 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     if (!cpu || !cpu->memory || !cpu->memory->mmu || !record || record->vector < 2 || record->vector > 255 ||
         interrupt_level > 7 || (interrupt_level && (record->vector != 24 + interrupt_level || record->format)))
         return 0;
+    if ((!record->forced_trace && record->forced_trace_pc) ||
+        (record->forced_trace &&
+         (record->forced_trace != 1 || (record->forced_trace_pc & 1) || !forced_exception(record) ||
+          record->restartable_read || record->movem_state || record->move16.state || record->store_state ||
+          record->fpu_vector || record->store_tail_valid || record->store_locked || record->stopped))) {
+        result->reason = SYN68K_DELIVERY_UNSUPPORTED;
+        return 1;
+    }
     if ((record->move16.state && !move16_write_fault(record, 0)) || (record->movem_state && !movem_fault(record)) ||
         ((record->store_state || record->fpu_vector || record->store_tail_valid || record->store_locked) &&
          !scalar_store_fault(record) && !replay_store_fault(record)) ||
@@ -753,6 +774,13 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     cpu->movem_pending = 0; // Continuation now belongs to the guest CM frame.
     if (interrupt_level)
         cpu_state.interrupt_pending[interrupt_level] = 0;
+    if (record->forced_trace) {
+        /* The forced frame and vector fetch have completed. Trace saves the
+           handler PC and the now-supervisor SR, above that intact frame. */
+        Syn68kIntegerStep trace = {
+            .vector = 9, .format = 2, .exception_pc = target, .fault_address = record->forced_trace_pc};
+        return syn68k_mapped_exception_enter(cpu, &trace, 0, result);
+    }
     result->reason = SYN68K_DELIVERY_COMPLETE;
     return 1;
 }
