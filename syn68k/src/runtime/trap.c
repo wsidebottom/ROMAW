@@ -895,6 +895,17 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
                 return saved_pc;
         }
     }
+    if (opcode == 0x4e72) {
+        if (!(cpu_state.sr & SR_SUPERVISOR_BIT))
+            return integer_exception(step, context, 8, pc, 0, 0);
+        unsigned value = syn68k_ea_fetch_memory(context, pc + 2, 2);
+        if (context->error)
+            return integer_exception(step, context, 2, pc, context->fault_address, 7);
+        load_status_register(value);
+        if (step)
+            step->stopped = 1;
+        return pc + 4;
+    }
     if (opcode == 0x4e70) {
         if (!(cpu_state.sr & SR_SUPERVISOR_BIT))
             return integer_exception(step, context, 8, pc, 0, 0);
@@ -1069,7 +1080,7 @@ static uint32 execute_integer(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         return move16(pc, opcode, context, step);
     if ((opcode & 0xF140) == 0x4100 || ((opcode & 0xF9C0) == 0x00C0 && (opcode & 0x600) != 0x600))
         return checked_bounds(pc, opcode, context, step);
-    if (control_opcode(opcode))
+    if (control_opcode(opcode) || (opcode == 0x4e72 && context->memory))
         return execute_control(pc, opcode, context, step);
     if ((opcode & 0xf0c0) == 0xc0c0)
         return multiply_word(pc, opcode, context, step);
@@ -1093,7 +1104,7 @@ int syn68k_integer_step_decoded(uint32 pc, unsigned opcode, Syn68kMMU040Memory* 
     if (!result)
         return 0;
     *result = (Syn68kIntegerStep){0};
-    if (!integer_opcode(opcode))
+    if (!integer_opcode(opcode) && !(opcode == 0x4e72 && memory))
         return syn68k_integer_operand_step(pc, opcode, memory, result);
     Syn68kEAContext context = {.pc = pc + 2, .memory = memory};
     result->next = execute_integer(pc, opcode, &context, result);

@@ -140,11 +140,16 @@ static void compare_mmu(unsigned opcode, unsigned command, unsigned mode, uint32
 {
     prepare_mmu(opcode, command, mode, value, dfc);
     Syn68kIntegerStep expected, actual;
+    unsigned expected_reason = 0, expected_stopped = 0;
+    uint32 expected_pc = 0;
     if (stream_mode) {
         Syn68kMappedCPU cpu = {.pc = start, .memory = &memory};
         Syn68kMappedRun run;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         expected = run.step;
+        expected_reason = run.reason;
+        expected_stopped = cpu.stopped;
+        expected_pc = cpu.pc;
     }
     else
         assert(__real_syn68k_integer_step_decoded(start, opcode, &memory, &expected));
@@ -160,6 +165,7 @@ static void compare_mmu(unsigned opcode, unsigned command, unsigned mode, uint32
         Syn68kMappedRun run;
         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
         actual = run.step;
+        assert(run.reason == expected_reason && cpu.stopped == expected_stopped && cpu.pc == expected_pc);
     }
     else
         assert(syn68k_x64_mapped_mmu(start, opcode, &memory, &actual) == 1);
@@ -200,12 +206,26 @@ int main(int argc, char** argv)
            Their alternating restores also exercise same-process disk hits. */
         assert(syn68k_aot_hit_count() == (atoi(argv[2]) ? 18U : 14U));
         assert(syn68k_native_compile_count() == (atoi(argv[2]) ? 0U : 4U));
+        uint64 stop_emissions = syn68k_native_compile_count(), stop_hits = syn68k_aot_hit_count();
+        const unsigned statuses[] = {0, 0x2000, 0x3000, 0x2700, 0xffff, 0x801f, 0x1000, 1};
+        for (stream_mode = 0; stream_mode < 2; ++stream_mode)
+            for (unsigned i = 0; i < sizeof statuses / sizeof *statuses; ++i)
+                for (unsigned mode = 0; mode < 4; ++mode) {
+                    compare_mmu(0x4e72, statuses[i], mode, 0x12345678, 5);
+                    // Force disk restoration, rather than an uncounted RAM hit.
+                    syn68k_x64_mapped_clear();
+                }
+        assert(syn68k_native_compile_count() - stop_emissions == (atoi(argv[2]) ? 0U : 1U));
+        assert(syn68k_aot_hit_count() - stop_hits == (atoi(argv[2]) ? 64U : 63U));
         syn68k_x64_mapped_clear();
         puts("Mapped MMU AOT replayed live control selectors, values, DFCs and ATC contents");
         return 0;
     }
     const unsigned selectors[] = {0, 1, 2, 3, 4, 5, 6, 7, 0x800, 0x801, 0x803, 0x804, 0x805, 0x806, 0x807};
     const uint32_t values[] = {0, 1, UINT32_MAX, 0x80008000, 0x12345678};
+    for (unsigned mode = 0; mode < 4; ++mode)
+        for (unsigned value = 0; value < 65536; value += 257)
+            compare_mmu(0x4e72, value, mode, 0x12345678, 5);
     for (unsigned i = 0; i < sizeof selectors / sizeof *selectors; ++i)
         for (unsigned reg = 0; reg < 16; ++reg)
             for (unsigned writing = 0; writing < 2; ++writing)
@@ -226,13 +246,16 @@ int main(int argc, char** argv)
                 for (unsigned crossing = 0; crossing < 2; ++crossing) {
                     command_pc = crossing ? 0x1ffe : 0x1000;
                     for (injected_fault = 0; injected_fault < 3; ++injected_fault)
-                        for (unsigned mode = 0; mode < 4; ++mode)
+                        for (unsigned mode = 0; mode < 4; ++mode) {
                             compare_mmu(0x4e7b, 0xf803, mode, 0xaabbccdd, 5);
+                            compare_mmu(0x4e72, 0x2000 | mode << 12, mode, 0xaabbccdd, 5);
+                        }
                     injected_fault = 0;
                     stream_mode = 1;
                     compare_mmu(0x4e7a, 0x1801, 2, 0, 5);
                     compare_mmu(0xf548, 0, 2, 0, 5);
                     compare_mmu(0xf508, 0, 2, 0, 5);
+                    compare_mmu(0x4e72, 0x001f, 2, 0, 5);
                     stream_mode = 0;
                 }
     page8k = bank = ram_mapping = warm = 0;
@@ -250,6 +273,7 @@ int main(int argc, char** argv)
             compare_mmu(0x4e7a, 8, mode, 0, 5);
             compare_mmu(0xf548, 0, mode, 0, 5);
             compare_mmu(0xf508, 0, mode, 0, 5);
+            compare_mmu(0x4e72, 0x2700, mode, 0, 5);
         }
     syn68k_x64_mapped_clear();
     printf(

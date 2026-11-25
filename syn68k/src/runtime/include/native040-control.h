@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      native040-control.h
 
-  Summary:   Define the invocation packet for closed native MOVEC register transfers.
+  Summary:   Define the invocation packet for closed native MOVEC and STOP status transfers.
 
   Classes:   None.
 

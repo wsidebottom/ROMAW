@@ -95,7 +95,7 @@ Syn68kNative040Entry syn68k_native040_entry(enum Syn68kNative040Operation operat
         native040_bus_write_offset,   native040_bus_write_rmw_offset, native040_movec_read_offset,
         native040_movec_write_offset, native040_load_fprs_offset,     native040_store_fprs_offset,
         native040_flat_read_offset,   native040_flat_write_offset,    native040_flat_span_offset,
-        native040_span_offset};
+        native040_span_offset,        native040_stop_offset};
     _Static_assert(sizeof offsets / sizeof *offsets == NATIVE040_COUNT, "native root table");
     if ((unsigned)operation >= NATIVE040_COUNT || offsets[operation] >= sizeof native040_code)
         return NULL;

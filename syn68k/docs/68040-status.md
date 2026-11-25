@@ -5,6 +5,48 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Mapped STOP suspension and wakeup (2026-11-25)
+
+The mapped backend implements STOP with a persistent stopped latch. Privilege
+is checked before fetching its immediate word; a fetch fault preserves the
+incoming SR and reports the original instruction PC. Successful execution
+loads the masked SR and selected stack bank, advances PC and reports STOPPED.
+Further runs issue no instruction bus cycles while stopped. Zero budget retains
+the latch and reports BUDGET. The embedding reset owner clears the latch.
+
+Trace uses the instruction-entry SR, as specified in
+[MC68040UM section 8.2.6](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf).
+A traced STOP reports format-2 trace after its SR load without stopping.
+Newly loaded trace bits do not themselves wake an untraced STOP. A pending
+interrupt eligible under the new mask reports INTERRUPT immediately; its
+pending bit and the stopped latch remain until accepted exception entry.
+Guest handlers and RTE resume at the following instruction, including user,
+interrupt-stack and master-stack returns.
+
+Native execution uses the new closed `native040_stop` root for the SR, CCR,
+stack-bank and interrupt-notification updates, with emitted privilege/fetch
+guards. Normal execution rejects semantic helpers. Host step and mapped-CPU
+records gained STOP fields; callers must rebuild. Source-based native cache
+identity covers the change.
+
+Validation passes 786,432 status-root cases per ABI, 31,784 focused stream
+cases, the full Windows/SysV native groups and the full FPU-native group.
+MMU validation passes 7,122,476 stream/recovery and 101,224 control-flow cases.
+Complete cold/warm AOT passes 3,126,574 recovery cases per run, with 67 cold
+images and 1,262,179 warm hits with zero warm compilations. The STOP packet
+fixture additionally forces disk restoration across 64 live status/mode cases;
+its warm run compiles no bodies. The final cache identity remains stable.
+
+The matching ROMAW bundle is staged at `build/68040-stop-stage/bin` and promoted
+to `build/68040-current/bin`, with all 74 files verified byte for byte. The prior
+trace bundle is retained at `build/68040-pre-stop-bin-20261125`.
+All 175 CPU inputs and six fixtures match the maintained, tested and application
+snapshots; `build/68040-stop-source-audit.json` records their hashes and the
+tested archive. The application base remains `e062e3db` with these CPU inputs.
+Windows help, Browser startup (30,940 native entries) and Speedometer's 68K
+startup (76,938 entries, one FPU query) pass with no live native checkpoint.
+These are startup checks; the remaining compatibility work below still applies.
+
 ## Mapped integer trace retirement (2026-11-25)
 
 T1 now applies after every normally completed mapped integer instruction,
@@ -245,7 +287,7 @@ the embedding memory implementation; the operand boundary is not a cycle model.
   case. Supported scalar/FPU/locked writebacks already populate format-7 slots;
   this is no longer an address-only fault model. Saved-EA MOVEM
   restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.
-- Remaining trace audit, including forced exceptions, mapped STOP/cache
+- Remaining trace audit, including forced exceptions, mapped cache
   support and the broader flat integer frontend. Normal mapped T1 and the
   supported serializing T0 classes now include CAS/CAS2 writeback/RTE checks;
   these do not establish the unsupported instruction classes.

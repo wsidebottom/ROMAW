@@ -23,6 +23,58 @@
 static Syn68kNative040Entry entries[2];
 static unsigned cases;
 
+static void stop_checks(void)
+{
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_STOP);
+    assert(entry);
+    const unsigned banks[] = {0, 0, 1, 2}, pending[] = {0, 1, 7};
+    unsigned checked = 0;
+    for (unsigned mode = 0; mode < 4; ++mode)
+        for (unsigned value = 0; value < 65536; ++value)
+            for (unsigned p = 0; p < sizeof pending / sizeof *pending; ++p) {
+                CPUState before, expected, compiled;
+                memset(&before, 0x5a, sizeof before);
+                before.sr = mode << 12;
+                before.usp = 0x11223344;
+                before.isp = 0x55667788;
+                before.msp = 0x99aabbcc;
+                before.regs[15].ul.n = 0xddeeff00;
+                memset((void*)before.interrupt_pending, 0, sizeof before.interrupt_pending);
+                if (pending[p])
+                    before.interrupt_pending[pending[p]] = 1;
+                expected = compiled = before;
+                unsigned masked = value & 0xf71f;
+                expected.sr = masked & 0xffe0;
+                expected.ccc = masked & 1;
+                expected.ccv = masked & 2;
+                expected.ccnz = masked & 4 ? 0 : 4;
+                expected.ccn = masked & 8;
+                expected.ccx = masked & 16;
+                if (mode != (masked >> 12 & 3)) {
+                    uint32 saved[] = {before.usp, before.isp, before.msp};
+                    saved[banks[mode]] = before.regs[15].ul.n;
+                    expected.usp = saved[0];
+                    expected.isp = saved[1];
+                    expected.msp = saved[2];
+                    expected.regs[15].ul.n = saved[banks[masked >> 12 & 3]];
+                }
+                if (pending[p])
+                    expected.interrupt_status_changed = -1;
+                Syn68kNative040Control frame = {.cpu = &compiled, .command = value, .ok = -1};
+                entry(&frame);
+                assert(frame.ok == 1 && !memcmp(&expected, &compiled, sizeof expected));
+                ++checked;
+            }
+    CPUState cpu = {0}, before = cpu;
+    Syn68kNative040Control frame = {.cpu = NULL, .command = 0, .ok = 1};
+    entry(&frame);
+    assert(!frame.ok);
+    frame = (Syn68kNative040Control){.cpu = &cpu, .command = 65536, .ok = 1};
+    entry(&frame);
+    assert(!frame.ok && !memcmp(&before, &cpu, sizeof cpu));
+    printf("%u emitted STOP immediate/mask/stack-bank/interrupt-notification cases passed\n", checked);
+}
+
 static void compare(unsigned selector, unsigned reg, unsigned writing, unsigned sr, unsigned connection, uint32 value)
 {
     CPUState model, compiled;
@@ -55,6 +107,7 @@ int main(void)
     entries[0] = syn68k_native040_entry(NATIVE040_MOVEC_READ);
     entries[1] = syn68k_native040_entry(NATIVE040_MOVEC_WRITE);
     assert(entries[0] && entries[1]);
+    stop_checks();
     for (unsigned selector = 0; selector < 4096; ++selector)
         for (unsigned writing = 0; writing < 2; ++writing)
             compare(selector, 0, writing, 0x2000, 1, 0x12345678);

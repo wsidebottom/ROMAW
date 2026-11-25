@@ -25,7 +25,8 @@ enum Syn68kMappedStop {
     SYN68K_MAPPED_EXCEPTION,
     SYN68K_MAPPED_INTERRUPT,
     SYN68K_MAPPED_UNSUPPORTED,
-    SYN68K_MAPPED_BAD_REQUEST
+    SYN68K_MAPPED_BAD_REQUEST,
+    SYN68K_MAPPED_STOPPED
 };
 
 typedef struct {
@@ -39,6 +40,10 @@ typedef struct {
        transfers. Checked execution still covers unfinished instruction forms.
        AOT persistence uses SYN68K_AOT_CACHE, as with flat native execution. */
     unsigned native;
+    /* STOP retains its following PC and suppresses instruction bus cycles.
+       Eligible interrupts are reported without consuming their pending bit;
+       accepted exception entry clears this latch. Reset owners clear it. */
+    unsigned stopped;
 } Syn68kMappedCPU;
 
 typedef struct {
@@ -53,8 +58,8 @@ typedef struct {
    completed counts instructions that finish without a reported exception.
    Exceptions/interrupts stop before delivery. A caller owns exception frames,
    continuation/restart and hardware bus locking.
-   Successful FPU/MMU instructions and decoded integer control flow, PEA and
-   LINK report trace using instruction-entry SR. T0 includes serializing forms
+   Successful FPU/MMU and integer instructions report trace using instruction-entry
+   SR. T0 includes supported serializing forms
    and taken branches; FDBcc always qualifies. Odd instruction references use
    format 2 before trace or interrupts, including an untaken conditional target.
    Forced/floating-point exceptions retain priority and leave trace to their
@@ -62,6 +67,11 @@ typedef struct {
    scalar store has retired. An odd call target uses certified SP rollback and
    ordinary guest writeback/RTE before restarting the call; no continuation bit
    is invented for its later address error.
+   Untraced STOP advances PC, loads SR/banks and reports STOPPED without further
+   instruction fetches. A newly eligible pending interrupt reports INTERRUPT
+   instead, retaining the stopped latch until accepted exception entry. Traced
+   STOP reports trace without stopping, irrespective of the newly loaded trace
+   bits. Zero budget preserves a stopped CPU and still reports BUDGET.
    Unsupported legitimate instructions stop explicitly instead of being simulated
    as successful NOPs.
    Invalid arguments return zero; a zero budget performs no bus transfers. */

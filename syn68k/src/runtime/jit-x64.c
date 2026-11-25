@@ -3193,7 +3193,7 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     }
     if (packet.exit != FPU_EXIT_DONE)
         return -1; // The command was consumed: never replay it after an invalid native outcome.
-    *result = (Syn68kIntegerStep){.next = next};
+    *result = (Syn68kIntegerStep){.next = next, .stopped = opcode == 0x4e72};
     return 1;
 }
 

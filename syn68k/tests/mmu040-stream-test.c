@@ -46,6 +46,8 @@ static uint32_t trace_read_physical = UINT32_MAX;
 static unsigned trace_read_sr;
 static int trace_read_ccr = -1;
 static unsigned trace_bus_kind; // Operand read, operand write, descriptor read.
+static uint32_t stop_irq_address = UINT32_MAX;
+static unsigned stop_irq_level;
 static uint32_t late_read_physical = UINT32_MAX;
 static uint32_t late_read_pte, late_read_descriptor;
 static uint32_t late_write_physical = UINT32_MAX;
@@ -76,6 +78,10 @@ static int address_callback(uint32_t address, unsigned kind)
 
 static void trace_bus(uint32_t address, unsigned kind)
 {
+    if (!kind && address == stop_irq_address) {
+        cpu_state.interrupt_pending[stop_irq_level] = 1;
+        stop_irq_address = UINT32_MAX;
+    }
     if (address == trace_read_physical && kind == trace_bus_kind) {
         cpu_state.sr = (cpu_state.sr & ~0xc000) | trace_read_sr;
         if (trace_read_ccr >= 0) {
@@ -346,6 +352,8 @@ static void fixture(unsigned page8k, unsigned privileged)
     trace_read_sr = 0;
     trace_read_ccr = -1;
     trace_bus_kind = 0;
+    stop_irq_address = UINT32_MAX;
+    stop_irq_level = 0;
     late_read_physical = late_write_physical = UINT32_MAX;
     read_callback_address = UINT32_MAX;
     read_callback_hits = 0;
@@ -5482,6 +5490,170 @@ static void guest_integer_traces(void)
     printf("%u integer T1/serializing-T0/entry-SR/privilege cases passed\n", cases - initial);
 }
 
+static void stop_setup(unsigned page8k, unsigned mode, unsigned trace)
+{
+    fixture(page8k, mode >= 2);
+    memset((void*)cpu_state.interrupt_pending, 0, sizeof cpu_state.interrupt_pending);
+    cpu_state.interrupt_status_changed = 0x12345678;
+    cpu_state.usp = 0x20080;
+    cpu_state.isp = 0x20100;
+    cpu_state.msp = 0x20200;
+    for (unsigned i = 0; i < 16; ++i)
+        cpu_state.regs[i].ul.n = 0x11220000 + i;
+    EM_A7 = 0x20300;
+    set_status(mode << 12 | trace << 14 | 17);
+}
+
+/* STOP loads the complete SR, but entry trace decides whether it ever stops. */
+static void guest_stop_streams(void)
+{
+    const unsigned statuses[] = {0, 1, 31, 0x1000, 0x2000, 0x3000, 0x2700, 0x3700, 0x8000, 0x4000, 0xc000, 0xffff};
+    const unsigned modes[] = {0, 2, 3}, banks[] = {0, 0, 1, 2};
+    unsigned initial = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned m = 0; m < sizeof modes / sizeof *modes; ++m)
+            for (unsigned trace = 0; trace < 4; ++trace)
+                for (unsigned v = 0; v < sizeof statuses / sizeof *statuses; ++v)
+                    for (unsigned fault = 0; fault < 3; ++fault)
+                        for (unsigned live = 0; live < 5; ++live) {
+                            unsigned mode = modes[m];
+                            stop_setup(page8k, mode, trace);
+                            unsigned pc = 0x10000 + page_size - 2;
+                            code_word(pc, 0x4e72);
+                            code_word(pc + 2, statuses[v]);
+                            if (live < 4) {
+                                trace_read_physical = physical(pc + 2);
+                                trace_read_sr = live << 14;
+                            }
+                            if (fault == 1)
+                                fail_physical = physical(pc + 2);
+                            else if (fault == 2)
+                                put32(pte(pc + 2), 0);
+                            CPUState before = cpu_state;
+                            unsigned denied = mode == 0, failed = !denied && fault;
+                            unsigned vector = denied ? 8 : failed ? 2 : trace ? 9 : 0;
+                            unsigned expected_sr = denied ? mode << 12 | trace << 14 | 17
+                                                   : failed
+                                                       ? mode << 12 | (live < 4 && fault == 1 ? live : trace) << 14 | 17
+                                                       : statuses[v] & 0xf71f;
+                            uint32 expected_banks[] = {before.usp, before.isp, before.msp};
+                            uint32 expected_sp = EM_A7;
+                            if (!denied && !failed && mode != (expected_sr >> 12 & 3)) {
+                                expected_banks[banks[mode]] = EM_A7;
+                                expected_sp = expected_banks[banks[expected_sr >> 12 & 3]];
+                            }
+                            Syn68kMappedCPU cpu = {.pc = pc, .memory = &memory, .native = native_execution};
+                            Syn68kMappedRun run;
+                            assert(syn68k_mapped_cpu_run(&cpu, 10, &run));
+                            unsigned next = denied || failed ? pc : pc + 4;
+                            unsigned reason = vector ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_STOPPED;
+                            if (run.step.vector != vector || run.reason != reason || status() != expected_sr)
+                                fprintf(
+                                    stderr,
+                                    "STOP mode=%u trace=%u live=%u SR=%x fault=%u vectors=%u/%u reasons=%u/%u status=%x/%x\n",
+                                    mode, trace, live, statuses[v], fault, run.step.vector, vector, run.reason, reason,
+                                    status(), expected_sr);
+                            assert(run.reason == reason && run.step.vector == vector && cpu.pc == next &&
+                                   status() == expected_sr && cpu.stopped == !vector && run.completed == !vector);
+                            assert(cpu_state.usp == expected_banks[0] && cpu_state.isp == expected_banks[1] &&
+                                   cpu_state.msp == expected_banks[2] && EM_A7 == expected_sp &&
+                                   !memcmp(before.regs, cpu_state.regs, 15 * sizeof before.regs[0]) &&
+                                   !memcmp(&before.fpu, &cpu_state.fpu, sizeof before.fpu) && !writes);
+                            if (vector)
+                                assert(run.step.exception_pc == next && run.step.format == (vector == 2   ? 7
+                                                                                            : vector == 9 ? 2
+                                                                                                          : 0));
+                            if (failed) {
+                                assert(run.step.access.request == pc + 2 && run.step.access.size == 2 &&
+                                       !run.step.access.writing && !run.step.stopped);
+                                unsigned changed = live < 4 && fault == 1 && live != trace;
+                                assert(run.step.restartable_read == !changed);
+                            }
+                            if (!vector) {
+                                unsigned saved_reads = reads;
+                                put32(pte(next), 0);
+                                assert(syn68k_mapped_cpu_run(&cpu, 5, &run));
+                                assert(run.reason == SYN68K_MAPPED_STOPPED && !run.completed && cpu.pc == next &&
+                                       cpu.stopped && reads == saved_reads && !writes);
+                                assert(syn68k_mapped_cpu_run(&cpu, 0, &run));
+                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.stopped && reads == saved_reads);
+                            }
+                            ++cases;
+                        }
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned old_mask = 0; old_mask < 8; ++old_mask)
+            for (unsigned mask = 0; mask < 8; ++mask)
+                for (unsigned level = 1; level <= 7; ++level)
+                    for (unsigned trace = 0; trace < 4; ++trace) {
+                        stop_setup(page8k, 2, trace);
+                        cpu_state.sr |= old_mask << 8;
+                        code_word(0x10000, 0x4e72);
+                        code_word(0x10002, 0x2000 | mask << 8 | 17);
+                        stop_irq_address = physical(0x10002);
+                        stop_irq_level = level;
+                        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                        Syn68kMappedRun run;
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                        unsigned eligible = level == 7 || level > mask;
+                        unsigned reason = trace      ? SYN68K_MAPPED_EXCEPTION
+                                          : eligible ? SYN68K_MAPPED_INTERRUPT
+                                                     : SYN68K_MAPPED_STOPPED;
+                        assert(run.reason == reason && cpu.pc == 0x10004 && cpu.stopped == !trace &&
+                               run.completed == !trace && cpu_state.interrupt_pending[level] &&
+                               stop_irq_address == UINT32_MAX && status() == (0x2000 | mask << 8 | 17));
+                        if (trace)
+                            assert(run.step.vector == 9 && run.step.format == 2 && !run.interrupt_level);
+                        else {
+                            unsigned saved_reads = reads;
+                            assert(run.interrupt_level == (eligible ? level : 0));
+                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                            assert(run.reason == reason && !run.completed && cpu.stopped && reads == saved_reads);
+                            if (!eligible) {
+                                cpu_state.interrupt_pending[7] = 1;
+                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                assert(run.reason == SYN68K_MAPPED_INTERRUPT && run.interrupt_level == 7 &&
+                                       cpu.stopped && !run.completed && reads == saved_reads);
+                            }
+                        }
+                        ++cases;
+                    }
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned m = 0; m < sizeof modes / sizeof *modes; ++m)
+            for (unsigned level = 1; level <= 7; ++level) {
+                stop_setup(page8k, 2, 0);
+                EM_A7 = 0x20100;
+                put32(0x3000 + (0x10000 / page_size) * 4, 0xc001);
+                put32(0x3000 + (0x20000 / page_size) * 4, 0x18001);
+                unsigned sr = modes[m] << 12 | 17;
+                code_word(0x10000, 0x4e72);
+                code_word(0x10002, sr);
+                code_word(0x10004, 0x7007);
+                code_word(0x10080, 0x4e73);
+                cpu_state.vbr = 0x20000;
+                put32(physical(cpu_state.vbr + (24 + level) * 4), 0x10080);
+                stop_irq_address = physical(0x10002);
+                stop_irq_level = level;
+                Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                Syn68kMappedRun run;
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                assert(run.reason == SYN68K_MAPPED_INTERRUPT && run.interrupt_level == level && cpu.stopped);
+                unsigned expected_sp = EM_A7;
+                Syn68kIntegerStep record = {.next = cpu.pc, .exception_pc = cpu.pc, .vector = 24 + level};
+                Syn68kMappedDelivery delivery;
+                assert(syn68k_mapped_exception_enter(&cpu, &record, level, &delivery));
+                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && !cpu.stopped && cpu.pc == 0x10080 &&
+                       !cpu_state.interrupt_pending[level]);
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10004 && !cpu.stopped &&
+                       EM_A7 == expected_sp && status() == sr);
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10006 && EM_D0 == 7 && !cpu.stopped);
+                ++cases;
+            }
+    memset((void*)cpu_state.interrupt_pending, 0, sizeof cpu_state.interrupt_pending);
+    printf("%u STOP SR/trace/privilege/fetch-fault/wait/interrupt/guest-RTE cases passed\n", cases - initial);
+}
+
 int main(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -5503,6 +5675,7 @@ int main(int argc, char** argv)
             stack_store_completions();
             guest_control_branches();
             guest_integer_traces();
+            guest_stop_streams();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -5558,6 +5731,7 @@ int main(int argc, char** argv)
             stack_store_completions();
             guest_control_branches();
             guest_integer_traces();
+            guest_stop_streams();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();

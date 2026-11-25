@@ -224,8 +224,9 @@ static int serializing_trace_opcode(unsigned opcode)
 {
     return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548 ||
            (opcode & 0xfffe) == 0x4e7a || ((opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0) ||
-           opcode == 0x4e71 || (opcode & 0xfff0) == 0x4e60 || (opcode & 0xffc0) == 0x46c0 || opcode == 0x007c ||
-           opcode == 0x027c || opcode == 0x0a7c || ((opcode & 0xf9c0) == 0x08c0 && (opcode & 0x0600));
+           opcode == 0x4e71 || opcode == 0x4e72 || (opcode & 0xfff0) == 0x4e60 || (opcode & 0xffc0) == 0x46c0 ||
+           opcode == 0x007c || opcode == 0x027c || opcode == 0x0a7c ||
+           ((opcode & 0xf9c0) == 0x08c0 && (opcode & 0x0600));
 }
 
 static int unconditional_flow_opcode(unsigned opcode)
@@ -260,7 +261,8 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
     if (!result)
         return 0;
     *result = (Syn68kMappedRun){.reason = SYN68K_MAPPED_BAD_REQUEST};
-    if (!cpu || !cpu->memory || !cpu->memory->mmu || cpu->native > 1)
+    if (!cpu || !cpu->memory || !cpu->memory->mmu || cpu->native > 1 || cpu->stopped > 1 ||
+        (cpu->stopped && cpu->movem_pending))
         return 0;
 #ifndef GENERATE_X64_CODE
     if (cpu->native)
@@ -270,6 +272,11 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
     while (result->completed < budget) {
         result->step = (Syn68kIntegerStep){.next = cpu->pc};
         result->opcode = 0;
+        if (cpu->stopped) {
+            result->interrupt_level = pending_interrupt();
+            result->reason = result->interrupt_level ? SYN68K_MAPPED_INTERRUPT : SYN68K_MAPPED_STOPPED;
+            return 1;
+        }
         if (cpu->pc & 1) {
             result->step.vector = 3;
             result->step.format = 2;
@@ -448,6 +455,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             result->step.fault_address = cpu->pc;
         }
         if (result->step.vector) {
+            result->step.stopped = 0;
             if (result->step.store_state == 1 && (result->step.store_next & 1) &&
                 ((opcode & 0xff00) == 0x6100 || (opcode & 0xffc0) == 0x4e80)) {
                 /* The data fault precedes an odd target's address error. Abort
@@ -512,6 +520,12 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             cpu->movem_pending = 1;
         }
         ++result->completed;
+        if (result->step.stopped) {
+            cpu->stopped = 1;
+            result->interrupt_level = pending_interrupt();
+            result->reason = result->interrupt_level ? SYN68K_MAPPED_INTERRUPT : SYN68K_MAPPED_STOPPED;
+            return 1;
+        }
     }
     result->step.next = cpu->pc;
     return 1;
@@ -625,6 +639,7 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         result->reason = SYN68K_DELIVERY_UNSUPPORTED;
         return 1;
     }
+    cpu->stopped = 0; // Accepted exception entry resumes a stopped processor.
     uint16 old_sr = COMPUTE_SR_FROM_CPU_STATE();
     uint16 next_sr = (old_sr & 0x3FFF) | SR_SUPERVISOR_BIT;
     if (interrupt_level)

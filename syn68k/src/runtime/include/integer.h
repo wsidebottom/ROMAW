@@ -62,6 +62,8 @@ typedef struct {
        no instruction prefetch bus cycle is performed at that address. */
     uint32_t prefetch_address;
     unsigned flow_changed;
+    /* STOP requests suspension only after successful, untraced retirement. */
+    unsigned stopped;
 } Syn68kIntegerStep;
 
 /* Internal MULU/MULS/DIVU/DIVS, MOVEM/MOVES/MOVEP, JSR/JMP/LEA/PEA and

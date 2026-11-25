@@ -67,6 +67,7 @@ ROOTS = (
     "flat_write",
     "flat_span",
     "span",
+    "stop",
 )
 
 

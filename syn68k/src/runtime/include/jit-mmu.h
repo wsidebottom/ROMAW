@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      jit-mmu.h
 
-  Summary:   Emit mapped PTEST, PFLUSH and MOVEC bodies using closed native roots.
+  Summary:   Emit mapped PTEST, PFLUSH, MOVEC and STOP bodies using closed native roots.
 
   Classes:   None.
 
@@ -23,7 +23,7 @@
 static int mapped_mmu_opcode(unsigned opcode)
 {
     return opcode <= 65535 && ((opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 ||
-                               (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a);
+                               (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a || opcode == 0x4e72);
 }
 
 static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
@@ -41,10 +41,14 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
     unsigned privilege = jump(out, 0x84);
     unsigned illegal = 0, skipped = 0;
     int movec = (opcode & 0xfffe) == 0x4e7a;
-    if (movec) {
+    int stop = opcode == 0x4e72;
+    if (movec || stop) {
         mapped_fetch_command(out, pc, failures, &count);
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, control.command), 0);
-        fpu_call_packet(out, opcode & 1 ? NATIVE040_MOVEC_WRITE : NATIVE040_MOVEC_READ,
+        fpu_call_packet(out,
+                        stop         ? NATIVE040_STOP
+                        : opcode & 1 ? NATIVE040_MOVEC_WRITE
+                                     : NATIVE040_MOVEC_READ,
                         offsetof(FPUInvocation, control), failures, &count);
         fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, control.ok), 0);
         byte(out, 0);
@@ -79,7 +83,7 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
         patch(out, skipped, out->size);
     pointer_r8(out, RELOC_FPU_FRAME);
     fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_DONE, 0);
-    instruction_end(out, pc, movec ? 4 : 2);
+    instruction_end(out, pc, movec || stop ? 4 : 2);
     byte(out, 0xc3);
     for (unsigned i = 0; i < count; ++i)
         patch(out, failures[i], out->size);
