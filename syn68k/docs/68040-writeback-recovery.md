@@ -15,6 +15,22 @@ non-null entry or changing other certified state denies replay without undoing
 its effects. Guest cleanup completes one WB1/WB2 scalar; RTE then reexecutes the
 whole instruction and repeats earlier writes. No continuation bit is introduced.
 
+## MOVEM store continuation
+
+MOVEM store faults retain CM and their original EA, plus the full failed scalar
+in WB1/WB2. Guest cleanup completes that captured write; RTE repeats the whole
+list from the saved EA, including earlier stores. Predecrement restores its
+original address sequence and the stored base-An value. Live handler changes
+to other source registers remain visible on replay. The original PC remains
+pending until the instruction completes; T1 trace follows successful replay.
+
+Resumed instruction-fetch faults retain CM/EA but no pending write. Store
+records require ordinary data FC, word/long size, consistent fault/progress
+addresses and valid physical/ATC metadata. Scalar retirement, FPU continuation,
+locked or tail-write metadata cannot be combined with CM. Invalid records leave
+CPU state and bus counters unchanged. See the current status checkpoint for
+focused/grouped coverage and the remaining active-stack/page-boundary checks.
+
 ## MOVEM read continuation checkpoint
 
 MOVEM load operand faults offer CM and the original EA for all legal read
@@ -184,8 +200,9 @@ entries with zero compilations. Native FPU helper-exclusion checks remain in
 
 ## Remaining work
 
-Integer stores without completed offers, MOVEM/MOVE16 store continuations and
-the constructed user-mode throwaway-RTE fault case also require further work.
+Additional active-stack/page-boundary MOVEM store checks, MOVE16 store
+continuations and the constructed user-mode throwaway-RTE fault case require
+further work.
 Locked-store restrictions remain unchanged. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
 still required; these writeback regressions do not establish complete 68040 or

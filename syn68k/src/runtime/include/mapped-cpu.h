@@ -149,10 +149,12 @@ typedef struct {
    with LK retained. A CAS2 first-write fault captures its independently addressed
    second store in the next slot; guest cleanup does not repeat completed reads
    or stores. Unaligned locked stores remain unsupported.
-   Indexed and PC-relative MOVEM data-read faults carry CM/EA;
-   RTE resumes past address calculation for these architectural modes.
-   Restart mask/extension fetch faults retain CM/EA, including split long fetches.
-   Other MOVEM addressing modes and stores remain unsupported by this delivery path.
+   All legal MOVEM data-read and data-write modes carry CM/EA. RTE resumes
+   past address calculation and repeats the operand list, including completed
+   transfers. Store faults additionally retain their scalar in WB1/WB2 for guest
+   cleanup. Predecrement replay restores its original address sequence and the
+   architecture's stored base-register value. Restart opcode/mask/extension
+   fetch faults retain CM/EA, including split long fetches.
    MOVES supports ordinary and alternate-space scalar writebacks, preserving
    converted TM and alternate TT=2. Alternate spaces permit physical faults,
    without translation or additional tail writes. MOVES normal/deferred trace

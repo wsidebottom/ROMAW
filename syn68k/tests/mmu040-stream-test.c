@@ -2775,6 +2775,342 @@ static void guest_nonindexed_movem_restarts(void)
            cases - initial);
 }
 
+/* The guest drains the failed scalar, then CM repeats the entire MOVEM list. */
+static void guest_movem_store_restarts(void)
+{
+    unsigned initial_cases = cases;
+    const unsigned modes[] = {2, 4, 5, 6, 7, 7, 6};
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned form = 0; form < 7; ++form)
+                for (unsigned wide = 0; wide < 2; ++wide)
+                    for (unsigned list = 0; list < 3; ++list)
+                        for (unsigned at = 0; at < 3; ++at)
+                            for (unsigned lane = 0; lane < 4; ++lane)
+                                for (unsigned completed = 0; completed < (wide ? 4u : 2u); ++completed)
+                                    for (unsigned fault = 0; fault < 3; ++fault)
+                                        for (unsigned trace = 0; trace < 4; ++trace) {
+                                            unsigned mode = modes[form], size = wide ? 4 : 2;
+                                            unsigned count = list == 0 ? 2 : list == 1 ? 3 : 16;
+                                            unsigned failed = at == 0 ? 0 : at == 1 ? count / 2 : count - 1;
+                                            if ((fault && (failed || completed)) || (form == 6 && fault == 2))
+                                                continue;
+                                            unsigned prefix = 0;
+                                            while (prefix < completed) {
+                                                unsigned address = lane + prefix, remain = size - prefix;
+                                                prefix += (address & 1) || remain < 2   ? 1
+                                                          : (address & 2) || remain < 4 ? 2
+                                                                                        : 4;
+                                            }
+                                            if (prefix != completed)
+                                                continue;
+                                            fixture(page8k, privileged);
+                                            syn68k_fpu_reset();
+                                            memory.aligned_transfers = 1;
+                                            unsigned base = form == 4 ? 0x6000 : 0x28000;
+                                            unsigned first = base + 0x100 + lane;
+                                            put32(pte(base), 0x10001);
+                                            unsigned ea = first + (mode == 4 ? size : 0);
+                                            unsigned operand = first + (mode == 4 ? -failed * size : failed * size);
+                                            unsigned mask = list == 0 ? 3 : list == 1 ? 0x103 : 0xffff;
+                                            unsigned encoded = 0;
+                                            for (unsigned bit = 0; bit < 16; ++bit)
+                                                if (mask & (1u << bit))
+                                                    encoded |= 1u << (mode == 4 ? 15 - bit : bit);
+                                            for (unsigned reg = 0; reg < 16; ++reg)
+                                                cpu_state.regs[reg].ul.n = 0x12340000 + reg * 0x101;
+                                            EM_D7 = 0;
+                                            EM_A0 = ea - (mode == 5 || (mode == 6 && form != 6) ? 16 : 0);
+                                            if (form == 6)
+                                                put32(0x10000 + first - base, ea);
+                                            EM_A7 = privileged ? 0x20100 : 0xdeadbe00;
+                                            cpu_state.isp = 0x20100;
+                                            unsigned sr = (privileged ? 0x2000 : 0) | trace << 14 | 0x15;
+                                            set_status(sr);
+                                            unsigned length = mode == 5 || mode == 6 || form == 4 ? 6
+                                                              : form == 5                         ? 8
+                                                                                                  : 4;
+                                            code_word(0x10000, 0x4880 | (wide ? 0x40 : 0) | mode << 3 | (form == 5));
+                                            code_word(0x10002, encoded);
+                                            if (mode == 5 || mode == 6)
+                                                code_word(0x10004, mode == 5 ? 16 : form == 6 ? 0x7915 : 0x7810);
+                                            if (form == 4)
+                                                code_word(0x10004, ea);
+                                            if (form == 5) {
+                                                code_word(0x10004, ea >> 16);
+                                                code_word(0x10006, ea);
+                                            }
+                                            unsigned opcode_physical = physical(0x10000);
+                                            CPUState before = cpu_state;
+                                            watched_physical = 0x10000 + first - base;
+                                            unsigned fault_pte = pte(operand), root = privileged ? 0x6000 : 0x3000;
+                                            if (!fault)
+                                                fail_write_physical = 0x10000 + operand - base + completed;
+                                            else
+                                                put32(fault_pte, fault == 1 ? 0x10005 : 0);
+                                            Syn68kMappedCPU cpu = {
+                                                .pc = 0x10000, .memory = &memory, .native = native_execution};
+                                            Syn68kMappedRun run;
+                                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                            unsigned bit = 0, transfer = 0;
+                                            for (; bit < 16; ++bit)
+                                                if ((encoded & (1u << bit)) && transfer++ == failed)
+                                                    break;
+                                            unsigned selected = mode == 4 ? 15 - bit : bit;
+                                            unsigned value =
+                                                mode == 4 && selected == 8 ? ea - size : before.regs[selected].ul.n;
+                                            unsigned scalar_mask = wide ? UINT32_MAX : 65535;
+                                            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                                   run.step.movem_state == 1 && run.step.movem_ea == ea &&
+                                                   !run.step.store_state && !run.step.restartable_read &&
+                                                   !run.completed && cpu.pc == 0x10000 && run.step.access.writing &&
+                                                   run.step.access.request == operand &&
+                                                   run.step.access.logical == operand + completed &&
+                                                   run.step.access.completed == completed &&
+                                                   run.step.access.size == size &&
+                                                   run.step.access.value == (value & scalar_mask) &&
+                                                   run.step.access.bus_error == !fault && status() == sr);
+                                            before.regs[8].ul.n =
+                                                mode == 4 ? ea - (failed + 1) * size : before.regs[8].ul.n;
+                                            assert(!memcmp(before.regs, cpu_state.regs, sizeof before.regs));
+                                            fail_write_physical = UINT32_MAX;
+                                            supervisor = 1;
+                                            put32(pte(0x10000), 0xc001);
+                                            put32(pte(0x20000), 0x18001);
+                                            unsigned table_page = root & ~(page_size - 1);
+                                            put32(pte(0x30000), table_page | 1);
+                                            unsigned target = 0x30000 + fault_pte - table_page;
+                                            unsigned end = 0x10040;
+                                            const unsigned repair[] = {0x23fc,
+                                                                       1,
+                                                                       1,
+                                                                       target >> 16,
+                                                                       target & 65535,
+                                                                       0xf518,
+                                                                       0x246f,
+                                                                       fault ? 32 : 40,
+                                                                       0x242f,
+                                                                       fault ? 36 : 44};
+                                            for (unsigned i = 0; i < sizeof repair / sizeof *repair; ++i) {
+                                                code_word(end, repair[i]);
+                                                end += 2;
+                                            }
+                                            if (!fault) {
+                                                const unsigned rotation[] = {0x260a, 0x0283, 0, 3, 0xe78b, 0xe7ba};
+                                                for (unsigned i = 0; i < sizeof rotation / sizeof *rotation; ++i) {
+                                                    code_word(end, rotation[i]);
+                                                    end += 2;
+                                                }
+                                                if (!wide) {
+                                                    code_word(end, 0x4842);
+                                                    end += 2;
+                                                }
+                                            }
+                                            const unsigned cleanup[] = {0x7600 | (privileged ? 5 : 1),
+                                                                        0x4e7b,
+                                                                        0x3001,
+                                                                        wide ? 0x0e92 : 0x0e52,
+                                                                        0x2800,
+                                                                        0x207c,
+                                                                        0x7654,
+                                                                        0x3210,
+                                                                        0x4e73};
+                                            for (unsigned i = 0; i < sizeof cleanup / sizeof *cleanup; ++i) {
+                                                code_word(end, cleanup[i]);
+                                                end += 2;
+                                            }
+                                            cpu_state.vbr = 0x20000;
+                                            put32(physical(cpu_state.vbr + 8), 0x10040);
+                                            Syn68kMappedDelivery delivery;
+                                            assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                            assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                                                   EM_A7 == 0x20100 - 60);
+                                            unsigned frame = EM_A7, size_bits = wide ? 0 : 0x40,
+                                                     fc = privileged ? 5 : 1;
+                                            assert(mapped_value(frame + 8, 4) == ea &&
+                                                   mapped_value(frame + 2, 4) == 0x10000 &&
+                                                   mapped_value(frame + 12, 2) ==
+                                                       (0x1000 | (fault ? 0x400 : 0) | size_bits | fc) &&
+                                                   mapped_value(frame + (fault ? 16 : 18), 2) ==
+                                                       (0x80 | size_bits | fc) &&
+                                                   !mapped_value(frame + (fault ? 18 : 16), 2) &&
+                                                   !mapped_value(frame + 14, 2) &&
+                                                   mapped_value(frame + (fault ? 32 : 40), 4) == operand);
+                                            unsigned handler_steps = 9 + (!fault ? 4 + !wide : 0);
+                                            assert(syn68k_mapped_cpu_run(&cpu, handler_steps, &run));
+                                            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 &&
+                                                   cpu.movem_pending && cpu.movem_ea == ea && status() == sr &&
+                                                   EM_A0 == 0x76543210 && EM_A7 == before.regs[15].ul.n);
+                                            assert(physical_value(0x10000 + operand - base, size) ==
+                                                   (value & scalar_mask));
+                                            if (!page8k && !trace && !lane && !completed && !fault && at == 1 &&
+                                                list == 1) {
+                                                /* Retry the store fault itself before forcing instruction-fetch
+                                                   faults on the next CM return. Neither may lose the saved EA. */
+                                                fail_write_physical = 0x10000 + operand - base;
+                                                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
+                                                       run.step.movem_state == 1 && run.step.movem_ea == ea &&
+                                                       run.step.access.writing && run.step.access.request == operand);
+                                                fail_write_physical = UINT32_MAX;
+                                                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE);
+                                                assert(syn68k_mapped_cpu_run(&cpu, handler_steps, &run));
+                                                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 &&
+                                                       cpu.movem_pending && cpu.movem_ea == ea && status() == sr);
+                                                ++cases;
+                                                code_word(0x100c0, 0x4e73);
+                                                put32(physical(cpu_state.vbr + 8), 0x100c0);
+                                                for (unsigned field = 0; field < (length > 4 ? 3u : 2u); ++field) {
+                                                    fail_physical = opcode_physical + field * 2;
+                                                    unsigned old_writes = writes,
+                                                             old_operand_reads = watched_read_attempts;
+                                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                    assert(run.reason == SYN68K_MAPPED_EXCEPTION &&
+                                                           run.step.vector == 2 && run.step.movem_state == 1 &&
+                                                           run.step.movem_ea == ea && !run.step.access.writing &&
+                                                           run.step.access.request == 0x10000 + field * 2 &&
+                                                           !run.step.store_state && writes == old_writes &&
+                                                           watched_read_attempts == old_operand_reads);
+                                                    fail_physical = UINT32_MAX;
+                                                    assert(
+                                                        syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                                                    assert(delivery.reason == SYN68K_DELIVERY_COMPLETE &&
+                                                           mapped_value(EM_A7 + 8, 4) == ea &&
+                                                           (mapped_value(EM_A7 + 12, 2) & 0x1000) &&
+                                                           !mapped_value(EM_A7 + 14, 2) &&
+                                                           !mapped_value(EM_A7 + 16, 2) &&
+                                                           !mapped_value(EM_A7 + 18, 2));
+                                                    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                                    assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10000 &&
+                                                           cpu.movem_pending && cpu.movem_ea == ea && status() == sr);
+                                                    ++cases;
+                                                }
+                                                put32(physical(cpu_state.vbr + 8), 0x10040);
+                                            }
+                                            CPUState expected = cpu_state;
+                                            unsigned expected_values[16], n = 0;
+                                            for (unsigned i = 0; i < 16; ++i)
+                                                if (encoded & (1u << i)) {
+                                                    unsigned source = mode == 4 ? 15 - i : i;
+                                                    expected_values[n++] =
+                                                        (mode == 4 && source == 8 ? ea - size
+                                                                                  : expected.regs[source].ul.n) &
+                                                        scalar_mask;
+                                                }
+                                            if (mode == 4)
+                                                expected.regs[8].ul.n = ea - count * size;
+                                            unsigned replay_attempts = watched_attempts,
+                                                     replay_successes = watched_successes,
+                                                     replay_reads = watched_read_attempts;
+                                            cpu_state.interrupt_pending[3] = 1;
+                                            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                            assert(run.reason ==
+                                                       (trace & 2 ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+                                                   run.step.vector == (trace & 2 ? 9u : 0u) && !cpu.movem_pending &&
+                                                   cpu.pc == 0x10000 + length &&
+                                                   !memcmp(expected.regs, cpu_state.regs, sizeof expected.regs) &&
+                                                   status() == sr &&
+                                                   !memcmp(&expected.fpu, &cpu_state.fpu, sizeof expected.fpu) &&
+                                                   watched_attempts == replay_attempts + 1 &&
+                                                   watched_successes == replay_successes + 1 &&
+                                                   watched_read_attempts == replay_reads);
+                                            for (unsigned i = 0; i < count; ++i)
+                                                assert(physical_value(0x10000 + first - base +
+                                                                          (mode == 4 ? -i * size : i * size),
+                                                                      size) == expected_values[i]);
+                                            cpu_state.interrupt_pending[3] = 0;
+                                            ++cases;
+                                        }
+    memory.aligned_transfers = 0;
+    printf("%u MOVEM store CM/writeback/partial-bus/guest-RTE cases passed\n", cases - initial_cases);
+}
+
+static void movem_store_record_guards(void)
+{
+    unsigned first = cases;
+    for (unsigned invalid = 0; invalid < 16; ++invalid) {
+        fixture(0, 1);
+        syn68k_fpu_reset();
+        code_word(0x10000, 0x48d0);
+        code_word(0x10002, 3);
+        put32(pte(0x28000), 0x10001);
+        EM_A0 = 0x28000;
+        EM_A7 = cpu_state.isp = 0x20100;
+        fail_write_physical = 0x10004;
+        Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+        Syn68kMappedRun run;
+        assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+        assert(run.step.movem_state == 1 && run.step.access.writing);
+        Syn68kIntegerStep record = run.step;
+        switch (invalid) {
+        case 0:
+            record.access.fc = 6;
+            record.access.request = 0x10002;
+            break;
+        case 1:
+            record.access.size = 1;
+            break;
+        case 2:
+            record.access.rmw = 1;
+            break;
+        case 3:
+            record.store_state = 4;
+            break;
+        case 4:
+            record.fpu_vector = 49;
+            break;
+        case 5:
+            record.store_tail_valid = 1;
+            record.store_tail_fc = 5;
+            break;
+        case 6:
+            record.store_locked = 1;
+            break;
+        case 7:
+            record.restartable_read = 1;
+            break;
+        case 8:
+            ++record.access.logical;
+            break;
+        case 9:
+            record.access.completed = 4;
+            break;
+        case 10:
+            record.access.translation.fault = MMU040_INVALID;
+            break;
+        case 11:
+            record.access.bus_error = 0;
+            record.access.translation.fault = MMU040_INVALID;
+            record.access.completed = 1;
+            ++record.access.logical;
+            ++record.fault_address;
+            break;
+        case 12:
+            ++record.fault_address;
+            break;
+        case 13:
+            ++record.exception_pc;
+            break;
+        case 14:
+            record.movem_state = 2;
+            break;
+        case 15:
+            record.format = 0;
+            break;
+        }
+        CPUState before = cpu_state;
+        Syn68kMappedCPU before_cpu = cpu;
+        unsigned before_reads = reads, before_writes = writes;
+        Syn68kMappedDelivery delivery;
+        assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery));
+        assert(delivery.reason == SYN68K_DELIVERY_UNSUPPORTED && reads == before_reads && writes == before_writes &&
+               !memcmp(&before, &cpu_state, sizeof before) && !memcmp(&before_cpu, &cpu, sizeof cpu));
+        ++cases;
+    }
+    printf("%u MOVEM store malformed-CM/writeback record guards passed\n", cases - first);
+}
+
 static void guest_movem_read_continuations(void)
 {
     for (unsigned page8k = 0; page8k < 2; ++page8k)
@@ -6050,6 +6386,8 @@ int main(int argc, char** argv)
             guest_stop_streams();
             guest_movem_prefix_restarts();
             guest_nonindexed_movem_restarts();
+            guest_movem_store_restarts();
+            movem_store_record_guards();
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
@@ -6113,6 +6451,8 @@ int main(int argc, char** argv)
             guest_partial_read_restarts();
             guest_movem_prefix_restarts();
             guest_nonindexed_movem_restarts();
+            guest_movem_store_restarts();
+            movem_store_record_guards();
             guest_movem_read_continuations();
             movem_fetch_record_guards();
             guest_fpu_read_restarts();

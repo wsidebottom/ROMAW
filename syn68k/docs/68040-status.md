@@ -5,6 +5,55 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## MOVEM store CM and writeback recovery (2026-11-25)
+
+Mapped MOVEM store operand faults now carry CM and the original effective
+address, plus the failed scalar in WB1 for a physical bus error or WB2 for an
+ATC fault. The instruction retains its original PC and completed partial writes;
+it is not retired. Guest cleanup drains the captured scalar before RTE repeats
+the operand list from the saved EA. Predecrement resumes the original address
+sequence and stored base-register value even after a handler changes the base.
+
+This extends the existing CM mechanism without adding a guest continuation bit.
+Further opcode, mask or extension fetch faults retain CM/EA and have no pending
+writeback. Malformed CM/store records are rejected before CPU or bus effects.
+The normal native kernel image is unchanged; checked continuation runs on the
+exceptional path. The restart contract follows
+[MC68040UM section 8.4.6.7](https://www.nxp.com/docs/en/reference-manual/MC68040UM.pdf).
+The manual interpretation and hardware-validation limits in the read checkpoint
+below still apply.
+
+Focused checks pass 80,928 cases across both dispatch modes and bus bindings.
+They cover legal store EA forms, brief/full indirect indexing, word/long lists,
+all natural bus lanes and partial physical transfers, protected/missing-page
+faults before the first store, entry trace modes, base-register replacement,
+source-list aliases, guest WB1/WB2 cleanup and real RTE. A store overwrites its
+own indirect pointer; CM replay must not reread it. Repeated data and instruction
+fetch faults preserve the original EA. Interrupts remain deferred during CM.
+The EA register in this matrix is A0; active-A7 and partial page-boundary ATC
+store cases remain additional validation work.
+
+Grouped MMU validation passes 7,681,228 stream/recovery cases and 101,224
+control-flow/RTE cases. Complete cold/warm AOT passes 3,405,950 guest recovery
+cases per run: 71 cold images, 1,262,187 warm hits and zero warm compilations.
+Stable source identity and malformed-cache fallback pass. The preceding native
+Windows/SysV and FPU-native kernel validation is retained for the byte-identical
+native image; the changed mapped fault boundary is covered by these full groups.
+
+ROMAW was rebuilt with the exact tested archive. All 175 CPU inputs, six
+fixtures and 74 staged files match the tested/application snapshots. The bundle
+at `build/68040-movem-store-stage/bin` is promoted to `build/68040-current/bin`;
+the preceding read bundle is preserved at
+`build/68040-pre-movem-store-bin-20261125`. The audit is recorded in
+`build/68040-movem-store-source-audit.json`. The coherent application base
+remains `e062e3db` with the current CPU overlay.
+
+Windows help passes (exit zero, 7,669 bytes). Isolated-profile Browser startup
+passes with 30,865 native entries; Speedometer's 68K startup passes with 76,931
+entries and one FPU query. Both reach WaitNextEvent without a live native
+checkpoint or win_exception entry. These remain startup checks, not a full FPU
+application benchmark.
+
 ## MOVEM read recovery checkpoint (2026-11-25)
 
 Mapped MOVEM loads now retain CM/saved-EA continuation for every legal read
@@ -328,12 +377,11 @@ the embedding memory implementation; the operand boundary is not a cycle model.
 - General busy-frame continuation, including FPSP-generated internal states
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
-- Remaining mapped access-error continuations: supervisor stack overlap and
-  further call effective-address variants; nonindexed MOVEM
-  restart; MOVEM/MOVE16 stores; and the constructed user-mode throwaway-RTE
-  case. Supported scalar/FPU/locked writebacks already populate format-7 slots;
-  this is no longer an address-only fault model. Saved-EA MOVEM
-  restart is restricted to indexed/PC-relative modes by MC68040UM 8.4.6.2.
+- Remaining mapped access-error work: further active-stack/call effective-address
+  variants, partial page-boundary ATC and active-A7 MOVEM store validation,
+  MOVE16 store continuations, and the constructed user-mode throwaway-RTE case.
+  Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
+  use CM/saved-EA continuation as described in the current checkpoints above.
 - Remaining trace audit, including forced exceptions, mapped cache
   support and the broader flat integer frontend. Normal mapped T1 and the
   supported serializing T0 classes now include CAS/CAS2 writeback/RTE checks;

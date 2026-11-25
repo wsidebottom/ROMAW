@@ -241,7 +241,7 @@ static void exception(Syn68kMappedCPU* cpu, Syn68kMappedRun* result)
     cpu->pc = result->step.exception_pc;
 }
 
-static int movem_read_fault(const Syn68kIntegerStep* record)
+static int movem_fault(const Syn68kIntegerStep* record)
 {
     uint16 ssw;
     const Syn68kMMU040Access* access = &record->access;
@@ -250,10 +250,18 @@ static int movem_read_fault(const Syn68kIntegerStep* record)
     uint32 offset = access->request - record->exception_pc;
     int instruction =
         (access->fc == 2 || access->fc == 6) && !(access->request & 1) && offset < 14 && access->size <= 14 - offset;
-    return record->vector == 2 && record->format == 7 && record->movem_state == 1 && !record->store_state &&
-           !(record->exception_pc & 1) && !access->writing && !access->rmw &&
-           (access->size == 2 || access->size == 4) && (instruction || access->fc == 1 || access->fc == 5) &&
-           syn68k_mmu040_access_ssw(access, &ssw);
+    int data = access->fc == 1 || access->fc == 5;
+    if (record->vector != 2 || record->format != 7 || record->movem_state != 1 || record->store_state ||
+        (record->exception_pc & 1) || access->rmw || (access->size != 2 && access->size != 4) ||
+        !syn68k_mmu040_access_ssw(access, &ssw))
+        return 0;
+    if (!access->writing)
+        return instruction || data;
+    /* A CM store is not retired. The guest drains its captured scalar through
+       WB1/WB2 before RTE repeats the list from the saved EA. */
+    return data && !record->restartable_read && record->fault_address == access->logical &&
+           access->logical == (uint32)(access->request + access->completed) && !(access->bus_error && (ssw & 0x400)) &&
+           (access->bus_error || !access->completed || !(access->logical & 0xfff));
 }
 
 int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun* result)
@@ -561,9 +569,11 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
          WB1 (physical bus fault) or WB2 (translation fault), with an optional
          following FPU longword or CAS2 operand in the next slot. WB1 data follows memory
          lanes; WB2 and WB3 data stay register aligned. A certified FPU store
-         abort retains its original PC and one WB1/WB2, with no continuation bits. */
+         abort retains its original PC and one WB1/WB2, with no continuation bits.
+         A MOVEM store instead retains CM and its original EA for list replay. */
         syn68k_mmu040_access_ssw(&record->access, &ssw);
-        int pending = record->store_state == 2 || record->store_state == 3 || record->store_state == 4;
+        int pending = record->store_state == 2 || record->store_state == 3 || record->store_state == 4 ||
+                      (record->movem_state == 1 && record->access.writing);
         if (record->fpu_vector)
             ssw |= 0x8000; // The FPU handler owns any stacked trace condition.
         else if (record->store_state == 3)
@@ -632,12 +642,12 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
     if (!cpu || !cpu->memory || !cpu->memory->mmu || !record || record->vector < 2 || record->vector > 255 ||
         interrupt_level > 7 || (interrupt_level && (record->vector != 24 + interrupt_level || record->format)))
         return 0;
-    if ((record->movem_state && !movem_read_fault(record)) ||
+    if ((record->movem_state && !movem_fault(record)) ||
         ((record->store_state || record->fpu_vector || record->store_tail_valid || record->store_locked) &&
          !scalar_store_fault(record) && !replay_store_fault(record)) ||
         (record->format != 0 && record->format != 2 && record->format != 3 && !restartable_read_fault(record) &&
          !((record->store_state == 2 || record->store_state == 3) && scalar_store_fault(record)) &&
-         !replay_store_fault(record) && !movem_read_fault(record))) {
+         !replay_store_fault(record) && !movem_fault(record))) {
         result->reason = SYN68K_DELIVERY_UNSUPPORTED;
         return 1;
     }
