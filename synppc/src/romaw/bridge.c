@@ -2469,6 +2469,17 @@ PRIVATE Handle ppc_top_resource_map(void)
     return (Handle)MR(TopMapHndl);
 }
 
+static Handle ppc_lm_get_da_strings(INTEGER index)
+{
+    return (unsigned)index < NELEM(DAStrings_H) ? HIDDEN_NATIVE(DAStrings_H[index]) : NULL;
+}
+
+static void ppc_lm_set_da_strings(Handle strings, INTEGER index)
+{
+    if ((unsigned)index < NELEM(DAStrings_H))
+        HIDDEN_RAW_SET(DAStrings_H[index], RM(strings));
+}
+
 PRIVATE Handle ppc_get_resource_map(INTEGER reference)
 {
     return (Handle)ROMlib_rntohandl(reference, NULL);
@@ -3758,6 +3769,8 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMGetDragPattern", ppc_lm_get_drag_pattern, M1(0, 5)},
     {"LMSetDragPattern", ppc_lm_set_drag_pattern, M1(0, 5)},
     {"LMGetTopMapHndl", ppc_top_resource_map, M0(5)},
+    {"LMGetDAStrings", ppc_lm_get_da_strings, M1(5, 2)},
+    {"LMSetDAStrings", ppc_lm_set_da_strings, M2(0, 5, 2)},
     {"LMGetCurApRefNum", ppc_cur_ap_ref, M0(2)},
     {"LMGetCurApName", ppc_cur_ap_name, M0(5)},
     {"LMGetCurDirStore", ppc_cur_dir_store, M0(4)},
