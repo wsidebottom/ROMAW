@@ -89,14 +89,15 @@ PUBLIC void ROMlib_menu_restore_bar(boolean_t redraw)
     MBarHeight = CW(hidden_menu_height);
     hidden_menu_region = NULL;
     hidden_menu_height = 0;
+    /* A patched draw can rebuild the desktop region while painting the bar. */
+    if (redraw)
+        DrawMenuBar();
     if (GrayRgn && wmgr_port) {
         DiffRgn(MR(GrayRgn), strip, MR(GrayRgn));
         CopyRgn(MR(GrayRgn), PORT_CLIP_REGION(MR(wmgr_port)));
         C_CalcVisBehind(ROMlib_window_first_all(), strip);
     }
     DisposeRgn(strip);
-    if (redraw)
-        DrawMenuBar();
 }
 
 PUBLIC void ROMlib_menu_hide_bar(void)

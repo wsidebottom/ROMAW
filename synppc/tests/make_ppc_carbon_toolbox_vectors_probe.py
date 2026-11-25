@@ -8881,6 +8881,9 @@ def menu_manager_operations(probe):
         p.emit(0x807E0000 | (base + offset))
         p.expect(expected, label)
 
+    # Establish the native menu geometry after the earlier original-library redraw tests.
+    probe.call("HideMenuBar")
+    probe.call("ShowMenuBar")
     probe.call("GetGrayRgn")
     p.nonzero("the Window Manager has a desktop region")
     p.emit(0x907E0000 | (base + 12))
