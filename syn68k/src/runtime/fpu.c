@@ -1060,6 +1060,10 @@ static void state_frame(FPUContext* context)
                 cpu_state.fpu.frame_size = stages ? size : 0;
                 cpu_state.fpu.pending_vector = stages ? pending : 0;
             }
+            /* FPSP has already completed this software instruction. With
+               no enabled exception remaining, there is no pipeline to replay. */
+            if (software_completed && !pending)
+                cpu_state.fpu.frame_size = 0;
             if (((stages & 4) || (size == 100 && restored[8] == 0xfe)) && valid_arithmetic && !pending) {
                 context->restoring = 1;
                 context->restored_source = frame_read_extended(restored + size - 12);

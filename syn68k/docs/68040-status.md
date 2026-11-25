@@ -5,6 +5,29 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Source checkpoint: completed FPSP frames (2026-11-26)
+
+FRESTORE now retires an FPSP-completed E1 frame when no exception remains
+enabled, preserving the completed result and controls. Incomplete S/X markers
+retain the unimplemented-instruction exit; enabled exceptions remain pending.
+The new 55,296-case matrix passes checked/native CPU and memory, both page
+sizes, short/busy frames, postincrement, rounding/precision, exception masks,
+FSIN/FINT/FMOVECR commands and previous FPU states. Its exact fixture rejects
+the preceding archive. Focused cold/warm AOT emits four bodies cold and loads
+all four with zero compilation warm.
+
+Grouped cache, FPU, MMU and flat MOVE16 checks pass, as do basic saved-state
+and Motorola FPSP checks. ROMAW is rebuilt and staged at
+`build/68040-fpsp-completion-stage/bin`; help, Browser and 68K Speedometer startup
+checks pass. CPU build ID is
+`91f756a14e91e721842f5cde6c910df6437778db6294ee75d019ae4c572b1507`.
+The complete grouped AOT rerun and final acceptance audit remain pending.
+This bundle has not been promoted; the validated bundle below remains current.
+
+A separate combined E3-writeback/E1-FMOVE-out continuation still retains a
+zero pending vector after writeback. Its isolated candidate and regression
+remain outside this source checkpoint. The broader 68040 goal is paused.
+
 ## Latest validated bundle: captured FRESTORE frames (2026-11-26)
 
 FRESTORE acquires the header once and decodes resumed operands and the saved

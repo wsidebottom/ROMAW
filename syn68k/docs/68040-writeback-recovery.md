@@ -173,6 +173,28 @@ are checked, including live trace/CCR changes after operand capture. Normal
 cases also verify load sign extension and preserved Dn upper bytes. Additional
 active-stack EA cases remain part of the wider exception/addressing audit.
 
+## Completed FPSP instruction frames
+
+The S/X markers distinguish a software-completed instruction from an
+unimplemented instruction that still needs FPSP. Restoring a completed frame
+with E1 set and E3 clear, with no enabled exception, now leaves the FPU idle.
+Its result, FPCR, FPSR and FPIAR are already final; the next FPU instruction must not
+replay a zero pending vector. Enabled exceptions remain pending, while frames
+without both completion markers retain their unimplemented-instruction exit.
+
+The 55,296-case regression covers checked/native CPU and memory, both page
+sizes, short/busy frames, postincrement, all defined rounding and precision
+settings, exception masks, FSIN/FINT/FMOVECR commands, all S/X combinations
+and previous null/idle/pending states. It verifies preserved registers and
+controls, the following FNOP, and an idle four-byte FSAVE with untouched tail
+storage. Its exact fixture rejects the preceding CPU archive. Grouped FPU
+and cold/warm AOT checks include this matrix; warm replay requires zero
+compilations.
+
+A separate combined E3-writeback/E1-FMOVE-out continuation still retains a
+zero pending vector after the older writeback completes. That continuation
+remains under investigation; this matrix covers completed software E1 frames.
+
 ## Captured FRESTORE frames
 
 Busy FRESTORE now retains its initial header and reads the remaining frame
