@@ -1970,12 +1970,51 @@ enum carbon_menu_command_operation {
     command_remove_property
 };
 
+static int menu_item_command(uint32_t menu_address, MenuHandle menu, int16_t item, uint32_t value, bool write,
+                             uint32_t* status)
+{
+    enum { menu_dispatch_vector = 0x0e94, menu_dispatch_slot = 0x25 };
+    uint32_t* output = !write && value ? ROMlib_carbon_guest_memory(value, sizeof *output, 1) : NULL;
+    if (!menu || item < 1 || item > ROMlib_menu_item_count(menu) || (!write && !output)) {
+        *status = paramErr;
+        return 1;
+    }
+
+    /* The saved item-data reader and writer use the MenuDispatch command
+       selectors. Use the live manager's state for both so copying and
+       searching can see command IDs set through either entry point. */
+    uint32_t vector;
+    if (!cfp_get(menu_dispatch_vector, &vector))
+        return 0;
+    if (vector && vector != (uint32_t)(uintptr_t)toolstuff[menu_dispatch_slot].orig) {
+        const ROMlib_carbon_ppc_frame args = {.words = {menu_address, item, value}};
+        uint32_t result;
+        if (!ROMlib_carbon_call_toolbox_vector(menu_dispatch_vector, 0x3ba8, write ? 0x0502 : 0x0503, &args,
+                                              &result))
+            return 0;
+        *status = (int16_t)result;
+    }
+    else {
+        *status = write ? ROMlib_set_menu_item_command(menu, item, value)
+                        : ROMlib_get_menu_item_command(menu, item, output);
+    }
+    return 1;
+}
+
 static int carbon_GetMenuItemCommandID(ROMlib_carbon_ppc_frame* call)
 {
-    const MenuHandle menu = carbon_menu_handle(call->words[0]);
-    uint32_t* id = call->words[2] ? ROMlib_carbon_guest_memory(call->words[2], sizeof *id, 1) : NULL;
-    call->words[0] = (uint32_t)ROMlib_get_menu_item_command(menu, (int16_t)call->words[1], id);
-    return 1;
+    uint32_t status;
+    return menu_item_command(call->words[0], carbon_menu_handle(call->words[0]), (int16_t)call->words[1],
+                             call->words[2], false, &status) &&
+           menu_result(call, status);
+}
+
+static int appearance_SetMenuItemCommandID(ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t status;
+    return menu_item_command(call->words[0], carbon_menu_handle(call->words[0]), (int16_t)call->words[1],
+                             call->words[2], true, &status) &&
+           menu_result(call, status);
 }
 
 typedef struct {
@@ -2003,9 +2042,11 @@ static int search_menu_commands(const ROMlib_carbon_reference* ref, uint32_t men
     const int items = ROMlib_menu_item_count(handle);
     for (int item = 1; item <= items && !search->menu && search->remaining; ++item) {
         --search->remaining;
-        uint32_t id;
-        if (!ROMlib_get_menu_item_command(handle, item, &id) && CL(id) == search->command &&
-            ++search->count == search->index && search->index) {
+        _Alignas(8) uint32_t id;
+        uint32_t status;
+        if (!menu_item_command(menu, handle, item, US_TO_SYN68K(&id), false, &status))
+            return 0;
+        if (!status && CL(id) == search->command && ++search->count == search->index && search->index) {
             search->menu = menu;
             search->item = item;
             return 1;
@@ -2043,10 +2084,14 @@ static int carbon_menu_command(const char* name, uint32_t offset, enum carbon_me
     if (operation == command_set_id) {
         const uint32_t menu = words[0];
         const MenuHandle handle = carbon_menu_handle(menu);
-        uint32_t old;
-        int status = ROMlib_get_menu_item_command(handle, (int16_t)words[1], &old);
+        const int16_t item = words[1];
+        _Alignas(8) uint32_t old;
+        uint32_t status;
+        if (!menu_item_command(menu, handle, item, US_TO_SYN68K(&old), false, &status))
+            return 0;
         if (!status && CL(old) != words[2]) {
-            status = ROMlib_set_menu_item_command(handle, (int16_t)words[1], words[2]);
+            if (!menu_item_command(menu, handle, item, words[2], true, &status))
+                return 0;
             if (!status && !cfp_private(&ref, 0x16ad4, &menu, 1, NULL))
                 return 0;
         }
@@ -2329,7 +2374,8 @@ static int menu_text_update(const ROMlib_carbon_reference* ref, enum carbon_menu
         if (attributes && !cfp_private(ref, 0x6e1a4, change, 5, NULL))
             return 0;
         if (command) {
-            *status = ROMlib_set_menu_item_command(handle, item, command);
+            if (!menu_item_command(menu, handle, item, command, true, status))
+                return 0;
             if (*status)
                 return 1;
             if (!cfp_private(ref, 0x16ad4, &menu, 1, NULL))

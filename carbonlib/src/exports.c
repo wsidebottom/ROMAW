@@ -2541,6 +2541,8 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"SetMenuItemCommandID", carbon_SetMenuItemCommandID, ROMLIB_CARBON_PPC_FRAME, 0x5e278, NULL,
      ROMLIB_CARBON_PPC_ONLY},
+    {"SetMenuItemCommandID", appearance_SetMenuItemCommandID, ROMLIB_CARBON_PPC_FRAME, 0x39620, "AppearanceLib",
+     ROMLIB_CARBON_PPC_ONLY | ROMLIB_CARBON_COMPANION_ONLY},
     {"CountMenuItemsWithCommandID", carbon_CountMenuItemsWithCommandID, ROMLIB_CARBON_PPC_FRAME, 0x15184, NULL,
      ROMLIB_CARBON_PPC_ONLY},
     {"GetIndMenuItemWithCommandID", carbon_GetIndMenuItemWithCommandID, ROMLIB_CARBON_PPC_FRAME, 0x156bc, NULL,
