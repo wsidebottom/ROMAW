@@ -6,7 +6,8 @@
 #
 #   Classes:   Probe, imported fixture builder.
 #
-#   Functions: make_probe, check_object_accessors, check_file_icons; script entry point.
+#   Functions: make_probe, check_object_accessors, check_file_icons, check_progress_controls;
+#              check_icon_file_registration; script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
 #
@@ -67,6 +68,11 @@ def make_probe(destination):
         "NGetTrapAddress",
         "AECreateList",
         "NewControl",
+        "GetCtlValue",
+        "Draw1Control",
+        "TestControl",
+        "GetCPixel",
+        "SetPort",
         "FrontWindow",
         "DisposeControl",
         "GetControlFeatures",
@@ -112,6 +118,7 @@ def make_probe(destination):
             "GetIconRefByName",
             "GetIconRefFromFolder",
             "GetIconRefFromFile",
+            "GetIconRefFromFolder",
             "UpdateIconRef",
             "ReleaseIconRef",
             "GetIconRefOwners",
@@ -133,8 +140,31 @@ def make_probe(destination):
             "AEDisposeToken",
         )
     ]
-    imports += [("MacDialogsLib", name, 2) for name in ("SetModalDialogEventMask", "GetModalDialogEventMask")]
+    imports += [
+        ("MacDialogsLib", name, 2)
+        for name in ("SetModalDialogEventMask", "GetModalDialogEventMask", "SetDialogTimeout")
+    ]
+    imports.append(("CarbonLib", "GetDialogTimeout", 2))
     imports += [("ThreadsLib", name, 2) for name in ("GetThreadCurrentTaskRef", "GetThreadStateGivenTaskRef")]
+    imports += [
+        ("CarbonLib", name, 2)
+        for name in (
+            "CreateProgressBarControl",
+            "GetControl32BitValue",
+            "GetControl32BitMinimum",
+            "GetControl32BitMaximum",
+            "ReadIconFile",
+            "WriteIconFile",
+            "RegisterIconRefFromIconFile",
+            "RegisterIconRefFromResource",
+            "UnregisterIconRef",
+            "OverrideIconRef",
+            "OverrideIconRefFromResource",
+            "RemoveIconRefOverride",
+            "FlushIconRefs",
+            "FlushIconRefsByVolume",
+        )
+    ]
     p = Probe(imports)
     p.import_base = 0x1000
     p.identify_failed_checks = True
@@ -344,6 +374,7 @@ def make_probe(destination):
     p.emit(0x807E02C0, 0x38800000)
     p.call("SetWindowProxyIcon")
     p.expect(-50, "null proxy icons return paramErr")
+    check_progress_controls(p)
     p.emit(0x807E02C0)
     p.call("DisposeWindow")
     p.emit(
@@ -364,7 +395,7 @@ def make_probe(destination):
     p.call("GetModalDialogEventMask")
     p.expect(0, "read the native dialog's default event mask")
     p.emit(0xA07E04C4)
-    p.expect(0x16E, "new dialogs retain classic modal events by default")
+    p.expect(0x17F, "new dialogs use the System 9 default modal event mask")
     p.emit(0x807E04C0, 0x38801000)
     p.call("SetModalDialogEventMask")
     p.expect(0, "set an actual per-dialog operating-system event mask")
@@ -381,6 +412,42 @@ def make_probe(destination):
     p.call("ModalDialog")
     p.emit(0x807E04C8)
     p.expect(12, "ModalDialog really delivers the added OS event to the guest filter")
+    p.emit(0x38007777, 0xB01E04D0, 0x807E04C0, 0x389E04D0, 0x38A00000, 0x38C00000)
+    p.call("GetDialogTimeout")
+    p.expect(-5640, "a new dialog has no timeout")
+    p.emit(0xA07E04D0)
+    p.expect(0x7777, "an absent timeout preserves the caller's result storage")
+    p.emit(0x807E04C0, 0x38800007, 0x38A00005)
+    p.call("SetDialogTimeout")
+    p.expect(0, "register the inactivity timeout through MacDialogsLib")
+    p.emit(0x807E04C0, 0x389E04D0, 0x38BE04D4, 0x38DE04D8)
+    p.call("GetDialogTimeout")
+    p.expect(0, "the CarbonLib re-export reads the same registered timeout")
+    p.emit(0xA07E04D0)
+    p.expect(7, "the configured timeout item is a guest-order short")
+    p.emit(0x807E04D4)
+    p.expect(5, "the configured duration is a guest-order long")
+    p.emit(0x807E04D8)
+    p._check(0x28030005, 0x40810000, "the remaining time is bounded by the duration")
+    p.emit(0x807E04C0, 0x38800007, 0x38A00001)
+    p.call("SetDialogTimeout")
+    p.expect(0, "replace the timeout with a one-second timer")
+    p.emit(0x38600000, 0x389E04CC)
+    p.call("ModalDialog")
+    p.emit(0xA07E04CC)
+    p.expect(7, "the native modal loop returns the timeout item while idle")
+    p.emit(0x807E04C0, 0x38800000, 0x38A00000)
+    p.call("SetDialogTimeout")
+    p.expect(0, "zero seconds removes the timeout")
+    p.emit(0x807E04C0, 0x38800000, 0x38A00000, 0x38C00000)
+    p.call("GetDialogTimeout")
+    p.expect(-5640, "a removed timeout is absent even with no outputs requested")
+    p.emit(0x807E04C0, 0x38800000, 0x38A00000)
+    p.call("SetDialogTimeout")
+    p.expect(-5604, "removing a missing timer returns the window property error")
+    p.emit(0x38600000, 0x38800001, 0x38A00001)
+    p.call("SetDialogTimeout")
+    p.expect(-5600, "a timeout requires a valid window")
     p.emit(0x807E04C0)
     p.call("DisposeDialog")
     p.data[0x340:0x360] = bytes([0xA5]) * 32
@@ -453,6 +520,67 @@ def make_probe(destination):
     p.emit(0x387E0240)
     p.call("DebugStr")
     p.finish(destination, "PPC Finder Services Probe")
+
+
+def check_progress_controls(p):
+    for definition in (80, 81):
+        p.emit(
+            0x807E02C0,
+            0x389E0460,
+            0x38BE0310,
+            0x38C00001,
+            0x38E00032,
+            0x39000000,
+            0x39200064,
+            0x39400000 | definition,
+            0x38000000,
+            0x90010038,
+        )
+        p.call("NewControl")
+        p.nonzero("create a legacy CDEF 5 progress or relevance bar")
+        p.emit(0x907E0B04)
+        p.call("GetCtlValue")
+        p.expect(50, "the progress indicator preserves its initial value")
+        p.emit(0x807E0B04, 0x3C800019, 0x60840019)
+        p.call("TestControl")
+        p.expect(0, "progress indicators do not return a clickable part")
+        p.emit(0x807E0B04, 0x389E0B0C)
+        p.call("GetControlFeatures")
+        p.expect(0, "query the CDEF 5 capabilities")
+        p.emit(0x807E0B0C)
+        p.expect(0x48 if definition == 80 else 0, "only progress bars support idling and data access")
+        if definition == 80:
+            p.emit(0x38000001, 0x981E0B10)
+            p.emit(0x807E0B04, 0x38800000, 0x3CA0696E, 0x60A56465, 0x38C00001, 0x38FE0B10)
+            p.call("SetControlData")
+            p.expect(0, "enable indeterminate progress")
+            p.emit(0x807E0B04, 0x38800000, 0x3CA0696E, 0x60A56465, 0x38C00001, 0x38FE0B11, 0x391E0B0C)
+            p.call("GetControlData")
+            p.expect(0, "retrieve the stored indeterminate flag")
+            p.emit(0x887E0B11)
+            p.expect(1, "the indeterminate flag uses a one-byte guest Boolean")
+        p.emit(0x807E0B04)
+        p.call("DisposeControl")
+
+    p.emit(0x807E02C0, 0x389E0460)
+    for register, value in enumerate((65000, -100000, 100000), 5):
+        p.emit(
+            0x3C000000 | (register << 21) | ((value >> 16) & 0xFFFF),
+            0x60000000 | (register << 21) | (register << 16) | (value & 0xFFFF),
+        )
+    p.emit(0x39000001, 0x393E0B04)
+    p.call("CreateProgressBarControl")
+    p.expect(0, "create a Carbon progress bar without a guest CarbonLib installed")
+    for operation, value in (
+        ("GetControl32BitValue", 65000),
+        ("GetControl32BitMinimum", -100000),
+        ("GetControl32BitMaximum", 100000),
+    ):
+        p.emit(0x807E0B04)
+        p.call(operation)
+        p.expect(value, "the native Carbon constructor preserves the full signed 32-bit range")
+    p.emit(0x807E0B04)
+    p.call("DisposeControl")
 
 
 def check_object_accessors(p):
@@ -616,6 +744,7 @@ def check_file_icons(p, destination):
     p.expect(0, "extract the actual custom icon data")
     p.emit(0x807E0AA4, 0x80630000, 0x80630000)
     p.expect(0x13385D82, "resource-fork artwork bytes survive map closure and copying")
+    check_icon_file_registration(p, destination)
     p.call("CurResFile")
     p.emit(0x907E0AB4, 0x38600000, 0x38800000, 0x38BE0A20, 0x38DE09D0)
     p.call("FSMakeFSSpec")
@@ -637,9 +766,9 @@ def check_file_icons(p, destination):
     p.call("CloseResFile")
     p.emit(0x807E0AB4)
     p.call("UseResFile")
-    p.emit(0x807E0A88)
-    p.call("UpdateIconRef")
-    p.expect(0, "refresh the reference from its actual source resource fork")
+    p.emit(0x3C602A2A, 0x60632A2A, 0x7C641B78)
+    p.call("FlushIconRefs")
+    p.expect(0, "discard reloadable icon data for wildcard creator and type")
     for offset, word in ((0xA88, 0x2468ACE0), (0xA8C, 0x13385D82)):
         p.emit(0x807E0AA0)
         p.call("DisposeHandle")
@@ -651,6 +780,41 @@ def check_file_icons(p, destination):
         p.expect(0, "extract refreshed artwork without changing another file's icon")
         p.emit(0x807E0AA4, 0x80630000, 0x80630000)
         p.expect(word, "only the modified source file receives replacement artwork")
+
+    def check_overridden_artwork(expected):
+        p.emit(0x807E0AA0)
+        p.call("DisposeHandle")
+        p.emit(0x807E0A8C, 0x38800001, 0x38BE0AA0)
+        p.call("IconRefToIconFamily")
+        p.expect(0, "copy the visible family for an overridden or restored icon")
+        p.emit(0x807E0AA0, 0x80630000, 0x80630010)
+        p.expect(expected, "the copied icon family reflects the active artwork")
+
+    p.emit(0x807E0A8C, 0x809E0A88)
+    p.call("OverrideIconRef")
+    p.expect(0, "apply artwork from another live icon reference")
+    check_overridden_artwork(0x2468ACE0)
+    p.emit(0x807E0A8C)
+    p.call("RemoveIconRefOverride")
+    p.expect(0, "remove the active replacement")
+    check_overridden_artwork(0x13385D82)
+    p.emit(0x807E0A8C, 0x389E09D0, 0x38A0BFB9)
+    p.call("OverrideIconRefFromResource")
+    p.expect(0, "apply an override from the actual resource fork")
+    check_overridden_artwork(0x2468ACE0)
+    p.emit(0x807E0A8C)
+    p.call("UpdateIconRef")
+    p.expect(0, "refreshing the base artwork preserves the installed override")
+    check_overridden_artwork(0x2468ACE0)
+    p.emit(0x807E0A8C, 0x389E09D0, 0x38A00001)
+    p.call("OverrideIconRefFromResource")
+    p.expect(-192, "a missing bitmap leaves the previously installed override active")
+    check_overridden_artwork(0x2468ACE0)
+    p.emit(0x807E0A8C)
+    p.call("RemoveIconRefOverride")
+    p.expect(0, "remove the resource override")
+    check_overridden_artwork(0x13385D82)
+
     for offset in (0xAA0, 0xAA4):
         p.emit(0x807E0000 | offset)
         p.call("DisposeHandle")
@@ -662,6 +826,91 @@ def check_file_icons(p, destination):
     p.call("IsValidIconRef")
     p.expect(0, "last release destroys the anonymous file icon family")
     p.data[0xA80:0xAC0] = bytes([0xA5]) * 64
+
+
+def check_icon_file_registration(p, destination):
+    p.emit(0x3860FFFF, 0x38800002, 0x38A00003, 0x38C00010, 0x38E00000, 0x391E0C70)
+    p.call("GetIconRefFromFolder")
+    p.expect(0, "resolve and retain a native folder icon through IconServicesLib")
+    p.emit(0x807E0C70)
+    p.call("ReleaseIconRef")
+    p.expect(0, "release the folder icon returned by the migrated entry")
+
+    name = b"Round Trip.icns"
+    (destination / name.decode()).write_bytes(bytes([0xA5]) * 4096)
+    p.data[0xC00 : 0xC01 + len(name)] = bytes([len(name)]) + name
+    p.emit(0x38600000, 0x38800000, 0x38BE0C00, 0x38DE0C20)
+    p.call("FSMakeFSSpec")
+    p.expect(0, "locate the data-fork icon fixture")
+    p.emit(0x387E0C20, 0x389E0C70)
+    p.call("ReadIconFile")
+    p.expect(-50, "reject non-icon contents in an otherwise valid data fork")
+    p.emit(0x807E0C70)
+    p.expect(0, "a malformed icon file publishes no handle")
+    p.emit(0x807E0AA0, 0x389E0C20)
+    p.call("WriteIconFile")
+    p.expect(0, "rewrite the existing data fork with a shorter complete icon family")
+    p.emit(0x387E0C20, 0x389E0C70)
+    p.call("ReadIconFile")
+    p.expect(0, "read back the truncated data-fork icon family")
+    p.emit(0x807E0C70)
+    p.call("GetHandleSize")
+    p.expect(272, "the data fork contains precisely the serialized family")
+    p.emit(0x807E0C70, 0x80630000, 0x80630010)
+    p.expect(0x13385D82, "the read-back handle carries the actual icon bytes")
+    p.emit(0x807E0C70)
+    p.call("DisposeHandle")
+
+    p.emit(0x38600000, 0x38800000, 0x38BE0A20, 0x38DE0C20)
+    p.call("FSMakeFSSpec")
+    p.expect(0, "locate the classic icon resource fixture")
+    p.call("CurResFile")
+    p.emit(0x907E0C74, 0x3C605445, 0x60635354, 0x3C806963, 0x60846E31, 0x38BE0C20, 0x38C0BFB9, 0x38FE0C70)
+    p.call("RegisterIconRefFromResource")
+    p.expect(0, "register actual classic icon artwork from its resource fork")
+    p.call("CurResFile")
+    p.emit(0x809E0C74)
+    p.equal("registration restores the caller's current resource map")
+    p.emit(0x3C605445, 0x60635354, 0x3C806963, 0x60846E31)
+    p.call("UnregisterIconRef")
+    p.expect(0, "drop the registered resource identity")
+    p.emit(0x807E0C70)
+    p.call("ReleaseIconRef")
+    p.expect(0, "release the independent caller's retained resource reference")
+
+    p.emit(0x38600000, 0x38800000, 0x38BE0C00, 0x38DE0C20)
+    p.call("FSMakeFSSpec")
+    p.expect(0, "resolve the serialized icon file")
+    p.emit(0x3C605445, 0x60635354, 0x3C806963, 0x60846E32, 0x38BE0C20, 0x38DE0C70)
+    p.call("RegisterIconRefFromIconFile")
+    p.expect(0, "register the actual serialized icon data")
+    p.emit(0x807E0C70, 0x38800001, 0x38BE0C78)
+    p.call("IconRefToIconFamily")
+    p.expect(0, "copy the registered file family independently of the original handle")
+    p.emit(0x807E0C78, 0x80630000, 0x80630010)
+    p.expect(0x13385D82, "the registry retained the icon artwork after closing the data fork")
+    p.emit(0x807E0C78)
+    p.call("DisposeHandle")
+    p.emit(0x807E0AA0, 0x80830000, 0x3CA089AB, 0x60A5CDEF, 0x90A40010, 0x389E0C20)
+    p.call("WriteIconFile")
+    p.expect(0, "replace the registered file's original on-disk artwork")
+    p.emit(0x807E0AA0, 0x80830000, 0x3CA01338, 0x60A55D82, 0x90A40010)
+    p.emit(0xA87E0C20)
+    p.call("FlushIconRefsByVolume")
+    p.expect(0, "discard cached icon data for the file's mounted volume")
+    p.emit(0x807E0C70, 0x38800001, 0x38BE0C78)
+    p.call("IconRefToIconFamily")
+    p.expect(0, "the original reference can still publish a family after volume flushing")
+    p.emit(0x807E0C78, 0x80630000, 0x80630010)
+    p.expect(0x89ABCDEF, "the existing reference lazily reloads the new icon from disk")
+    p.emit(0x807E0C78)
+    p.call("DisposeHandle")
+    p.emit(0x3C605445, 0x60635354, 0x3C806963, 0x60846E32)
+    p.call("UnregisterIconRef")
+    p.expect(0, "remove the data-fork registration")
+    p.emit(0x807E0C70)
+    p.call("ReleaseIconRef")
+    p.expect(0, "release the registered icon file reference")
 
 
 if __name__ == "__main__":

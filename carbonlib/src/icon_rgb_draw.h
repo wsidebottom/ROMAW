@@ -26,7 +26,7 @@ typedef struct {
     boolean_t packed_mask;
 } IconRGBImage;
 
-static OSErr icon_rgb_find_image(const IconReference* icon, const Rect* bounds, IconRGBImage* image)
+static OSErr icon_rgb_find_image(IconFamilyView view, const Rect* bounds, IconRGBImage* image)
 {
     static const struct {
         uint32 type, mask, monochrome;
@@ -42,8 +42,8 @@ static OSErr icon_rgb_find_image(const IconReference* icon, const Rect* bounds, 
     int selected = -1;
     uint32 offset = 0;
     for (unsigned i = 0; i < NELEM(formats); ++i) {
-        uint32 element = icon_family_element(icon->bytes, icon->size, formats[i].type);
-        if (element == icon->size || icon_read_word(icon->bytes + element + 4) == icon_family_header_size)
+        uint32 element = icon_family_element(view.bytes, view.size, formats[i].type);
+        if (element == view.size || icon_read_word(view.bytes + element + 4) == icon_family_header_size)
             continue;
         selected = i;
         offset = element;
@@ -55,20 +55,20 @@ static OSErr icon_rgb_find_image(const IconReference* icon, const Rect* bounds, 
 
     const unsigned width = formats[selected].width;
     const unsigned count = width * width;
-    *image = (IconRGBImage){width, icon->bytes + offset + icon_family_header_size,
-                            icon_read_word(icon->bytes + offset + 4) - icon_family_header_size, NULL, FALSE};
-    uint32 mask = icon_family_element(icon->bytes, icon->size, formats[selected].mask);
-    if (mask < icon->size) {
-        if (icon_read_word(icon->bytes + mask + 4) != count + icon_family_header_size)
+    *image = (IconRGBImage){width, view.bytes + offset + icon_family_header_size,
+                            icon_read_word(view.bytes + offset + 4) - icon_family_header_size, NULL, FALSE};
+    uint32 mask = icon_family_element(view.bytes, view.size, formats[selected].mask);
+    if (mask < view.size) {
+        if (icon_read_word(view.bytes + mask + 4) != count + icon_family_header_size)
             return paramErr;
-        image->mask = icon->bytes + mask + icon_family_header_size;
+        image->mask = view.bytes + mask + icon_family_header_size;
     }
     else if (formats[selected].monochrome) {
-        mask = icon_family_element(icon->bytes, icon->size, formats[selected].monochrome);
-        if (mask < icon->size) {
-            if (icon_read_word(icon->bytes + mask + 4) != count / 4 + icon_family_header_size)
+        mask = icon_family_element(view.bytes, view.size, formats[selected].monochrome);
+        if (mask < view.size) {
+            if (icon_read_word(view.bytes + mask + 4) != count / 4 + icon_family_header_size)
                 return paramErr;
-            image->mask = icon->bytes + mask + icon_family_header_size + count / 8;
+            image->mask = view.bytes + mask + icon_family_header_size + count / 8;
             image->packed_mask = TRUE;
         }
     }

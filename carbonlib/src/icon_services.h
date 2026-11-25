@@ -30,19 +30,46 @@
 
 enum { invalid_icon_ref = -2580, no_such_icon = -2581, icon_family_header_size = 8 };
 
+typedef enum { icon_memory, icon_system, icon_catalog, icon_data_fork, icon_resource_fork } IconSource;
+
 typedef struct IconReference {
     struct IconReference* next;
     Handle identity;
     uint32 creator, type;
     uint16 owners;
     boolean_t registered;
-    boolean_t system_backed, file_backed;
+    IconSource source;
     FSSpec source_file;
+    int16 resource_id;
     Byte* bytes;
     uint32 size;
+    Byte* override_bytes;
+    uint32 override_size;
 } IconReference;
 
+typedef struct {
+    const Byte* bytes;
+    uint32 size;
+} IconFamilyView;
+
 static IconReference* icon_references;
+
+static OSErr icon_reload(IconReference* icon);
+
+static OSErr icon_family_view(IconReference* icon, IconFamilyView* family)
+{
+    if (icon->override_bytes) {
+        *family = (IconFamilyView){icon->override_bytes, icon->override_size};
+        return noErr;
+    }
+    if (!icon->bytes) {
+        OSErr error = icon_reload(icon);
+        if (error)
+            return error;
+    }
+    *family = (IconFamilyView){icon->bytes, icon->size};
+    return noErr;
+}
 
 static const struct {
     uint32 type;
@@ -152,6 +179,7 @@ static void icon_destroy(IconReference* icon)
     *link = icon->next;
     DisposHandle(icon->identity);
     free(icon->bytes);
+    free(icon->override_bytes);
     free(icon);
 }
 
@@ -171,18 +199,14 @@ static int icon_return_reference(ROMlib_carbon_ppc_frame* call, IconReference* i
 }
 
 /* The Registry and the caller each have their own lifetime. */
-static IconReference* icon_register(uint32 creator, uint32 type, const Byte* bytes, uint32 size)
+static IconReference* icon_register_owned(uint32 creator, uint32 type, Byte* bytes, uint32 size)
 {
-    Byte* copy = malloc(size);
-    if (!copy)
-        return NULL;
-    memcpy(copy, bytes, size);
     IconReference* icon = icon_find_key(creator, type);
     if (!icon) {
         icon = calloc(1, sizeof *icon);
         if (!icon || !(icon->identity = NewHandleSys(0))) {
             free(icon);
-            free(copy);
+            free(bytes);
             return NULL;
         }
         icon->creator = creator;
@@ -192,10 +216,54 @@ static IconReference* icon_register(uint32 creator, uint32 type, const Byte* byt
         icon_references = icon;
     }
     free(icon->bytes);
-    icon->bytes = copy;
+    icon->bytes = bytes;
     icon->size = size;
-    icon->system_backed = FALSE;
+    icon->source = icon_memory;
     return icon;
+}
+
+static IconReference* icon_register(uint32 creator, uint32 type, const Byte* bytes, uint32 size)
+{
+    Byte* copy = malloc(size);
+    if (!copy)
+        return NULL;
+    memcpy(copy, bytes, size);
+    return icon_register_owned(creator, type, copy, size);
+}
+
+static void icon_set_override(IconReference* icon, Byte* bytes, uint32 size)
+{
+    free(icon->override_bytes);
+    icon->override_bytes = bytes;
+    icon->override_size = size;
+}
+
+static int carbon_OverrideIconRef(ROMlib_carbon_ppc_frame* call)
+{
+    IconReference* target = icon_find(call->words[0]);
+    IconReference* source = icon_find(call->words[1]);
+    if (!target || !source)
+        return icon_fallback(call, "OverrideIconRef", invalid_icon_ref);
+
+    IconFamilyView family;
+    OSErr status = icon_family_view(source, &family);
+    if (status)
+        return icon_status(call, status);
+    Byte* copy = malloc(family.size);
+    if (!copy)
+        return icon_status(call, memFullErr);
+    memcpy(copy, family.bytes, family.size);
+    icon_set_override(target, copy, family.size);
+    return icon_status(call, noErr);
+}
+
+static int carbon_RemoveIconRefOverride(ROMlib_carbon_ppc_frame* call)
+{
+    IconReference* icon = icon_find(call->words[0]);
+    if (!icon)
+        return icon_fallback(call, "RemoveIconRefOverride", invalid_icon_ref);
+    icon_set_override(icon, NULL, 0);
+    return icon_status(call, noErr);
 }
 
 static int carbon_RegisterIconRefFromIconFamily(ROMlib_carbon_ppc_frame* call)
@@ -259,19 +327,18 @@ static IconReference* icon_register_system(uint32 type, const Byte* bytes, uint3
 {
     IconReference* icon = icon_register(TICK("macs"), type, bytes, size);
     if (icon)
-        icon->system_backed = TRUE;
+        icon->source = icon_system;
     return icon;
 }
 
-static IconReference* icon_load_system_family(uint32 type, int16 id)
+static const Byte* icon_map_family(int16 id, Byte* packed, uint32* size)
 {
     Handle family = C_Get1Resource(TICK("icns"), id);
-    const uint32 size = family ? GetHandleSize(family) : 0;
+    *size = family ? GetHandleSize(family) : 0;
     const Byte* bytes = family ? (const Byte*)STARH(family) : NULL;
-    if (icon_family_valid(bytes, size))
-        return icon_register_system(type, bytes, size);
+    if (icon_family_valid(bytes, *size))
+        return bytes;
 
-    Byte packed[classic_icon_family_capacity];
     uint32 used = icon_family_header_size;
     for (unsigned i = 0; i < NELEM(classic_icon_elements); ++i) {
         const uint32 type = classic_icon_elements[i].type;
@@ -288,7 +355,211 @@ static IconReference* icon_load_system_family(uint32 type, int16 id)
         return NULL;
     icon_write_word(packed, TICK("icns"));
     icon_write_word(packed + 4, used);
-    return icon_register_system(type, packed, used);
+    *size = used;
+    return packed;
+}
+
+static IconReference* icon_load_system_family(uint32 type, int16 id)
+{
+    Byte packed[classic_icon_family_capacity];
+    uint32 size;
+    const Byte* bytes = icon_map_family(id, packed, &size);
+    return bytes ? icon_register_system(type, bytes, size) : NULL;
+}
+
+static const FSSpec* icon_file_spec(uint32 address)
+{
+    const FSSpec* spec = address ? ROMlib_carbon_try_guest_memory(address, sizeof *spec, 0) : NULL;
+    return spec && spec->name[0] <= 63 ? spec : NULL;
+}
+
+static OSErr icon_read_disk_family(const FSSpec* spec, Handle* family)
+{
+    FSSpec file = *spec;
+    INTEGER reference;
+    OSErr status = C_FSpOpenDF(&file, fsRdPerm, &reference);
+    if (status)
+        return status;
+    reference = CW(reference);
+    LONGINT size;
+    Handle data = NULL;
+    status = GetEOF(reference, &size);
+    if (!status) {
+        if (size < icon_family_header_size)
+            status = paramErr;
+        else if (!(data = NewHandle(size)))
+            status = memFullErr;
+    }
+    if (!status) {
+        HLock(data);
+        LONGINT actual = size;
+        status = FSRead(reference, &actual, STARH(data));
+        if (!status)
+            status = actual != size ? eofErr : icon_family_valid((const Byte*)STARH(data), size) ? noErr : paramErr;
+        HUnlock(data);
+    }
+    OSErr closed = FSClose(reference);
+    if (!status)
+        status = closed;
+    if (status && data)
+        DisposHandle(data);
+    if (!status)
+        *family = data;
+    return status;
+}
+
+static int carbon_ReadIconFile(ROMlib_carbon_ppc_frame* call)
+{
+    const FSSpec* spec = icon_file_spec(call->words[0]);
+    void* output = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], 4, 1) : NULL;
+    if (!spec || !output)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("ReadIconFile", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    icon_write_word(output, 0);
+    Handle family;
+    OSErr status = icon_read_disk_family(spec, &family);
+    if (!status)
+        icon_write_word(output, US_TO_SYN68K(family));
+    return icon_status(call, status);
+}
+
+static int carbon_WriteIconFile(ROMlib_carbon_ppc_frame* call)
+{
+    const FSSpec* spec = icon_file_spec(call->words[1]);
+    if (!spec)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("WriteIconFile", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    uint32 size = 0;
+    const Byte* bytes = icon_handle_data(call->words[0], &size);
+    if (!icon_family_valid(bytes, size))
+        return icon_status(call, paramErr);
+
+    FSSpec file = *spec;
+    Handle family = SYN68K_TO_US(call->words[0]);
+    SignedByte state = HGetState(family);
+    HLock(family);
+    OSErr status = C_FSpCreate(&file, TICK("????"), TICK("icns"), 0);
+    const boolean_t created = status == noErr;
+    if (created || status == dupFNErr) {
+        INTEGER reference;
+        status = C_FSpOpenDF(&file, fsWrPerm, &reference);
+        if (!status) {
+            reference = CW(reference);
+            LONGINT actual = size;
+            status = FSWrite(reference, &actual, STARH(family));
+            if (!status && actual != size)
+                status = ioErr;
+            if (!status)
+                status = SetEOF(reference, size);
+            OSErr closed = FSClose(reference);
+            if (!status)
+                status = closed;
+        }
+    }
+    HSetState(family, state);
+    if (status && created)
+        C_FSpDelete(&file);
+    return icon_status(call, status);
+}
+
+static int carbon_RegisterIconRefFromIconFile(ROMlib_carbon_ppc_frame* call)
+{
+    const FSSpec* spec = icon_file_spec(call->words[2]);
+    void* output = call->words[3] ? ROMlib_carbon_try_guest_memory(call->words[3], 4, 1) : NULL;
+    if (!spec || !output)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    IconReference* icon = icon_find_key(call->words[0], call->words[1]);
+    if (!icon && icon_saved_reference("RegisterIconRefFromIconFile", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    icon_write_word(output, 0);
+    if (icon && icon->owners == UINT16_MAX)
+        return icon_status(call, memFullErr);
+    Handle family;
+    OSErr status = icon_read_disk_family(spec, &family);
+    if (status)
+        return icon_status(call, status);
+    icon = icon_register(call->words[0], call->words[1], (const Byte*)STARH(family), GetHandleSize(family));
+    DisposHandle(family);
+    if (icon) {
+        icon->source = icon_data_fork;
+        icon->source_file = *spec;
+    }
+    return icon ? icon_return_reference(call, icon, output) : icon_status(call, memFullErr);
+}
+
+static OSErr icon_read_resource_family(const FSSpec* spec, int16 id, Byte** output, uint32* size)
+{
+    FSSpec source = *spec;
+    const INTEGER previous = C_CurResFile();
+    const BOOLEAN loading = ResLoad;
+    Handle previous_top = MR(TopMapHndl);
+    INTEGER file = C_FSpOpenResFile(&source, fsRdPerm);
+    if (file == -1)
+        return C_ResError();
+    C_UseResFile(file);
+    C_SetResLoad(TRUE);
+    Byte packed[classic_icon_family_capacity];
+    const Byte* bytes = icon_map_family(id, packed, size);
+    Byte* copy = bytes ? malloc(*size) : NULL;
+    if (copy)
+        memcpy(copy, bytes, *size);
+    const OSErr status = copy ? noErr : bytes ? memFullErr : resNotFound;
+    if (MR(TopMapHndl) != previous_top)
+        C_CloseResFile(file);
+    C_UseResFile(previous);
+    C_SetResLoad(loading);
+    *output = copy;
+    return status;
+}
+
+static int carbon_RegisterIconRefFromResource(ROMlib_carbon_ppc_frame* call)
+{
+    const FSSpec* spec = icon_file_spec(call->words[2]);
+    void* output = call->words[4] ? ROMlib_carbon_try_guest_memory(call->words[4], 4, 1) : NULL;
+    if (!spec || !output)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    IconReference* icon = icon_find_key(call->words[0], call->words[1]);
+    if (!icon && icon_saved_reference("RegisterIconRefFromResource", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    icon_write_word(output, 0);
+    if (icon && icon->owners == UINT16_MAX)
+        return icon_status(call, memFullErr);
+
+    Byte* bytes;
+    uint32 size;
+    OSErr status = icon_read_resource_family(spec, (int16)call->words[3], &bytes, &size);
+    if (status)
+        return icon_status(call, status);
+    icon = icon_register_owned(call->words[0], call->words[1], bytes, size);
+    if (icon) {
+        icon->source = icon_resource_fork;
+        icon->source_file = *spec;
+        icon->resource_id = (int16)call->words[3];
+    }
+    return icon ? icon_return_reference(call, icon, output) : icon_status(call, memFullErr);
+}
+
+static int carbon_OverrideIconRefFromResource(ROMlib_carbon_ppc_frame* call)
+{
+    IconReference* icon = icon_find(call->words[0]);
+    if (!icon)
+        return icon_fallback(call, "OverrideIconRefFromResource", invalid_icon_ref);
+    const FSSpec* spec = icon_file_spec(call->words[1]);
+    if (!spec)
+        return icon_status(call, paramErr);
+
+    Byte* bytes;
+    uint32 size;
+    OSErr status = icon_read_resource_family(spec, (int16)call->words[2], &bytes, &size);
+    if (!status)
+        icon_set_override(icon, bytes, size);
+    return icon_status(call, status);
 }
 
 static IconReference* icon_load_system_companion(uint32 type, int16 id)
@@ -350,9 +621,26 @@ static int carbon_GetIconRef(ROMlib_carbon_ppc_frame* call)
     return icon ? icon_return_reference(call, icon, output) : icon_status(call, no_such_icon);
 }
 
+static int carbon_GetIconRefFromFolder(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("GetIconRefFromFolder", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+
+    /* The native file system exposes ordinary folders and volume roots. The
+       saved dispatcher handles the additional file-sharing folder variants. */
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[1] = TICK("macs");
+    arguments.words[2] = call->words[2] == 2 && call->words[1] == 1 ? TICK("hdsk") : TICK("fldr");
+    arguments.words[3] = call->words[5];
+    const int status = carbon_GetIconRef(&arguments);
+    call->words[0] = arguments.words[0];
+    return status;
+}
+
 /* File families retain their real source for UpdateIconRef. Labels are queried
    separately and never participate in the reference identity. */
-static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* source)
+static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* source, uint32 creator, uint32 type)
 {
     const Byte* planes[] = {source->mono,   source->small,  source->color4,
                             source->color8, source->small4, source->small8};
@@ -369,7 +657,8 @@ static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* sou
     icon_write_word(packed, TICK("icns"));
     icon_write_word(packed + 4, used);
     for (IconReference* icon = icon_references; icon; icon = icon->next)
-        if (icon->file_backed && icon->source_file.vRefNum == spec->vRefNum && icon->source_file.parID == spec->parID &&
+        if (icon->source == icon_catalog && icon->source_file.vRefNum == spec->vRefNum &&
+            icon->source_file.parID == spec->parID &&
             EqualString(icon->source_file.name, (StringPtr)spec->name, FALSE, TRUE)) {
             if (icon->size != used || memcmp(icon->bytes, packed, used)) {
                 Byte* copy = malloc(used);
@@ -380,6 +669,8 @@ static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* sou
                 icon->bytes = copy;
                 icon->size = used;
             }
+            icon->creator = creator;
+            icon->type = type;
             return icon;
         }
     IconReference* icon = calloc(1, sizeof *icon);
@@ -394,8 +685,10 @@ static IconReference* icon_file_family(const FSSpec* spec, const FinderIcon* sou
     }
     memcpy(copy, packed, used);
     icon->identity = identity;
-    icon->file_backed = TRUE;
+    icon->source = icon_catalog;
     icon->source_file = *spec;
+    icon->creator = creator;
+    icon->type = type;
     icon->bytes = copy;
     icon->size = used;
     icon->next = icon_references;
@@ -443,33 +736,150 @@ static IconReference* icon_file_default(const CInfoPBRec* info)
     return icon ? icon : icon_get_system(generic);
 }
 
-static int carbon_UpdateIconRef(ROMlib_carbon_ppc_frame* call)
+static OSErr icon_replace_family(IconReference* icon, const Byte* bytes, uint32 size)
 {
-    IconReference* icon = icon_find(call->words[0]);
-    if (!icon)
-        return icon_fallback(call, "UpdateIconRef", invalid_icon_ref);
-    if (icon->file_backed) {
+    Byte* copy = malloc(size);
+    if (!copy)
+        return memFullErr;
+    memcpy(copy, bytes, size);
+    free(icon->bytes);
+    icon->bytes = copy;
+    icon->size = size;
+    return noErr;
+}
+
+static OSErr icon_reload(IconReference* icon)
+{
+    switch (icon->source) {
+    case icon_memory:
+        return noErr;
+    case icon_system: {
+        const IconReference* loaded = icon_get_system(icon->type);
+        if (!loaded)
+            return no_such_icon;
+        return loaded == icon ? noErr : icon_replace_family(icon, loaded->bytes, loaded->size);
+    }
+    case icon_catalog: {
         CInfoPBRec info;
         OSErr error = icon_file_catalog(&icon->source_file, &info);
         if (error)
-            return icon_status(call, error);
+            return error;
+        const boolean_t folder = (info.hFileInfo.ioFlAttrib & 0x10) != 0;
+        const uint32 creator = folder ? 0 : CL(info.hFileInfo.ioFlFndrInfo.fdCreator);
+        const uint32 type = folder ? TICK("fldr") : CL(info.hFileInfo.ioFlFndrInfo.fdType);
         FinderIcon family;
         if (icon_file_artwork(&icon->source_file, &info, &family))
-            return icon_status(call, icon_file_family(&icon->source_file, &family) ? noErr : memFullErr);
+            return icon_file_family(&icon->source_file, &family, creator, type) ? noErr : memFullErr;
         IconReference* generic = icon_file_default(&info);
         if (!generic)
-            return icon_status(call, no_such_icon);
-        Byte* copy = malloc(generic->size);
-        if (!copy)
-            return icon_status(call, memFullErr);
-        memcpy(copy, generic->bytes, generic->size);
-        free(icon->bytes);
-        icon->bytes = copy;
-        icon->size = generic->size;
+            return no_such_icon;
+        error = generic->bytes ? noErr : icon_reload(generic);
+        return error ? error : icon_replace_family(icon, generic->bytes, generic->size);
     }
-    else if (icon->system_backed)
-        return icon_status(call, icon_get_system(icon->type) ? noErr : no_such_icon);
-    /* Client-registered families already own their current in-memory bytes. */
+    case icon_data_fork: {
+        Handle image;
+        OSErr error = icon_read_disk_family(&icon->source_file, &image);
+        if (error)
+            return error;
+        error = icon_replace_family(icon, (const Byte*)STARH(image), GetHandleSize(image));
+        DisposHandle(image);
+        return error;
+    }
+    case icon_resource_fork: {
+        Byte* bytes;
+        uint32 size;
+        OSErr error = icon_read_resource_family(&icon->source_file, icon->resource_id, &bytes, &size);
+        if (error)
+            return error;
+        free(icon->bytes);
+        icon->bytes = bytes;
+        icon->size = size;
+        return noErr;
+    }
+    }
+    return invalid_icon_ref;
+}
+
+static int carbon_UpdateIconRef(ROMlib_carbon_ppc_frame* call)
+{
+    IconReference* icon = icon_find(call->words[0]);
+    return icon ? icon_status(call, icon_reload(icon)) : icon_fallback(call, "UpdateIconRef", invalid_icon_ref);
+}
+
+static void icon_flush(IconReference* icon)
+{
+    free(icon->bytes);
+    icon->bytes = NULL;
+    icon->size = 0;
+}
+
+static int carbon_FlushIconRefs(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32 creator = call->words[0], type = call->words[1];
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("FlushIconRefs", &saved)) {
+        if (!ROMlib_carbon_invoke_frame(saved.function, call))
+            return 0;
+        if (call->words[0])
+            return 1;
+    }
+    const uint32 wildcard = TICK("****");
+    for (IconReference* icon = icon_references; icon; icon = icon->next) {
+        if (icon->source != icon_memory && (creator == wildcard || creator == icon->creator) &&
+            (type == wildcard || type == icon->type))
+            icon_flush(icon);
+    }
+    return icon_status(call, noErr);
+}
+
+static OSErr icon_volume(int16 reference, int16* volume)
+{
+    if (reference == kOnSystemDisk) {
+        int16 encoded;
+        int32 folder;
+        OSErr error = C_FindFolder(kOnSystemDisk, kSystemFolderType, FALSE, &encoded, &folder);
+        if (!error)
+            *volume = CW(encoded);
+        return error;
+    }
+    HParamBlockRec block = {0};
+    block.volumeParam.ioVRefNum = CW(reference);
+    OSErr error = PBHGetVInfo(&block, FALSE);
+    if (!error)
+        *volume = CW(block.volumeParam.ioVRefNum);
+    return error;
+}
+
+static int carbon_GetIconDevice(ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t ignored;
+    if (call->words[0] && !ROMlib_carbon_guest_memory(call->words[0], sizeof(uint32_t), 1))
+        return 0;
+    return ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x220, call, &ignored);
+}
+
+static int carbon_FlushIconRefsByVolume(ROMlib_carbon_ppc_frame* call)
+{
+    const int16 reference = (int16)call->words[0];
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("FlushIconRefsByVolume", &saved)) {
+        if (!ROMlib_carbon_invoke_frame(saved.function, call))
+            return 0;
+        if (call->words[0])
+            return 1;
+    }
+    int16 volume;
+    OSErr error = icon_volume(reference, &volume);
+    if (error)
+        return icon_status(call, error);
+    for (IconReference* icon = icon_references; icon; icon = icon->next) {
+        if (icon->source == icon_memory)
+            continue;
+        const int16 origin = icon->source == icon_system ? kOnSystemDisk : CW(icon->source_file.vRefNum);
+        int16 origin_volume;
+        if (!icon_volume(origin, &origin_volume) && volume == origin_volume)
+            icon_flush(icon);
+    }
     return icon_status(call, noErr);
 }
 
@@ -497,7 +907,7 @@ static int carbon_GetIconRefFromFile(ROMlib_carbon_ppc_frame* call)
     IconReference* icon = custom ? NULL : icon_find_key(creator, type);
     FinderIcon family;
     if (!icon && icon_file_artwork(&file, &info, &family)) {
-        icon = icon_file_family(&file, &family);
+        icon = icon_file_family(&file, &family, creator, type);
         if (!icon)
             return icon_status(call, memFullErr);
     }
@@ -665,12 +1075,16 @@ static int carbon_IconRefToIconFamily(ROMlib_carbon_ppc_frame* call)
     if (!icon)
         return icon_fallback(call, "IconRefToIconFamily", invalid_icon_ref);
     /* The IconSelectorValue filters chunks of the stored family. */
+    IconFamilyView view;
+    OSErr status = icon_family_view(icon, &view);
+    if (status)
+        return icon_status(call, status);
     uint32 selector = call->words[1], used = icon_family_header_size;
-    Byte* bytes = malloc(icon->size);
+    Byte* bytes = malloc(view.size);
     if (!bytes)
         return icon_status(call, memFullErr);
-    for (uint32 offset = icon_family_header_size; offset < icon->size;) {
-        const Byte* chunk = icon->bytes + offset;
+    for (uint32 offset = icon_family_header_size; offset < view.size;) {
+        const Byte* chunk = view.bytes + offset;
         uint32 size = icon_read_word(chunk + 4);
         if (selector == UINT32_MAX || (icon_family_selector(icon_read_word(chunk)) & selector)) {
             memcpy(bytes + used, chunk, size);
@@ -810,16 +1224,20 @@ static int icon_ref_operation(ROMlib_carbon_ppc_frame* call, IconOperation opera
         return icon_status(call, hit ? FALSE : paramErr);
     const Rect rect = *bounds;
     const int16 alignment = call->words[drawing ? 1 : 2];
+    IconFamilyView view;
+    OSErr load_status = icon_family_view(icon, &view);
+    if (load_status)
+        return icon_status(call, hit ? FALSE : load_status);
     if (!drawing || (int16)call->words[2] == ttNone) {
         IconRGBImage image;
-        OSErr status = icon_rgb_find_image(icon, &rect, &image);
+        OSErr status = icon_rgb_find_image(view, &rect, &image);
         if (!status)
             return icon_status(call, icon_rgb_operation(operation, &image, rect, alignment, argument));
         if (status != no_such_icon)
             return icon_status(call, hit ? FALSE : status);
     }
     Handle suite;
-    OSErr error = icon_suite_from_family(icon->bytes, icon->size, UINT32_MAX, &suite);
+    OSErr error = icon_suite_from_family(view.bytes, view.size, UINT32_MAX, &suite);
     if (error)
         return icon_status(call, hit ? FALSE : error);
     int32 result = paramErr;
@@ -896,10 +1314,13 @@ static int carbon_GetIconSizesFromIconRef(ROMlib_carbon_ppc_frame* call)
     IconReference* icon = icon_find(call->words[3]);
     if (!icon)
         return icon_fallback(call, "GetIconSizesFromIconRef", invalid_icon_ref);
+    IconFamilyView view;
+    OSErr status = icon_family_view(icon, &view);
+    if (status)
+        return icon_status(call, status);
     uint32 available = 0;
-    for (uint32 offset = icon_family_header_size; offset < icon->size;
-         offset += icon_read_word(icon->bytes + offset + 4))
-        available |= icon_family_selector(icon_read_word(icon->bytes + offset));
+    for (uint32 offset = icon_family_header_size; offset < view.size; offset += icon_read_word(view.bytes + offset + 4))
+        available |= icon_family_selector(icon_read_word(view.bytes + offset));
     return icon_status(call,
                        call->words[1] && cfp_write(call->words[1], available & call->words[0]) ? noErr : paramErr);
 }
@@ -909,8 +1330,11 @@ static int carbon_IsIconRefMaskEmpty(ROMlib_carbon_ppc_frame* call)
     IconReference* icon = icon_find(call->words[0]);
     if (!icon)
         return icon_fallback(call, "IsIconRefMaskEmpty", TRUE);
-    for (uint32 offset = icon_family_header_size; offset < icon->size;) {
-        const Byte* element = icon->bytes + offset;
+    IconFamilyView view;
+    if (icon_family_view(icon, &view))
+        return icon_status(call, TRUE);
+    for (uint32 offset = icon_family_header_size; offset < view.size;) {
+        const Byte* element = view.bytes + offset;
         uint32 selector = icon_family_selector(icon_read_word(element));
         uint32 chunk = icon_read_word(element + 4), length = chunk - icon_family_header_size;
         if (selector & 0x11111111) {

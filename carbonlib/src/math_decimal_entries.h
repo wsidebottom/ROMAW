@@ -63,6 +63,16 @@ static int carbon_math_entry_num2dec(ROMlib_carbon_ppc_frame* call_frame)
     return ROMlib_carbon_report_failure("Invalid MathLib decimal format or output");
 }
 
+static int carbon_math_entry_num2decl(ROMlib_carbon_ppc_frame* call_frame)
+{
+    const unsigned char* form = carbon_decimal_memory(call_frame->words[0], 4, 0);
+    /* Two double limbs occupy r4 through r7. */
+    unsigned char* decimal = carbon_decimal_memory(call_frame->words[5], ROMLIB_PPC_DECIMAL_SIZE, 1);
+    if (!form || !decimal)
+        return ROMlib_carbon_report_failure("Invalid MathLib decimal format or output");
+    return ROMlib_carbon_math_binary_to_decl(call_frame, form[0], carbon_decimal_short(form + 2), decimal);
+}
+
 static int carbon_math_entry_dec2str(ROMlib_carbon_ppc_frame* call_frame)
 {
     const unsigned char* form = carbon_decimal_memory(call_frame->words[0], 4, 0);
@@ -106,6 +116,23 @@ static int carbon_math_entry_dec2num(ROMlib_carbon_ppc_frame* call_frame)
         return 1;
     }
     return ROMlib_carbon_report_failure("Invalid MathLib decimal record");
+}
+
+static int carbon_math_entry_dec2f(ROMlib_carbon_ppc_frame* call_frame)
+{
+    const unsigned char* decimal = carbon_decimal_memory(call_frame->words[0], ROMLIB_PPC_DECIMAL_SIZE, 0);
+    return ROMlib_carbon_math_dec_to_binary(call_frame, decimal, 1);
+}
+
+static int carbon_math_entry_dec2numl(ROMlib_carbon_ppc_frame* call_frame)
+{
+    const unsigned char* decimal = carbon_decimal_memory(call_frame->words[0], ROMLIB_PPC_DECIMAL_SIZE, 0);
+    return ROMlib_carbon_math_dec_to_binary(call_frame, decimal, 0);
+}
+
+static int carbon_math_entry_ldexpl(ROMlib_carbon_ppc_frame* call_frame)
+{
+    return ROMlib_carbon_math_extended(call_frame, carbon_math_dd_scale);
 }
 
 static int carbon_decimal_integer(ROMlib_carbon_ppc_frame* call_frame, const unsigned char* decimal, uint32_t limit,

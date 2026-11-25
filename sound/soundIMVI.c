@@ -492,12 +492,10 @@ P2(PUBLIC, pascal trap OSErr, GetSoundHeaderOffset, Handle, sndHandle, LONGINT*,
 P3(PUBLIC, pascal trap UnsignedFixed, UnsignedFixedMulDiv, UnsignedFixed, value, UnsignedFixed, multiplier,
    UnsignedFixed, divisor)
 {
-    UnsignedFixed retval;
-
-    warning_sound_log(NULL_STRING);
-    warning_unimplemented(NULL_STRING);
-    retval = 0;
-    return retval;
+    if (!divisor)
+        return UINT32_MAX;
+    const uint64_t quotient = (uint64_t)value * multiplier / divisor;
+    return MIN(quotient, UINT32_MAX);
 }
 
 P5(PUBLIC, pascal trap OSErr, GetCompressionInfo, INTEGER, compressionID, OSType, format, INTEGER, numChannels, INTEGER,

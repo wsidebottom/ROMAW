@@ -42,6 +42,8 @@ enum {
     ROMlib_bevel_button_proc = 32,
     ROMlib_slider_proc = 48,
     ROMlib_slider_thumb_length = 14,
+    ROMlib_progress_bar_proc = 80,
+    ROMlib_relevance_bar_proc = 81,
     ROMlib_chasing_arrows_proc = 112,
     ROMlib_tabs_proc = 128,
     ROMlib_separator_proc = 144,
@@ -80,6 +82,9 @@ typedef struct PACKED {
     uint32 chasing_frame;
     BOOLEAN chasing_animating;
 } ROMlib_aux_control_data;
+    uint32 progress_last_tick;
+    Byte progress_phase;
+    BOOLEAN progress_indeterminate, progress_animating;
 
 #define ROMlib_aux_control_extra(aux) ((ROMlib_aux_control_data*)(STARH(aux) + 1))
 extern ControlHandle ROMlib_alloc_custom_control(WindowPtr window, const Rect* bounds, uint32 definition);
@@ -111,6 +116,7 @@ extern OSErr ROMlib_get_control_text(ControlHandle control, Size size, Byte* dat
 extern OSErr ROMlib_get_dialog_control(WindowPtr window, INTEGER item, HIDDEN_ControlHandle* control);
 extern OSErr ROMlib_control_focus(WindowPtr window, ControlHandle control, INTEGER part, HIDDEN_ControlHandle* output);
 extern OSErr ROMlib_control_activate(ControlHandle control, boolean_t active);
+extern OSErr ROMlib_control_cycle_focus(WindowPtr window, boolean_t reverse);
 extern void ROMlib_control_idle(WindowPtr window);
 
 enum ROMlib_control_data_op { ROMLIB_CONTROL_READ, ROMLIB_CONTROL_MEASURE, ROMLIB_CONTROL_WRITE };

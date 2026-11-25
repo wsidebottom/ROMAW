@@ -19,6 +19,7 @@
 
 #include "carbonlib.h"
 #include "cf_batch.h"
+#include "ScriptMgr.h"
 #include "rsys/mixed_mode.h"
 
 /* Pack6 takes a two-byte selector after the Pascal arguments. */
@@ -59,6 +60,62 @@ static int carbon_EqualString(ROMlib_carbon_ppc_frame* call)
 static int carbon_RelString(ROMlib_carbon_ppc_frame* call)
 {
     return carbon_classic_string_order(call, 0);
+}
+
+static uint32_t carbon_c_string_extent(uint32_t address)
+{
+    for (uint32_t length = 0; address && length < INT16_MAX && address <= UINT32_MAX - length; ++length) {
+        const Byte* byte = ROMlib_carbon_try_guest_memory(address + length, 1, 0);
+        if (!byte)
+            break;
+        if (!*byte)
+            return length ? length + 1 : 0;
+    }
+    return UINT32_MAX;
+}
+
+static int carbon_relstring(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t left = carbon_c_string_extent(call->words[0]);
+    const uint32_t right = carbon_c_string_extent(call->words[1]);
+    if (left == UINT32_MAX || right == UINT32_MAX)
+        return ROMlib_carbon_report_failure("Invalid relstring C string");
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[2] = (left << 16) | right;
+    const uint16_t trap_word = 0xa050 | ((uint8_t)call->words[2] ? 0x400 : 0) | ((uint8_t)call->words[3] ? 0 : 0x200);
+    uint32_t result;
+    if (!ROMlib_carbon_call_register_vector(0x0540, 0xef33022, trap_word, 0, &arguments, &result))
+        return 0;
+    call->words[0] = (int16_t)result;
+    return 1;
+}
+
+static int carbon_upperstring(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t extent = carbon_c_string_extent(call->words[0]);
+    if (extent == UINT32_MAX || (extent && !ROMlib_carbon_try_guest_memory(call->words[0], extent, 1)))
+        return ROMlib_carbon_report_failure("Invalid upperstring C string");
+    const ROMlib_carbon_ppc_frame arguments = {.words = {call->words[0], extent}, .stack = call->stack};
+    uint32_t ignored;
+    return ROMlib_carbon_call_register_vector(0x0550, 0x533002, (uint8_t)call->words[1] ? 0xa054 : 0xa254, 0,
+                                              &arguments, &ignored);
+}
+
+static int carbon_GetApplicationScript(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[0] = (int32_t)C_Font2Script(GetAppFont());
+    return 1;
+}
+
+static int carbon_stdtext(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_ppc_frame arguments = *call;
+    for (unsigned i = 2; i <= 3; ++i) {
+        if (!call->words[i] || !cfp_get(call->words[i], &arguments.words[i]))
+            return 0;
+    }
+    uint32_t ignored;
+    return ROMlib_carbon_call_toolbox_vector(0x1008, 0x3f80, 0, &arguments, &ignored);
 }
 
 static int carbon_transform_text(ROMlib_carbon_ppc_frame* call, uint32_t transform, const char* name)

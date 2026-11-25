@@ -25,6 +25,9 @@
 
 extern LONGINT debugnumber;
 extern LONGINT ROMlib_creator;
+
+enum { ROMLIB_PPC_TIMEBASE_MHZ = 25, ROMLIB_PPC_CORE_MHZ = 250 };
+
 extern syn68k_addr_t alinehandler(syn68k_addr_t pc, void* ignored);
 extern void filltables(void);
 extern void romaw_main(void);

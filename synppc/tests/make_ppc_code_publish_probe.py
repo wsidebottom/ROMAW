@@ -34,9 +34,12 @@ def make_probe(destination):
     def call(index):
         emit(0x819E0008 + index * 4, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421)
 
-    def publish(offset, length):
-        emit(0x387E0000 | offset, 0x38800000 | length)
-        call(0)
+    def publish(index, offset, length):
+        if index == 4:
+            emit(0x3860FFFF, 0x389E0000 | offset, 0x38A00000 | length)
+        else:
+            emit(0x387E0000 | offset, 0x38800000 | length)
+        call(index)
 
     def check(value):
         emit(0x2C030000 | value)
@@ -54,10 +57,10 @@ def make_probe(destination):
     emit(0x38600000, 0x38800008, 0x38A00000, 0x38C00000)
     call(2)
     check(0)
-    for value in (17, 29):
+    for publisher, value in ((0, 17), (3, 29), (4, 41)):
         # Replace the first instruction of a previously compiled RAM function.
         emit(0x3C603860, 0x60630000 | value, 0x907E0080)
-        publish(128, 20)
+        publish(publisher, 128, 20)
         emit(0x3BA00020)
         loop = len(code)
         emit(0x399E0080, 0x7D8903A6, 0x4E800421)
@@ -80,9 +83,10 @@ def make_probe(destination):
     app = pef(
         code,
         data,
-        imports=[("InterfaceLib", name, 2) for name in ("MakeDataExecutable", "GetMainDevice", "HasDepth")],
+        imports=[("InterfaceLib", name, 2) for name in ("MakeDataExecutable", "GetMainDevice", "HasDepth")]
+        + [("CarbonLib", name, 2) for name in ("MakeDataExecutable", "MakeExecutable")],
         main=0,
-        reloc=[0x4600, 0x4A02],
+        reloc=[0x4600, 0x4A04],
     )
     write_fragment(destination, "PPC Code Publish Probe", app, 1)
 

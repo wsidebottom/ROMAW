@@ -5,7 +5,9 @@
 
   Classes:   None.
 
-  Functions: ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask; BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext, dialog_draw_item, get_item_style_info
+  Functions: ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask, ROMlib_SetDialogTimeout,
+             ROMlib_GetDialogTimeout, BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext,
+             dialog_draw_item, get_item_style_info.
 
   Origin:    Existing repository source in executor/src/dialogs; original attribution and provenance comments are
              preserved below.
@@ -114,7 +116,12 @@ P3(PUBLIC pascal, BOOLEAN, ROMlib_myfilt, DialogPeek, dp, EventRecord*, evt, INT
     return pressed ? (BOOLEAN)-1 : FALSE;
 }
 
-#define DIALOGEVTS (mDownMask | mUpMask | keyDownMask | autoKeyMask | updateMask | activMask)
+enum {
+    dialog_default_events = 0x17f,
+    dialog_no_timeout = -5640,
+    dialog_invalid_window = -5600,
+    dialog_property_missing = -5604
+};
 
 typedef pascal BOOLEAN (*modalprocp)(DialogPtr dial, EventRecord* evtp, INTEGER* iht);
 
@@ -173,8 +180,10 @@ static inline void ROMlib_CALLUSERITEM(DialogPtr dp, INTEGER inum, useritemp tem
 int32 ROMlib_SetModalDialogEventMask(DialogPtr dialog, uint16 mask)
 {
     ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
-    if (!metadata || WINDOW_KIND(dialog) != dialogKind)
+    if (!dialog)
         return paramErr;
+    if (!metadata)
+        return dialog_invalid_window;
     metadata->modal_event_mask = mask;
     metadata->modal_event_mask_set = TRUE;
     return noErr;
@@ -182,11 +191,65 @@ int32 ROMlib_SetModalDialogEventMask(DialogPtr dialog, uint16 mask)
 
 int32 ROMlib_GetModalDialogEventMask(DialogPtr dialog, uint16* mask)
 {
-    ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
-    if (!metadata || WINDOW_KIND(dialog) != dialogKind || !mask)
+    const ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
+    if (!mask)
         return paramErr;
-    *mask = CW(metadata->modal_event_mask_set ? metadata->modal_event_mask : DIALOGEVTS);
+    *mask = CW(metadata && metadata->modal_event_mask_set ? metadata->modal_event_mask : dialog_default_events);
     return noErr;
+}
+
+static uint32 dialog_time(void)
+{
+    LONGINT seconds;
+    GetDateTime(&seconds);
+    return CL(seconds);
+}
+
+int32 ROMlib_SetDialogTimeout(DialogPtr dialog, INTEGER item, uint32 duration)
+{
+    ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
+    if (!metadata)
+        return dialog_invalid_window;
+    if (!duration && !metadata->dialog_timeout_duration)
+        return dialog_property_missing;
+
+    metadata->dialog_timeout_duration = duration;
+    metadata->dialog_timeout_deadline = duration ? dialog_time() + duration : 0;
+    metadata->dialog_timeout_item = item;
+    metadata->dialog_timeout_mouse = (Point){0, 0};
+    return noErr;
+}
+
+int32 ROMlib_GetDialogTimeout(DialogPtr dialog, INTEGER* item, uint32* duration, uint32* remaining)
+{
+    const ROMlib_window_metadata* metadata = ROMlib_window_get_metadata(dialog);
+    if (!metadata || !metadata->dialog_timeout_duration)
+        return dialog_no_timeout;
+    if (item)
+        *item = CW(metadata->dialog_timeout_item);
+    if (duration)
+        *duration = CL(metadata->dialog_timeout_duration);
+    if (remaining)
+        *remaining = CL(metadata->dialog_timeout_deadline - dialog_time());
+    return noErr;
+}
+
+static boolean_t dialog_timeout_filter(ROMlib_window_metadata* metadata, const EventRecord* event, INTEGER* item)
+{
+    if (!metadata || !metadata->dialog_timeout_duration)
+        return FALSE;
+    const uint32 seconds = dialog_time();
+    const uint16 kind = CW(event->what);
+    if (event->where.h != metadata->dialog_timeout_mouse.h || event->where.v != metadata->dialog_timeout_mouse.v ||
+        kind == keyDown || kind == autoKey) {
+        metadata->dialog_timeout_mouse = event->where;
+        metadata->dialog_timeout_deadline = seconds + metadata->dialog_timeout_duration;
+        return FALSE;
+    }
+    if (seconds < metadata->dialog_timeout_deadline)
+        return FALSE;
+    *item = CW(metadata->dialog_timeout_item);
+    return TRUE;
 }
 
 P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
@@ -209,7 +272,7 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
         boolean_t done;
 
         dp = (DialogPeek)FrontWindow();
-        if (dp->window.windowKind != CWC(dialogKind) && CW(dp->window.windowKind) >= 0)
+        if (!dp || (dp->window.windowKind != CWC(dialogKind) && CW(dp->window.windowKind) >= 0))
             *item = CWC(-1);
         else {
             idle = (Cx(dp->editField) == -1) ? 0 : PPR(dp->textH);
@@ -224,9 +287,10 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
 
                 if (idle)
                     TEIdle(idle);
-                ROMlib_window_metadata* metadata = ROMlib_window_get_metadata((DialogPtr)dp);
-                GetNextEvent(metadata && metadata->modal_event_mask_set ? metadata->modal_event_mask : DIALOGEVTS,
-                             &evt);
+                const ROMlib_window_metadata* metadata = ROMlib_window_get_metadata((DialogPtr)dp);
+                const uint16 mask =
+                    metadata && metadata->modal_event_mask_set ? metadata->modal_event_mask : dialog_default_events;
+                GetNextEvent(mask, &evt);
                 whereunswapped.h = CW(evt.where.h);
                 whereunswapped.v = CW(evt.where.v);
 
@@ -239,7 +303,8 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
                 if (mousedown_p)
                     mousedown_where = _FindWindow(whereunswapped, &temp_wp);
 
-                if (CALLMODALPROC((DialogPtr)dp, &evt, item, fp2)) {
+                if (CALLMODALPROC((DialogPtr)dp, &evt, item, fp2) ||
+                    dialog_timeout_filter(ROMlib_window_get_metadata((DialogPtr)dp), &evt, item)) {
                     /* #### not sure what this means */
                     /* above callpascal might need to be `& 0xF0' */
 

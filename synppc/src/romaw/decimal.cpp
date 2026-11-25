@@ -5,7 +5,8 @@
 
   Classes:   Declared: decimal_digits.
 
-  Functions: ROMlib_ppc_num2dec, ROMlib_ppc_dec2str, ROMlib_ppc_str2dec, ROMlib_ppc_dec2num.
+  Functions: ROMlib_ppc_num2dec, ROMlib_ppc_num2decl, ROMlib_ppc_decimal_text,
+             ROMlib_ppc_dec2str, ROMlib_ppc_str2dec, ROMlib_ppc_dec2num.
 
   Origin:    Original implementation of the record layout and formatting specified in Inside Macintosh:
              PowerPC Numerics, Chapter 9 and Appendix C. Uses the standard C++ character conversion library.
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <quadmath.h>
 #include <system_error>
 
 struct decimal_digits {
@@ -26,44 +28,56 @@ struct decimal_digits {
     int count = 0, exponent = 0;
 };
 
-static bool scientific_digits(double value, int precision, decimal_digits& digits)
+template <typename Float> static bool scientific_digits(Float value, int precision, decimal_digits& digits)
 {
-    char buffer[64];
-    auto result = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::scientific, precision - 1);
-    if (result.ec != std::errc())
-        return false;
+    char buffer[80];
+    char* limit;
+    if constexpr (sizeof(Float) == sizeof(double)) {
+        auto result = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::scientific, precision - 1);
+        if (result.ec != std::errc())
+            return false;
+        limit = result.ptr;
+    }
+    else {
+        const int length = quadmath_snprintf(buffer, sizeof buffer, "%.*Qe", precision - 1, value);
+        if (length < 0 || (size_t)length >= sizeof buffer)
+            return false;
+        limit = buffer + length;
+    }
     char* cursor = buffer;
     digits.count = 0;
-    while (cursor < result.ptr && *cursor != 'e') {
-        if (*cursor != '.')
+    while (cursor < limit && *cursor != 'e') {
+        if (*cursor >= '0' && *cursor <= '9')
             digits.text[digits.count++] = *cursor;
         ++cursor;
     }
-    if (cursor == result.ptr)
+    if (cursor == limit)
         return false;
     ++cursor;
-    if (cursor < result.ptr && *cursor == '+')
+    if (cursor < limit && *cursor == '+')
         ++cursor;
     int exponent;
-    auto parsed = std::from_chars(cursor, result.ptr, exponent);
-    if (parsed.ec != std::errc() || parsed.ptr != result.ptr)
+    auto parsed = std::from_chars(cursor, limit, exponent);
+    if (parsed.ec != std::errc() || parsed.ptr != limit)
         return false;
     digits.exponent = exponent - digits.count + 1;
     return true;
 }
 
-extern "C" int ROMlib_ppc_num2dec(int style, int digits, double value, unsigned char output[ROMLIB_PPC_DECIMAL_SIZE])
+template <typename Float>
+static int decimal_from_binary(int style, int digits, Float magnitude, bool negative, char special,
+                               unsigned char output[ROMLIB_PPC_DECIMAL_SIZE])
 {
     if (!output || (style != 0 && style != 1) || digits < INT16_MIN || digits > INT16_MAX)
         return 0;
     std::memset(output, 0, ROMLIB_PPC_DECIMAL_SIZE);
-    output[0] = std::signbit(value) ? 1 : 0;
-    if (!std::isfinite(value) || value == 0) {
+    output[0] = negative;
+    if (special) {
         output[4] = 1;
-        output[5] = std::isnan(value) ? 'N' : std::isinf(value) ? 'I' : '0';
+        output[5] = special;
         return 1;
     }
-    value = std::fabs(value);
+    const Float value = magnitude;
     decimal_digits converted;
     if (!scientific_digits(value, 36, converted))
         return 0;
@@ -101,34 +115,58 @@ extern "C" int ROMlib_ppc_num2dec(int style, int digits, double value, unsigned 
     return 1;
 }
 
-extern "C" int ROMlib_ppc_dec2num(const unsigned char decimal[ROMLIB_PPC_DECIMAL_SIZE], double* output)
+extern "C" int ROMlib_ppc_num2dec(int style, int digits, double value, unsigned char output[ROMLIB_PPC_DECIMAL_SIZE])
+{
+    const char special = std::isnan(value) ? 'N' : std::isinf(value) ? 'I' : value == 0 ? '0' : 0;
+    return decimal_from_binary(style, digits, std::fabs(value), std::signbit(value), special, output);
+}
+
+extern "C" int ROMlib_ppc_num2decl(int style, int digits, __float128 value, unsigned char output[ROMLIB_PPC_DECIMAL_SIZE])
+{
+    const char special = isnanq(value) ? 'N' : isinfq(value) ? 'I' : value == 0 ? '0' : 0;
+    return decimal_from_binary(style, digits, fabsq(value), signbitq(value), special, output);
+}
+
+extern "C" int ROMlib_ppc_decimal_text(const unsigned char decimal[ROMLIB_PPC_DECIMAL_SIZE],
+                                       char output[ROMLIB_PPC_DECIMAL_INPUT_SIZE])
 {
     if (!decimal || !output || decimal[4] < 1 || decimal[4] > 36)
         return 0;
-    bool negative = decimal[0] != 0;
+    char* end = output;
+    if (decimal[0])
+        *end++ = '-';
     if (decimal[5] == 'N' || decimal[5] == 'I') {
-        *output = std::copysign(decimal[5] == 'N' ? std::numeric_limits<double>::quiet_NaN()
-                                                  : std::numeric_limits<double>::infinity(),
-                                negative ? -1.0 : 1.0);
+        std::memcpy(end, decimal[5] == 'N' ? "nan" : "inf", 4);
         return 1;
     }
-    char buffer[64], *end = buffer;
-    if (negative)
-        *end++ = '-';
     for (int i = 0; i < decimal[4]; ++i) {
         if (decimal[5 + i] < '0' || decimal[5 + i] > '9')
             return 0;
         *end++ = decimal[5 + i];
     }
     *end++ = 'e';
-    int exponent = static_cast<int16_t>((decimal[2] << 8) | decimal[3]);
-    auto formatted = std::to_chars(end, buffer + sizeof buffer, exponent);
+    const int exponent = static_cast<int16_t>((decimal[2] << 8) | decimal[3]);
+    auto formatted = std::to_chars(end, output + ROMLIB_PPC_DECIMAL_INPUT_SIZE - 1, exponent);
+    if (formatted.ec != std::errc())
+        return 0;
+    *formatted.ptr = 0;
+    return 1;
+}
+
+extern "C" int ROMlib_ppc_dec2num(const unsigned char decimal[ROMLIB_PPC_DECIMAL_SIZE], double* output)
+{
+    char buffer[ROMLIB_PPC_DECIMAL_INPUT_SIZE];
+    if (!output || !ROMlib_ppc_decimal_text(decimal, buffer))
+        return 0;
+    const char* end = buffer + std::strlen(buffer);
     double value;
-    auto parsed = std::from_chars(buffer, formatted.ptr, value, std::chars_format::scientific);
-    if (parsed.ec == std::errc::result_out_of_range)
+    auto parsed = std::from_chars(buffer, end, value, std::chars_format::scientific);
+    if (parsed.ec == std::errc::result_out_of_range) {
+        const int exponent = static_cast<int16_t>((decimal[2] << 8) | decimal[3]);
         value = std::copysign(exponent + decimal[4] - 1 > 0 ? std::numeric_limits<double>::infinity() : 0.0,
-                              negative ? -1.0 : 1.0);
-    else if (parsed.ec != std::errc() || parsed.ptr != formatted.ptr)
+                              decimal[0] ? -1.0 : 1.0);
+    }
+    else if (parsed.ec != std::errc() || parsed.ptr != end)
         return 0;
     *output = value;
     return 1;

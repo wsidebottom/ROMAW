@@ -60,6 +60,39 @@ static int carbon_ShowMenuBar(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+static bool alternate_menu_profile(const char* name, uint32_t offset, ROMlib_carbon_reference* reference)
+{
+    return ROMlib_carbon_probe_reference("MenusLib", name, reference) &&
+           (reference->code_offset != offset || reference->code_size != 0x162a4);
+}
+
+static int carbon_ValidateMenuBar(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (alternate_menu_profile("ValidateMenuBar", 0xaf0, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    ROMlib_menu_validate_bar();
+    return 1;
+}
+
+static int carbon_InvalidateAllMenuSizes(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (alternate_menu_profile("InvalidateAllMenuSizes", 0x1351c, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    ROMlib_menu_invalidate_sizes();
+    return 1;
+}
+
+static int carbon_SetMenuBarHeight(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (alternate_menu_profile("SetMenuBarHeight", 0x1d60, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    ROMlib_menu_set_bar_height((int16_t)call->words[0]);
+    return 1;
+}
+
 enum carbon_menu_enable_operation {
     menu_enable,
     menu_disable,
@@ -1629,6 +1662,19 @@ static int carbon_SetSubmenuParentChoosable(ROMlib_carbon_ppc_frame* call)
     call->words[2] = enabled ? menu_parent_choosable : 0;
     call->words[3] = enabled ? 0 : menu_parent_choosable;
     return carbon_ChangeMenuItemAttributes(call);
+}
+
+static int carbon_GetSubmenuParentChoosable(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t address = call->words[2];
+    BOOLEAN* output = address ? ROMlib_carbon_try_guest_memory(address, sizeof *output, 1) : NULL;
+    const uint32_t menu_address = call->words[0];
+    const uint32_t* master = menu_address ? ROMlib_carbon_try_guest_memory(menu_address, sizeof *master, 0) : NULL;
+    const uint32_t data = master ? CL(*master) : 0;
+    const MenuHandle menu = data && ROMlib_carbon_try_guest_memory(data, offsetof(MenuInfo, menuData) + 2, 0)
+                                ? (MenuHandle)master
+                                : NULL;
+    return menu_result(call, ROMlib_get_submenu_parent_choosable(menu, (INTEGER)call->words[1], output));
 }
 
 static int carbon_IsMenuItemIconEnabled(ROMlib_carbon_ppc_frame* call)

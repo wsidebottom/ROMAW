@@ -100,6 +100,9 @@ int ROMlib_carbon_math_bits(ROMlib_carbon_ppc_frame* call_frame, carbon_math_bit
 int ROMlib_carbon_math_aux(ROMlib_carbon_ppc_frame* call_frame, carbon_math_aux_op operation);
 int ROMlib_carbon_math_env(ROMlib_carbon_ppc_frame* call_frame, carbon_math_env_op operation);
 int ROMlib_carbon_math_financial(ROMlib_carbon_ppc_frame* call_frame, int annuity);
+int ROMlib_carbon_math_dec_to_binary(ROMlib_carbon_ppc_frame* call_frame, const unsigned char* decimal, int single);
+int ROMlib_carbon_math_binary_to_decl(ROMlib_carbon_ppc_frame* call_frame, int style, int digits, unsigned char* decimal);
+int ROMlib_carbon_math_dd_frexp(ROMlib_carbon_ppc_frame* call_frame);
 int ROMlib_carbon_math_extended(ROMlib_carbon_ppc_frame* call_frame, carbon_math_extended_op operation);
 int ROMlib_carbon_fixed_to_double(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_fract_to_double(ROMlib_carbon_ppc_frame* call);

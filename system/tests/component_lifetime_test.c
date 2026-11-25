@@ -5,10 +5,8 @@
 
   Classes:   None.
 
-  Functions: CToPascalCall, C_Count1Resources, C_CurResFile, C_FSMakeFSSpec, C_Get1IndResource, C_Get1Resource,
-             C_HomeResFile, C_UseResFile, DisposHandle, GetHandleSize, HLock, HUnlock, MemError, PBGetFCBInfo,
-             ROMlib_ppc_component_entry, SetHandleSize, _NewHandle_flags, main, syn68k_guest_to_host,
-             syn68k_host_to_guest
+  Functions: Component registry test, guest address helpers, and fixture implementations of
+             Memory Manager, Resource Manager, File Manager, and callback entry points.
 
   Origin:    Existing repository source in executor/tests; original attribution and provenance comments are preserved
              below.
@@ -92,6 +90,51 @@ C_Count1Resources(ResType type)
 }
 
 Handle C_Get1IndResource(ResType type, INTEGER index)
+{
+    abort();
+}
+
+INTEGER C_HOpenResFile(INTEGER volume, LONGINT directory, Str255 name, SignedByte permission)
+{
+    abort();
+}
+
+int ROMlib_resource_file_already_open(const FSSpec* spec, Boolean* in_chain, INTEGER* reference)
+{
+    abort();
+}
+
+resmaphand ROMlib_rntohandl(INTEGER reference, Handle* previous)
+{
+    abort();
+}
+
+void C_CloseResFile(INTEGER reference)
+{
+    abort();
+}
+
+INTEGER C_ResError(void)
+{
+    abort();
+}
+
+void C_LoadResource(Handle resource)
+{
+    abort();
+}
+
+SignedByte HGetState(Handle handle)
+{
+    abort();
+}
+
+void HSetState(Handle handle, SignedByte state)
+{
+    abort();
+}
+
+OSErrRET HandToHand(Handle* handle)
 {
     abort();
 }
@@ -213,18 +256,18 @@ int main(void)
     source = _NewHandle_flags(8, 1, 1);
     assert(source);
     memcpy(STARH(source), "original", 8);
-    for (i = 1; i <= 5; ++i) {
+    for (i = 1; i <= 6; ++i) {
         allocation = 0;
         fail_at = i;
-        id = component_register(&description, (ProcPtr)0x1000, source, source, source, source, NULL, 0, 1, 0, 0);
+        id = component_register(&description, (ProcPtr)0x1000, source, source, source, source, NULL, 0, 1, 0, 0, 0);
         assert(!id && !components && !instances && live_allocs == 1);
     }
     fail_at = 0;
-    id = component_register(&description, (ProcPtr)0x1000, source, source, source, source, NULL, 0, 1, 0, 0);
+    id = component_register(&description, (ProcPtr)0x1000, source, source, source, source, NULL, 0, 1, 0, 0, 0);
     assert(id && !memcmp(STARH(components->code), "original", 8));
     memset(STARH(source), 0, 8);
     assert(!memcmp(STARH(components->code), "original", 8));
-    other = component_register(&description, (ProcPtr)0x1000, NULL, NULL, NULL, NULL, NULL, 0, 1, 0, 0);
+    other = component_register(&description, (ProcPtr)0x1000, NULL, NULL, NULL, NULL, NULL, 0, 1, 0, 0, 0);
     nested_component = component_find(other);
     action = 1;
     assert(!component_open(component_find(id)));

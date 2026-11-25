@@ -195,21 +195,6 @@ typedef struct ppc_shutdown_callback {
     uint16 flags;
 } ppc_shutdown_callback;
 
-/* Appearance drawing states are opaque guest tokens with per-launch ownership.
-   They save color/pen state, not a port, clip region or font selection. */
-typedef struct ppc_theme_state {
-    struct ppc_theme_state* next;
-    uint32 token;
-    PenState pen;
-    RGBColor foreground, background;
-    LONGINT foreground_index, background_index;
-    Pattern background_pattern;
-    PixPatHandle background_pixpat;
-    Point origin;
-    INTEGER text_mode;
-    boolean_t color, background_valid;
-} ppc_theme_state;
-
 typedef struct {
     uint32 architecture;
     ROMlib_pef_image* application;
@@ -255,7 +240,9 @@ typedef struct {
     ppc_notifier* notifiers;
     ppc_folder_notification* folder_notifications;
     unsigned folder_notification_depth;
-    ppc_theme_state* theme_states;
+    ROMlib_carbon_theme_state* theme_states;
+    ROMlib_carbon_debug_component* debug_components;
+    uint32_t debug_assert_handler;
     ppc_fragment* notifying_owner;
     uint32 notifier_serial;
     int floating_windows_inactive;
@@ -1711,29 +1698,6 @@ PRIVATE int ppc_get_icon_ref_by_name(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
-PRIVATE int ppc_get_icon_ref_from_folder(ROMlib_carbon_ppc_frame* call)
-{
-    ROMlib_carbon_reference saved;
-    if (ROMlib_carbon_probe_reference("IconServicesLib", "GetIconRefFromFolder", &saved)) {
-        uint32* dispatch = ppc_memory(ppc_active_context, 0x17d4, 4, FALSE);
-        if (saved.code_size != 0x16fd0 || (dispatch && CL(*dispatch)))
-            return ROMlib_carbon_invoke_frame(saved.function, call);
-    }
-    /* This entry explicitly describes a folder without a custom icon. Use
-       the actual system family, retaining the normal IconRef ownership. */
-    const ROMlib_carbon_export* service = ROMlib_carbon_find_export("GetIconRef", 2);
-    if (!service || !(service->signature & ROMLIB_CARBON_PPC_FRAME))
-        return 0;
-    ROMlib_carbon_ppc_frame arguments = *call;
-    arguments.words[1] = TICK("macs");
-    arguments.words[2] = call->words[2] == 2 && call->words[1] == 1 ? TICK("hdsk") : TICK("fldr");
-    arguments.words[3] = call->words[5];
-    if (!((ROMlib_carbon_frame_entry)service->function)(&arguments))
-        return 0;
-    call->words[0] = arguments.words[0];
-    return 1;
-}
-
 PRIVATE MenuHandle ppc_classic_menu_handle(ppc_context* ctx, uint32 address)
 {
     uint32* master = address ? ppc_memory(ctx, address, 4, FALSE) : NULL;
@@ -1757,119 +1721,19 @@ PRIVATE int ppc_get_submenu_parent_choosable(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
-PRIVATE int32 ppc_get_theme_drawing_state(uint32 output_address)
+ROMlib_carbon_debug_component** ROMlib_carbon_debug_component_slot(void)
 {
-    ppc_context* ctx = ppc_active_context;
-    void* output = output_address ? ppc_memory(ctx, output_address, 4, TRUE) : NULL;
-    if (!output)
-        return paramErr;
-    memset(output, 0, 4);
-    if (!thePort || !ROMlib_valid_qd_port(thePort))
-        return paramErr;
-    unsigned count = 0;
-    for (ppc_theme_state* saved = ctx->theme_states; saved; saved = saved->next)
-        ++count;
-    if (count >= 512)
-        return memFullErr;
-    ppc_theme_state* state = calloc(1, sizeof *state);
-    if (!state)
-        return memFullErr;
-    if (!ppc_allocate(ctx, 4, 4, &state->token)) {
-        free(state);
-        return memFullErr;
-    }
-    GetPenState(&state->pen);
-    state->color = CGrafPort_p(thePort);
-    state->foreground_index = PORT_FG_COLOR(thePort);
-    state->background_index = PORT_BK_COLOR(thePort);
-    state->text_mode = PORT_TX_MODE(thePort);
-    state->origin = ROMlib_pattern_origin();
-    if (state->color) {
-        GetForeColor(&state->foreground);
-        GetBackColor(&state->background);
-        PixPatHandle background = CPORT_BK_PIXPAT(theCPort);
-        if (background) {
-            state->background_valid = TRUE;
-            PATASSIGN(state->background_pattern, PIXPAT_1DATA(background));
-            if (PIXPAT_TYPE_X(background) != CWC(pixpat_type_orig))
-                state->background_pixpat = background;
-        }
-    }
-    else {
-        state->background_valid = TRUE;
-        PATASSIGN(state->background_pattern, PORT_BK_PAT(thePort));
-    }
-    state->next = ctx->theme_states;
-    ctx->theme_states = state;
-    const uint32 token = CL(state->token);
-    memcpy(output, &token, sizeof token);
-    return noErr;
+    return ppc_active_context ? &ppc_active_context->debug_components : NULL;
 }
 
-PRIVATE int32 ppc_dispose_theme_drawing_state(uint32 token)
+uint32_t* ROMlib_carbon_debug_handler_slot(void)
 {
-    ppc_context* ctx = ppc_active_context;
-    ppc_theme_state** link = &ctx->theme_states;
-    while (*link && (*link)->token != token)
-        link = &(*link)->next;
-    if (!*link)
-        return paramErr;
-    ppc_theme_state* state = *link;
-    *link = state->next;
-    ppc_release(ctx, SYN68K_TO_US(state->token));
-    free(state);
-    return noErr;
+    return ppc_active_context ? &ppc_active_context->debug_assert_handler : NULL;
 }
 
-PRIVATE int32 ppc_set_theme_drawing_state(uint32 token, BOOLEAN dispose)
+ROMlib_carbon_theme_state** ROMlib_carbon_theme_state_slot(void)
 {
-    ppc_context* ctx = ppc_active_context;
-    ppc_theme_state* state = ctx->theme_states;
-    while (state && state->token != token)
-        state = state->next;
-    if (!state || !thePort || !ROMlib_valid_qd_port(thePort))
-        return paramErr;
-    THz zone = GetZone();
-    if (thePort == MR(wmgr_port))
-        SetZone(MR(SysZone));
-    SetPenState(&state->pen);
-    if (state->color && CGrafPort_p(thePort)) {
-        RGBForeColor(&state->foreground);
-        RGBBackColor(&state->background);
-        if (state->background_valid) {
-            if (state->background_pixpat)
-                BackPixPat(state->background_pixpat);
-            else
-                BackPat(state->background_pattern);
-        }
-    }
-    else {
-        ForeColor(state->foreground_index);
-        BackColor(state->background_index);
-        if (state->background_valid)
-            BackPat(state->background_pattern);
-    }
-    TextMode(state->text_mode);
-    ROMlib_QDSetPatternOrigin(state->origin);
-    SetZone(zone);
-    return dispose ? ppc_dispose_theme_drawing_state(token) : noErr;
-}
-
-PRIVATE int32 ppc_normalize_theme_drawing_state(void)
-{
-    if (!thePort || !ROMlib_valid_qd_port(thePort))
-        return paramErr;
-    THz zone = GetZone();
-    if (thePort == MR(wmgr_port))
-        SetZone(MR(SysZone));
-    ForeColor(blackColor);
-    BackColor(whiteColor);
-    PenNormal();
-    BackPat(white);
-    TextMode(srcOr);
-    ROMlib_QDSetPatternOrigin((Point){0, 0});
-    SetZone(zone);
-    return noErr;
+    return ppc_active_context ? &ppc_active_context->theme_states : NULL;
 }
 
 PRIVATE BOOLEAN ppc_wait_next_event(INTEGER mask, EventRecord* event, LONGINT sleep, RgnHandle mouse_region)
@@ -2590,22 +2454,7 @@ PRIVATE OSErr ppc_set_keyboard_focus(WindowPtr window, ControlHandle control, IN
 
 PRIVATE LONGINT ppc_set_theme_window_background(WindowPtr window, INTEGER brush, BOOLEAN update)
 {
-    HIDDEN_GrafPtr saved;
-
-    if (!ROMlib_valid_window(window))
-        return paramErr;
-    if (brush != 1 && brush != 2)
-        return -4; /* unimpErr */
-    GetPort(&saved);
-    SetPort((GrafPtr)window);
-    AuxWinHandle aux = HIDDEN_NATIVE(*lookup_aux_win(window));
-    if (aux)
-        HxX(aux, awFlags) = CL(Hx(aux, awFlags) | ROMlib_theme_window_background);
-    RGBBackColor(&ROMlib_theme_background_rgb);
-    if (update)
-        InvalRect(&PORT_RECT((GrafPtr)window));
-    SetPort(HIDDEN_NATIVE(saved));
-    return noErr;
+    return ROMlib_carbon_set_theme_window_background(window, brush, update);
 }
 
 PRIVATE OSErr ppc_get_window_region(WindowPtr window, INTEGER code, RgnHandle output)
@@ -3067,49 +2916,14 @@ PRIVATE LONGINT ppc_set_theme_text_color(INTEGER color, INTEGER depth, BOOLEAN c
 
 PRIVATE LONGINT ppc_draw_theme_placard(const Rect* rect, LONGINT state)
 {
-    if (!rect || state < 0 || state > 2)
-        return paramErr;
-    draw_state_t saved;
-    draw_state_save(&saved);
-    RGBBackColor(&ROMlib_theme_background_rgb);
-    LONGINT result = ppc_draw_theme_frame(rect, state, 0, TRUE);
-    Rect bevel = *rect;
-    InsetRect(&bevel, 1, 1);
-    if (RECT_WIDTH(&bevel) > 1 && RECT_HEIGHT(&bevel) > 1) {
-        PenNormal();
-        RGBForeColor(&ROMlib_white_rgb_color);
-        MoveTo(CW(bevel.left), CW(bevel.bottom) - 1);
-        LineTo(CW(bevel.left), CW(bevel.top));
-        LineTo(CW(bevel.right) - 1, CW(bevel.top));
-        static const RGBColor shadow = {CWC(0x8888), CWC(0x8888), CWC(0x8888)};
-        RGBForeColor(&shadow);
-        MoveTo(CW(bevel.right) - 1, CW(bevel.top) + 1);
-        LineTo(CW(bevel.right) - 1, CW(bevel.bottom) - 1);
-        LineTo(CW(bevel.left) + 1, CW(bevel.bottom) - 1);
-    }
-    draw_state_restore(&saved);
-    return result;
+    return ROMlib_carbon_draw_theme_panel(rect, state, appearance_placard);
 }
 
 PRIVATE LONGINT ppc_draw_theme_window_header(const Rect* rect, LONGINT state)
 {
-    if (!rect || !ROMlib_win_accessible_span(rect, sizeof *rect, FALSE) || state < 0 || state > 2)
+    if (!rect || !ROMlib_win_accessible_span(rect, sizeof *rect, FALSE))
         return paramErr;
-    if (EmptyRect(rect))
-        return noErr;
-    draw_state_t saved;
-    draw_state_save(&saved);
-    PenNormal();
-    RGBForeColor(&ROMlib_theme_background_rgb);
-    PaintRect(rect);
-    RGBForeColor(&ROMlib_white_rgb_color);
-    MoveTo(CW(rect->left), CW(rect->top));
-    LineTo(CW(rect->right) - 1, CW(rect->top));
-    RGBForeColor(state ? &ROMlib_black_rgb_color : &ROMlib_gray_rgb_color);
-    MoveTo(CW(rect->left), CW(rect->bottom) - 1);
-    LineTo(CW(rect->right) - 1, CW(rect->bottom) - 1);
-    draw_state_restore(&saved);
-    return noErr;
+    return ROMlib_carbon_draw_theme_panel(rect, state, appearance_window_header);
 }
 
 PRIVATE QDErr ppc_new_gworld(HIDDEN_GWorldPtr* world, INTEGER depth, Rect* bounds, CTabHandle colors, GDHandle device,
@@ -3400,13 +3214,6 @@ static void ppc_set_icon_device(uint32 device)
     ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x218, &args, &ignored);
 }
 
-static void ppc_get_icon_device(uint32 output)
-{
-    const ROMlib_carbon_ppc_frame args = {.words = {output}};
-    uint32 ignored;
-    ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x220, &args, &ignored);
-}
-
 PRIVATE const ppc_native_import native_imports[] = {
     {"AEObjectInit", ROMlib_ae_object_init, M0(2)},
     {"AESetObjectCallbacks", C_AESetObjectCallbacks, PTOC_AESetObjectCallbacks},
@@ -3419,7 +3226,6 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"PPCOpenSync", ppc_ppc_open_sync, M1(2, 4)},
     {"PPCCloseSync", ppc_ppc_close_sync, M1(2, 4)},
     {"SetIconDevice", ppc_set_icon_device, M1(0, 4)},
-    {"GetIconDevice", ppc_get_icon_device, M1(0, 4)},
     {"NewDesktopLayerOwner", ROMlib_new_desktop_layer_owner, M1(2, 5)},
     {"RequestVolumeNotification", ppc_request_volume_notification, M2(2, 4, 4)},
     {"DeclineVolumeNotification", ppc_decline_volume_notification, M2(2, 4, 4)},
@@ -4091,7 +3897,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
             binding.magic = M2(2, 4, 4);
         }
     }
-    if (!strcmp(library, "MacDialogsLib") &&
+    if (cfm_architecture(ctx) == kMotorola68KArch && !strcmp(library, "MacDialogsLib") &&
         (!strcmp(name, "SetModalDialogEventMask") || !strcmp(name, "GetModalDialogEventMask"))) {
         int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
         if (found)
@@ -4174,11 +3980,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         }
     }
     if (!strcmp(library, "IconServicesLib") && cfm_architecture(ctx) == kPowerPCArch) {
-        if (!strcmp(name, "GetIconRefFromFolder")) {
-            binding.function = ppc_get_icon_ref_from_folder;
-            binding.magic = ROMLIB_CARBON_PPC_FRAME;
-        }
-        else if (!strcmp(name, "GetIconRefByName")) {
+        if (!strcmp(name, "GetIconRefByName")) {
             binding.function = ppc_get_icon_ref_by_name;
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
         }
@@ -4213,7 +4015,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         (!strcmp(library, "PrivateInterfaceLib") &&
          (!strcmp(name, "SndSoundManagerVersion") || !strcmp(name, "IsSystemMenu") ||
           !strcmp(name, "RequestVolumeNotification") || !strcmp(name, "DeclineVolumeNotification") ||
-          !strcmp(name, "NewDesktopLayerOwner") || !strcmp(name, "SetIconDevice") || !strcmp(name, "GetIconDevice") ||
+          !strcmp(name, "NewDesktopLayerOwner") || !strcmp(name, "SetIconDevice") ||
           !strcmp(name, "SysZoneFloatSizes") || !strcmp(name, "VM_GetHoldableBytes")))) {
         const ppc_native_import* service = ppc_find_native_import(name);
         if (service) {
@@ -4227,22 +4029,6 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         if (!strcmp(name, "GetViewsFont") && cfm_architecture(ctx) == kPowerPCArch) {
             binding.function = ppc_get_views_font;
             binding.magic = ROMLIB_CARBON_PPC_FRAME;
-        }
-        else if (!strcmp(name, "GetThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
-            binding.function = ppc_get_theme_drawing_state;
-            binding.magic = M1(4, 4);
-        }
-        else if (!strcmp(name, "SetThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
-            binding.function = ppc_set_theme_drawing_state;
-            binding.magic = M2(4, 4, 1);
-        }
-        else if (!strcmp(name, "DisposeThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
-            binding.function = ppc_dispose_theme_drawing_state;
-            binding.magic = M1(4, 4);
-        }
-        else if (!strcmp(name, "NormalizeThemeDrawingState") && cfm_architecture(ctx) == kPowerPCArch) {
-            binding.function = ppc_normalize_theme_drawing_state;
-            binding.magic = M0(4);
         }
         else if (!strcmp(name, "SetMenuItemRefCon2")) {
             binding.function = ROMlib_set_menu_item_refcon2;
@@ -4632,7 +4418,7 @@ PRIVATE int ppc_time_service(ppc_context* ctx, const char* name, ROMlib_ppc_regi
     if (!strcmp(name, "UpTime"))
         value = ROMlib_ppc_clock_ticks();
     else if (!strcmp(name, "Microseconds"))
-        value = ROMlib_ppc_clock_ticks() / 25;
+        value = ROMlib_ppc_clock_ticks() / ROMLIB_PPC_TIMEBASE_MHZ;
     else if (!strcmp(name, "AbsoluteToNanoseconds"))
         value = (((uint64)r->gpr[4] << 32) | r->gpr[5]) * 40;
     else
@@ -4855,6 +4641,15 @@ PRIVATE void ppc_debug_string(const unsigned char* bytes, unsigned length)
     fprintf(stderr, "debugstr: ");
     fwrite(bytes, 1, length, stderr);
     fputc('\n', stderr);
+}
+
+static int ppc_debug_pascal_string(ppc_context* ctx, uint32 address)
+{
+    const unsigned char* text = address ? ppc_memory(ctx, address, 1, FALSE) : NULL;
+    if (!text || !ppc_memory(ctx, address, (size_t)text[0] + 1, FALSE))
+        return 0;
+    ppc_debug_string(text + 1, text[0]);
+    return 1;
 }
 
 /* Classic StdCLib's scalar PowerPC jump buffer. The vector slot at 0x10 is
@@ -5289,13 +5084,8 @@ PRIVATE int ppc_service(void* opaque, uint32 id, ROMlib_ppc_registers* r)
             return handled > 0;
         }
     }
-    if (!strcmp(strrchr(binding->name, ':') + 1, "DebugStr")) {
-        unsigned char* text = ppc_memory(ctx, r->gpr[3], 1, FALSE);
-        if (!text || !ppc_memory(ctx, r->gpr[3], (size_t)text[0] + 1, FALSE))
-            return 0;
-        ppc_debug_string(text + 1, text[0]);
-        return 1;
-    }
+    if (!(binding->magic & ROMLIB_CARBON_PPC_FRAME) && !strcmp(strrchr(binding->name, ':') + 1, "DebugStr"))
+        return ppc_debug_pascal_string(ctx, r->gpr[3]);
     if (!strcmp(binding->name, "InterfaceLib:MakeDataExecutable") ||
         !strcmp(binding->name, "CarbonLib:MakeDataExecutable"))
         return ppc_make_code_executable(ctx, r->gpr[3], r->gpr[4], NULL, NULL);
@@ -5396,6 +5186,8 @@ int ROMlib_carbon_call_romaw_service(const char* name, ROMlib_carbon_ppc_frame* 
         return 0;
     if (!strcmp(name, "MakeDataExecutable"))
         return ppc_make_code_executable(ctx, call_frame->words[0], call_frame->words[1], NULL, NULL);
+    if (!strcmp(name, "DebugStr"))
+        return ppc_debug_pascal_string(ctx, call_frame->words[0]);
     const ppc_native_import* native = ppc_find_native_import(name);
     if (!native || (native->magic & ROMLIB_CARBON_PPC_FRAME))
         return 0;
@@ -5412,13 +5204,14 @@ PRIVATE void ppc_advance_system_clock(ppc_context* ctx, uint64 now)
 {
     uint64 elapsed = now - ctx->system_tick;
     ROMlib_ppc_750_advance(&ctx->system, elapsed);
-    /* Functional 250-MHz core input alongside the 25-MHz TB source.
-       Split multiplication to preserve every cycle for long suspensions. */
-    while (elapsed > UINT64_MAX / 10) {
-        ROMlib_ppc_750_advance_core(&ctx->system, (UINT64_MAX / 10) * 10);
-        elapsed -= UINT64_MAX / 10;
+    /* Split multiplication to preserve every core cycle for long suspensions. */
+    const unsigned clocks_per_tick = ROMLIB_PPC_CORE_MHZ / ROMLIB_PPC_TIMEBASE_MHZ;
+    const uint64 maximum_interval = UINT64_MAX / clocks_per_tick;
+    while (elapsed > maximum_interval) {
+        ROMlib_ppc_750_advance_core(&ctx->system, maximum_interval * clocks_per_tick);
+        elapsed -= maximum_interval;
     }
-    ROMlib_ppc_750_advance_core(&ctx->system, elapsed * 10);
+    ROMlib_ppc_750_advance_core(&ctx->system, elapsed * clocks_per_tick);
     ctx->system_tick = now;
 }
 
@@ -5759,6 +5552,9 @@ PRIVATE int ppc_mapped_service(void* opaque, uint32 id, ROMlib_ppc_registers* r,
     if (!strcmp(binding->name, "InterfaceLib:MakeDataExecutable") ||
         !strcmp(binding->name, "CarbonLib:MakeDataExecutable"))
         return ppc_make_code_executable(ctx, r->gpr[3], r->gpr[4], &bus, fault);
+    if (!strcmp(binding->name, "PrivateInterfaceLib:MakeExecutable") ||
+        !strcmp(binding->name, "CarbonLib:MakeExecutable"))
+        return ppc_make_code_executable(ctx, r->gpr[4], r->gpr[5], &bus, fault);
     if (!strcmp(binding->name, "InterfaceLib:BlockMove") || !strcmp(binding->name, "CarbonLib:BlockMove"))
         return ppc_mapped_block_move(ctx, access, binding->name, TRUE, r);
     if (!strcmp(binding->name, "InterfaceLib:BlockMoveData") || !strcmp(binding->name, "CarbonLib:BlockMoveData"))
@@ -8637,11 +8433,9 @@ PRIVATE void ppc_free_closures(ppc_context* ctx)
         ctx->shutdown_callbacks = entry->next;
         free(entry);
     }
-    while (ctx->theme_states) {
-        ppc_theme_state* state = ctx->theme_states;
-        ctx->theme_states = state->next;
-        free(state); /* Guest tokens are released by the allocation teardown. */
-    }
+    ROMlib_carbon_free_theme_states(&ctx->theme_states);
+    ROMlib_carbon_free_debug_components(&ctx->debug_components);
+    ctx->debug_assert_handler = 0;
     while (ctx->notifiers) {
         ppc_notifier* notifier = ctx->notifiers;
         ctx->notifiers = notifier->next;

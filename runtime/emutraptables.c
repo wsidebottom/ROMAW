@@ -1282,7 +1282,7 @@ void* fsroutines[][2] = {
 #define MOUNTVOLTRAP 0xF
 #define MOUNTVOLINDEX 15
 
-    {/* 0xA010 */ PBAllocate, PBAllocate /* 16 */},
+    {/* 0xA010 / 0xA210 */ PBAllocate, PBAllocContig /* 16 */},
 #define ALLOCATETRAP 0x10
 #define ALLOCATEINDEX 16
 

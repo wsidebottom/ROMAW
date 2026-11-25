@@ -16,6 +16,8 @@
 #define ROMAW_CARBON_ROMAW_SERVICES_H
 
 #include "carbonlib.h"
+#include "DialogMgr.h"
+#include "rsys/wind.h"
 
 #define CARBON_ROMAW_SERVICE(name)                                      \
     static int carbon_romaw_##name(ROMlib_carbon_ppc_frame* call_frame) \
@@ -45,6 +47,16 @@ CARBON_ROMAW_SERVICE(SetScriptManagerVariable)
 CARBON_ROMAW_SERVICE(SndSoundManagerVersion)
 CARBON_ROMAW_SERVICE(TSMGetActiveDocument)
 CARBON_ROMAW_SERVICE(UpperString)
+CARBON_ROMAW_SERVICE(DebugStr)
+CARBON_ROMAW_SERVICE(MakeDataExecutable)
+
+static int carbon_romaw_MakeExecutable(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[0] = call->words[1];
+    arguments.words[1] = call->words[2];
+    return carbon_romaw_MakeDataExecutable(&arguments);
+}
 
 CARBON_ROMAW_SERVICE(StandardAlert)
 CARBON_ROMAW_SERVICE(GetMenuItemModifiers)
@@ -79,5 +91,66 @@ CARBON_ROMAW_SERVICE(GetThemeMenuSeparatorHeight)
 CARBON_ROMAW_SERVICE(GetThemeMenuItemExtra)
 
 #undef CARBON_ROMAW_SERVICE
+
+static DialogPtr carbon_dialog(ROMlib_carbon_ppc_frame* call)
+{
+    return call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(WindowRecord), 0) : NULL;
+}
+
+static int carbon_dialog_result(ROMlib_carbon_ppc_frame* call, int32 result)
+{
+    call->words[0] = (uint32)result;
+    return 1;
+}
+
+static bool carbon_saved_dialog(DialogPtr dialog, const char* name, ROMlib_carbon_reference* reference)
+{
+    return dialog && !ROMlib_window_get_metadata(dialog) &&
+           ROMlib_carbon_load_reference("MacDialogsLib", name, reference);
+}
+
+static int carbon_SetModalDialogEventMask(ROMlib_carbon_ppc_frame* call)
+{
+    DialogPtr dialog = carbon_dialog(call);
+    ROMlib_carbon_reference reference;
+    if (carbon_saved_dialog(dialog, "SetModalDialogEventMask", &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    return carbon_dialog_result(call, ROMlib_SetModalDialogEventMask(dialog, (uint16)call->words[1]));
+}
+
+static int carbon_GetModalDialogEventMask(ROMlib_carbon_ppc_frame* call)
+{
+    DialogPtr dialog = carbon_dialog(call);
+    uint16* mask = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *mask, 1) : NULL;
+    if (!mask)
+        return carbon_dialog_result(call, paramErr);
+    ROMlib_carbon_reference reference;
+    if (carbon_saved_dialog(dialog, "GetModalDialogEventMask", &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    return carbon_dialog_result(call, ROMlib_GetModalDialogEventMask(dialog, mask));
+}
+
+static int carbon_SetDialogTimeout(ROMlib_carbon_ppc_frame* call)
+{
+    DialogPtr dialog = carbon_dialog(call);
+    ROMlib_carbon_reference reference;
+    if (carbon_saved_dialog(dialog, "SetDialogTimeout", &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    return carbon_dialog_result(call, ROMlib_SetDialogTimeout(dialog, (int16)call->words[1], call->words[2]));
+}
+
+static int carbon_GetDialogTimeout(ROMlib_carbon_ppc_frame* call)
+{
+    DialogPtr dialog = carbon_dialog(call);
+    INTEGER* item = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *item, 1) : NULL;
+    uint32* duration = call->words[2] ? ROMlib_carbon_try_guest_memory(call->words[2], sizeof *duration, 1) : NULL;
+    uint32* remaining = call->words[3] ? ROMlib_carbon_try_guest_memory(call->words[3], sizeof *remaining, 1) : NULL;
+    if ((call->words[1] && !item) || (call->words[2] && !duration) || (call->words[3] && !remaining))
+        return carbon_dialog_result(call, paramErr);
+    ROMlib_carbon_reference reference;
+    if (carbon_saved_dialog(dialog, "GetDialogTimeout", &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    return carbon_dialog_result(call, ROMlib_GetDialogTimeout(dialog, item, duration, remaining));
+}
 
 #endif

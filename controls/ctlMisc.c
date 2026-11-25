@@ -12,7 +12,8 @@
              ROMlib_forget_control_font_style, ROMlib_get_control_text, ROMlib_get_control_features,
              ROMlib_native_control_kind, ROMlib_send_control_message, ROMlib_set_control_image_content, ROMlib_get_control_image_content,
              ROMlib_set_control_font_style, ROMlib_set_control_text, ROMlib_set_user_pane_callback, ctl_color_init,
-             ROMlib_control_activate, ROMlib_control_best_rect, ROMlib_control_data, ROMlib_control_focus,
+             ROMlib_control_activate, ROMlib_control_best_rect, ROMlib_control_cycle_focus, ROMlib_control_data,
+             ROMlib_control_focus,
              ROMlib_control_idle, ROMlib_control_region, ROMlib_set_up_control_color,
              ROMlib_live_control_aux, ROMlib_set_control_supervisor, ROMlib_control_hit_target,
              ROMlib_handle_control_click, ROMlib_handle_control_key, lookup_aux_ctl
@@ -408,6 +409,10 @@ PUBLIC OSErr ROMlib_get_control_features(ControlHandle control, uint32* features
         *features = CLC((1U << 3) | (1U << 6)); /* Idle and Boolean animation data. */
         return noErr;
     case ROMlib_slider_proc:
+    case ROMlib_progress_bar_proc:
+        if (kind == ROMlib_progress_bar_proc)
+            *features = CLC((1U << 3) | (1U << 6));
+        return noErr;
     case ROMlib_tabs_proc:
     case ROMlib_separator_proc:
         return noErr;
@@ -704,6 +709,83 @@ PUBLIC OSErr ROMlib_control_focus(WindowPtr window, ControlHandle control, INTEG
 }
 
 PUBLIC OSErr ROMlib_control_activate(ControlHandle control, boolean_t active)
+static OSErr collect_focus_controls(ControlHandle root, ControlHandle** result, unsigned* count)
+{
+    unsigned capacity = 0;
+    const uint32 raw_root = RM(root);
+    const ROMlib_aux_control_data* root_extra = ROMlib_aux_control_extra(ROMlib_live_control_aux(root));
+    uint32 address = root_extra->first_child;
+    for (unsigned visited = 0; address && visited < UINT16_MAX; ++visited) {
+        ControlHandle control = MR(address);
+        AuxCtlHandle aux = ROMlib_live_control_aux(control);
+        if (!aux)
+            return paramErr;
+        const ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+        if (CTL_VIS(control) && CTL_HILITE(control) != INACTIVE) {
+            if (*count == capacity) {
+                const unsigned next_capacity = capacity ? 2 * capacity : 8;
+                ControlHandle* next = realloc(*result, next_capacity * sizeof *next);
+                if (!next)
+                    return memFullErr;
+                *result = next;
+                capacity = next_capacity;
+            }
+            (*result)[(*count)++] = control;
+            if (extra->first_child) {
+                address = extra->first_child;
+                continue;
+            }
+        }
+        while (!extra->next_sibling && extra->parent && extra->parent != raw_root) {
+            aux = ROMlib_live_control_aux(MR(extra->parent));
+            if (!aux || ++visited == UINT16_MAX)
+                return paramErr;
+            extra = ROMlib_aux_control_extra(aux);
+        }
+        address = extra->next_sibling;
+    }
+    return address ? paramErr : noErr;
+}
+
+PUBLIC OSErr ROMlib_control_cycle_focus(WindowPtr window, boolean_t reverse)
+{
+    HIDDEN_ControlHandle root, focus;
+    OSErr error = ROMlib_get_root_control(window, &root);
+    if (error)
+        return error;
+    error = ROMlib_control_focus(window, NULL, 0, &focus);
+    if (error)
+        return error;
+
+    unsigned count = 0;
+    ControlHandle* controls = NULL;
+    error = collect_focus_controls(HIDDEN_NATIVE(root), &controls, &count);
+    if (!error) {
+        const INTEGER part = reverse ? -2 : -1;
+        ControlHandle previous = HIDDEN_NATIVE(focus);
+        unsigned start = reverse || !count ? 0 : count - 1;
+        for (unsigned i = 0; i < count; ++i) {
+            if (controls[i] == previous) {
+                start = i;
+                break;
+            }
+        }
+        if (!previous || ROMlib_control_focus(window, previous, part, NULL)) {
+            ROMlib_control_focus(window, NULL, 0, NULL);
+            error = -30585; /* errCouldntSetFocus */
+            for (unsigned i = 0; i < count; ++i) {
+                start = reverse ? (start ? start - 1 : count - 1) : (start + 1 == count ? 0 : start + 1);
+                if (!ROMlib_control_focus(window, controls[start], part, NULL)) {
+                    error = noErr;
+                    break;
+                }
+            }
+        }
+    }
+    free(controls);
+    return error;
+}
+
 {
     if (!ROMlib_live_control_aux(control))
         return -30584;
@@ -798,7 +880,8 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
             memcpy(data, callback, 4);
             return noErr;
         }
-        const int kind = ROMlib_native_control_kind(control) & ~15;
+        const int definition = ROMlib_native_control_kind(control);
+        const int kind = definition & ~15;
         if (tag == TICK("anim") && kind == ROMlib_chasing_arrows_proc) {
             if (actual)
                 *actual = CLC(1);
@@ -831,6 +914,23 @@ PUBLIC LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
             return noErr;
         }
         const boolean_t image =
+        if (definition == ROMlib_progress_bar_proc && (tag == TICK("inde") || tag == TICK("anim"))) {
+            if (actual)
+                *actual = CLC(1);
+            if (operation == ROMLIB_CONTROL_MEASURE)
+                return noErr;
+            if (size < 1 || (operation == ROMLIB_CONTROL_WRITE && size != 1))
+                return -30591;
+            ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+            BOOLEAN* flag = tag == TICK("inde") ? &extra->progress_indeterminate : &extra->progress_animating;
+            if (operation == ROMLIB_CONTROL_WRITE) {
+                *flag = *data != 0;
+                CTL_CALL_EXCURSION(control, { InvalRect(&CTL_RECT(control)); });
+            }
+            else
+                *data = *flag;
+            return noErr;
+        }
             tag == TICK("cont") && (kind == ROMlib_image_well_proc || kind == ROMlib_bevel_button_proc);
         const boolean_t bevel =
             kind == ROMlib_bevel_button_proc && (tag == TICK("mval") || tag == TICK("gali") || tag == TICK("goff") ||
@@ -1482,6 +1582,55 @@ PRIVATE void draw_native_value_control(ControlHandle control, int kind)
                 int y = position + length / 2 + stripe;
                 MoveTo(CW(thumb.left) + 3, y);
                 LineTo(CW(thumb.right) - 4, y);
+PRIVATE void draw_native_progress_bar(ControlHandle control, AuxCtlHandle aux, boolean_t relevance)
+{
+    Rect bounds = CTL_RECT(control);
+    if (EmptyRect(&bounds))
+        return;
+
+    static const RGBColor track = {CWC(0xdddd), CWC(0xdddd), CWC(0xdddd)};
+    static const RGBColor progress = {CWC(0x5555), CWC(0x7777), CWC(0xaaaa)};
+    static const RGBColor stripe = {CWC(0xaaaa), CWC(0xbbbb), CWC(0xdddd)};
+    const boolean_t active = CTL_HILITE(control) != INACTIVE;
+    const ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    RGBForeColor(active ? &ROMlib_black_rgb_color : &ROMlib_gray_rgb_color);
+    FrameRect(&bounds);
+    InsetRect(&bounds, 1, 1);
+    if (!EmptyRect(&bounds)) {
+        RGBForeColor(&track);
+        PaintRect(&bounds);
+        RGBForeColor(active && !relevance ? &progress : &ROMlib_gray_rgb_color);
+        if (!relevance && extra->progress_indeterminate) {
+            PaintRect(&bounds);
+            RGBForeColor(active ? &stripe : &track);
+            const int left = CW(bounds.left), right = CW(bounds.right);
+            Rect band = bounds;
+            for (int x = left + extra->progress_phase * 2 - 8; x < right; x += 8) {
+                if (x + 3 > left) {
+                    band.left = CW(MAX(left, x));
+                    band.right = CW(MIN(right, x + 3));
+                    PaintRect(&band);
+                }
+            }
+        }
+        else {
+            int32 range[4];
+            ROMlib_control_read_range(control, aux, range);
+            const int64 span = (int64)range[control_maximum] - range[control_minimum];
+            const int64 offset = (int64)range[control_value] - range[control_minimum];
+            if (span > 0 && offset > 0) {
+                bounds.right = CW(CW(bounds.left) + MIN(offset, span) * RECT_WIDTH(&bounds) / span);
+                if (!EmptyRect(&bounds))
+                    PaintRect(&bounds);
+            }
+        }
+    }
+    draw_state_restore(&saved);
+}
+
             }
             else {
                 int x = position + length / 2 + stripe;
@@ -1740,6 +1889,26 @@ int32 ROMlib_ctlcall(ControlHandle c, int16 i, intptr_t native_param)
                 INTEGER type = CW(CTL_MIN(c)), id = CTL_VALUE_X(c);
                 memcpy(ROMlib_aux_control_extra(aux)->image_content, &type, 2);
                 memcpy(ROMlib_aux_control_extra(aux)->image_content + 2, &id, 2);
+        if ((kind == ROMlib_progress_bar_proc || kind == ROMlib_relevance_bar_proc) && aux) {
+            ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+            if (i == initCntl)
+                extra->progress_animating = TRUE;
+            if (i == calcCntlRgn || i == calcCRgns)
+                RectRgn((RgnHandle)native_param, &CTL_RECT(c));
+            if (CTL_VIS(c) && WINDOW_VISIBLE(CTL_OWNER(c))) {
+                if (i == drawCntl)
+                    draw_native_progress_bar(c, aux, kind == ROMlib_relevance_bar_proc);
+                if (i == 18 && extra->progress_indeterminate && extra->progress_animating) {
+                    const uint32 ticks = TickCount();
+                    if (ticks - extra->progress_last_tick >= 2) {
+                        extra->progress_last_tick = ticks;
+                        extra->progress_phase = (extra->progress_phase + 1) & 3;
+                        draw_native_progress_bar(c, aux, FALSE);
+                    }
+                }
+            }
+            return 0;
+        }
                 CTL_MIN_X(c) = CWC(0);
                 CTL_MAX_X(c) = CWC(1);
                 CTL_VALUE_X(c) = CWC(0);

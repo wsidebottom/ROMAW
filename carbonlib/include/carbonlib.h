@@ -202,6 +202,21 @@ int ROMlib_carbon_invoke_callback(void* procedure, const uint32_t* arguments, un
 /* Validate and translate an entire raw guest span. Invalid memory retains the
    active launch diagnostic; subsequent accesses on that failed launch stop. */
 void* ROMlib_carbon_guest_memory(uint32_t address, size_t length, int write_access);
+typedef struct ROMlib_carbon_theme_state ROMlib_carbon_theme_state;
+ROMlib_carbon_theme_state** ROMlib_carbon_theme_state_slot(void);
+typedef struct ROMlib_carbon_debug_component ROMlib_carbon_debug_component;
+ROMlib_carbon_debug_component** ROMlib_carbon_debug_component_slot(void);
+uint32_t* ROMlib_carbon_debug_handler_slot(void);
+void ROMlib_carbon_free_debug_components(ROMlib_carbon_debug_component** components);
+
+void ROMlib_carbon_free_theme_states(ROMlib_carbon_theme_state** states);
+enum ROMlib_carbon_theme_panel {
+    appearance_window_header = 5,
+    appearance_list_view_header = 6,
+    appearance_placard = 7,
+};
+int32_t ROMlib_carbon_draw_theme_panel(const void* bounds, uint32_t state, enum ROMlib_carbon_theme_panel panel);
+int32_t ROMlib_carbon_set_theme_window_background(void* window, int16_t brush, uint8_t update);
 void* ROMlib_carbon_timezone_storage(uint32_t size, uint32_t* address);
 int ROMlib_carbon_native_ppc_callback(const char* name, int (*function)(ROMlib_carbon_ppc_frame*), uint32_t* vector);
 

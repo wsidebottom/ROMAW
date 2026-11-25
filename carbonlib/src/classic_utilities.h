@@ -20,7 +20,7 @@
 #include "cf_batch.h"
 #include "OSUtil.h"
 #include "TextEdit.h"
-#include "rsys/mman.h"
+#include "rsys/mman_private.h"
 #include "rsys/osutil.h"
 #include "synppc/ppc.h"
 
@@ -476,6 +476,136 @@ static int carbon_PurgeSpace(ROMlib_carbon_ppc_frame* call)
     _PurgeSpace_flags(&total, &contiguous, FALSE);
     return (!call->words[0] || carbon_write_longword(call->words[0], total)) &&
            (!call->words[1] || carbon_write_longword(call->words[1], contiguous));
+}
+
+enum carbon_heap_query { carbon_heap_structure, carbon_heap_pointer, carbon_heap_handle };
+
+static bool carbon_check_heap(uint32_t zone_address, enum carbon_heap_query query, uint32_t target)
+{
+    if (!zone_address || zone_address >= ROMlib_guest_memory_size)
+        return false;
+    const Zone* zone = ROMlib_carbon_try_guest_memory(zone_address, sizeof *zone, 0);
+    if (!zone)
+        return false;
+    const uint32_t end = CL((uint32_t)(uintptr_t)ZONE_BK_LIM_X(zone));
+    uint32_t address = zone_address + offsetof(Zone, heapData);
+    if (end < address || end >= ROMlib_guest_memory_size ||
+        (query != carbon_heap_structure && (target < address || target >= end)))
+        return false;
+
+    bool matched = query == carbon_heap_structure;
+    const uint32_t alloc = CL((uint32_t)(uintptr_t)ZONE_ALLOC_PTR_X(zone));
+    bool found_alloc = !alloc || alloc == end;
+    while (address < end) {
+        const block_header_t* block = ROMlib_carbon_try_guest_memory(address, sizeof *block, 0);
+        if (!block)
+            return false;
+        const uint32_t size = PSIZE(block);
+        if (size < MIN_BLOCK_SIZE || size > end - address || size < HDRSIZE + SIZEC(block))
+            return false;
+
+        const uint32_t location = CL(block->location_u);
+        const uint32_t data = address + HDRSIZE;
+        switch (USE(block)) {
+        case FREE:
+            if (location || BLOCK_STATE(block) != FREE_BLOCK_STATE)
+                return false;
+            break;
+        case NREL:
+            if (location != zone_address)
+                return false;
+            matched |= query == carbon_heap_pointer && target == data;
+            break;
+        case REL: {
+            if (location < offsetof(Zone, heapData) || location > end - zone_address ||
+                sizeof(uint32_t) > end - zone_address - location)
+                return false;
+            const uint32_t handle = zone_address + location;
+            uint32_t master;
+            const void* entry = ROMlib_carbon_try_guest_memory(handle, sizeof master, 0);
+            if (!entry)
+                return false;
+            memcpy(&master, entry, sizeof master);
+            if ((CL(master) & syn68k_address_mask) != data)
+                return false;
+            matched |= query == carbon_heap_handle && target == handle;
+            break;
+        }
+        default:
+            return false;
+        }
+        found_alloc |= address == alloc;
+        address += size;
+    }
+    return matched && found_alloc;
+}
+
+static int carbon_IsHeapValid(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[0] = carbon_check_heap(CL((uint32_t)(uintptr_t)ApplZone), carbon_heap_structure, 0);
+    return 1;
+}
+
+static int carbon_CheckAllHeaps(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t system = CL((uint32_t)(uintptr_t)SysZone), application = CL((uint32_t)(uintptr_t)ApplZone);
+    const uint32_t current = CL((uint32_t)(uintptr_t)TheZone);
+    call->words[0] = carbon_check_heap(system, carbon_heap_structure, 0) &&
+                     (!application || carbon_check_heap(application, carbon_heap_structure, 0)) &&
+                     (!current || current == system || current == application ||
+                      carbon_check_heap(current, carbon_heap_structure, 0));
+    return 1;
+}
+
+static int carbon_heap_object_valid(ROMlib_carbon_ppc_frame* call, enum carbon_heap_query query)
+{
+    const uint32_t target = call->words[0];
+    const uint32_t system = CL((uint32_t)(uintptr_t)SysZone), application = CL((uint32_t)(uintptr_t)ApplZone);
+    const uint32_t current = CL((uint32_t)(uintptr_t)TheZone);
+    call->words[0] = carbon_check_heap(application, query, target) || carbon_check_heap(system, query, target) ||
+                     (current != application && current != system && carbon_check_heap(current, query, target));
+    return 1;
+}
+
+static int carbon_IsPointerValid(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_heap_object_valid(call, carbon_heap_pointer);
+}
+
+static int carbon_IsHandleValid(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_heap_object_valid(call, carbon_heap_handle);
+}
+
+static int carbon_MoreMasterPointers(ROMlib_carbon_ppc_frame* call)
+{
+    const int16_t count = (int16_t)call->words[0];
+    if (count <= 0) {
+        MemErr = CW(count ? paramErr : noErr);
+        return 1;
+    }
+    Zone* zone = ROMlib_carbon_try_guest_memory(CL((uint32_t)(uintptr_t)TheZone), sizeof *zone, 1);
+    if (!TheZone || !zone) {
+        MemErr = CW(memAZErr);
+        return 1;
+    }
+    const int16_t saved = zone->moreMast;
+    zone->moreMast = CW(count);
+    uint32_t ignored;
+    const int ok = ROMlib_carbon_call_register_vector(0x04d8, 0x3802, 0xa036, 0, call, &ignored);
+    zone->moreMast = saved;
+    return ok;
+}
+
+static int carbon_SysError(ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t ignored;
+    return ROMlib_carbon_call_toolbox_vector(0x1524, 0x80, 0, call, &ignored);
+}
+
+static int carbon_UnsignedFixedMulDiv(ROMlib_carbon_ppc_frame* call)
+{
+    return ROMlib_carbon_call_toolbox_vector(0x0e00, 0x3ff8, 0x060c0018, call, &call->words[0]);
 }
 
 static int carbon_store_clock_value(uint32_t address, uint64_t value)

@@ -1163,6 +1163,35 @@ STUB(LayerDispatch)
     syn68k_addr_t retaddr = POPADDR();
     uint32 state, window, size;
     switch ((int8)EM_D0) {
+    case -7: { /* GetParent, including a guest Layer Manager patch's tail call. */
+        window = POPUL();
+        const void* parent = ROMlib_layer_parent(SYN68K_TO_US_CHECK0(window));
+        WRITEUL(EM_A7, US_TO_SYN68K_CHECK0(parent));
+        break;
+    }
+    case 2: /* IsLayer */
+        window = POPUL();
+        WRITEUB(EM_A7, ROMlib_layer_p(SYN68K_TO_US_CHECK0(window)));
+        break;
+    case 3: /* GetCurLayer */
+        WRITEUL(EM_A7, US_TO_SYN68K_CHECK0(ROMlib_layer_current()));
+        break;
+    case 4: /* SetCurLayer */
+        window = POPUL();
+        ROMlib_layer_set(SYN68K_TO_US_CHECK0(window));
+        break;
+    case 5: { /* SwapCurLayer */
+        window = POPUL();
+        const void* previous = ROMlib_layer_swap(SYN68K_TO_US_CHECK0(window));
+        WRITEUL(EM_A7, US_TO_SYN68K_CHECK0(previous));
+        break;
+    }
+    case 6: { /* GetSubWindows */
+        window = POPUL();
+        WindowPtr first = ROMlib_layer_children(SYN68K_TO_US_CHECK0(window));
+        WRITEUL(EM_A7, US_TO_SYN68K_CHECK0(first));
+        break;
+    }
     case 10:
         size = POPUL();
         state = POPUL();
@@ -1861,6 +1890,17 @@ PRIVATE selectorblock_t menu_item_dispatch_block[] = {
 STUB(MenuDispatch)
 {
     unsigned selector = EM_D0 & 0xffff;
+    if (selector == 0x0502 || selector == 0x0503) {
+        const syn68k_addr_t return_address = POPADDR();
+        const uint32 value = POPUL();
+        const INTEGER item = POPUW();
+        MenuHandle menu = (MenuHandle)SYN68K_TO_US_CHECK0(POPUL());
+        const OSErr status = selector == 0x0502 ? ROMlib_set_menu_item_command(menu, item, value)
+                                               : ROMlib_get_menu_item_command(menu, item,
+                                                                              (uint32*)SYN68K_TO_US_CHECK0(value));
+        WRITEUW(EM_A7, status);
+        return return_address;
+    }
     if (selector == 0x08FB) {
         /* MenuMgrPriv DrawMBARString: Pascal string, script, justification. */
         syn68k_addr_t retaddr = POPADDR();
@@ -1928,7 +1968,14 @@ PRIVATE selectorblock_t control_dispatch_block[] = {
 
 STUB(ControlDispatch)
 {
-    return do_selector_block(control_dispatch_block, EM_D0 & 0xffff, ControlDispatch);
+    const uint16 selector = EM_D0 & 0xffff;
+    if (selector == 0x0f || selector == 0x10) {
+        const syn68k_addr_t return_address = POPADDR();
+        const uint32 window = POPUL();
+        WRITEUW(EM_A7, ROMlib_control_cycle_focus(SYN68K_TO_US_CHECK0(window), selector == 0x10));
+        return return_address;
+    }
+    return do_selector_block(control_dispatch_block, selector, ControlDispatch);
 }
 
 STUB(DialogDispatch)
@@ -3093,8 +3140,29 @@ STUB(IMVI_IdleUpdate)
 
 STUB(PowerDispatch)
 {
-    const uint16 selector = EM_D0;
-    if (selector == 0x24) {
+    switch ((uint16)EM_D0) {
+    case 0x01: /* PMFeatures: fixed-clock desktop board, with no portable power hardware. */
+    case 0x0c: /* GetScaledBatteryInfo: empty flag, warning and level bytes. */
+    case 0x0e: /* GetIntModemInfo: no modem or modem state flags. */
+    case 0x13: /* SetProcessorSpeed: FALSE when the speed did not change. */
+    case 0x18: /* IsProcessorCyclingEnabled. */
+    case 0x1a: /* BatteryCount: no internal battery slots. */
+    case 0x1b: /* GetBatteryVoltage: 0.0 when the requested battery is unavailable. */
+        EM_D0 = 0;
+        break;
+    case 0x10: /* MaximumProcessorSpeed. */
+    case 0x11: /* CurrentProcessorSpeed. */
+        EM_D0 = ROMLIB_PPC_CORE_MHZ;
+        break;
+    case 0x12: /* FullProcessorSpeed: the next restart uses the fixed clock. */
+        EM_D0 = TRUE;
+        break;
+    case 0x1c: /* Unavailable BatteryTimeRec measurements are zero. */
+        if (EM_A0)
+            for (unsigned field = 0; field < 4; ++field)
+                WRITEUL(EM_A0 + field * sizeof(uint32), 0);
+        break;
+    case 0x24: {
         const unsigned activity = (uint8)(EM_D0 >> 16);
         if (activity < ROMlib_power_activity_count) {
             ROMlib_power_note_activity(activity, CL(Ticks_UL.u));
@@ -3102,8 +3170,9 @@ STUB(PowerDispatch)
         }
         else
             EM_D0 = paramErr;
+        break;
     }
-    else if (selector == 0x28) {
+    case 0x28: {
         /* ActivityInfo contains a short followed by a two-byte-aligned long. */
         const unsigned activity = EM_A0 ? READUW(EM_A0) : ROMlib_power_activity_count;
         if (activity < ROMlib_power_activity_count) {
@@ -3112,9 +3181,12 @@ STUB(PowerDispatch)
         }
         else
             EM_D0 = paramErr;
+        break;
     }
-    else
+    default:
         EM_D0 = power_unimplemented;
+        break;
+    }
     ADJUST_CC_BASED_ON_D0();
     RTS();
 }

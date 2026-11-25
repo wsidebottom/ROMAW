@@ -34,6 +34,8 @@
     }
 
 CARBON_FS(FSpMakeFSRef, carbon_fs_make_ref_from_spec)
+CARBON_FS(FSPathMakeRef, carbon_fs_path_make_ref)
+CARBON_FS(FSRefMakePath, carbon_fs_ref_make_path)
 CARBON_FS(FSGetCatalogInfo, carbon_fs_get_catalog)
 CARBON_FS(FSCompareFSRefs, carbon_fs_compare_refs)
 CARBON_FS(FSFindFolder, carbon_fs_find_folder)
@@ -104,7 +106,6 @@ CARBON_FS_PAIR(PBOpenIterator, carbon_fs_open_iterator)
 CARBON_FS_PAIR(PBCloseIterator, carbon_fs_close_iterator)
 CARBON_FS_PAIR(PBGetCatalogInfoBulk, carbon_fs_bulk_catalog)
 CARBON_FS_PAIR(PBXGetVolInfo, carbon_fs_extended_volume)
-CARBON_FS_PAIR(PBAllocContig, carbon_fs_allocate_contig)
 
 #undef CARBON_FS_PAIR
 #undef CARBON_FS

@@ -57,7 +57,8 @@ enum carbon_fs_operation {
     carbon_fs_get_volume_ref,
     carbon_fs_flush_volume,
     carbon_fs_cat_move,
-    carbon_fs_allocate_contig,
+    carbon_fs_path_make_ref,
+    carbon_fs_ref_make_path,
 };
 
 int ROMlib_carbon_fs_ref(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation operation);

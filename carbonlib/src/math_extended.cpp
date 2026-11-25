@@ -7,6 +7,7 @@
 
   Functions: ROMlib_carbon_math_dd_binary, ROMlib_carbon_math_dd_remquo, ROMlib_carbon_math_dd_unary,
              ROMlib_carbon_math_extended, ROMlib_carbon_math_quad_binary, ROMlib_carbon_math_quad_unary,
+             ROMlib_carbon_math_dec_to_binary, ROMlib_carbon_math_binary_to_decl, ROMlib_carbon_math_dd_frexp,
              ROMlib_carbon_math_wide_float, ROMlib_carbon_fract_to_double, ROMlib_carbon_fixed_to_double,
              ROMlib_carbon_double_to_fixed, ROMlib_carbon_double_to_fract, ROMlib_carbon_fract_cosine,
              ROMlib_carbon_fract_sine, ROMlib_carbon_fract_square_root, ROMlib_carbon_fixed_atan2.
@@ -18,6 +19,8 @@
 
 #include "math_native.h"
 #include "math_wide.h"
+#include "synppc/src/romaw/decimal.h"
+#include <quadmath.h>
 #include "synppc/src/ppc-arithmetic.h"
 #include <cstring>
 
@@ -552,7 +555,92 @@ int ROMlib_carbon_fixed_atan2(ROMlib_carbon_ppc_frame* call)
     return constants && fixed_atan2(call, constants);
 }
 
-extern "C" int ROMlib_carbon_math_extended(ROMlib_carbon_ppc_frame* call_frame, carbon_math_extended_op operation)
+extern "C" int ROMlib_carbon_math_dec_to_binary(ROMlib_carbon_ppc_frame* call_frame, const unsigned char* decimal, int single)
+{
+    char text[ROMLIB_PPC_DECIMAL_INPUT_SIZE];
+    if (!ROMlib_ppc_decimal_text(decimal, text))
+        return ROMlib_carbon_report_failure("Invalid MathLib decimal record");
+
+    math_host_environment saved;
+    if (!ROMlib_carbon_math_begin_host(&saved, single ? 1 : call_frame->fpscr))
+        return 0;
+    char* end = nullptr;
+    const __float128 value = strtoflt128(text, &end);
+    const bool parsed = end && !*end;
+    float128_t bits{};
+    if (single && parsed) {
+        std::memcpy(&bits, &value, sizeof bits);
+        const uint64_t exponent = bits.v[high_word] & UINT64_C(0x7fff000000000000);
+        /* The host parser can raise inexact during an exact conversion.
+           Compare the directed results before adding a sticky bit. */
+        if (exponent != UINT64_C(0x7fff000000000000) && !(bits.v[1 - high_word] & 1) &&
+            fetestexcept(FE_INEXACT) && !fesetround(decimal[0] ? FE_DOWNWARD : FE_UPWARD)) {
+            const __float128 away = strtoflt128(text, nullptr);
+            if (away != value)
+                bits.v[1 - high_word] |= 1;
+        }
+    }
+    ROMlib_carbon_ppc_frame parsing = {};
+    ROMlib_carbon_math_finish_host(single ? &parsing : call_frame, &saved);
+    if (!parsed)
+        return ROMlib_carbon_report_failure("Invalid MathLib decimal conversion");
+
+    MathSoftFloat environment(call_frame->fpscr);
+    if (!single)
+        return set_quad_result(call_frame, value);
+
+    const auto guest_rounding = softfloat_roundingMode;
+    softfloat_roundingMode = softfloat_round_odd;
+    const float64_t intermediate = f128_to_f64(bits);
+    softfloat_roundingMode = guest_rounding;
+    call_frame->floating[0] = f32_to_f64(f64_to_f32(intermediate)).v;
+    call_frame->fpscr = romaw_ppc_record_fpscr(call_frame->fpscr, raised_exceptions());
+    return 1;
+}
+
+int ROMlib_carbon_math_binary_to_decl(ROMlib_carbon_ppc_frame* call_frame, int style, int digits, unsigned char* decimal)
+{
+    math_host_environment saved;
+    if (!ROMlib_carbon_math_begin_host(&saved, 0))
+        return 0;
+    int ok;
+    {
+        MathSoftFloat environment(0);
+        ok = ROMlib_ppc_num2decl(style, digits, quad_argument(call_frame->floating), decimal);
+    }
+    /* Formatting a decimal record must leave the guest rounding mode intact. */
+    ROMlib_carbon_ppc_frame formatting = {};
+    ROMlib_carbon_math_finish_host(&formatting, &saved);
+    return ok ? 1 : ROMlib_carbon_report_failure("Invalid MathLib decimal format or output");
+}
+
+int ROMlib_carbon_math_dd_frexp(ROMlib_carbon_ppc_frame* call_frame)
+{
+    auto* output = static_cast<unsigned char*>(call_frame->words[4] ?
+        ROMlib_carbon_try_guest_memory(call_frame->words[4], sizeof(uint32_t), 1) : nullptr);
+    if (!output)
+        return ROMlib_carbon_report_failure("Missing MathLib exponent output pointer");
+
+    MathSoftFloat environment(call_frame->fpscr);
+    const uint64_t high = call_frame->floating[0], low = call_frame->floating[1];
+    const auto normalized = extended_value(high, low);
+    const unsigned biased_exponent = (normalized.v[high_word] >> 48) & 0x7fff;
+    int exponent = 0;
+    if (biased_exponent < 0x7fff && nonzero(normalized)) {
+        exponent = (int)biased_exponent - 16382;
+        const auto high_limb = binary_scale(f64_to_f128(float64_t{high}), -exponent);
+        const auto low_limb = binary_scale(f64_to_f128(float64_t{low}), -exponent);
+        split_extended(high_limb, call_frame->floating[0], call_frame->floating[1], low_limb);
+    }
+    else {
+        split_extended(normalized, call_frame->floating[0], call_frame->floating[1]);
+    }
+    write_bytes(output, sizeof(uint32_t), (uint32_t)exponent);
+    call_frame->fpscr = romaw_ppc_record_fpscr(call_frame->fpscr, raised_exceptions());
+    return 1;
+}
+
+int ROMlib_carbon_math_extended(ROMlib_carbon_ppc_frame* call_frame, carbon_math_extended_op operation)
 {
     MathSoftFloat rounding(call_frame->fpscr);
     if (operation >= carbon_math_x80_to_double) {

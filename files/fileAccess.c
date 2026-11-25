@@ -1993,12 +1993,9 @@ A2(PUBLIC, OSErr, ufsPBAllocate, ParmBlkPtr, pb, /* INTERNAL */
 A2(PUBLIC, OSErr, ufsPBAllocContig, ParmBlkPtr, pb, /* INTERNAL */
    BOOLEAN, a)
 {
-    OSErr err;
-
-    /* WARN that calling this might be a sign of a non-portable program */
-    err = PBAllocate(pb, a); /* o.k. a lie, but wtf */
-    fs_err_hook(err);
-    return err;
+    /* A host fork uses the same reservation path. PBAllocContig performs
+       the caller's single completion after this backend returns. */
+    return ufsPBAllocate(pb, FALSE);
 }
 
 A2(PUBLIC, OSErr, ufsPBFlushFile, ParmBlkPtr, pb, /* INTERNAL */

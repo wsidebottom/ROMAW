@@ -16,9 +16,12 @@
 
 /* Classic Component Manager registration and instance lifetime support. */
 #include "rsys/common.h"
+#include "OSUtil.h"
 #include "rsys/everything.h"
 #include "rsys/component.h"
 #include "rsys/mman.h"
+#include "rsys/resource.h"
+#include "rsys/system_resources.h"
 #include "rsys/ctopflags.h"
 #include "rsys/stubify.h"
 
@@ -27,10 +30,17 @@ typedef struct PACKED {
     uint32 flags, mask;
 } component_description;
 
+typedef struct component_type_seed {
+    struct component_type_seed* next;
+    OSType type;
+    uint32 seed;
+} component_type_seed;
+
 typedef struct component_entry {
     struct component_entry* next;
     uint32 id, refcon, registration_flags, version, instances;
     component_description description;
+    component_type_seed* type_seed;
     Handle code, name, info, icon;
     FSSpec spec;
     ProcPtr entry;
@@ -49,6 +59,14 @@ typedef struct component_instance {
     unsigned busy, closing;
 } component_instance;
 
+typedef struct component_resource_file {
+    struct component_resource_file* next;
+    resmaphand map;
+    INTEGER reference;
+    unsigned opens;
+    Boolean owned;
+} component_resource_file;
+
 static void* component_pointer(uint32 address)
 {
     return address ? SYN68K_TO_US(address) : NULL;
@@ -56,6 +74,8 @@ static void* component_pointer(uint32 address)
 
 static component_entry* components;
 static component_instance* instances;
+static component_type_seed* type_seeds;
+static component_resource_file* resource_files;
 static uint32 next_id = 0x10000, modification_seed;
 static int shutting_down;
 
@@ -183,6 +203,27 @@ static int same_component_group(const component_description* candidate, const co
            ((flags & default_any_flags) || candidate->flags == wanted->flags);
 }
 
+static component_type_seed* component_find_type_seed(OSType type, boolean_t create)
+{
+    for (component_type_seed* record = type_seeds; record; record = record->next)
+        if (record->type == type)
+            return record;
+    if (!create)
+        return NULL;
+    component_type_seed* record = calloc(1, sizeof *record);
+    if (record) {
+        record->type = type;
+        record->next = type_seeds;
+        type_seeds = record;
+    }
+    return record;
+}
+
+static void component_modified(component_entry* component)
+{
+    component->type_seed->seed = ++modification_seed;
+}
+
 static int16 set_default_component(uint32 id, uint16 flags)
 {
     component_entry** current = &components;
@@ -200,7 +241,7 @@ static int16 set_default_component(uint32 id, uint16 flags)
             *current = selected->next;
             selected->next = *first;
             *first = selected;
-            ++modification_seed;
+            component_modified(selected);
             break;
         }
     }
@@ -323,7 +364,7 @@ static int32 component_unregister(uint32 id)
     if (!(p = *link) || p->instances || p->loading)
         return -3000;
     *link = p->next;
-    ++modification_seed;
+    component_modified(p);
     if (p->code)
         DisposHandle(p->code);
     if (p->name)
@@ -366,7 +407,8 @@ static uint32 component_register(const component_description* description, ProcP
             if ((options & register_after_existing) && existing->description.type == p->description.type)
                 position = &existing->next;
         }
-    if (!p->id || (code && !p->code) || (name && !p->name) || (info && !p->info) || (icon && !p->icon)) {
+    if (!p->id || (code && !p->code) || (name && !p->name) || (info && !p->info) || (icon && !p->icon) ||
+        !(p->type_seed = component_find_type_seed(description->type, TRUE))) {
         if (p->code)
             DisposHandle(p->code);
         if (p->name)
@@ -388,7 +430,7 @@ static uint32 component_register(const component_description* description, ProcP
         p->spec = *spec;
     p->next = *position;
     *position = p;
-    ++modification_seed;
+    component_modified(p);
     if (CL(p->description.flags) & UINT32_C(0x80000000)) {
         instance = component_open(p);
         if (!instance) {
@@ -488,6 +530,156 @@ done:
     return result;
 }
 
+static OSErr component_open_resource_file(uint32 id, INTEGER* reference)
+{
+    const component_instance* instance = instance_find(id);
+    const component_entry* component = instance ? instance->component : component_find(id);
+    if (!component)
+        return -3000; /* invalidComponentID */
+    if (!component->spec.name[0] || component->spec.name[0] > 63)
+        return resFNotFound;
+
+    const FSSpec spec = component->spec;
+    component_resource_file* lease = calloc(1, sizeof *lease);
+    if (!lease)
+        return memFullErr;
+    INTEGER previous_ref;
+    const int already_open = ROMlib_resource_file_already_open(&spec, NULL, &previous_ref);
+    Str255 name;
+    memcpy(name, spec.name, spec.name[0] + 1);
+    const INTEGER opened = HOpenResFile(CW(spec.vRefNum), CL(spec.parID), name, fsRdPerm);
+    if (opened < 0) {
+        const OSErr error = ResError();
+        free(lease);
+        return error ? error : resFNotFound;
+    }
+    resmaphand map = ROMlib_rntohandl(opened, NULL);
+    if (!map) {
+        free(lease);
+        return resFNotFound;
+    }
+
+    for (component_resource_file* current = resource_files; current; current = current->next) {
+        if (current->reference == opened && current->map == map) {
+            free(lease);
+            if (current->opens == UINT_MAX)
+                return memFullErr;
+            ++current->opens;
+            *reference = opened;
+            return noErr;
+        }
+    }
+    lease->map = map;
+    lease->reference = opened;
+    lease->opens = 1;
+    lease->owned = !already_open || opened != CW(previous_ref);
+    lease->next = resource_files;
+    resource_files = lease;
+    *reference = opened;
+    return noErr;
+}
+
+static OSErr component_close_resource_file(INTEGER reference)
+{
+    component_resource_file** next = &resource_files;
+    while (*next && (*next)->reference != reference)
+        next = &(*next)->next;
+    component_resource_file* lease = *next;
+    if (!lease)
+        return resFNotFound;
+
+    OSErr status = noErr;
+    if (lease->map != ROMlib_rntohandl(reference, NULL))
+        status = resFNotFound;
+    else if (--lease->opens)
+        return noErr;
+    *next = lease->next;
+    const Boolean close = !status && lease->owned;
+    free(lease);
+    if (close) {
+        CloseResFile(reference);
+        status = ResError();
+    }
+    return status;
+}
+
+static OSErr component_get_resource(uint32 id, OSType type, INTEGER number, Handle* output)
+{
+    const INTEGER saved = CurResFile();
+    INTEGER reference;
+    OSErr status = component_open_resource_file(id, &reference);
+    if (status)
+        return status;
+
+    UseResFile(reference);
+    Handle resource = Get1Resource(type, number);
+    status = ResError();
+    Handle copy = NULL;
+    if (!status && resource) {
+        LoadResource(resource);
+        status = ResError();
+        if (!status && STARH(resource)) {
+            const SignedByte state = HGetState(resource);
+            HLock(resource);
+            copy = resource;
+            status = HandToHand(&copy);
+            HSetState(resource, state);
+            if (status)
+                copy = NULL;
+        }
+    }
+    if (!status && !copy)
+        status = resNotFound;
+
+    const OSErr close_error = component_close_resource_file(reference);
+    UseResFile(saved);
+    if (!status && close_error) {
+        DisposHandle(copy);
+        copy = NULL;
+        status = close_error;
+    }
+    *output = copy;
+    return status;
+}
+
+static OSErr component_get_string(uint32 id, INTEGER list_id, INTEGER index, StringPtr output)
+{
+    if (!output)
+        return paramErr;
+    output[0] = 0;
+    if (index <= 0)
+        return paramErr;
+
+    Handle copy = NULL;
+    OSErr status = component_get_resource(id, TICK("STR#"), list_id, &copy);
+    if (status)
+        return status;
+    const Size size = GetHandleSize(copy);
+    const Byte* data = (const Byte*)STARH(copy);
+    uint16 count;
+    status = resNotFound;
+    if (size >= (Size)sizeof count && data) {
+        memcpy(&count, data, sizeof count);
+        if (index <= CW(count)) {
+            const Byte* entry = data + sizeof count;
+            const Byte* end = data + size;
+            for (int current = 1; current <= index && entry < end; ++current) {
+                const size_t length = *entry + 1;
+                if (length > (size_t)(end - entry))
+                    break;
+                if (current == index) {
+                    memcpy(output, entry, length);
+                    status = noErr;
+                    break;
+                }
+                entry += length;
+            }
+        }
+    }
+    DisposHandle(copy);
+    return status;
+}
+
 PUBLIC int ROMlib_component_can_dispatch(uint32 id)
 {
     enum { component_dispatch_trap_index = 0x2a };
@@ -522,6 +714,15 @@ PUBLIC void ROMlib_component_reset(void)
         component_close(instances->id);
     while (components)
         component_unregister(components->id);
+    while (resource_files) {
+        resource_files->opens = 1;
+        component_close_resource_file(resource_files->reference);
+    }
+    while (type_seeds) {
+        component_type_seed* record = type_seeds;
+        type_seeds = record->next;
+        free(record);
+    }
     shutting_down = 0;
 }
 
@@ -645,12 +846,50 @@ PUBLIC int ROMlib_component_service(unsigned selector, const uint32* a, uint32* 
         UseResFile(saved);
         *result = count;
     } break;
+    case 21: /* OpenComponentResFile */
+    case 47: { /* OpenAComponentResFile */
+        INTEGER* output = selector == 47 ? component_pointer(a[1]) : NULL;
+        INTEGER reference;
+        if (selector == 47 && !output) {
+            *result = paramErr;
+            break;
+        }
+        const OSErr status = component_open_resource_file(a[0], &reference);
+        if (output) {
+            const INTEGER encoded = CW(status ? -1 : reference);
+            memcpy(output, &encoded, sizeof encoded);
+        }
+        *result = status ? status : selector == 21 ? reference : noErr;
+        break;
+    }
+    case 24:
+        *result = component_close_resource_file((INTEGER)a[0]);
+        break;
+    case 53: { /* GetComponentResource */
+        HIDDEN_Handle* output = component_pointer(a[3]);
+        if (!output) {
+            *result = paramErr;
+            break;
+        }
+        Handle resource = NULL;
+        *result = component_get_resource(a[0], a[1], (INTEGER)a[2], &resource);
+        HIDDEN_RAW_SET(*output, resource ? RM(resource) : 0);
+        break;
+    }
+    case 54: /* GetComponentIndString */
+        *result = component_get_string(a[0], (INTEGER)a[2], (INTEGER)a[3], component_pointer(a[1]));
+        break;
     case 25:
         *result = 3;
         break;
     case 30:
         *result = set_default_component(a[0], a[1]);
         break;
+    case 44: { /* GetComponentTypeModSeed */
+        const component_type_seed* record = component_find_type_seed(CL(a[0]), FALSE);
+        *result = record ? record->seed : 0;
+        return 1;
+    }
     case 45: {
         uint32* output = component_pointer(a[1]);
         if (!output) {
@@ -709,11 +948,17 @@ static const struct {
                       {18, "RegisterComponentResource", "442"},
                       {19, "CountComponentInstances", "44"},
                       {20, "RegisterComponentResourceFile", "422"},
+                      {21, "OpenComponentResFile", "24"},
+                      {24, "CloseComponentResFile", "22"},
                       {25, "ComponentManagerVersion", "4"},
                       {30, "SetDefaultComponent", "242"},
                       {33, "OpenDefaultComponent", "444"},
+                      {44, "GetComponentTypeModSeed", "44"},
                       {45, "OpenAComponent", "244"},
-                      {46, "OpenADefaultComponent", "2444"}};
+                      {46, "OpenADefaultComponent", "2444"},
+                      {47, "OpenAComponentResFile", "244"},
+                      {53, "GetComponentResource", "24424"},
+                      {54, "GetComponentIndString", "24422"}};
 
 PUBLIC const char* ROMlib_component_signature(unsigned selector)
 {

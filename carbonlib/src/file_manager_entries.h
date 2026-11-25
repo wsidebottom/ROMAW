@@ -41,6 +41,8 @@
         return ROMlib_carbon_file_spec(call_frame, trap, selector);    \
     }
 
+CARBON_FILE_PB(PBAllocContigAsync, 0xa610, -1, ioParam)
+CARBON_FILE_PB(PBAllocContigSync, 0xa210, -1, ioParam)
 CARBON_FILE_PB(PBAllocateAsync, 0xa410, -1, ioParam)
 CARBON_FILE_PB(PBAllocateSync, 0xa010, -1, ioParam)
 CARBON_FILE_PB(PBCatMoveAsync, 0xa660, 0x5, CMovePBRec)
@@ -139,6 +141,8 @@ CARBON_FILE_PB(PBSetVInfoSync, 0xa260, 0xb, HVolumeParam)
 CARBON_FILE_PB(PBWriteAsync, 0xa403, -1, ioParam)
 CARBON_FILE_PB(PBWriteSync, 0xa003, -1, ioParam)
 
+CARBON_FILE_IO(Allocate, 0xa010)
+CARBON_FILE_IO(AllocContig, 0xa210)
 CARBON_FILE_IO(FSClose, 0xa001)
 CARBON_FILE_IO(FSRead, 0xa002)
 CARBON_FILE_IO(FSWrite, 0xa003)

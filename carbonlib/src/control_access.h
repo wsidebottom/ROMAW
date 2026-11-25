@@ -53,6 +53,31 @@ static int carbon_control_result(ROMlib_carbon_ppc_frame* call, int32_t value)
     return 1;
 }
 
+static int carbon_cycle_keyboard_focus(ROMlib_carbon_ppc_frame* call, bool reverse)
+{
+    const uint32_t address = 0x17cc;
+    uint32_t vector;
+    if (!cfp_get(address, &vector))
+        return 0;
+    if (vector && vector != (uint32_t)(uintptr_t)toolstuff[0x273].orig) {
+        uint32_t result;
+        return ROMlib_carbon_call_toolbox_vector(address, 0x3a8, reverse ? 0x10 : 0x0f, call, &result) &&
+               carbon_control_result(call, (int16_t)result);
+    }
+    WindowPtr window = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(WindowRecord), 0) : NULL;
+    return carbon_control_result(call, ROMlib_control_cycle_focus(window, reverse));
+}
+
+static int carbon_AdvanceKeyboardFocus(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_cycle_keyboard_focus(call, false);
+}
+
+static int carbon_ReverseKeyboardFocus(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_cycle_keyboard_focus(call, true);
+}
+
 static int control_tag_access(ROMlib_carbon_ppc_frame* call, const char* name, int16_t part, uint32_t tag, size_t size,
                               Byte* value, bool write)
 {
@@ -919,9 +944,6 @@ BUILTIN_CONTROL(CreateCheckBoxControl, 0x6bd7c, 5, .definition = 0x171 + ((uint8
 BUILTIN_CONTROL(CreateRadioButtonControl, 0x6bca4, 5, .definition = 0x172 + ((uint8_t)call->words[4] ? 2 : 0),
                 .maximum = 2, .title = call->words[2], .set_value = true, .initial_value = call->words[3])
 BUILTIN_CONTROL(CreateRadioGroupControl, 0x6c054, 2, .definition = 0x1a0)
-BUILTIN_CONTROL(CreateProgressBarControl, 0x6a9b0, 6, .definition = 0x50, .maximum = 1, .set_range = true,
-                .initial_value = call->words[2], .lower_bound = call->words[3], .upper_bound = call->words[4],
-                .data_tag = TICK("inde"), .data_size = 1, .data = (uint8_t)call->words[5])
 BUILTIN_CONTROL(CreateDisclosureTriangleControl, 0x6a8a4, 7,
                 .definition = 0x40 + ((uint16_t)call->words[2] == 2) + ((uint8_t)call->words[6] ? 2 : 0),
                 .title = call->words[3], .maximum = 1, .set_value = true, .initial_value = call->words[4],
@@ -945,6 +967,53 @@ BUILTIN_CONTROL(CreateTabsControl, 0x6ac2c, 6,
                 .tab_count = call->words[4], .tabs = call->words[5])
 
 #undef BUILTIN_CONTROL
+
+static int carbon_CreateProgressBarControl(ROMlib_carbon_ppc_frame* call)
+{
+    WindowPtr window = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(WindowRecord), 0) : NULL;
+    const Rect* bounds = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *bounds, 0) : NULL;
+    const uint32_t output = call->words[6];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1) || !window || !bounds)
+        return carbon_control_result(call, paramErr);
+
+    if (!ROMlib_valid_window(window) || GetResource(TICK("CDEF"), ROMlib_progress_bar_proc >> 4)) {
+        const struct builtin_control_options options = {.definition = ROMlib_progress_bar_proc,
+                                                        .maximum = 1,
+                                                        .set_range = true,
+                                                        .initial_value = call->words[2],
+                                                        .lower_bound = call->words[3],
+                                                        .upper_bound = call->words[4],
+                                                        .data_tag = TICK("inde"),
+                                                        .data_size = 1,
+                                                        .data = (uint8_t)call->words[5]};
+        return create_builtin_control(call, "CreateProgressBarControl", 0x6a9b0, 6, &options);
+    }
+
+    cfp_write(output, 0);
+    const int32_t minimum = (int32_t)call->words[3], maximum = (int32_t)call->words[4];
+    const int32_t initial = (int32_t)call->words[2];
+    const int32_t value = initial < minimum ? minimum : initial > maximum ? maximum : initial;
+    Str255 title = {0};
+    Rect rect = *bounds;
+    ControlHandle control = C_NewControl(window, &rect, title, FALSE, ROMlib_control_legacy_value(value),
+                                         ROMlib_control_legacy_value(minimum), ROMlib_control_legacy_value(maximum),
+                                         ROMlib_progress_bar_proc, 0);
+    if (!control)
+        return carbon_control_result(call, memFullErr);
+
+    AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(control));
+    ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+    extra->range[control_minimum] = minimum;
+    extra->range[control_maximum] = maximum;
+    ROMlib_control_store_value(control, aux, value);
+    extra->progress_indeterminate = (uint8_t)call->words[5] != 0;
+    C_ShowControl(control);
+    if (!cfp_write(output, US_TO_SYN68K(control))) {
+        C_DisposeControl(control);
+        return 0;
+    }
+    return carbon_control_result(call, noErr);
+}
 
 static int carbon_CreateLittleArrowsControl(ROMlib_carbon_ppc_frame* call)
 {

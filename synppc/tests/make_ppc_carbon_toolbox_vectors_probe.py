@@ -279,7 +279,7 @@ TEXTENSION_SUPPORT = (
 )
 
 
-def vector_cases(header="toolbox_vectors.h", count=398):
+def vector_cases(header="toolbox_vectors.h", count=399):
     source = (ROOT / "carbonlib/src" / header).read_text()
     rows = []
     for name, address, info, result in re.findall(
@@ -1227,6 +1227,33 @@ def math_decimals(probe):
         call("dec2num", [decimal], side)
         capture_float(0xC029000000000000, "dec2num restores the signed binary64 value")
 
+    if not probe.original_only:
+        high_precision = record(b"9007199254740993")
+        form_long = probe.far_raw(struct.pack(">BBh", 0, 0, 16))
+        p.emit(0xC81E1850, 0xFDFE058E)
+        probe.call("fesetround", [0])
+        probe.call("dec2numl", [high_precision])
+        capture_float(0x4340000000000000, "dec2numl returns the nearest high limb")
+        capture_float(0x3FF0000000000000, "dec2numl keeps the integer unit in the low limb", register=2)
+        probe.call("num2decl", [form_long, 0, 0, 0, 0, decimal])
+        check_record(0x1A00, 0, 0, b"9007199254740993", "num2decl keeps the precision of both limbs")
+        for direction, bits in ((0, 0x4170000000000000), (2, 0x4170000020000000)):
+            probe.call("fesetround", [direction])
+            probe.call("dec2f", [record(b"16777217")])
+            capture_float(bits, "dec2f rounds the binary32 result using FPSCR")
+        probe.call("fesetround", [0])
+
+        probe.call("dec2numl", [high_precision])
+        exponent_output = probe.ptr(0x1AA4)
+        probe.call("frexpl", [0, 0, 0, 0, exponent_output])
+        p.emit(0x807E1AA4)
+        p.expect(54, "frexpl stores the power-of-two exponent in guest byte order")
+        capture_float(0x3FE0000000000000, "frexpl normalizes the high limb")
+        capture_float(0x3C90000000000000, "frexpl scales the low limb", register=2)
+        probe.call("ldexpl", [0, 0, 0, 0, 54])
+        capture_float(0x4340000000000000, "ldexpl restores the original high limb")
+        capture_float(0x3FF0000000000000, "ldexpl restores the original low limb", register=2)
+
     cases = ((b"15", -1), (b"25", -1), (b"51", -2), (b"1", -80), (b"327675", -1), (b"21474836485", -1), (b"I", 0))
     for digits, exponent in cases:
         for negative in (False, True):
@@ -1546,7 +1573,7 @@ def file_cases():
         for name, trap, selector in re.findall(r"^CARBON_FILE_PB\((\w+), (0x\w+), (-1|0x\w+), \w+\)$", source, re.M)
     ]
     native_names = set(re.findall(r"^CARBON_FILE_\w+\((\w+),", source, re.M)) | {"FSMakeFSSpec"}
-    if len(parameter_blocks) != 97 or len(native_names) != 128:
+    if len(parameter_blocks) != 99 or len(native_names) != 132:
         raise ValueError("Incomplete Carbon File Manager table")
     return parameter_blocks, native_names
 
@@ -1652,6 +1679,25 @@ def file_operations(probe):
     p.pointer(0x2000, "File Manager completion receives the block in A0")
     p.emit(0x807E1FF0)
     p.expect(0x41524449, "File Manager completion observes the filled input buffer")
+    for allocator in ("Allocate", "AllocContig"):
+        p.emit(0x38600008, 0x907E1FE8)
+        success(allocator, [reference, ptr(0x1FE8)])
+        p.emit(0x807E1FE8)
+        p.expect(8, allocator + " returns the allocated byte count")
+        p.emit(0x3860FFFF, 0x907E1FE8)
+        probe.call(allocator, [reference, ptr(0x1FE8)])
+        p.expect(-50, allocator + " rejects a negative request")
+        p.emit(0x807E1FE8)
+        p.expect(0, allocator + " returns zero bytes for a rejected request")
+    # The 68K completion increments the block's unused ioMisc longword.
+    completion = probe.raw(bytes.fromhex("52a8001c4e75"))
+    probe.arguments([completion], 0)
+    p.emit(0x907E200C, 0x38600000, 0x907E201C, 0x38600008, 0x907E2024)
+    success("PBAllocContigAsync", [ptr(0x2000)])
+    p.emit(0x807E201C)
+    p.expect(1, "PBAllocContigAsync completes exactly once on the caller's block")
+    p.emit(0x807E2028)
+    p.expect(8, "PBAllocContigAsync publishes the actual count")
     success("FSClose", [reference])
 
     for name, locked in (("HSetFLock", 1), ("HRstFLock", 0)):
@@ -1875,6 +1921,11 @@ def fsref_operations(probe):
     call("FSCompareFSRefs", [resolved, other])
     call("FSGetCatalogInfo", [resolved, 0x18, info, 0, 0, 0])
     check(0x208, 2, "Volume FSRef points to the root catalog node")
+    path_buffer, is_directory = ptr(0x4A0), ptr(0x6B8)
+    call("FSRefMakePath", [resolved, path_buffer, 512])
+    call("FSPathMakeRef", [path_buffer, other, is_directory])
+    check(0x6B8, 1, "The root pathname resolves to a directory", 1)
+    call("FSCompareFSRefs", [resolved, other])
     call("FSSetVolumeInfo", [volume, 0, info])
     call("FlushVol", [0, volume])
     pb("PBGetVolumeInfo", ((22, volume, 2), (28, 0xC0, 4), (32, info, 4), (36, name, 4), (40, resolved, 4)))
@@ -1888,6 +1939,17 @@ def fsref_operations(probe):
     call("FSpMakeFSRef", [spec, other])
     call("FSCompareFSRefs", [ref, other])
     call("FSCompareFSRefs", [ref, folder], -1420)
+    put(0x4A0, 0x12345678)
+    call("FSRefMakePath", [ref, path_buffer, 1], -210)
+    check(0x4A0, 0x12345678, "A short pathname buffer is left untouched")
+    call("FSRefMakePath", [ref, path_buffer, 512])
+    call("FSPathMakeRef", [path_buffer, other, is_directory])
+    check(0x6B8, 0, "A pathname to a file clears the directory flag", 1)
+    call("FSCompareFSRefs", [ref, other])
+    call("FSRefMakePath", [folder, path_buffer, 512])
+    call("FSPathMakeRef", [path_buffer, other, is_directory])
+    check(0x6B8, 1, "A pathname to a directory sets the directory flag", 1)
+    call("FSCompareFSRefs", [folder, other])
     call("FSMakeFSRefUnicode", [folder, 5, leaf, 0, other])
     pb("PBCompareFSRefs", ((28, ref, 4), (56, other, 4)))
     pb("PBMakeFSRefUnicode", ((28, folder, 4), (40, 5, 4), (44, leaf, 4), (60, other, 4)))
@@ -1926,6 +1988,18 @@ def fsref_operations(probe):
     call("FSNewAlias", [0, ref, ptr(0x704)])
     call("FSFollowFinderAlias", [0, alias_handle, 0, other, alias_flags])
     call("FSCompareFSRefs", [ref, other])
+
+    matched_spec = probe.far_raw(bytes(70))
+    match_count = probe.far_raw(bytes(2))
+    for matcher in ("MatchAlias", "MatchAliasNoUI"):
+        probe.arguments([match_count], 0)
+        p.emit(0x38800001, 0xB0830000)
+        call(matcher, [0, 0, alias_handle, match_count, matched_spec, alias_flags, 0, 0])
+        probe.arguments([match_count], 0)
+        p.emit(0xA0630000)
+        p.expect(1, matcher + " finds one matching alias target")
+        call("FSpMakeFSRef", [matched_spec, other])
+        call("FSCompareFSRefs", [ref, other])
 
     alias_name = probe.raw(b"\x0bCarbon Link")
     alias_file = ptr(0x4C0)
@@ -2195,6 +2269,9 @@ def fsref_operations(probe):
     check(0x2A0, 7, "A file reference survives a same-folder rename", 2)
     call("FSMoveObject", [other, container, resolved])
     call("FSCompareFSRefs", [ref, resolved])
+    call("FSRefMakePath", [ref, path_buffer, 512])
+    call("FSPathMakeRef", [path_buffer, other, 0])
+    call("FSCompareFSRefs", [resolved, other])
     call("FSGetCatalogInfo", [ref, 0, 0, name, 0, other])
     call("FSCompareFSRefs", [container, other])
     call("FSDeleteObject", [resolved])
@@ -2433,6 +2510,9 @@ def apple_event_object_packing(probe):
     def call(name, args, side=0):
         probe.call(name, args, side=side)
         p.expect(0, name + " succeeds")
+
+    call("AEObjectInit", [])
+    call("AESetObjectCallbacks", [0, 0, 0, 0, 0, 0, 0])
 
     def expand_compact(at, kind, view):
         # Add the classic manager header to the original stream's count,
@@ -5191,6 +5271,32 @@ def power_activity_operations(probe):
     p.emit(0x807E0000 | (invalid[1] + 2))
     p.expect(0x12345678, "an unknown activity leaves the caller's record intact")
 
+    for name, arguments, expected in (
+        ("PMFeatures", [], 0),
+        ("MaximumProcessorSpeed", [], 250),
+        ("CurrentProcessorSpeed", [], 250),
+        ("FullProcessorSpeed", [], 1),
+        ("SetProcessorSpeed", [0], 0),
+        ("CurrentProcessorSpeed", [], 250),
+        ("IsProcessorCyclingEnabled", [], 0),
+        ("GetIntModemInfo", [], 0),
+        ("BatteryCount", [], 0),
+        ("GetBatteryVoltage", [0xFFFF], 0),
+    ):
+        probe.call(name, arguments)
+        p.expect(expected, name + " reports the fixed-clock desktop hardware")
+
+    _, buffer = probe.far_raw(bytes([0xA5]) * 24)
+    probe.call("GetBatteryTimes", [1, probe.ptr(buffer + 4)])
+    for offset, expected in ((0, 0xA5A5A5A5), (4, 0), (8, 0), (12, 0), (16, 0), (20, 0xA5A5A5A5)):
+        probe.arguments([probe.ptr(buffer + offset)], 0)
+        p.emit(0x80630000)
+        p.expect(expected, "battery time clears exactly four guest longwords for an absent battery")
+    probe.call("GetScaledBatteryInfo", [0, probe.ptr(buffer)])
+    probe.arguments([probe.ptr(buffer)], 0)
+    p.emit(0x80630000)
+    p.expect(0, "scaled battery information clears all four bytes on the desktop board")
+
 
 def code_fragment_operations(probe, destination):
     p = probe.p
@@ -5832,6 +5938,43 @@ def classic_state_operations(probe):
             for side in (0, 1):
                 probe.call(name, [lower, upper, *flags], side=side)
                 p.expect(expected[index], name + " respects case sensitivity")
+    c_string = probe.far_raw(b"a\x8a\x00Z")
+    accented = probe.far_raw(b"A\x80\x00Q")
+    probe.call("relstring", [c_string, accented, 0, 1])
+    p.expect(0, "relstring handles MacRoman case and stops at the first NUL")
+    probe.call("relstring", [c_string, accented, 1, 1])
+    p.expect(1, "relstring supports case-sensitive ordering")
+    probe.call("upperstring", [c_string, 1])
+    probe.arguments([c_string], 0)
+    p.emit(0x80630000)
+    p.expect(0x4180005A, "upperstring uppercases the text and preserves bytes after NUL")
+    probe.call("GetApplicationScript")
+    p.expect(0, "GetApplicationScript resolves the default Roman application font")
+    probe.call("UnsignedFixedMulDiv", [0x18000, 0x30000, 0x20000])
+    p.expect(0x24000, "UnsignedFixedMulDiv preserves the full intermediate product")
+    probe.call("UnsignedFixedMulDiv", [0xFFFFFFFF, 0x20000, 0x10000])
+    p.expect(0xFFFFFFFF, "UnsignedFixedMulDiv saturates an out-of-range quotient")
+    probe.call("GetMainDevice")
+    p.emit(0x907E0000 | (base + 24))
+    probe.call("GetIconDevice", [ptr(base + 28)])
+    p.emit(0x807E0000 | (base + 24), 0x809E0000 | (base + 28))
+    p.equal("GetIconDevice returns the selected screen device")
+
+    for vector, name, args, capture, expected in (
+        (0x1524, "SysError", [-17], 0x1910, -17),
+        (
+            0x1008,
+            "stdtext",
+            [2, c_string, probe.far_raw(b"\x00\x02\x00\x03"), probe.far_raw(b"\x00\x04\x00\x05")],
+            0x1918,
+            0x20003,
+        ),
+    ):
+        p.emit(0x81600000 | vector, 0x917E1820, 0x397E1800, 0x91600000 | vector)
+        probe.call(name, args)
+        p.emit(0x817E1820, 0x91600000 | vector, 0x807E0000 | capture)
+        p.expect(expected, name + " forwards the native arguments through the installed Toolbox vector")
+    probe.call("DebugStr", [probe.far_raw(b"\x12Toolbox debug text")])
     for name, expected in (
         ("LowercaseText", 0x8A615A5A),
         ("UppercaseText", 0x80415A5A),
@@ -8333,6 +8476,15 @@ def control_manager_operations(probe):
     call("ClearKeyboardFocus", [window])
     call("GetKeyboardFocus", [window, out])
     word(8, 0, "clearing focus publishes a null control handle")
+    call("AdvanceKeyboardFocus", [window], -30586)
+    call("CreateRootControl", [window, out])
+    call("EmbedControl", [pane, result])
+    call("AdvanceKeyboardFocus", [window])
+    word(40, -1, "advancing focus asks the pane for its next part")
+    call("GetKeyboardFocus", [window, out])
+    match(8, "the pane becomes the focused child of the root")
+    call("ReverseKeyboardFocus", [window])
+    word(40, -2, "reversing focus asks the current pane for its previous part")
     probe.call("DisposeControl", [pane])
     call("IsValidControlHandle", [pane])
     probe.call("ShowWindow", [window])
@@ -9121,6 +9273,8 @@ def data_browser_control_operations(probe, cases):
     p.expect(0, "get the registered icon owner count")
     p.emit(0xA07E0000 | owners)
     p.expect(3, "registration, lookup and acquire each grant one owner")
+    probe.call("FlushIconRefs", [*sound])
+    p.expect(0, "flush leaves a matching family without an external reload source intact")
     probe.call("IconRefToIconFamily", [probe.slot(icon), 0x100, probe.ptr(copy)])
     p.expect(0, "copy the small elements of a registered icon family")
     probe.call("GetHandleSize", [probe.slot(copy)])
@@ -9755,12 +9909,47 @@ def menu_manager_operations(probe):
     call("IsMenuBarVisible", expected=1)
     call("PtInRgn", [strip_point, desktop])
 
+    p.emit(0xA0600BAA, 0x907E0000 | (base + 16))
+    probe.call("SetMenuBarHeight", [10])
+    p.emit(0xA0600BAA)
+    p.expect(10, "the menu bar publishes its new height")
+    call("PtInRgn", [0x0010000A, desktop], 1)
+    probe.call("SetMenuBarHeight", [24])
+    call("PtInRgn", [0x0010000A, desktop])
+    probe.call("HideMenuBar")
+    probe.call("SetMenuBarHeight", [12])
+    call("IsMenuBarVisible")
+    probe.call("ShowMenuBar")
+    p.emit(0xA0600BAA)
+    p.expect(12, "showing a hidden menu bar restores the requested height")
+    call("PtInRgn", [0x0010000A, desktop], 1)
+    probe.call("SetMenuBarHeight", [slot(base + 16)])
+    p.emit(0xA0600B20, 0xB07E0000 | (base + 24), 0x38604040, 0xB0600B20)
+    probe.call("ValidateMenuBar")
+    call("IsMenuBarInvalid", [0])
+    p.emit(0xA07E0000 | (base + 24), 0xB0600B20)
+
     probe.call("NewMenu", [8319, probe.raw(b"\x04Menu")])
     p.nonzero("allocate the menu for state and property checks")
     p.emit(0x907E0000 | base)
     items = b";".join([b"Item"] * 34)
     probe.call("AppendMenu", [menu, probe.raw(bytes([len(items)]) + items)])
     call("CountMenuItems", [menu], 34)
+    probe.call("InsertMenu", [menu, 0])
+    probe.call("NewMenu", [8321, probe.far_raw(b"\x07Submenu")])
+    p.nonzero("allocate a hierarchical menu")
+    p.emit(0x907E0000 | (base + 16))
+    submenu = slot(base + 16)
+    probe.call("InsertMenu", [submenu, -1])
+    for handle in (menu, submenu):
+        probe.call("SetMenuWidth", [handle, 80])
+        probe.call("SetMenuHeight", [handle, 24])
+    probe.call("InvalidateAllMenuSizes")
+    for handle in (menu, submenu):
+        call("IsMenuSizeInvalid", [handle], 1)
+    probe.call("DeleteMenu", [8321])
+    probe.call("DisposeMenu", [submenu])
+    probe.call("DeleteMenu", [8319])
     for side in (0, 1):
         probe.call("CheckMenuItem", [menu, 1, 1], side=side)
         probe.call("GetItemMark", [menu, 1, output])
@@ -9845,6 +10034,9 @@ def menu_manager_operations(probe):
     call("DisableMenuItemIcon", [menu, 1])
     call("IsMenuItemIconEnabled", [menu, 1])
     call("SetSubmenuParentChoosable", [menu, 1, 1])
+    call("GetSubmenuParentChoosable", [menu, 1, output])
+    p.emit(0x887E0000 | (base + 8))
+    p.expect(1, "the submenu-parent getter reads the enabled attribute")
     call("ChangeMenuItemAttributes", [menu, 1, 1, 0])
     call("IsMenuItemEnabled", [menu, 1])
     call("GetMenuItemAttributes", [menu, 1, output])
@@ -9853,6 +10045,9 @@ def menu_manager_operations(probe):
     call("EnableMenuItemIcon", [menu, 1])
     call("IsMenuItemIconEnabled", [menu, 1], 1)
     call("SetSubmenuParentChoosable", [menu, 1, 0])
+    call("GetSubmenuParentChoosable", [menu, 1, output])
+    p.emit(0x887E0000 | (base + 8))
+    p.expect(0, "the submenu-parent getter reads the cleared attribute")
     call("ChangeMenuItemAttributes", [menu, 1, 0, 1])
     call("IsMenuItemEnabled", [menu, 1], 1)
     call("GetMenuItemAttributes", [menu, 1, output])
@@ -10801,6 +10996,9 @@ def component_operations(probe):
     store(8)
     probe.call("GetComponentListModSeed")
     store(36)
+    probe.call("GetComponentTypeModSeed", [0x43507072])
+    store(40)
+    expect("GetComponentTypeModSeed", [0x7A7A7A7A], 0)
     for offset, entry in zip((0, 4), descriptions):
         probe.call("RegisterComponent", [entry, descriptor, 0, 0, 0, 0])
         p.nonzero("register a guest component")
@@ -10808,6 +11006,10 @@ def component_operations(probe):
     probe.call("GetComponentListModSeed")
     p.emit(0x809E0000 | (base + 36), 0x38840002)
     p.equal("component registration advances the list modification seed")
+    probe.call("GetComponentTypeModSeed", [0x43507072])
+    p.emit(0x809E0000 | (base + 40), 0x7C641850)
+    p.nonzero("component registration changes the matching type's modification seed")
+    expect("GetComponentTypeModSeed", [0x7A7A7A7A], 0)
     expect("CountComponents", [query], 2)
     expect("SetDefaultComponent", [0, 0], -3000)
     expect("SetDefaultComponent", [first, 8], -50)
@@ -10914,6 +11116,34 @@ def component_operations(probe):
     p.nonzero("register a resource-backed component")
     store(0)
     expect("CountComponents", [query], 1)
+    file_ref, resource = ptr(base + 56), ptr(base + 60)
+    string = probe.far_raw(bytes(256))
+    expect("OpenAComponentResFile", [first, file_ref], 0)
+    p.emit(0xA87E0000 | (base + 56))
+    p.nonzero("the component's resource fork is open")
+    store(56)
+    probe.call("OpenComponentResFile", [first])
+    p.nonzero("the legacy opener returns another valid reference")
+    store(64)
+    expect("CloseComponentResFile", [slot(base + 64)], 0)
+    expect("CloseComponentResFile", [slot(base + 56)], 0)
+    probe.call("UseResFile", [slot(base + 40)])
+    probe.call("ResError")
+    p.expect(0, "closing component leases keeps the application resource map usable")
+    expect("GetComponentResource", [first, 0x72436D70, 182, resource], 0)
+    expect("GetHandleSize", [slot(base + 60)], 4)
+    probe.call("DisposeHandle", [slot(base + 60)])
+    expect("GetComponentResource", [first, 0x72436D70, 183, resource], -192)
+    p.emit(0x807E0000 | (base + 60))
+    p.expect(0, "a missing component resource leaves a null handle")
+    expect("GetComponentIndString", [first, string, 182, 2], 0)
+    probe.arguments([string], 0)
+    p.emit(0x80630000)
+    p.expect(0x0354776F, "the indexed string is copied as a Pascal string")
+    probe.call("CurResFile")
+    p.emit(0x809E0000 | (base + 40))
+    p.equal("reading a component resource preserves the selected resource map")
+
     expect("UnregisterComponent", [first], 0)
     expect("RegisterComponentResourceFile", [slot(base + 40), 0], 1)
     probe.call("FindNextComponent", [0, query])
@@ -11878,6 +12108,247 @@ def color_profile_operations(probe):
     p.expect(0, "close the saved ColorSync connection")
 
 
+DEBUG_REGISTRY_APIS = (
+    "TaskLevel",
+    "DebugAssert",
+    "InstallDebugAssertOutputHandler",
+    "NewDebugComponent",
+    "DisposeDebugComponent",
+    "GetDebugComponentInfo",
+    "NewDebugOption",
+    "GetDebugOptionInfo",
+    "SetDebugOptionValue",
+)
+
+
+HEAP_DIAGNOSTIC_APIS = ("CheckAllHeaps", "IsHeapValid", "IsPointerValid", "IsHandleValid", "MoreMasterPointers")
+
+
+def heap_diagnostic_operations(probe):
+    p = probe.p
+    base = 0x2000
+    pointer, handle = probe.slot(base), probe.slot(base + 4)
+    probe.call("CheckAllHeaps")
+    p.expect(1, "CheckAllHeaps validates the system and application heaps")
+    probe.call("IsHeapValid")
+    p.expect(1, "IsHeapValid validates the application heap")
+    probe.call("MoreMasterPointers", [5])
+    probe.call("MemError")
+    p.expect(0, "MoreMasterPointers reserves entries in the current heap")
+    probe.call("NewPtr", [16])
+    p.nonzero("Allocate a nonrelocatable test pointer")
+    p.emit(0x907E0000 | base)
+    probe.call("IsPointerValid", [pointer])
+    p.expect(1, "A live nonrelocatable block has a valid data pointer")
+    probe.call("IsPointerValid", [0])
+    p.expect(0, "A null pointer fails heap validation")
+    probe.call("NewHandle", [16])
+    p.nonzero("Allocate a relocatable test handle")
+    p.emit(0x907E0000 | (base + 4))
+    probe.call("IsHandleValid", [handle])
+    p.expect(1, "A live handle and its relocatable block agree")
+    probe.call("IsHandleValid", [pointer])
+    p.expect(0, "An allocated pointer is not a relocatable handle")
+    probe.call("DisposeHandle", [handle])
+    probe.call("IsHandleValid", [handle])
+    p.expect(0, "A released master pointer fails heap validation")
+    probe.call("DisposePtr", [pointer])
+    probe.call("IsPointerValid", [pointer])
+    p.expect(0, "A disposed nonrelocatable block fails heap validation")
+    p.emit(0x38600000, 0x907E0000 | base, 0x907E0000 | (base + 4))
+
+
+def debug_registry_operations(probe):
+    p = probe.p
+    base = 0x2000  # Shared fixture scratch, cleared before leaving this section.
+    name = probe.far_raw(b"\x04Demo")
+    option_name = probe.far_raw(b"\x05Trace")
+    name_out = probe.far_raw(bytes(256))
+    signature, setting, state = probe.ptr(base), probe.ptr(base + 4), base + 8
+    descriptor_value = probe.slot(base + 12)
+    callback = probe.far_raw(bytes(8))
+    p.routines.append(
+        (
+            callback[1],
+            [
+                0x2C040002,  # cmpwi r4, kSetDebugOption
+                0x41820010,
+                0x88C20000 | state,
+                0x98C50000,
+                0x4E800020,
+                0x88C50000,
+                0x98C20000 | state,
+                0x4E800020,
+            ],
+        )
+    )
+
+    def expect(name, arguments, expected=0):
+        probe.call(name, arguments)
+        p.expect(expected, name + " returns the expected DebugLib status")
+
+    component = int.from_bytes(b"rDbg", "big")
+    probe.call("NewDebugComponentCallbackUPP", [callback])
+    p.nonzero("allocate a component option callback")
+    p.emit(0x907E0000 | (base + 12))
+    expect("NewDebugComponent", [component, 0, 0], -13885)
+    expect("NewDebugComponent", [component, name, descriptor_value])
+    expect("NewDebugComponent", [component, name, 0], -13881)
+    expect("GetDebugComponentInfo", [1, signature, name_out])
+    p.emit(0x807E0000 | base)
+    p.expect(component, "component enumeration writes the signature")
+    probe.arguments([name_out], 0)
+    p.emit(0x80630000)
+    p.expect(0x0444656D, "component enumeration writes the registered Pascal name")
+
+    expect("GetDebugOptionInfo", [0, component, signature, name_out, setting])
+    p.emit(0x887E0000 | (base + 4))
+    p.expect(1, "component-level debug breaks start enabled")
+    expect("SetDebugOptionValue", [component, 0, 0])
+    expect("GetDebugOptionInfo", [0, component, signature, name_out, setting])
+    p.emit(0x887E0000 | (base + 4))
+    p.expect(0, "the built-in option can disable component breaks")
+
+    expect("NewDebugOption", [component, 42, option_name])
+    expect("NewDebugOption", [component, 42, option_name], -13882)
+    expect("SetDebugOptionValue", [component, 19, 1], -13884)
+    expect("SetDebugOptionValue", [component, 42, 1])
+    expect("GetDebugOptionInfo", [1, component, signature, name_out, setting])
+    p.emit(0x807E0000 | base)
+    p.expect(42, "the option's index resolves to its registered selector")
+    p.emit(0x887E0000 | (base + 4))
+    p.expect(1, "option lookup invokes the callback and returns its value")
+    expect("DisposeDebugComponent", [component])
+    expect("GetDebugOptionInfo", [1, component, signature, name_out, setting], -13883)
+    expect("GetDebugComponentInfo", [1, signature, name_out], -13887)
+    probe.call("DisposeDebugComponentCallbackUPP", [descriptor_value])
+    # The busy bits are in the guest queue headers. Restore both before
+    # checking the status so later sections see the original queues.
+    p.emit(0xA0600160, 0x907E0000 | base, 0xA0600D92, 0x907E0000 | (base + 4),
+           0x38604000, 0xB0600160, 0xB0600D92)
+    probe.call("TaskLevel")
+    p.emit(0x809E0000 | base, 0xB0800160, 0x809E0000 | (base + 4), 0xB0800D92)
+    p.expect(0x30, "TaskLevel reports active VBL and deferred-task queues")
+
+    handler = probe.far_raw(bytes(8))
+    p.routines.append(
+        (
+            handler[1],
+            [
+                0x90620000 | base,
+                0x90820000 | (base + 4),
+                0x81610038,  # Read the ninth PPC argument, the Pascal message.
+                0x818B0000,
+                0x91820000 | (base + 8),
+                0x818B0020,
+                0x91820000 | (base + 16),
+                0x4E800020,
+            ],
+        )
+    )
+    probe.call("NewDebugAssertOutputHandlerUPP", [handler])
+    p.nonzero("allocate a DebugAssert output handler")
+    p.emit(0x907E0000 | (base + 12))
+    probe.call("InstallDebugAssertOutputHandler", [descriptor_value])
+    probe.call("DebugAssert", [component, 17, probe.far_raw(b"X\x00"), 0, 0,
+                               probe.far_raw(b"Disk:Sources:Unit.c\x00"), 37, -42])
+    message = b"Assert failed: X\r     file: Unit.c\r     line: 37\r    error: -42"
+    encoded = bytes([len(message)]) + message
+    for slot, expected, label in (
+        (0, component, "assert handler receives the unmodified signature"),
+        (4, 17, "assert handler receives the unmodified options"),
+        (8, int.from_bytes(encoded[:4], "big"), "assert handler receives a Pascal message"),
+        (16, int.from_bytes(encoded[32:36], "big"), "assert message prints the file basename and next line"),
+    ):
+        p.emit(0x807E0000 | (base + slot))
+        p.expect(expected, label)
+    probe.call("InstallDebugAssertOutputHandler", [0])
+    probe.call("DisposeDebugAssertOutputHandlerUPP", [descriptor_value])
+    p.emit(
+        0x38600000,
+        *(0x907E0000 | (base + offset) for offset in range(0, 20, 4)),
+    )
+
+
+def appearance_geometry_operations(probe):
+    p = probe.p
+    output = probe.far_raw(bytes(8))
+    top, left, bottom, right = 10, 20, 30, 90
+
+    def check_rect(expected, label):
+        for offset in (0, 4):
+            probe.arguments([output], 0)
+            p.emit(0x80630000 | offset)
+            p.expect(int.from_bytes(expected[offset : offset + 4], "big"), f"{label} rect word {offset // 4}")
+
+    for direction, small, expected in (
+        (0, 0, (10, 20, 26, 36)),
+        (1, 1, (10, 9, 21, 20)),
+    ):
+        for side in (0, 1):
+            probe.call("GetThemeStandaloneGrowBoxBounds", [(top << 16) | left, direction, small, output], side=side)
+            p.expect(0, "measure a standalone grow box")
+            check_rect(struct.pack(">4h", *expected), "standalone grow box")
+
+    for kind, flags, thumb, basis, status, expected in (
+        (0, 1, 0, (top, left, bottom, right), 0, (top, left, bottom, right)),
+        (1, 0, 0, (bottom, left, top, right), -50, (bottom, left, top, right)),
+        (2, 1, 2, (top, left, bottom, right), 0, (top, left + 2, top + 16, right - 2)),
+        (2, 2, 1, (top, left, right, bottom), 0, (top + 2, bottom - 16, right - 2, bottom)),
+        (3, 1, 0, (top, left, bottom, right), 0, (top, left, top + 14, right)),
+        (4, 1, 0, (top, left, bottom, right), 0, (top, left, top + 14, right)),
+    ):
+        track = probe.far_raw(struct.pack(">H4h4iHBBB", kind, *basis, 0, 100, 50, 0, flags, 0, 0, thumb))
+        for side in (0, 1):
+            probe.call("GetThemeTrackBounds", [track, output], side=side)
+            p.expect(status, f"measure track kind {kind}")
+            check_rect(struct.pack(">4h", *expected), f"track kind {kind}")
+
+
+    slider = probe.far_raw(struct.pack(">H4h4iHBBB", 2, top, left, bottom, right, 0, 100, 50, 0, 1, 0, 0, 2))
+    _, region_address = probe.far_raw(struct.pack(">H4h", 10, 10, 53, 26, 68))
+    region_handle = probe.far_raw(bytes(4))
+    for side in (0, 1):
+        probe.call("GetThemeTrackDragRect", [slider, output], side=side)
+        p.expect(0, "measure the slider thumb's drag rectangle")
+        check_rect(struct.pack(">4h", 10, 25, 26, 85), "slider drag rectangle")
+
+        probe.arguments([probe.ptr(region_address), region_handle], 0)
+        p.emit(0x90640000)
+        for name, argument, expected in (
+            ("GetThemeTrackThumbPositionFromOffset", 3, 26),
+            ("GetThemeTrackThumbPositionFromRegion", region_handle, 28),
+            ("GetThemeTrackLiveValue", 23, 51),
+        ):
+            probe.call(name, [slider, argument, output], side=side)
+            p.expect(0, name + " measures slider travel")
+            probe.arguments([output], 0)
+            p.emit(0x80630000)
+            p.expect(expected, name + " returns the expected slider position")
+
+    original_style = probe.far_raw(bytes(4))
+    probe.call("GetThemeScrollBarArrowStyle", [original_style])
+    p.expect(0, "snapshot the existing scrollbar arrow preference")
+    probe.call("SetThemeScrollBarArrowStyle", [0, 0])
+    p.expect(0, "measure classic scrollbars with single arrows")
+    bar = probe.far_raw(struct.pack(">4h", 10, 20, 26, 120))
+    part = probe.far_raw(bytes(4))
+    for side in (0, 1):
+        probe.call("GetThemeScrollBarTrackRect", [bar, 0, 0, 1, output], side=side)
+        p.expect(0, "measure the track between the scrollbar arrows")
+        check_rect(struct.pack(">4h", 10, 35, 26, 105), "scrollbar track")
+        for horizontal_point, expected in ((22, 20), (75, 0), (119, 21)):
+            probe.call("HitTestThemeScrollBarArrows", [bar, 0, 0, 1, (16 << 16) | horizontal_point, output, part], side=side)
+            p.expect(int(expected != 0), "hit-test the scrollbar arrows")
+            probe.arguments([part], 0)
+            p.emit(0xA0630000)
+            p.expect(expected, "return the matching scrollbar part code")
+    _, saved_offset = probe.raw(bytes(4))
+    probe.arguments([original_style, probe.ptr(saved_offset)], 0)
+    p.emit(0xA0630000, 0x90640000)
+    probe.call("SetThemeScrollBarArrowStyle", [probe.slot(saved_offset), 0])
+    p.expect(0, "restore the original scrollbar arrow preference")
+
 def appearance_state_operations(probe):
     p = probe.p
     _, base = probe.raw(bytes(24))
@@ -12329,7 +12800,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     math_rows = [{"name": name, "original_library": "MathOracle"} for name, _, _ in entries]
     math_rows.extend(
         {"name": name, "original_library": "MathOracle"}
-        for name in ("num2dec", "dec2str", "str2dec", "dec2num", "dec2s", "dec2l", "nan", "nanf", "nanl")
+        for name in (
+            "num2dec", "dec2str", "str2dec", "dec2num", "dec2s", "dec2l", "nan", "nanf", "nanl",
+            "num2decl", "dec2numl", "dec2f", "frexpl", "ldexpl",
+        )
     )
     wide_source = (ROOT / "carbonlib/src/math_wide_entries.h").read_text()
     wide_entries = re.findall(r"^CARBON_MATH_WIDE\((\w+), (\w+)\)$", wide_source, re.M)
@@ -12402,8 +12876,20 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
         native_names.update(("SetControlColorProc", "SetUpControlBackground", "SetUpControlTextColor"))
         icon_services = (ROOT / "carbonlib/src/icon_services.h").read_text()
-        # The Finder Services fixture exercises file-backed IconRefs and their reload behavior.
-        finder_file_icons = {"GetIconRefFromFile", "UpdateIconRef"}
+        # The Finder Services fixture exercises file-backed IconRefs and icon-file I/O.
+        finder_file_icons = {
+            "GetIconRefFromFile",
+            "GetIconRefFromFolder",
+            "UpdateIconRef",
+            "ReadIconFile",
+            "WriteIconFile",
+            "RegisterIconRefFromIconFile",
+            "RegisterIconRefFromResource",
+            "OverrideIconRef",
+            "OverrideIconRefFromResource",
+            "RemoveIconRefOverride",
+            "FlushIconRefsByVolume",
+        }
         native_names.update(
             set(re.findall(r"^static int carbon_([A-Z]\w+)\(", icon_services, re.M)) - finder_file_icons
         )
@@ -12534,7 +13020,26 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         native_names.update(re.findall(r"^CARBON_SOUND_INPUT\((\w+),", sound_input, re.M))
         sound_converter = (ROOT / "carbonlib/src/sound_converter.h").read_text()
         native_names.update(re.findall(r"^static int carbon_(SoundConverter\w+)\(", sound_converter, re.M))
-        native_names.update(("IdleUpdate", "UpdateSystemActivity", "GetLastActivity"))
+        native_names.update(
+            ("AEObjectInit", "AESetObjectCallbacks", "GetSubmenuParentChoosable", "MatchAliasNoUI")
+        )
+        native_names.update(DEBUG_REGISTRY_APIS)
+        native_names.update(HEAP_DIAGNOSTIC_APIS)
+        native_names.update(
+            (
+                "relstring",
+                "upperstring",
+                "GetApplicationScript",
+                "UnsignedFixedMulDiv",
+                "GetIconDevice",
+                "SysError",
+                "stdtext",
+                "DebugStr",
+            )
+        )
+        power_entries = (ROOT / "carbonlib/src/power_manager.h").read_text()
+        native_names.update(re.findall(r"^CARBON_POWER\((\w+),", power_entries, re.M))
+        native_names.update(re.findall(r"^static int carbon_(\w+)\(", power_entries, re.M))
         native_names.update(
             (
                 "NavGetDefaultDialogOptions",
@@ -12653,7 +13158,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
         control_entries = (ROOT / "carbonlib/src/control_access.h").read_text()
         native_names.update(re.findall(r"^CARBON_(?:CONTROL|RANGE)\((\w+),", control_entries, re.M))
-        native_names.update(("GetBestControlRect", "GetControlRegion"))
+        native_names.update(("GetBestControlRect", "GetControlRegion", "AdvanceKeyboardFocus", "ReverseKeyboardFocus"))
         native_names.update(("GetWindowBounds", "GetWindowRegion"))
         native_names.update(
             (
@@ -12865,7 +13370,18 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 ]
                 + [
                     {"name": name, "original_library": "AppearanceLib"}
-                    for name in (*APPEARANCE_STATE_APIS, "GetThemeFont")
+                    for name in (
+                        *APPEARANCE_STATE_APIS,
+                        "GetThemeFont",
+                        "GetThemeStandaloneGrowBoxBounds",
+                        "GetThemeTrackBounds",
+                        "GetThemeTrackDragRect",
+                        "GetThemeTrackThumbPositionFromOffset",
+                        "GetThemeTrackThumbPositionFromRegion",
+                        "GetThemeTrackLiveValue",
+                        "GetThemeScrollBarTrackRect",
+                        "HitTestThemeScrollBarArrows",
+                    )
                 ]
                 + (
                     [{"name": name, "original_library": "ObjectPackingOracle"} for name in AE_OBJECT_PACKING]
@@ -12991,6 +13507,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         probe.section("TextEdit register callbacks", lambda: textedit_upp_invocations(probe, textedit))
     if nqd_imports:
         probe.section("Appearance clients and preferences", lambda: appearance_state_operations(probe))
+        if not original_only:
+            probe.section("DebugLib component and option registry", lambda: debug_registry_operations(probe))
+            probe.section("Memory Manager heap diagnostics", lambda: heap_diagnostic_operations(probe))
+        probe.section("Appearance geometry", lambda: appearance_geometry_operations(probe))
         probe.section("NQD original QuickDraw traps", lambda: nqd_native_operations(probe))
     if file_entries:
         probe.section("File Manager parameter-block trap dispatch", lambda: file_parameter_blocks(probe, file_entries))
@@ -13122,6 +13642,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
             (b"cltn", 183, collection[:-2]),
             (b"thng", 182, component),
             (b"rCmp", 182, bytes.fromhex("70004e75")),
+            (b"STR#", 182, b"\x00\x02\x03One\x03Two"),
         ]
         resources.extend(
             (b"CURS", cursor, struct.pack(">I", word) + bytes(64))

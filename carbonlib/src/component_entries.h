@@ -20,6 +20,27 @@
 
 static int carbon_component_call(ROMlib_carbon_ppc_frame* call, unsigned selector)
 {
+    unsigned output_index = 0;
+    size_t output_size = 0;
+    switch (selector) {
+    case 47: /* OpenAComponentResFile */
+        output_index = 1;
+        output_size = sizeof(INTEGER);
+        break;
+    case 53: /* GetComponentResource */
+        output_index = 3;
+        output_size = sizeof(uint32_t);
+        break;
+    case 54: /* GetComponentIndString */
+        output_index = 1;
+        output_size = sizeof(Str255);
+        break;
+    }
+    if (output_size && (!call->words[output_index] ||
+                        !ROMlib_carbon_try_guest_memory(call->words[output_index], output_size, 1))) {
+        call->words[0] = paramErr;
+        return 1;
+    }
     const char* signature = ROMlib_component_signature(selector);
     uint32_t arguments[6] = {0}, result;
     for (unsigned index = 1; signature[index]; ++index) {
@@ -64,8 +85,15 @@ CARBON_COMPONENT(CountComponentInstances, 19)
 CARBON_COMPONENT(RegisterComponentResourceFile, 20)
 CARBON_COMPONENT(SetDefaultComponent, 30)
 CARBON_COMPONENT(OpenDefaultComponent, 33)
+CARBON_COMPONENT(GetComponentTypeModSeed, 44)
 CARBON_COMPONENT(OpenAComponent, 45)
 CARBON_COMPONENT(OpenADefaultComponent, 46)
+
+CARBON_COMPONENT(OpenComponentResFile, 21)
+CARBON_COMPONENT(CloseComponentResFile, 24)
+CARBON_COMPONENT(OpenAComponentResFile, 47)
+CARBON_COMPONENT(GetComponentResource, 53)
+CARBON_COMPONENT(GetComponentIndString, 54)
 
 #undef CARBON_COMPONENT
 

@@ -47,6 +47,9 @@ enum {
     fsref_bad_iterator_flags = -1422,
     fsref_iterator_not_found = -1423,
     fsref_iterator_not_supported = -1424,
+    fsref_buffers_too_small = -210,
+    fsref_path_too_long = -2110,
+    fsref_path_limit = INT16_MAX, /* CarbonLib passes the input byte count as a signed short. */
     fsref_directory = 0x10,
     fsref_host_identity = 0x8000,
 };
@@ -1144,6 +1147,178 @@ static int fs_result(ROMlib_carbon_ppc_frame* call, OSErr result)
     return 1;
 }
 
+static OSErr path_make_ref(uint32_t address, carbon_file_ref* ref)
+{
+    _Alignas(256) Str255 name;
+    size_t length = 0;
+    if (!address)
+        return paramErr;
+    for (size_t offset = 0; offset <= fsref_path_limit; ++offset) {
+        const Byte* byte = (uint64_t)address + offset <= UINT32_MAX ? fs_memory(address + offset, 1, 0) : NULL;
+        if (!byte)
+            return paramErr;
+        const Byte character = *byte;
+        if (!character || character == ':') {
+            const bool first = !ref->volume;
+            if (first && (!character || !length))
+                return nsvErr;
+            if (!first && !(CW(ref->flags) & fsref_directory))
+                return dirNFErr;
+            if (!length && !character)
+                return noErr;
+
+            OSErr error;
+            if (first) {
+                if (length == sizeof name - 1)
+                    return bdNamErr;
+                name[++length] = ':';
+                name[0] = length;
+                error = make_ref(0, 0, name, ref);
+            }
+            else if (!length) {
+                if (ref->parent == CL((uint32_t)1))
+                    return dirNFErr;
+                error = make_directory_ref(ref->volume, ref->parent, ref);
+            }
+            else {
+                name[0] = length;
+                _Alignas(128) CInfoPBRec catalog;
+                error = get_catalog(ref->volume, ref->node, 0, name, &catalog);
+                if (!error) {
+                    if (is_directory(&catalog))
+                        error = make_directory_ref(ref->volume, catalog.dirInfo.ioDrDirID, ref);
+                    else if (name[0] >= sizeof ref->name)
+                        error = fsref_name_too_long;
+                    else
+                        store_ref(ref, ref->volume, &catalog, name);
+                }
+            }
+            if (error || !character)
+                return error;
+            length = 0;
+        }
+        else {
+            if (length == sizeof name - 1)
+                return bdNamErr;
+            name[++length] = character;
+        }
+    }
+    return fsref_path_too_long;
+}
+
+static void ref_path_directory_name(int16_t volume, uint32_t directory, Str255 name)
+{
+    if (name[0] < 31 || CL(directory) <= 2)
+        return;
+    HVCB* disk = ROMlib_vcbbyvrn(CW(volume));
+    if (!disk || disk->vcbCTRef)
+        return;
+    /* The classic catalog shortens host directory names to 31 bytes. The
+       host directory map retains the full component needed for a round trip. */
+    const datum path = ROMlib_dbm_fetch((VCBExtra*)disk, CL(directory));
+    if (!path.dptr || path.dsize <= 0)
+        return;
+    const char* end = path.dptr + path.dsize;
+    while (end > path.dptr && (end[-1] == 0 || end[-1] == '/'))
+        --end;
+    const char* first = end;
+    while (first > path.dptr && first[-1] != '/')
+        --first;
+    const size_t length = end - first;
+    if (length <= 31 || length > 255)
+        return;
+    char mac[255];
+    const int converted = ROMlib_host_name_to_mac(first, length, mac);
+    if (converted > 31 && !memchr(mac, ':', converted)) {
+        memcpy(name + 1, mac, converted);
+        name[0] = converted;
+    }
+}
+
+static OSErr ref_make_path(const carbon_file_ref* ref, uint32_t address, uint32_t capacity)
+{
+    _Alignas(256) Str255 name = {0};
+    _Alignas(128) CInfoPBRec catalog;
+    OSErr error = resolve_ref(ref, &catalog, name);
+    if (error)
+        return error;
+    if (!capacity)
+        return fsref_buffers_too_small;
+    const bool directory = is_directory(&catalog);
+    uint32_t parent = directory ? catalog.dirInfo.ioDrParID : catalog.hFileInfo.ioFlParID;
+    const size_t size = MIN(capacity, fsref_path_limit + 1u);
+    Byte* path = malloc(size);
+    if (!path)
+        return memFullErr;
+
+    /* Fill from the end so each parent name is copied once. */
+    size_t start = size - 1;
+    path[start] = 0;
+    bool colon = directory;
+    for (;;) {
+        if (colon)
+            ref_path_directory_name(ref->volume, catalog.dirInfo.ioDrDirID, name);
+        const size_t length = name[0];
+        if (length + colon > start) {
+            error = capacity > size ? fsref_path_too_long : fsref_buffers_too_small;
+            break;
+        }
+        if (colon)
+            path[--start] = ':';
+        start -= length;
+        memcpy(path + start, name + 1, length);
+        if (parent == CL((uint32_t)1)) {
+            Byte* output = fs_memory(address, size - start, 1);
+            if (output)
+                memcpy(output, path + start, size - start);
+            else
+                error = paramErr;
+            break;
+        }
+        error = get_catalog(ref->volume, parent, -1, name, &catalog);
+        if (error)
+            break;
+        if (!is_directory(&catalog) || !parent || catalog.dirInfo.ioDrParID == parent) {
+            error = dirNFErr;
+            break;
+        }
+        parent = catalog.dirInfo.ioDrParID;
+        colon = true;
+    }
+    free(path);
+    return error;
+}
+
+static int call_ref_path(ROMlib_carbon_ppc_frame* call, bool from_path)
+{
+    const uint32_t* words = call->words;
+    if (from_path) {
+        carbon_file_ref* output = fs_memory(words[1], sizeof *output, 1);
+        Byte* is_folder = fs_memory(words[2], 1, 1);
+        if (!output || (words[2] && !is_folder))
+            return fs_result(call, paramErr);
+        carbon_file_ref ref = {0};
+        const OSErr error = path_make_ref(words[0], &ref);
+        if (!error) {
+            *output = ref;
+            if (is_folder)
+                *is_folder = (CW(ref.flags) & fsref_directory) != 0;
+        }
+        return fs_result(call, error);
+    }
+
+    const carbon_file_ref* ref = fs_memory(words[0], sizeof *ref, 0);
+    if (!ref || !words[1])
+        return fs_result(call, paramErr);
+    if (ref->stamp != CL((uint32_t)fsref_stamp)) {
+        ROMlib_carbon_reference original;
+        if (ROMlib_carbon_load_reference("CarbonLib", "FSRefMakePath", &original))
+            return ROMlib_carbon_invoke_frame(original.function, call);
+        return fs_result(call, fsref_bad);
+    }
+    return fs_result(call, ref_make_path(ref, words[1], words[2]));
+}
+
 static int dispatch_fork(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation operation, int asynchronous,
                          carbon_fork_pb* block)
 {
@@ -1354,7 +1529,10 @@ static int call_bulk(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation ope
             block.info = CL(words[5]);
             block.refs = CL(words[6]);
             block.specs = CL(words[7]);
-            block.names = CL(words[8]);
+            uint32_t names;
+            if (!ROMlib_carbon_frame_word(call, 8, &names))
+                return 0;
+            block.names = CL(names);
         }
     }
     const int ok = dispatch_bulk(call, operation, 0, &block);
@@ -1463,10 +1641,6 @@ int ROMlib_carbon_fs_ref_parameter_block(ROMlib_carbon_ppc_frame* call, enum car
                                          int asynchronous)
 {
     const uint32_t address = call->words[0];
-    if (operation == carbon_fs_allocate_contig) {
-        ParamBlockRec* block = fs_memory(address, sizeof(ioParam), 1);
-        return fs_result(call, block ? PBAllocContig(block, asynchronous) : paramErr);
-    }
     if (operation == carbon_fs_extended_volume) {
         carbon_extended_volume_pb* block = fs_memory(address, sizeof *block, 1);
         return block ? fs_result(call, ROMlib_file_complete(block, asynchronous, extended_volume(block)))
@@ -1506,6 +1680,8 @@ int ROMlib_carbon_fs_ref_parameter_block(ROMlib_carbon_ppc_frame* call, enum car
 int ROMlib_carbon_fs_ref(ROMlib_carbon_ppc_frame* call, enum carbon_fs_operation operation)
 {
     const uint32_t* words = call->words;
+    if (operation == carbon_fs_path_make_ref || operation == carbon_fs_ref_make_path)
+        return call_ref_path(call, operation == carbon_fs_path_make_ref);
     if (fork_operation(operation) || operation == carbon_fs_data_name || operation == carbon_fs_resource_name)
         return call_fork(call, operation);
     if (operation == carbon_fs_fork_info)

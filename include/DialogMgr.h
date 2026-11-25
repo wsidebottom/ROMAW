@@ -163,6 +163,8 @@ extern pascal BOOLEAN C_ROMlib_myfilt(DialogPeek dp, EventRecord* evt, INTEGER* 
 
 extern int32 ROMlib_SetModalDialogEventMask(DialogPtr dialog, uint16 mask);
 extern int32 ROMlib_GetModalDialogEventMask(DialogPtr dialog, uint16* mask);
+extern int32 ROMlib_SetDialogTimeout(DialogPtr dialog, INTEGER item, uint32 duration);
+extern int32 ROMlib_GetDialogTimeout(DialogPtr dialog, INTEGER* item, uint32* duration, uint32* remaining);
 
 extern pascal trap void C_ModalDialog(ProcPtr fp, INTEGER* item);
 extern pascal trap BOOLEAN C_IsDialogEvent(EventRecord* evt);

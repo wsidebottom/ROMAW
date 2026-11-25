@@ -13,7 +13,8 @@
              ROMlib_set_menu_item_encoding, ROMlib_set_menu_item_font, ROMlib_set_menu_item_icon,
              ROMlib_menu_item_count,
              ROMlib_menu_item_enabled, ROMlib_set_menu_item_command,
-             ROMlib_menu_item_property, ROMlib_menu_restore_bar, ROMlib_menu_show_bar,
+             ROMlib_menu_item_property, ROMlib_menu_restore_bar, ROMlib_menu_show_bar, ROMlib_menu_set_bar_height,
+             ROMlib_menu_validate_bar, ROMlib_menu_invalidate_sizes,
              ROMlib_menu_sync_item_removal, ROMlib_menu_sync_saved_insert,
              ROMlib_mbdfcall, ROMlib_mentosix, ROMlib_menu_event, ROMlib_menucall, ROMlib_menuhelper, ROMlib_mitemtop,
              ROMlib_prepare_quit_menu_key, ROMlib_set_menu_item_key_glyph, ROMlib_set_menu_item_modifiers,
@@ -82,6 +83,14 @@ static INTEGER finder_quit_item;
 static RgnHandle hidden_menu_region;
 static INTEGER hidden_menu_height;
 
+static void menu_bar_strip(RgnHandle strip, INTEGER top, INTEGER bottom)
+{
+    const Rect bounds = GD_BOUNDS(MR(MainDevice));
+    const int origin = CW(bounds.top), limit = CW(bounds.bottom);
+    SetRectRgn(strip, CW(bounds.left), MIN(origin + top, limit), CW(bounds.right), MIN(origin + bottom, limit));
+    SectRgn(strip, PORT_VIS_REGION(MR(wmgr_port)), strip);
+}
+
 PUBLIC void ROMlib_menu_restore_bar(boolean_t redraw)
 {
     RgnHandle strip = hidden_menu_region;
@@ -91,7 +100,7 @@ PUBLIC void ROMlib_menu_restore_bar(boolean_t redraw)
     hidden_menu_region = NULL;
     hidden_menu_height = 0;
     /* A patched draw can rebuild the desktop region while painting the bar. */
-    if (redraw)
+    if (redraw && CW(MBarHeight) > 0)
         DrawMenuBar();
     if (GrayRgn && wmgr_port) {
         DiffRgn(MR(GrayRgn), strip, MR(GrayRgn));
@@ -109,10 +118,7 @@ PUBLIC void ROMlib_menu_hide_bar(void)
     RgnHandle strip = NewRgn();
     if (!strip)
         return;
-    Rect bounds = GD_BOUNDS(MR(MainDevice));
-    bounds.bottom = CW(CW(bounds.top) + height);
-    RectRgn(strip, &bounds);
-    SectRgn(strip, PORT_VIS_REGION(MR(wmgr_port)), strip);
+    menu_bar_strip(strip, 0, height);
     hidden_menu_height = height;
     hidden_menu_region = strip;
     MBarHeight = 0;
@@ -128,6 +134,46 @@ PUBLIC void ROMlib_menu_hide_bar(void)
 PUBLIC void ROMlib_menu_show_bar(void)
 {
     ROMlib_menu_restore_bar(TRUE);
+}
+
+PUBLIC void ROMlib_menu_set_bar_height(INTEGER height)
+{
+    if (height < 0)
+        return;
+    if (hidden_menu_region) {
+        hidden_menu_height = height;
+        menu_bar_strip(hidden_menu_region, 0, height);
+        return;
+    }
+
+    const INTEGER previous = CW(MBarHeight);
+    if (height == previous)
+        return;
+    if (!GrayRgn || !wmgr_port || !MainDevice) {
+        MBarHeight = CW(height);
+        return;
+    }
+    RgnHandle strip = NewRgn();
+    if (!strip)
+        return;
+
+    menu_bar_strip(strip, MIN(height, previous), MAX(height, previous));
+    MBarHeight = CW(height);
+    if (height > previous)
+        DiffRgn(MR(GrayRgn), strip, MR(GrayRgn));
+    else
+        UnionRgn(MR(GrayRgn), strip, MR(GrayRgn));
+
+    HIDDEN_GrafPtr port;
+    GetPort(&port);
+    if (height)
+        DrawMenuBar();
+    CopyRgn(MR(GrayRgn), PORT_CLIP_REGION(MR(wmgr_port)));
+    C_CalcVisBehind(ROMlib_window_first_all(), strip);
+    if (height < previous)
+        C_PaintBehind(ROMlib_window_first_all(), strip);
+    SetPort(HIDDEN_NATIVE(port));
+    DisposeRgn(strip);
 }
 
 /* Finder is ROMAW's shell, so its File/Quit command exits the host through
@@ -204,6 +250,22 @@ P0(PUBLIC pascal trap, void, DrawMenuBar)
         TheMenu = 0;
         MBDFCALL(mbDraw, 0, 0L);
     }
+}
+
+PUBLIC void ROMlib_menu_validate_bar(void)
+{
+    enum { validating = 0x08 };
+
+    Byte* const menu_list_flags = SYN68K_TO_US(0xb21);
+    if (MENU_BAR_GLOBAL_INVALID & validating)
+        return;
+
+    MENU_BAR_GLOBAL_INVALID |= validating;
+    const boolean_t redraw = ((*menu_list_flags | MENU_BAR_GLOBAL_INVALID) & MENU_BAR_GLOBAL_INVALID_MASK) != 0;
+    *menu_list_flags &= ~MENU_BAR_GLOBAL_INVALID_MASK;
+    if (redraw)
+        DrawMenuBar();
+    MENU_BAR_GLOBAL_INVALID &= ~validating;
 }
 
 #define HIEROFFX (*(INTEGER*)((char*)STARH(MENULIST) + Hx(MENULIST, muoff) + sizeof(muelem) + 4))
@@ -1417,6 +1479,18 @@ A1(PRIVATE, void, initpairs, startendpairs, pairs)
     pairs[(int)nonhier].endp = HxX(MENULIST, mulist) + Hx(MENULIST, muoff) / sizeof(muelem);
     pairs[(int)hier].startp = FIRSTHIER;
     pairs[(int)hier].endp = HxX(MENULIST, mulist) + HIEROFF / sizeof(muelem);
+}
+
+PUBLIC void ROMlib_menu_invalidate_sizes(void)
+{
+    if (!MenuList || (uintptr_t)MenuList == UINT32_MAX || !STARH(MENULIST))
+        return;
+
+    startendpairs pairs;
+    initpairs(pairs);
+    for (unsigned list = nonhier; list <= hier; ++list)
+        for (muelem* element = pairs[list].startp; element < pairs[list].endp; ++element)
+            dirtymenusize(PPR(element->muhandle));
 }
 
 static boolean_t menu_id_exists_p(int id)

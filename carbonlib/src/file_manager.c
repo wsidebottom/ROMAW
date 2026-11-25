@@ -69,28 +69,30 @@ int ROMlib_carbon_file_io(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_wor
     block.ioRefNum = CW(arguments[0]);
     void* output = NULL;
     const void* result_field = NULL;
-    int transfer = trap_word == 0xa002 || trap_word == 0xa003;
-    if (transfer || trap_word == 0xa011 || trap_word == 0xa018) {
+    const int transfer = trap_word == 0xa002 || trap_word == 0xa003;
+    const int allocate = trap_word == 0xa010 || trap_word == 0xa210;
+    if (transfer || allocate || trap_word == 0xa011 || trap_word == 0xa018) {
         if (!arguments[1])
             return result_error(call_frame, paramErr);
         output = ROMlib_carbon_guest_memory(arguments[1], 4, 1);
         if (!output)
             return 0;
     }
-    if (transfer) {
+    if (transfer || allocate) {
         memcpy(&block.ioReqCount, output, 4);
         int32_t length = (int32_t)CL(block.ioReqCount);
-        if (length < 0 || (length && !arguments[2])) {
+        if (length < 0 || (transfer && length && !arguments[2])) {
             uint32_t zero = 0;
             memcpy(output, &zero, 4);
             return result_error(call_frame, paramErr);
         }
-        if (length && !ROMlib_carbon_guest_memory(arguments[2], length, trap_word == 0xa002)) {
+        if (transfer && length && !ROMlib_carbon_guest_memory(arguments[2], length, trap_word == 0xa002)) {
             uint32_t zero = 0;
             memcpy(output, &zero, 4);
             return 0;
         }
-        PP_RAW(block.ioBuffer) = CL(arguments[2]);
+        if (transfer)
+            PP_RAW(block.ioBuffer) = CL(arguments[2]);
         block.ioPosMode = CWC(fsAtMark);
         result_field = &block.ioActCount;
     }
@@ -108,7 +110,7 @@ int ROMlib_carbon_file_io(ROMlib_carbon_ppc_frame* call_frame, uint16_t trap_wor
     uint32_t result;
     if (!ROMlib_carbon_file_trap(trap_word, -1, US_TO_SYN68K(&block), &result))
         return 0;
-    if (transfer || (output && !result))
+    if (transfer || allocate || (output && !result))
         memcpy(output, result_field, 4);
     call_frame->words[0] = result;
     return 1;

@@ -396,6 +396,14 @@ TOOLBOX_SELECTOR(GetMenuItemFontID, 0x0e94, 0x3ba8, 0x0510, int16_t)
 TOOLBOX_SELECTOR(SetMenuItemIconHandle, 0x0e94, 0xdba8, 0x0606, int16_t)
 TOOLBOX_SELECTOR(GetMenuItemIconHandle, 0x0e94, 0xfba8, 0x0707, int16_t)
 TOOLBOX_SELECTOR(FollowFinderAlias, 0x0e8c, 0x3dfe8, 0xf, int16_t)
+TOOLBOX_SELECTOR(MatchAlias, 0x0e8c, 0x00ffffe8, 0x5, int16_t)
+
+static int carbon_MatchAliasNoUI(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[1] &= ~2u; /* kARMMountVol */
+    return carbon_vector_MatchAlias(call);
+}
+
 TOOLBOX_SELECTOR(UpdateAlias, 0x0e8c, 0xffe8, 0x6, int16_t)
 TOOLBOX_SELECTOR(TempNewHandle, 0x103c, 0xfbe, 0x1d, uint32_t)
 TOOLBOX_SELECTOR(TempMaxMem, 0x103c, 0x3be, 0x15, uint32_t)
