@@ -29,13 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def native_entries(source):
     entries = {}
+    companion_scopes = set()
     pattern = (
         r'\{\s*"([^"]+)"\s*,[^{}]*?,\s*(0x[0-9a-fA-F]+)'
         r'(?:\s*,\s*(?:"([^"]+)"|NULL))?(?:\s*,\s*([A-Z_]+(?:\s*\|\s*[A-Z_]+)*))?\s*\}'
     )
     for name, offset, library, flags in re.findall(pattern, source, re.S):
-        if name in entries:
-            raise ValueError(f"Duplicate native binding: {name}")
         flags = [flag.strip() for flag in flags.split("|")] if flags else []
         if len(set(flags)) != len(flags) or set(flags) - {
             "ROMLIB_CARBON_PPC_ONLY",
@@ -46,15 +45,23 @@ def native_entries(source):
             raise ValueError(f"Unrecognized native binding flags: {name}")
         if "ROMLIB_CARBON_PRELOAD_REFERENCE" in flags and not library:
             raise ValueError(f"Reference preload needs a source library: {name}")
-        entries[name] = {"offset": int(offset, 16), "library": library or None}
-        if "ROMLIB_CARBON_COMPANION_ONLY" in flags:
+        companion_only = "ROMLIB_CARBON_COMPANION_ONLY" in flags
+        scope = (library, name)
+        key = scope if companion_only else name
+        if key in entries or (library and scope in companion_scopes):
+            raise ValueError(f"Duplicate native binding: {name}")
+        if library:
+            companion_scopes.add(scope)
+        entry = {"offset": int(offset, 16), "library": library or None}
+        if companion_only:
             if not library:
                 raise ValueError(f"Companion binding needs a source library: {name}")
-            entries[name]["companion_only"] = True
+            entry["companion_only"] = True
         if "ROMLIB_CARBON_EXTENSION" in flags:
-            if library or entries[name]["offset"] != 0xFFFFFFFF or entries[name].get("companion_only"):
+            if library or entry["offset"] != 0xFFFFFFFF or companion_only:
                 raise ValueError(f"Extension binding cannot declare a reference location: {name}")
-            entries[name]["extension"] = True
+            entry["extension"] = True
+        entries[key] = entry
     if len(entries) != len(re.findall(r'\{\s*"([^"]+)"\s*,', source)):
         raise ValueError("Unparsed native binding; update the audit for its registry format")
     data_pattern = (
@@ -114,9 +121,11 @@ def native_entries(source):
     if len(nqd_native_rows) != len(re.findall(r"\bNQD_NATIVE\(", invocations)):
         raise ValueError("Unparsed NQD native binding")
     for name, offset in nqd_rows + nqd_native_rows:
-        if name in entries:
+        scope = ("NQD", name)
+        if scope in companion_scopes:
             raise ValueError(f"Duplicate native binding: {name}")
-        entries[name] = {"offset": int(offset, 16), "library": "NQD", "companion_only": True}
+        companion_scopes.add(scope)
+        entries[scope] = {"offset": int(offset, 16), "library": "NQD", "companion_only": True}
     if not entries:
         raise ValueError("No native bindings found")
     return entries
@@ -155,12 +164,13 @@ def audit(reference, native, imports=(), observed=(), companions=None):
         raise ValueError("CarbonLib metadata belongs in the main reference, not companion metadata")
     companions = {name: reference_exports(metadata) for name, metadata in (companions or {}).items()}
     exports = reference_exports(reference)
+    definitions = [(key[1] if isinstance(key, tuple) else key, item) for key, item in native.items()]
     main_native = {
         name: item for name, item in native.items() if not item.get("companion_only") and not item.get("extension")
     }
     extensions = {name: item for name, item in native.items() if item.get("extension")}
     imported = {item["index"]: item for item in reference.get("imports", [])}
-    for name, location in native.items():
+    for name, location in definitions:
         if location.get("extension"):
             if name in exports:
                 raise ValueError(f"Extension binding also appears in the main reference: {name}")
@@ -213,9 +223,8 @@ def audit(reference, native, imports=(), observed=(), companions=None):
         }
     }
     for library, items in companions.items():
-        names = {name for name, item in native.items() if item["library"] == library}
-        for name in names:
-            binding = native[name]
+        bindings = {name: item for name, item in definitions if item["library"] == library}
+        for name, binding in bindings.items():
             classes = (1,) if binding.get("data") else (0, 2)
             item = items.get(name, {})
             if item.get("symbol_class") not in classes:
@@ -224,8 +233,8 @@ def audit(reference, native, imports=(), observed=(), companions=None):
                 raise ValueError(f"Native data record offset mismatch: {library}:{name}")
         libraries[library] = {
             "reference_exports": len(items),
-            "native_archive_exports": len(names),
-            "pending_reference_exports": len(items) - len(names),
+            "native_archive_exports": len(bindings),
+            "pending_reference_exports": len(items) - len(bindings),
         }
     return {
         "scope": "CarbonLib main PEF fragment and supplied companion metadata; application counts cover CarbonLib imports",

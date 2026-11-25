@@ -251,7 +251,7 @@ class CoverageTests(unittest.TestCase):
             '{"Private", fn, 4, 0x461fc, "CoreFoundationLib", ROMLIB_CARBON_PPC_ONLY | ROMLIB_CARBON_COMPANION_ONLY},'
         )
         native = coverage.native_entries(source)
-        self.assertTrue(native["Private"]["companion_only"])
+        self.assertTrue(native["CoreFoundationLib", "Private"]["companion_only"])
         reference = {"exports": [{"name": "Private", "symbol_class": 2, "code_offset": 99}]}
         companion = {
             "exports": [
@@ -271,6 +271,14 @@ class CoverageTests(unittest.TestCase):
             result["libraries"]["CoreFoundationLib"],
             {"reference_exports": 2, "native_archive_exports": 1, "pending_reference_exports": 1},
         )
+        both = coverage.native_entries(source + '{"Private", main_fn, 4, 0x63},')
+        both_result = coverage.audit(reference, both, imports, companions={"CoreFoundationLib": companion})
+        self.assertEqual(both_result["native_archive_exports"], 1)
+        self.assertEqual(both_result["native_archive_total_exports"], 2)
+        self.assertEqual(both_result["native_companion_only_exports"], 1)
+        self.assertEqual(both_result["application_native_imports"], 1)
+        with self.assertRaisesRegex(ValueError, "Duplicate native binding"):
+            coverage.native_entries(source + '{"Private", main_fn, 4, 0x63, "CoreFoundationLib"},')
         with self.assertRaises(ValueError):
             coverage.audit(reference, native)
         for field, value in (("symbol_class", 1), ("code_offset", 0)):
