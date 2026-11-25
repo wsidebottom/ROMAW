@@ -233,8 +233,18 @@ static void flat_setup(unsigned opcode, unsigned command, unsigned mode)
 static void flat_compare(unsigned opcode, unsigned command, unsigned mode, unsigned exceptional)
 {
     flat_setup(opcode, command, mode);
+    uint16 entry_sr = cpu_state.sr;
     Syn68kFPUStep expected, actual;
     assert(syn68k_fpu_step_decoded(start, opcode, NULL, &expected));
+    if (flat_compiled && !expected.vector) {
+        syn68k_fpu_trace_result(&expected, entry_sr, start);
+        if (expected.vector)
+            expected = (Syn68kFPUStep){.next = start,
+                                       .exception_pc = expected.exception_pc,
+                                       .fault_address = expected.fault_address,
+                                       .vector = expected.vector,
+                                       .format = expected.format};
+    }
     CPUState expected_cpu = cpu_state;
     memcpy(expected_ram, ram, sizeof ram);
     if (flat_alias_address)
