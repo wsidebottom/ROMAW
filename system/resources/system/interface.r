@@ -135,6 +135,15 @@ resource 'DITL' (-6042, purgeable) {
     }
 };
 
+resource 'DITL' (-6044, purgeable) {
+    {
+        { 73, 194, 94, 266 }, Button { enabled, "Create" };
+        { 73, 108, 94, 180 }, Button { enabled, "Cancel" };
+        { 39, 18, 56, 266 }, EditText { enabled, "untitled folder" };
+        { 15, 18, 33, 266 }, StaticText { disabled, "Folder name:" };
+    }
+};
+
 resource 'DITL' (-4065) {
     {
         /* Item 1 */
@@ -479,6 +488,17 @@ resource 'DLOG' (-6042, purgeable) {
     0x00000000, /* refCon */
     -6042, /* DITL */
     ""
+};
+
+resource 'DLOG' (-6044, purgeable) {
+    { 0, 0, 110, 284 },
+    dBoxProc,
+    invisible,
+    noGoAway,
+    0x00000000,
+    -6044,
+    "New Folder",
+    centerMainScreen
 };
 
 resource 'DLOG' (-4065) {

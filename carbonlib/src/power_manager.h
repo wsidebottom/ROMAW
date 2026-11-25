@@ -24,13 +24,24 @@ static int power_dispatch(uint32_t selector, uint32_t info, uint32_t pointer, ui
     return ROMlib_carbon_call_register_vector(0x0678, info, 0xa09e, 1, &arguments, result);
 }
 
-#define CARBON_POWER(name, selector, info, argument)                                                \
-    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                                         \
+#define CARBON_POWER(name, selector, info, argument)                                                 \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                                          \
     {                                                                                               \
-        return power_dispatch((selector) | ((uint32_t)(argument) << 16), info, 0, &call->words[0]); \
+        uint32_t result;                                                                            \
+        if (!power_dispatch((selector) | ((uint32_t)(argument) << 16), info, 0, &result))              \
+            return 0;                                                                               \
+        call->words[0] = ((info) & 0x30) == 0x10 ? (uint8_t)result : result;                          \
+        return 1;                                                                                   \
     }
 
 CARBON_POWER(PMFeatures, 0x01, 0x71832, 0)
+CARBON_POWER(GetSleepTimeout, 0x02, 0x71812, 0)
+CARBON_POWER(SetSleepTimeout, 0x03, 0x71802, (uint8_t)call->words[0])
+CARBON_POWER(GetHardDiskTimeout, 0x04, 0x71812, 0)
+CARBON_POWER(SetHardDiskTimeout, 0x05, 0x71802, (uint8_t)call->words[0])
+CARBON_POWER(IsSpindownDisabled, 0x08, 0x71812, 0)
+CARBON_POWER(SetSpindownDisable, 0x09, 0x71802, (uint8_t)call->words[0])
+CARBON_POWER(AutoSleepControl, 0x0d, 0x71802, (uint8_t)call->words[0])
 CARBON_POWER(GetIntModemInfo, 0x0e, 0x71832, 0)
 CARBON_POWER(MaximumProcessorSpeed, 0x10, 0x71822, 0)
 CARBON_POWER(CurrentProcessorSpeed, 0x11, 0x71822, 0)
@@ -39,6 +50,13 @@ CARBON_POWER(SetProcessorSpeed, 0x13, 0x71812, (uint8_t)call->words[0])
 CARBON_POWER(IsProcessorCyclingEnabled, 0x18, 0x71812, 0)
 CARBON_POWER(BatteryCount, 0x1a, 0x71822, 0)
 CARBON_POWER(GetBatteryVoltage, 0x1b, 0x71832, (uint16_t)call->words[0])
+CARBON_POWER(GetDimmingTimeout, 0x1d, 0x71812, 0)
+CARBON_POWER(SetDimmingTimeout, 0x1e, 0x71802, (uint8_t)call->words[0])
+CARBON_POWER(DimmingControl, 0x1f, 0x71802, (uint8_t)call->words[0])
+CARBON_POWER(IsDimmingControlDisabled, 0x20, 0x71812, 0)
+CARBON_POWER(IsAutoSlpControlDisabled, 0x21, 0x71812, 0)
+CARBON_POWER(GetDimSuspendState, 0x2b, 0x71812, 0)
+CARBON_POWER(SetDimSuspendState, 0x2c, 0x71802, (uint8_t)call->words[0])
 
 #undef CARBON_POWER
 

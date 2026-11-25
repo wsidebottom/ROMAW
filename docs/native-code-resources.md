@@ -12,7 +12,7 @@ python3 tools/audit-native-resources.py
 bash system/tests/check-toolbox.sh native-resource /absolute/path/to/ROMAW.exe
 ```
 
-The audit checks all 251 System and 251 Finder resource declarations, including
+The audit checks all 253 System and 251 Finder resource declarations, including
 the embedded INTL localization entry, plus the two separate DSAT tables. It
 rejects changed native veneers, unregistered entries of executable resource
 types and non-native DSAT procedure bodies. It uses resource

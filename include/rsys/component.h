@@ -22,6 +22,7 @@
 extern const char* ROMlib_component_signature(unsigned selector);
 extern int ROMlib_component_selector(const char* name);
 extern int ROMlib_component_service(unsigned selector, const uint32* args, uint32* result);
+extern OSErr ROMlib_component_copy_name(OSType type, OSType subtype, StringPtr name);
 extern OSErr ROMlib_component_text_services(INTEGER count, const OSType* types, HIDDEN_Handle* output, LONGINT* seed);
 extern int ROMlib_component_can_dispatch(uint32 instance);
 extern int32 ROMlib_component_call(uint32 instance, const void* parameters);

@@ -20,7 +20,7 @@
 #include <stddef.h>
 
 typedef struct {
-    uint32_t frames, rate, offset, input_size;
+    uint32_t frames, rate, offset, input_size, format;
     unsigned channels, bits, compression;
 } resource_sound;
 
@@ -34,7 +34,7 @@ static unsigned resource_word(const uint8_t* p)
     return (unsigned)p[0] << 8 | p[1];
 }
 
-static int resource_sound_parse(const uint8_t* bytes, size_t size, resource_sound* output)
+static int resource_sound_read(const uint8_t* bytes, size_t size, resource_sound* output, int playback)
 {
     resource_sound info = {0};
     if (!bytes || !output || size < 6 || size > INT32_MAX)
@@ -64,7 +64,7 @@ static int resource_sound_parse(const uint8_t* bytes, size_t size, resource_soun
         unsigned number = resource_word(command);
         if (number == 0) /* nullCmd */
             continue;
-        if (number != 0x8051 || header) /* one relative bufferCmd */
+        if ((number != 0x8051 && (playback || number != 0x8050)) || header)
             return -206;
         header = resource_long(command + 4);
     }
@@ -78,6 +78,7 @@ static int resource_sound_parse(const uint8_t* bytes, size_t size, resource_soun
         return -206;
     info.channels = 1;
     info.bits = 8;
+    info.format = resource_long((const uint8_t*)"raw ");
     if (sound[20] == 0) {
         info.frames = resource_long(sound + 4);
         info.offset = header + 22;
@@ -88,31 +89,49 @@ static int resource_sound_parse(const uint8_t* bytes, size_t size, resource_soun
             return -206;
         info.channels = resource_long(sound + 4);
         info.frames = resource_long(sound + 22);
-        if (info.channels != 1 && info.channels != 2)
+        if (!info.channels || info.channels > INT16_MAX || (playback && info.channels > 2))
             return -206;
         info.offset = header + 64;
         uint64_t length;
         if (sound[20] == 0xff) {
             info.bits = resource_word(sound + 48);
-            if (info.bits != 8 && info.bits != 16)
+            if (info.bits != 8 && info.bits != 16 && (playback || !info.bits || info.bits > 32))
                 return -206;
-            length = (uint64_t)info.frames * info.channels * (info.bits / 8);
+            if (info.bits != 8)
+                info.format = resource_long((const uint8_t*)"twos");
+            length = (uint64_t)info.frames * info.channels * ((info.bits + 7) / 8);
         }
         else {
-            info.compression = resource_word(sound + 56);
-            if ((info.compression != 3 && info.compression != 4) || resource_word(sound + 62) != 8 ||
-                info.frames > (UINT32_MAX - 1) / 6)
+            const unsigned id = resource_word(sound + 56);
+            info.bits = resource_word(sound + 62);
+            info.format = resource_long(sound + 40);
+            if (id == 3 || id == 4) {
+                if (info.bits != 8 || (playback && info.frames > (UINT32_MAX - 1) / 6))
+                    return -206;
+                info.format = resource_long((const uint8_t*)(id == 3 ? "MAC3" : "MAC6"));
+                length = (uint64_t)info.frames * info.channels * (id == 3 ? 2 : 1);
+                if (playback) {
+                    info.compression = id;
+                    info.frames *= 6;
+                }
+            }
+            else if (playback || !info.format || !info.bits || info.bits > 64)
                 return -206;
-            length = (uint64_t)info.frames * info.channels * (info.compression == 3 ? 2 : 1);
-            info.frames *= 6;
+            else
+                length = size - info.offset;
         }
         if (length > UINT32_MAX)
             return -206;
         info.input_size = length;
     }
-    if (info.frames == UINT32_MAX || info.input_size > size - info.offset)
+    if ((playback && info.frames == UINT32_MAX) || info.input_size > size - info.offset)
         return -206;
     *output = info;
     return 0;
+}
+
+static int resource_sound_parse(const uint8_t* bytes, size_t size, resource_sound* output)
+{
+    return resource_sound_read(bytes, size, output, 1);
 }
 #endif

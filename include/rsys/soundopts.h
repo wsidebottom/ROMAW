@@ -45,6 +45,7 @@ extern void ROMlib_MUTEX_CONDITION_DESTROY(LONGINT lp);
 
 extern void C_sound_timer_handler(void);
 extern void clear_pending_sounds(void);
+extern OSErr ROMlib_get_sound_compression_name(OSType format, Str255 name);
 
 /* patl stuff */
 
@@ -103,6 +104,8 @@ struct hunger_info {
 extern syn68k_addr_t sound_callback(syn68k_addr_t, void*);
 
 extern INTEGER ROMlib_sysbeep_state;
+extern boolean_t ROMlib_sound_play_alert(void);
+extern boolean_t ROMlib_sound_finish_mix(struct hunger_info info);
 
 extern int ROMlib_get_snd_cmds(Handle sndh, SndCommand** cmdsp);
 

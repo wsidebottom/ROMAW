@@ -2567,11 +2567,41 @@ static int romaw_window_metadata(uint32_t offset, ROMlib_carbon_ppc_frame* call)
     if (offset == windows_get_region)
         return window_result(call, address && call->words[2] ? -30580 : paramErr);
     if (offset == windows_reposition_window || offset == windows_reshape_windows ||
-        offset == windows_recalculate_title_widths || offset == windows_collapse_window ||
-        offset == windows_collapse_all_windows)
+        offset == windows_recalculate_title_widths)
         return window_result(call, -4);
     WindowPtr window = address ? ROMlib_carbon_try_guest_memory(address, sizeof(WindowRecord), 0) : NULL;
     const int valid = window && ROMlib_valid_window(window);
+    if (offset == windows_collapse_window)
+        return window_result(call, valid ? -4 : window_invalid);
+    if (offset == windows_is_collapsed)
+        return window_result(call, 0);
+    if (offset == windows_get_features) {
+        if (!argument)
+            return window_result(call, paramErr);
+        if (!cfp_write(argument, 0))
+            return 0;
+        if (valid)
+            ROMlib_windcall(window, 7, argument);
+        return window_result(call, valid ? noErr : window_invalid);
+    }
+    if (offset == windows_is_collapsable || offset == windows_collapse_all_windows) {
+        /* The classic Window Manager has no WindowShade state. A request
+           for all windows is already satisfied when none can collapse. */
+        if (offset == windows_collapse_all_windows) {
+            for (WindowPtr item = MR(WindowList); item; item = WINDOW_NEXT_WINDOW(item)) {
+                _Alignas(8) uint32_t features = 0;
+                if (WINDOW_VISIBLE(item))
+                    ROMlib_windcall(item, 7, US_TO_SYN68K(&features));
+                if (CL(features) & 4)
+                    return window_result(call, -4);
+            }
+            return window_result(call, noErr);
+        }
+        _Alignas(8) uint32_t features = 0;
+        if (valid)
+            ROMlib_windcall(window, 7, US_TO_SYN68K(&features));
+        return window_result(call, (CL(features) & 4) != 0);
+    }
     if (offset == windows_install_paint_proc) {
         if (!valid)
             return window_result(call, window_invalid);
@@ -2914,7 +2944,8 @@ int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMli
             }
             return window_result(call, -4);
         }
-        if (extra && !proxy && !geometry)
+        if (extra && !proxy && !geometry && offset != windows_get_features && offset != windows_is_collapsable &&
+            offset != windows_is_collapsed)
             return ROMlib_carbon_report_failure("The saved WindowsLib window metadata is unavailable");
         if (offset == windows_title_double_click)
             return 0;

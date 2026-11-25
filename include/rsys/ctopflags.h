@@ -693,7 +693,7 @@
 #define CTOP_CoerceDescTemplate 0x0000592A
 #define CTOP_AECoercePtr 0x0002C962
 #define CTOP_AECoerceDesc 0x00000B2A
-#define CTOP_AEManagerInfo 0x0000002A
+#define CTOP_AEManagerInfo 0x00000162
 #define CTOP_AEDisposeToken 0x0000002A
 #define CTOP_AEREesolve 0x00000AAA
 #define CTOP_AERemoveObjectAccessor 0x00001B22

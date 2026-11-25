@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: C_AEGetTheCurrentEvent, ROMlib_decode_launch_parameters, ROMlib_send_application_open_event,
-             ROMlib_send_document_open_event, ROMlib_ae_object_init, ROMlib_ae_object_reinit,
+             ROMlib_send_document_open_event, ROMlib_ae_dispatch_reinit, ROMlib_ae_object_init, ROMlib_ae_object_reinit,
              C_AEDisposeToken, C_AEREesolve, C_AERemoveObjectAccessor, C_AEInstallObjectAccessor,
              C_AEGetObjectAccessor, C_AECallObjectAccessor, C_AESetObjectCallbacks
 
@@ -203,7 +203,87 @@ static syn68k_addr_t gregs_browser_bookmark_window(syn68k_addr_t pc, void* unuse
 
 /* dispatching apple events */
 
-static AppleEvent* current_apple_event;
+typedef struct ae_suspended_event {
+    struct ae_suspended_event* next;
+    AppleEvent event, reply;
+    bool dispatching;
+} ae_suspended_event;
+
+typedef struct {
+    AppleEvent* event;
+    ae_suspended_event* suspended;
+} ae_dispatch_scope;
+
+static ae_dispatch_scope* active_dispatch;
+static ae_suspended_event *suspended_events, *manual_event;
+
+enum {
+    ae_ignore_app_handler = 0x00000002,
+    ae_ignore_system_handler = 0x00000008,
+    ae_keep_descriptors = 0x80000000,
+    ae_standard_dispatch = UINT32_MAX,
+};
+
+static AppleEvent* current_apple_event(void)
+{
+    return active_dispatch ? active_dispatch->event : manual_event ? &manual_event->event : NULL;
+}
+
+static bool same_apple_event(const AppleEvent* left, const AppleEvent* right)
+{
+    return left && right && DESC_TYPE(left) == typeAppleEvent && DESC_TYPE(right) == typeAppleEvent &&
+           DESC_DATA(left) && DESC_DATA(left) == DESC_DATA(right);
+}
+
+static ae_suspended_event** suspended_apple_event(const AppleEvent* event)
+{
+    ae_suspended_event** link = &suspended_events;
+    while (*link && ((*link)->dispatching || !same_apple_event(&(*link)->event, event)))
+        link = &(*link)->next;
+    return link;
+}
+
+void ROMlib_ae_dispatch_reinit(void)
+{
+    /* AE_reinit runs after the old application's heap has been reset. */
+    while (suspended_events) {
+        ae_suspended_event* event = suspended_events;
+        suspended_events = event->next;
+        free(event);
+    }
+    manual_event = NULL;
+    active_dispatch = NULL;
+}
+
+static OSErr find_event_handler(AEEventClass event_class, AEEventID event_id, uint32_t mask, HIDDEN_ProcPtr* handler,
+                                int32* refcon)
+{
+    OSErr status = errAEHandlerNotFound;
+    if (!(mask & ae_ignore_app_handler))
+        status = AEGetEventHandler(event_class, event_id, handler, refcon, FALSE);
+    if (status && !(mask & ae_ignore_system_handler))
+        status = AEGetEventHandler(event_class, event_id, handler, refcon, TRUE);
+    return status;
+}
+
+static OSErr invoke_event_handler(AppleEvent* event, AppleEvent* reply, ProcPtr handler, int32 refcon, bool dispose)
+{
+    ae_dispatch_scope* previous = active_dispatch;
+    ae_dispatch_scope scope = {.event = event};
+    active_dispatch = &scope;
+    const OSErr status = CToPascalCall(handler, CTOP_EventHandlerTemplate, event, reply, refcon);
+    active_dispatch = previous;
+    if (scope.suspended) {
+        scope.suspended->event = *event;
+        scope.suspended->reply = *reply;
+        scope.suspended->dispatching = false;
+    }
+    else if (dispose) {
+        AEDisposeDesc(reply);
+        AEDisposeDesc(event);
+    }
+    return status;
+}
 
 P3(PUBLIC pascal, OSErr, EventHandlerTemplate, AppleEvent*, evt, AppleEvent*, reply, int32, refcon)
 {
@@ -295,13 +375,10 @@ P1(PUBLIC pascal trap, OSErr, AEProcessAppleEvent, EventRecord*, evtrec)
     }
 #endif
 
-    err = AEGetEventHandler(event_class, event_id, &hdlr, &refcon, FALSE);
+    err = find_event_handler(event_class, event_id, 0, &hdlr, &refcon);
     if (err != noErr) {
-        err = AEGetEventHandler(event_class, event_id, &hdlr, &refcon, TRUE);
-        if (err != noErr) {
-            AEDisposeDesc(evt);
-            AE_RETURN_ERROR(err);
-        }
+        AEDisposeDesc(evt);
+        AE_RETURN_ERROR(err);
     }
     refcon = CL(refcon);
 
@@ -310,23 +387,19 @@ P1(PUBLIC pascal trap, OSErr, AEProcessAppleEvent, EventRecord*, evtrec)
         AEDesc* target = alloca(sizeof *target);
         ProcessSerialNumber psn;
 
-        GetCurrentProcess(&psn);
-
-        err = AECreateDesc(typeProcessSerialNumber, (Ptr)&psn, sizeof psn, target);
-
-        /* create a reply apple event.  currently unused */
-        err = AECreateAppleEvent(kCoreEventClass, kAEAnswer, target,
-                                 /* dummy */ -1, /* dummy */ -1, reply);
-
-        AppleEvent* previous = current_apple_event;
-        current_apple_event = evt;
-        retval = CToPascalCall(HIDDEN_NATIVE(hdlr), CTOP_EventHandlerTemplate, evt, reply, refcon);
-        current_apple_event = previous;
-
-        AEDisposeDesc(reply);
+        err = GetCurrentProcess(&psn);
+        if (!err)
+            err = AECreateDesc(typeProcessSerialNumber, (Ptr)&psn, sizeof psn, target);
+        if (!err) {
+            err = AECreateAppleEvent(kCoreEventClass, kAEAnswer, target, -1, -1, reply);
+            AEDisposeDesc(target);
+        }
+        if (err) {
+            AEDisposeDesc(evt);
+            AE_RETURN_ERROR(err);
+        }
+        retval = invoke_event_handler(evt, reply, HIDDEN_NATIVE(hdlr), refcon, true);
     }
-
-    AEDisposeDesc(evt);
     AE_RETURN_ERROR(retval);
 }
 
@@ -439,15 +512,71 @@ P7(PUBLIC pascal trap, OSErr, AESend, AppleEvent*, evt, AppleEvent*, reply, AESe
 
 P1(PUBLIC pascal trap, OSErr, AESuspendTheCurrentEvent, AppleEvent*, evt)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!evt)
+        AE_RETURN_ERROR(paramErr);
+    if (active_dispatch && same_apple_event(active_dispatch->event, evt) && !active_dispatch->suspended) {
+        active_dispatch->suspended = malloc(sizeof *active_dispatch->suspended);
+        if (!active_dispatch->suspended)
+            AE_RETURN_ERROR(memFullErr);
+        active_dispatch->suspended->dispatching = true;
+        active_dispatch->suspended->next = suspended_events;
+        suspended_events = active_dispatch->suspended;
+    }
     AE_RETURN_ERROR(noErr);
 }
 
 P4(PUBLIC pascal trap, OSErr, AEResumeTheCurrentEvent, AppleEvent*, evt, AppleEvent*, reply, EventHandlerProcPtr,
    dispatcher, int32, refcon)
 {
-    warning_unimplemented(NULL_STRING);
-    AE_RETURN_ERROR(noErr);
+    if (!evt)
+        AE_RETURN_ERROR(paramErr);
+    ae_suspended_event** link = suspended_apple_event(evt);
+    if (!*link)
+        AE_RETURN_ERROR(errAEEventNotHandled);
+    ae_suspended_event* state = *link;
+    if (reply && (DESC_TYPE(reply) != DESC_TYPE(&state->reply) || DESC_DATA(reply) != DESC_DATA(&state->reply)))
+        AE_RETURN_ERROR(errAEReplyNotValid);
+
+    const bool standard = dispatcher == (EventHandlerProcPtr)SYN68K_TO_US(ae_standard_dispatch) ||
+                          (uintptr_t)dispatcher == UINTPTR_MAX;
+    const bool dispose = !(standard && ((uint32_t)refcon & ae_keep_descriptors));
+    OSErr status = noErr;
+    if (standard) {
+        AEEventClass event_class = 0;
+        AEEventID event_id = 0;
+        DescType type;
+        Size size;
+        status = AEGetAttributePtr(&state->event, keyEventClassAttr, typeType, &type, (Ptr)&event_class,
+                                   sizeof event_class, &size);
+        if (!status && CL(size) != sizeof event_class)
+            status = errAEWrongDataType;
+        if (!status)
+            status = AEGetAttributePtr(&state->event, keyEventIDAttr, typeType, &type, (Ptr)&event_id, sizeof event_id,
+                                       &size);
+        if (!status && CL(size) != sizeof event_id)
+            status = errAEWrongDataType;
+        if (!status) {
+            HIDDEN_ProcPtr handler;
+            int32 handler_refcon;
+            status = find_event_handler(CL(event_class), CL(event_id), (uint32_t)refcon, &handler, &handler_refcon);
+            if (!status) {
+                dispatcher = HIDDEN_NATIVE(handler);
+                refcon = CL(handler_refcon);
+            }
+        }
+    }
+    *link = state->next;
+    if (manual_event == state)
+        manual_event = NULL;
+    _Alignas(16) AppleEvent event = state->event, response = state->reply;
+    free(state);
+    if (dispatcher && !status)
+        status = invoke_event_handler(&event, &response, dispatcher, refcon, dispose);
+    else if (dispose) {
+        AEDisposeDesc(&response);
+        AEDisposeDesc(&event);
+    }
+    AE_RETURN_ERROR(status);
 }
 
 P1(PUBLIC pascal trap, OSErr, AEGetTheCurrentEvent, AppleEvent*, return_evt)
@@ -455,9 +584,10 @@ P1(PUBLIC pascal trap, OSErr, AEGetTheCurrentEvent, AppleEvent*, return_evt)
     if (!return_evt)
         AE_RETURN_ERROR(paramErr);
 
-    if (current_apple_event) {
+    const AppleEvent* event = current_apple_event();
+    if (event) {
         /* The manager owns the event for the duration of the handler. */
-        *return_evt = *current_apple_event;
+        *return_evt = *event;
     }
     else {
         DESC_TYPE_X(return_evt) = CLC(typeNull);
@@ -468,7 +598,12 @@ P1(PUBLIC pascal trap, OSErr, AEGetTheCurrentEvent, AppleEvent*, return_evt)
 
 P1(PUBLIC pascal trap, OSErr, AESetTheCurrentEvent, AppleEvent*, evt)
 {
-    warning_unimplemented(NULL_STRING);
+    if (!evt)
+        AE_RETURN_ERROR(paramErr);
+    ae_suspended_event* event = *suspended_apple_event(evt);
+    if (!event)
+        AE_RETURN_ERROR(errAEEventNotHandled);
+    manual_event = event;
     AE_RETURN_ERROR(noErr);
 }
 
@@ -506,18 +641,19 @@ P1(PUBLIC pascal trap, OSErr, AEGetInteractionAllowed, AEInteractionAllowed*, le
 
 P3(PUBLIC pascal trap, OSErr, AEInteractWithUser, int32, timeout, NMRecPtr, nm_req, IdleProcPtr, idle_proc)
 {
-    if (current_apple_event) {
+    AppleEvent* event = current_apple_event();
+    if (event) {
         DescType type;
         Size size;
         int32 interaction;
         const DescType long_type = TICK("long"), short_type = TICK("shor");
-        if (AEGetAttributePtr(current_apple_event, keyInteractLevelAttr, long_type, &type, (Ptr)&interaction,
+        if (AEGetAttributePtr(event, keyInteractLevelAttr, long_type, &type, (Ptr)&interaction,
                               sizeof interaction, &size) == noErr &&
             CL(size) == sizeof interaction && (CL(interaction) & _kAEInteractMask) == kAENeverInteract)
             AE_RETURN_ERROR(errAENoUserInteraction);
 
         int16 source;
-        if (AEGetAttributePtr(current_apple_event, keyEventSourceAttr, short_type, &type, (Ptr)&source, sizeof source,
+        if (AEGetAttributePtr(event, keyEventSourceAttr, short_type, &type, (Ptr)&source, sizeof source,
                               &size) == noErr &&
             CL(size) == sizeof source &&
             ((CW(source) == kAELocalProcess && interaction_level < kAEInteractWithLocal) ||
@@ -800,14 +936,21 @@ fail:
     AE_RETURN_ERROR(errAECoercionFail);
 }
 
-P1(PUBLIC pascal trap, OSErr, AEManagerInfo, LONGINT*, resultp)
+P2(PUBLIC pascal trap, OSErr, AEManagerInfo, AEKeyword, keyword, LONGINT*, resultp)
 {
-    OSErr retval;
-
-    *resultp = 0;
-    retval = noErr;
-
-    return retval;
+    if (!resultp)
+        AE_RETURN_ERROR(paramErr);
+    switch (keyword) {
+    case T('v', 'e', 'r', 's'):
+        *resultp = CLC(0x01058000); /* System 9 PACK 8's NumVersion. */
+        break;
+    case T('r', 'e', 'c', 'r'):
+        *resultp = 0; /* No Apple Event recorder is registered. */
+        break;
+    default:
+        AE_RETURN_ERROR(paramErr);
+    }
+    AE_RETURN_ERROR(noErr);
 }
 
 /* Object accessor records are host-owned; their procedures remain guest UPPs.

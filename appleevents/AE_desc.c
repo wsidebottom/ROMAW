@@ -455,9 +455,10 @@ static void ae_desc_to_ptr(descriptor_t* desc, Ptr data, uint32 max_size, int32*
 
     copy_size = MIN(desc_size, max_size);
 
-    memcpy(data, STARH(desc_data), copy_size);
-
-    *size_out = CL(copy_size);
+    if (data && copy_size)
+        memcpy(data, STARH(desc_data), copy_size);
+    if (size_out)
+        *size_out = CL(copy_size);
 }
 
 /* apple events descriptor stuff */
@@ -619,7 +620,8 @@ P8(PUBLIC pascal trap, OSErr, AEGetNthPtr, AEDescList*, list, int32, index, Desc
     if (err != noErr)
         AE_RETURN_ERROR(err);
 
-    *type_out = DESC_TYPE_X(coerced_desc);
+    if (type_out)
+        *type_out = DESC_TYPE_X(coerced_desc);
     ae_desc_to_ptr(coerced_desc, data, max_size, size_out);
     AE_RETURN_ERROR(AEDisposeDesc(coerced_desc));
 }

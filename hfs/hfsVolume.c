@@ -459,6 +459,7 @@ PUBLIC OSErr hfsPBMountVol(ParmBlkPtr pb, LONGINT floppyfd, LONGINT offset, LONG
         if (!vcbp)
             err = MemError();
         else {
+            ((VCBExtra*)vcbp)->custom_icons_disabled = FALSE;
             ((VCBExtra*)vcbp)->u.hfs.fd = floppyfd;
             ((VCBExtra*)vcbp)->u.hfs.offset = offset;
             ((VCBExtra*)vcbp)->u.hfs.bsize = bsize;

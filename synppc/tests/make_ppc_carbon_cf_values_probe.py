@@ -193,13 +193,19 @@ class ValuesProbe:
                     offset += side * 4
                 if kind == "output":
                     offset += side * 256
-                if offset >= 0x8000 and kind in ("pointer", "output"):
+                address_only = kind in ("pointer", "output")
+                if offset >= 0x8000:
                     upper = (offset + 0x8000) >> 16
                     self.p.emit(0x3C1E0000 | register << 21 | upper)
-                    self.p.emit(0x38000000 | register << 21 | register << 16 | (offset & 0xFFFF))
+                    self.p.emit(
+                        (0x38000000 if address_only else 0x80000000)
+                        | register << 21
+                        | register << 16
+                        | (offset & 0xFFFF)
+                    )
                 else:
                     self.p.emit(
-                        (0x38000000 if kind in ("pointer", "output") else 0x80000000)
+                        (0x38000000 if address_only else 0x80000000)
                         | register << 21
                         | 30 << 16
                         | offset

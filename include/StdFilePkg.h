@@ -132,6 +132,16 @@ extern pascal trap void P_SFGetFile(Point p, StringPtr prompt, ProcPtr filef, IN
 
 extern pascal trap void C_StandardGetFile(ProcPtr filef, INTEGER numt, SFTypeList tl, StandardFileReply* replyp);
 
+typedef enum {
+    romlib_choose_default,
+    romlib_choose_folder,
+    romlib_choose_object,
+    romlib_choose_volume,
+    romlib_create_folder,
+} ROMlib_catalog_choice;
+
+extern OSErr ROMlib_choose_catalog(ROMlib_catalog_choice choice, StringPtr title, StandardFileReply* reply);
+
 extern pascal trap void C_StandardPutFile(Str255 prompt, Str255 defaultname, StandardFileReply* replyp);
 
 extern pascal trap void C_CustomPutFile(Str255 prompt, Str255 defaultName, StandardFileReply* replyp, INTEGER dlgid,

@@ -696,7 +696,7 @@
 #define PTOC_CoerceDescTemplate 0x0000592A
 #define PTOC_AECoercePtr 0x0002592A
 #define PTOC_AECoerceDesc 0x00000B2A
-#define PTOC_AEManagerInfo 0x0000002A
+#define PTOC_AEManagerInfo 0x0000012A
 #define PTOC_AEDisposeToken 0x0000002A
 #define PTOC_AEREesolve 0x00000AAA
 #define PTOC_AERemoveObjectAccessor 0x0000494A

@@ -821,6 +821,8 @@ syn68k_addr_t sound_callback(syn68k_addr_t interrupt_addr, void* unused)
 
     if (ROMlib_legacy_sound_mix(info))
         did_something = 1;
+    if (ROMlib_sound_finish_mix(info))
+        did_something = 1;
     SOUND_HUNGER_FINISH();
 
     if (!did_something)

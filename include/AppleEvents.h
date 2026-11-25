@@ -236,6 +236,7 @@ extern boolean_t application_accepts_open_app_aevt_p;
 #define errAENotAEDesc (-1704)
 
 #define errAEEventNotHandled (-1708)
+#define errAEReplyNotValid (-1709)
 #define errAETimeout (-1712)
 #define errAENoUserInteraction (-1713)
 #define errAEUnknownAddressType (-1716)
@@ -403,8 +404,9 @@ extern void AE_init(void);
 extern void AE_reinit(void);
 extern OSErr ROMlib_ae_object_init(void);
 extern void ROMlib_ae_object_reinit(void);
+extern void ROMlib_ae_dispatch_reinit(void);
 
-extern pascal trap OSErr C_AEManagerInfo(LONGINT* resultp);
+extern pascal trap OSErr C_AEManagerInfo(AEKeyword keyword, LONGINT* resultp);
 
 #if !defined(AE_info_H)
 extern HIDDEN_AE_info_ptr AE_info_H;

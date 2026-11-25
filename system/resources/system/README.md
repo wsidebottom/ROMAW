@@ -1,6 +1,6 @@
 # Embedded System resources
 
-ROMAW compiles 251 System resources, including a native
+ROMAW compiles 253 System resources, including a native
 `dcmp 0` dispatch resource and default drive icons into its
 executable. `catalog.r` includes the authoritative Rez declarations of each resource's
 type, signed ID, attributes, Macintosh name bytes and payload. Dialogs,

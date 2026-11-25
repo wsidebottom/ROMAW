@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_reset, ROMlib_component_selector, ROMlib_component_service,
+  Functions: ROMlib_component_call, ROMlib_component_can_dispatch, ROMlib_component_copy_name,
+             ROMlib_component_reset, ROMlib_component_selector, ROMlib_component_service,
              ROMlib_component_signature, ROMlib_component_text_services
 
   Origin:    Existing repository source in executor/src/services; original attribution and provenance comments are
@@ -78,6 +79,22 @@ static component_type_seed* type_seeds;
 static component_resource_file* resource_files;
 static uint32 next_id = 0x10000, modification_seed;
 static int shutting_down;
+
+OSErr ROMlib_component_copy_name(OSType type, OSType subtype, StringPtr name)
+{
+    for (component_entry* component = components; component; component = component->next) {
+        if (component->description.type != CL(type) || component->description.subtype != CL(subtype) ||
+            !component->name)
+            continue;
+        const Byte* source = (const Byte*)STARH(component->name);
+        const Size length = GetHandleSize(component->name);
+        if (source && length > 0 && source[0] && length > source[0]) {
+            memcpy(name, source, 1 + source[0]);
+            return noErr;
+        }
+    }
+    return resNotFound;
+}
 
 static OSType text_service_type(const OSType* types, unsigned index)
 {

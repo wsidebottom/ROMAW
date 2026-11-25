@@ -23,7 +23,9 @@
 #include "icon_rgb.h"
 #include "MemoryMgr.h"
 #include "rsys/cquick.h"
+#include "rsys/file.h"
 #include "rsys/fileicon.h"
+#include "rsys/hfs.h"
 #include "../../finder-metadata/include/finder_metadata/icons.h"
 #include "toolbox_vectors.h"
 #include <stdlib.h>
@@ -53,6 +55,7 @@ typedef struct {
 } IconFamilyView;
 
 static IconReference* icon_references;
+static boolean_t icon_deep_icons_enabled = TRUE;
 
 static OSErr icon_reload(IconReference* icon);
 
@@ -116,6 +119,74 @@ static int icon_fallback(ROMlib_carbon_ppc_frame* call, const char* name, int32_
     if (icon_saved_reference(name, &saved))
         return ROMlib_carbon_invoke_frame(saved.function, call);
     return icon_status(call, unavailable);
+}
+
+static VCBExtra* icon_mounted_volume(int16 reference)
+{
+    return (VCBExtra*)(reference < 0 ? ROMlib_vcbbyvrn(reference) : ROMlib_findvcb(reference, NULL, NULL, TRUE));
+}
+
+static bool icon_custom_enabled(int16 reference)
+{
+    const VCBExtra* volume = icon_mounted_volume(reference);
+    return !volume || !volume->custom_icons_disabled;
+}
+
+static int carbon_GetCustomIconsEnabled(ROMlib_carbon_ppc_frame* call)
+{
+    Byte* enabled = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], 1, 1) : NULL;
+    if (!enabled)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("GetCustomIconsEnabled", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    const VCBExtra* volume = icon_mounted_volume((int16)call->words[0]);
+    if (!volume)
+        return icon_status(call, nsvErr);
+    *enabled = !volume->custom_icons_disabled;
+    return icon_status(call, noErr);
+}
+
+static int carbon_SetCustomIconsEnabled(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("SetCustomIconsEnabled", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    VCBExtra* volume = icon_mounted_volume((int16)call->words[0]);
+    if (!volume)
+        return icon_status(call, nsvErr);
+    const boolean_t disabled = (uint8)call->words[1] == 0;
+    if (volume->custom_icons_disabled != disabled) {
+        volume->custom_icons_disabled = disabled;
+        for (IconReference* icon = icon_references; icon; icon = icon->next)
+            if (icon->source == icon_catalog && icon_mounted_volume(CW(icon->source_file.vRefNum)) == volume) {
+                free(icon->bytes);
+                icon->bytes = NULL;
+                icon->size = 0;
+            }
+    }
+    return icon_status(call, noErr);
+}
+
+static int carbon_GetDeepIconsEnabled(ROMlib_carbon_ppc_frame* call)
+{
+    Byte* enabled = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], 1, 1) : NULL;
+    if (!enabled)
+        return icon_status(call, paramErr);
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("GetDeepIconsEnabled", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    *enabled = icon_deep_icons_enabled;
+    return icon_status(call, noErr);
+}
+
+static int carbon_SetDeepIconsEnabled(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("SetDeepIconsEnabled", &saved))
+        return ROMlib_carbon_invoke_frame(saved.function, call);
+    icon_deep_icons_enabled = (uint8)call->words[0] != 0;
+    return icon_status(call, noErr);
 }
 
 static const Byte* icon_handle_data(uint32 address, uint32* length)
@@ -711,7 +782,7 @@ static boolean_t icon_file_artwork(const FSSpec* spec, const CInfoPBRec* info, F
 {
     const boolean_t folder = (info->hFileInfo.ioFlAttrib & 0x10) != 0;
     const uint16 flags = CW(folder ? info->dirInfo.ioDrUsrWds.frFlags : info->hFileInfo.ioFlFndrInfo.fdFlags);
-    const boolean_t custom = (flags & 0x400) != 0;
+    const boolean_t custom = (flags & 0x400) != 0 && icon_custom_enabled(CW(spec->vRefNum));
     if (folder && !custom)
         return FALSE;
     const uint32 creator = folder ? 0 : CL(info->hFileInfo.ioFlFndrInfo.fdCreator);
@@ -858,6 +929,12 @@ static int carbon_GetIconDevice(ROMlib_carbon_ppc_frame* call)
     return ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x220, call, &ignored);
 }
 
+static int carbon_SetIconDevice(ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t ignored;
+    return ROMlib_carbon_call_toolbox_vector(0x1d24, 0x388, 0x218, call, &ignored);
+}
+
 static int carbon_FlushIconRefsByVolume(ROMlib_carbon_ppc_frame* call)
 {
     const int16 reference = (int16)call->words[0];
@@ -901,7 +978,7 @@ static int carbon_GetIconRefFromFile(ROMlib_carbon_ppc_frame* call)
         return icon_status(call, error);
     const boolean_t folder = (info.hFileInfo.ioFlAttrib & 0x10) != 0;
     const uint16 flags = CW(folder ? info.dirInfo.ioDrUsrWds.frFlags : info.hFileInfo.ioFlFndrInfo.fdFlags);
-    const boolean_t custom = (flags & 0x400) != 0;
+    const boolean_t custom = (flags & 0x400) != 0 && icon_custom_enabled(CW(file.vRefNum));
     const uint32 creator = folder ? 0 : CL(info.hFileInfo.ioFlFndrInfo.fdCreator);
     const uint32 type = folder ? TICK("fldr") : CL(info.hFileInfo.ioFlFndrInfo.fdType);
     IconReference* icon = custom ? NULL : icon_find_key(creator, type);
@@ -1228,7 +1305,7 @@ static int icon_ref_operation(ROMlib_carbon_ppc_frame* call, IconOperation opera
     OSErr load_status = icon_family_view(icon, &view);
     if (load_status)
         return icon_status(call, hit ? FALSE : load_status);
-    if (!drawing || (int16)call->words[2] == ttNone) {
+    if (!drawing || (icon_deep_icons_enabled && (int16)call->words[2] == ttNone)) {
         IconRGBImage image;
         OSErr status = icon_rgb_find_image(view, &rect, &image);
         if (!status)

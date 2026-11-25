@@ -7,7 +7,8 @@
   Classes:   None.
 
   Functions: C_SndPauseFilePlay, C_SndStartFilePlay, C_SndStopFilePlay, ROMlib_fileplay_busy, ROMlib_fileplay_cancel,
-             ROMlib_fileplay_mix, ROMlib_fileplay_poll, ROMlib_fileplay_reset
+             ROMlib_fileplay_mix, ROMlib_fileplay_poll, ROMlib_fileplay_reset,
+             ROMlib_parse_aiff_header, ROMlib_parse_snd_header
 
   Origin:    Existing repository source in executor/src/sound; original attribution and provenance comments are
              preserved below.
@@ -158,6 +159,66 @@ static int read_file(void* context, uint32_t offset, void* buffer, uint32_t leng
     if (!file->error && count != length)
         file->error = eofErr;
     return file->error == noErr;
+}
+
+static void store_sound_description(void* description, uint32 format, unsigned channels, unsigned bits,
+                                    uint32 rate, uint32 frames, uint32 offset, uint32* out_frames,
+                                    uint32* out_offset)
+{
+    /* Seven guest longwords, with the two adjacent shorts in word 2.
+       There is no sample buffer attached to a parsed description. */
+    const uint32 data[7] = {0, CL(format), CL((channels << 16) | bits), CL(rate), 0, 0, 0};
+    memcpy(description, data, sizeof data);
+    if (out_frames) {
+        const uint32 count = CL(frames);
+        memcpy(out_frames, &count, sizeof count);
+    }
+    if (out_offset) {
+        const uint32 position = CL(offset);
+        memcpy(out_offset, &position, sizeof position);
+    }
+}
+
+OSErr ROMlib_parse_aiff_header(INTEGER refnum, void* description, uint32* frames, uint32* offset)
+{
+    if (!description)
+        return paramErr;
+    LONGINT position, size;
+    OSErr error = GetFPos(refnum, &position);
+    if (error)
+        return error;
+    error = GetEOF(refnum, &size);
+    if (error)
+        return error;
+    if (size < 0)
+        return -208;
+
+    aiff_info info;
+    file_source file = {refnum, noErr};
+    error = aiff_read_header(read_file, &file, size, &info);
+    if (error == ioErr && file.error)
+        error = file.error;
+    const OSErr restored = SetFPos(refnum, fsFromStart, position);
+    if (error || restored)
+        return error ? error : restored;
+    const uint32 format = info.format == TICK("NONE") ? TICK("twos") : info.format;
+    store_sound_description(description, format, info.channels, info.bits, info.rate, info.frames, info.offset,
+                            frames, offset);
+    return noErr;
+}
+
+OSErr ROMlib_parse_snd_header(Handle resource, void* description, uint32* frames, uint32* offset)
+{
+    if (!resource || !description)
+        return paramErr;
+    const Size size = GetHandleSize(resource);
+    const uint8* data = (const uint8*)STARH(resource);
+    resource_sound info;
+    const OSErr error = size < 0 ? badFormat : resource_sound_read(data, size, &info, 0);
+    if (!error)
+        store_sound_description(description, info.format, info.channels, info.bits, info.rate, info.frames, info.offset,
+                                frames, offset);
+    return error;
 }
 
 static void* guest_input(void* pointer, uint32 size)

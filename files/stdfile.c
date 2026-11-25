@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: C_ROMlib_filebox, C_ROMlib_stdffilt, C_ROMlib_stdftrack, ROMlib_host_fsspec, ROMlib_init_stdfile,
-             adjustdrivebutton, futzwithdosdisks, keyarrow, linuxfloppy_open, spfcommon
+             ROMlib_choose_catalog, adjustdrivebutton, futzwithdosdisks, keyarrow, linuxfloppy_open, spfcommon
 
   Origin:    Existing repository source in executor/src/files; original attribution and provenance comments are
              preserved below.
@@ -135,6 +135,7 @@ struct flinfostr {
 
 typedef struct {
     sf_flavor_t flavor;
+    ROMlib_catalog_choice choice;
     reply_u flreplyp;
     ControlHandle flsh;
     INTEGER flnmfil;
@@ -1021,6 +1022,9 @@ A1(PRIVATE, void, flfill, fltype*, f)
         }
         else {
             errcount = 0;
+            if ((f->choice == romlib_choose_folder || f->choice == romlib_create_folder) &&
+                !(pb.hFileInfo.ioFlAttrib & ATTRIB_ISADIR))
+                continue;
             if (f->flnumt <= 0 || (pb.hFileInfo.ioFlAttrib & ATTRIB_ISADIR) ||
                 typeinarray(pb.hFileInfo.ioFlFndrInfo.fdType, f->flnumt, f->fltl))
                 if (passes_filter(f, &pb, f->flnumt)) {
@@ -1219,8 +1223,8 @@ keyarrow(fltype* fl, INTEGER incr) /* -1: up, 1: down */
    * If we land on a grayed out file, advance until non-grayed
    */
 
-    for (flp = ((struct flinfostr*)STARH((Handle)fl->flinfo)) + nsel;
-         (flp->flicns & GRAYBIT) && nsel >= 0 && nsel < fl->flnmfil; nsel += incr, flp += incr)
+    flp = (struct flinfostr*)STARH(fl->flinfo);
+    for (; nsel >= 0 && nsel < fl->flnmfil && (flp[nsel].flicns & GRAYBIT); nsel += incr)
         ;
 
     /*
@@ -1460,7 +1464,7 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
                 (((struct flinfostr*)STARH((Handle)fl->flinfo)) + fl->flsel)->flicns == MICONCFOLDER) {
                 prefix[0] = 0;
                 oldticks = -1000;
-                *ith = CWC(opentoken);
+                *ith = CWC(fl->choice ? FAKEOPENDIR : opentoken);
             }
             else
                 keyarrow(fl, 1);
@@ -1470,8 +1474,15 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
             *ith = CWC(putDrive); /* PutDrive is 6 which is also getDrive. */
             retval = -1;
             break;
+        case 27:
+            if (fl->choice) {
+                *ith = CW(fl->fl_cancel_item);
+                retval = -1;
+                break;
+            }
+            /* FALL THROUGH */
         case '.':
-            if (evt->modifiers & CWC(cmdKey)) {
+            if ((CL(evt->message) & 0xff) == '.' && (evt->modifiers & CWC(cmdKey))) {
                 *ith = CW(fl->fl_cancel_item);
                 retval = -1;
                 break;
@@ -1482,9 +1493,9 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
        * may be a better place to put it, but not enough tests have been done
        * to say where.
        */
-            if (!fl->flgraynondirs && dp->editField == -1) {
+            if (fl->flnmfil && !fl->flgraynondirs && dp->editField == -1) {
                 flep = ((struct flinfostr*)STARH((Handle)fl->flinfo)) + fl->flnmfil - 1;
-                if (CL(evt->when) > lastkeydowntime + CL(DoubleTime)) {
+                if (prefix[0] == MAXPREFIX || CL(evt->when) > lastkeydowntime + CL(DoubleTime)) {
                     flp = ((struct flinfostr*)STARH((Handle)fl->flinfo));
                     prefix[0] = 0;
                     oldticks = -1000;
@@ -1551,7 +1562,9 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
             ticks = TickCount();
             if (fl->flsel != -1 && savesel == fl->flsel && (ticks < oldticks + CL(DoubleTime))) {
                 prefix[0] = 0;
-                *ith = CWC(opentoken);
+                *ith = CWC(fl->choice && fl->choice != romlib_choose_volume && folder_selected_p(fl)
+                               ? FAKEOPENDIR
+                               : opentoken);
                 oldticks = -1000;
                 retval = -1;
             }
@@ -1601,7 +1614,7 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
     }
     retval2 = call_magicfp(fl, dp, evt, ith);
 
-    if (*ith == CWC(getOpen) && folder_selected_p(fl)) /* 1 is getOpen and putSave */
+    if (!fl->choice && *ith == CWC(getOpen) && folder_selected_p(fl)) /* 1 is getOpen and putSave */
         *ith = CWC(FAKEOPENDIR);
 
     return retval ? retval : retval2;
@@ -1653,7 +1666,8 @@ static void select_file_desktop(fltype* state)
 {
     INTEGER volume;
     LONGINT directory;
-    state->desktop_files = C_FindFolder(kOnSystemDisk, kDesktopFolderType, FALSE, &volume, &directory) == noErr;
+    state->desktop_files = state->choice != romlib_choose_volume &&
+                           C_FindFolder(kOnSystemDisk, kDesktopFolderType, FALSE, &volume, &directory) == noErr;
     if (state->desktop_files) {
         SFSaveDisk = CW(-CW(volume));
         CurDirStore = directory;
@@ -2501,7 +2515,7 @@ PRIVATE void report_new_folder_failure(OSErr err)
 PRIVATE boolean_t new_folder_from_dp(DialogPtr dp, fltype* f)
 {
     Str255 str;
-    HParamBlockRec hpb;
+    HParamBlockRec hpb = {0};
     OSErr err;
     boolean_t retval;
 
@@ -2535,6 +2549,8 @@ PRIVATE boolean_t do_new_folder(fltype* f)
         boolean_t done;
         INTEGER ihit;
 
+        C_SetDialogDefaultItem(dp, 1);
+        C_SetDialogCancelItem(dp, 2);
         SelIText(dp, 3, 0, 32767);
         ShowWindow(dp);
         SelectWindow(dp);
@@ -2805,10 +2821,50 @@ static void add_save_extension_hint(DialogPtr dp, int filename_item, StringPtr n
                CW(dp->portRect.bottom) - CW(dp->portRect.top) + height, FALSE);
 }
 
-PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u dh, reply_u rep, INTEGER dig,
-                      filter_u fp, file_filter_u filef, INTEGER numt, SFTypeList tl, getorput_t getorput,
-                      sf_flavor_t flavor, Ptr activeList, ActivateYDProcPtr activateproc, UNIV Ptr yourdatap)
+static OSErr accept_catalog_choice(fltype* state)
 {
+    StandardFileReply* reply = state->flreplyp.nreplyp;
+    if (state->flsel < 0)
+        return fnfErr;
+    const struct flinfostr* entry = (struct flinfostr*)STARH(state->flinfo) + state->flsel;
+    const boolean_t folder = entry->flicns == MICONCFOLDER;
+    const boolean_t volume = entry->volume != 0;
+    const OSType type = entry->type;
+    const INTEGER vref = volume ? entry->volume : -CW(SFSaveDisk);
+    const LONGINT directory = volume ? 2 : folder ? CL(reply->sfType) : CL(CurDirStore);
+    Str255 name = {0};
+    if (!folder && !volume)
+        str255assign(name, (StringPtr)STARH(state->flstrs) + entry->floffs);
+    const OSErr status = C_FSMakeFSSpec(vref, directory, name, &reply->sfFile);
+    if (!status) {
+        reply->sfType = folder || volume ? 0 : CL(type);
+        reply->sfIsFolder = folder || volume;
+        reply->sfIsVolume = volume;
+        reply->sfGood = TRUE;
+    }
+    return status;
+}
+
+static OSErr new_catalog_folder(fltype* state)
+{
+    StandardFileReply* reply = state->flreplyp.nreplyp;
+    Str255 name = {0};
+    const OSErr status = C_FSMakeFSSpec(-CW(SFSaveDisk), CL(reply->sfType), name, &reply->sfFile);
+    if (!status) {
+        reply->sfType = 0;
+        reply->sfIsFolder = TRUE;
+        reply->sfIsVolume = FALSE;
+        reply->sfGood = TRUE;
+    }
+    return status;
+}
+
+PUBLIC OSErr spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u dh, reply_u rep, INTEGER dig,
+                       filter_u fp, file_filter_u filef, INTEGER numt, SFTypeList tl, getorput_t getorput,
+                       sf_flavor_t flavor, Ptr activeList, ActivateYDProcPtr activateproc, UNIV Ptr yourdatap,
+                       ROMlib_catalog_choice choice)
+{
+    OSErr status = paramErr;
     TRAPBEGIN();
     if (!rep.oreplyp)
         goto finished;
@@ -2836,6 +2892,7 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
         f.magicfp = fp;
         f.mydata = yourdatap;
         f.flavor = flavor;
+        f.choice = choice;
         f.flreplyp = rep;
 
         if (p.h < 2 || p.v < CW(MBarHeight) + 7)
@@ -2894,9 +2951,19 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
         }
         gp = thePort;
         dp = ROMlib_get_new_dialog(dig, (Ptr)0, (WindowPtr)-1, TRUE);
-        if (!dp)
+        if (!dp) {
+            status = memFullErr;
             goto finished;
+        }
+        status = noErr;
         SetWTitle((WindowPtr)dp, getorput == put ? (StringPtr) "\004Save" : (StringPtr) "\004Open");
+        if (choice) {
+            StringPtr title = choice == romlib_choose_folder   ? (StringPtr)"\015Choose Folder"
+                              : choice == romlib_choose_volume ? (StringPtr)"\015Choose Volume"
+                              : choice == romlib_create_folder ? (StringPtr)"\012New Folder"
+                                                              : (StringPtr)"\015Choose Object";
+            SetWTitle((WindowPtr)dp, prompt && prompt[0] ? prompt : title);
+        }
         resolve_file_starting_directory();
         bumpsavedisk(dp, FALSE);
         SetPort(dp);
@@ -2907,6 +2974,9 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
                                                                                           "Open"
                                                                             : (StringPtr) "\x04"
                                                                                           "Save");
+        if (choice)
+            SetCTitle((ControlHandle)HIDDEN_NATIVE(sahand),
+                      choice == romlib_create_folder ? (StringPtr)"\012New Folder" : (StringPtr)"\006Choose");
 
         if (getorput == put && SF_NAME(&f)[0]) {
             boolean_t writable;
@@ -2922,9 +2992,15 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
 
         SetCTitle((ControlHandle)HIDDEN_NATIVE(ejhand), (StringPtr) "\010Use Host");
         HiliteControl((ControlHandle)HIDDEN_NATIVE(ejhand), 0);
+        if (choice)
+            HideControl((ControlHandle)HIDDEN_NATIVE(ejhand));
         GetDItem(dp, driveitem, &i, &drhand, &r);
 
         adjustdrivebutton(dp);
+        if (choice == romlib_choose_volume) {
+            HideControl((ControlHandle)HIDDEN_NATIVE(drhand));
+            select_file_desktop(&f);
+        }
 
         if (getorput == put) {
             GetDItem(dp, promptitem, &i, &h, &r);
@@ -3026,6 +3102,8 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
         resolve_file_starting_directory();
         flfill(&f); /* moved to after dhook call of -1 suggested by
          Wieslaw Kuzmicz */
+        if (choice == romlib_create_folder)
+            HiliteControl(f.flch, 0);
 
         if (width != f.minimum_width || height != f.minimum_height)
             resize_file_dialog((DialogPeek)dp, &f, width, height);
@@ -3038,7 +3116,17 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
                 read_reply_name(&f, HIDDEN_NATIVE(pnhand));
             if (dh.odh)
                 ihit = ROMlib_CALLDHOOK(&f, ihit, dp, dh);
-            if (ihit == openorsave) {
+            if (ihit == openorsave && choice == romlib_create_folder) {
+                if ((!f.desktop || f.desktop_files) && do_new_folder(&f)) {
+                    status = new_catalog_folder(&f);
+                    done = TRUE;
+                }
+            }
+            else if (ihit == openorsave && choice) {
+                status = accept_catalog_choice(&f);
+                done = TRUE;
+            }
+            else if (ihit == openorsave) {
                 makeworking(&f);
                 if (getorput == get) {
                     if (*SF_FTYPE_XP(&f))     /* will never happen unless someone */
@@ -3084,7 +3172,7 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
   cancels a get, too */
                 done = TRUE;
             }
-            else if (ihit == ejectitem) {
+            else if (ihit == ejectitem && !choice) {
                 HideWindow((WindowPtr)dp);
                 done = use_host_file_dialog(&f, getorput, prompt);
                 ShowWindow((WindowPtr)dp);
@@ -3097,12 +3185,12 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
                 select_file_desktop(&f);
                 ihit = FAKEREDRAW;
             }
-            else if (ihit == diskname) {
+            else if (ihit == diskname && choice != romlib_choose_volume) {
                 f.desktop = FALSE;
                 if (moveuponedir(&f))
                     ihit = FAKEREDRAW;
             }
-            else if (ihit == FAKECURDIR) {
+            else if (ihit == FAKECURDIR && choice != romlib_choose_volume) {
                 if (trackdirs((DialogPeek)dp))
                     ihit = FAKEREDRAW;
             }
@@ -3152,6 +3240,8 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
             }
             if (ihit == FAKEREDRAW)
                 realcd((DialogPeek)dp, CL(CurDirStore));
+            if (!done && choice == romlib_create_folder)
+                HiliteControl(f.flch, f.desktop && !f.desktop_files ? 255 : 0);
         }
         if (f.flavor != original_sf && dh.odh)
             ihit = ROMlib_CALLDHOOK(&f, -2, dp, dh); /* the mac does this */
@@ -3164,11 +3254,19 @@ PUBLIC void spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u d
         flfinit(&f);
         destroy_new_folder_button(dp, new_folder_button);
         CloseDialog((DialogPtr)dp);
-        makeworking(&f);
+        if (!choice)
+            makeworking(&f);
         SetPort(gp);
     }
 finished:
     TRAPEND();
+    return status;
+}
+
+OSErr ROMlib_choose_catalog(ROMlib_catalog_choice choice, StringPtr title, StandardFileReply* reply)
+{
+    return spfcommon((Point){-1, -1}, title, NULL, (dialog_hook_u){0}, (reply_u){.nreplyp = reply}, sfGetDialogID,
+                     (filter_u){0}, (file_filter_u){0}, -1, NULL, get, new_sf, NULL, NULL, NULL, choice);
 }
 
 P7(PUBLIC pascal trap, void, SFPPutFile, Point, p, StringPtr, prompt, StringPtr, name, ProcPtr, dh, SFReply*, rep,
@@ -3183,7 +3281,8 @@ P7(PUBLIC pascal trap, void, SFPPutFile, Point, p, StringPtr, prompt, StringPtr,
     repu.oreplyp = rep;
     filteru.ofilterp = fp;
 
-    spfcommon(p, prompt, name, dhu, repu, dig, filteru, zero_file_filter, -1, (OSType*)0, put, original_sf, 0, 0, 0);
+    spfcommon(p, prompt, name, dhu, repu, dig, filteru, zero_file_filter, -1, (OSType*)0, put, original_sf, 0, 0, 0,
+              romlib_choose_default);
 }
 
 P5(PUBLIC pascal trap, void, SFPutFile, Point, p, StringPtr, prompt, StringPtr, name, ProcPtr, dh, SFReply*, rep)
@@ -3204,7 +3303,8 @@ P9(PUBLIC pascal trap, void, SFPGetFile, Point, p, StringPtr, prompt, ProcPtr, f
     filteru.ofilterp = fp;
     file_filteru.oflfilef = filef;
 
-    spfcommon(p, prompt, (StringPtr) "", dhu, repu, dig, filteru, file_filteru, numt, tl, get, original_sf, 0, 0, 0);
+    spfcommon(p, prompt, (StringPtr) "", dhu, repu, dig, filteru, file_filteru, numt, tl, get, original_sf, 0, 0, 0,
+              romlib_choose_default);
 }
 
 P7(PUBLIC pascal trap, void, SFGetFile, Point, p, StringPtr, prompt, ProcPtr, filef, INTEGER, numt, SFTypeList, tl,
@@ -3231,7 +3331,7 @@ P10(PUBLIC pascal trap, void, CustomPutFile, Str255, prompt, Str255, defaultName
         dlgid = sfPutDialogID;
 
     spfcommon(where, prompt, defaultName, dhu, repu, dlgid, filteru, file_filteru, -1, 0, put, new_custom_sf,
-              activeList, activateproc, yourdatap);
+              activeList, activateproc, yourdatap, romlib_choose_default);
 }
 
 P11(PUBLIC pascal trap, void, CustomGetFile, FileFilterYDProcPtr, filefilter, INTEGER, numtypes, SFTypeList, typelist,
@@ -3252,7 +3352,7 @@ P11(PUBLIC pascal trap, void, CustomGetFile, FileFilterYDProcPtr, filefilter, IN
         dlgid = sfGetDialogID;
 
     spfcommon(where, (StringPtr) "", (StringPtr) "", dhu, repu, dlgid, filteru, file_filteru, numtypes, typelist, get,
-              new_custom_sf, activeList, activateproc, yourdatap);
+              new_custom_sf, activeList, activateproc, yourdatap, romlib_choose_default);
 }
 
 P4(PUBLIC pascal trap, void, StandardGetFile, ProcPtr, filef, INTEGER, numt, SFTypeList, tl, StandardFileReply*, replyp)
@@ -3271,7 +3371,7 @@ P4(PUBLIC pascal trap, void, StandardGetFile, ProcPtr, filef, INTEGER, numt, SFT
     p.h = -1;
     p.v = -1;
     spfcommon(p, (StringPtr) "", (StringPtr) "", dhu, repu, sfGetDialogID, filteru, file_filteru, numt, tl, get, new_sf,
-              0, 0, 0);
+              0, 0, 0, romlib_choose_default);
 }
 
 P3(PUBLIC pascal trap, void, StandardPutFile, Str255, prompt, Str255, defaultname, StandardFileReply*, replyp)
@@ -3289,5 +3389,6 @@ P3(PUBLIC pascal trap, void, StandardPutFile, Str255, prompt, Str255, defaultnam
 
     p.h = -1;
     p.v = -1;
-    spfcommon(p, prompt, defaultname, dhu, repu, sfPutDialogID, filteru, file_filteru, -1, 0, put, new_sf, 0, 0, 0);
+    spfcommon(p, prompt, defaultname, dhu, repu, sfPutDialogID, filteru, file_filteru, -1, 0, put, new_sf, 0, 0, 0,
+              romlib_choose_default);
 }

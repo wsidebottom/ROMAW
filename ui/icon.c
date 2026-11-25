@@ -32,7 +32,9 @@
 #include "rsys/mman.h"
 #include "rsys/icon.h"
 #include "rsys/icon_color.h"
+#include "rsys/file.h"
 #include "rsys/fileicon.h"
+#include "rsys/hfs.h"
 #include "rsys/device.h"
 #include "../finder-metadata/include/finder_metadata/icons.h"
 
@@ -435,6 +437,13 @@ P1(PUBLIC pascal trap, void, DisposeCIcon, CIconHandle, icon)
 
 int ROMlib_read_file_icon(FSSpec* spec, uint32 creator, uint32 type, boolean_t custom, FinderIcon* icon)
 {
+    if (!spec || !icon)
+        return 0;
+    const int16 reference = CW(spec->vRefNum);
+    const VCBExtra* volume =
+        (const VCBExtra*)(reference < 0 ? ROMlib_vcbbyvrn(reference) : ROMlib_findvcb(reference, NULL, NULL, TRUE));
+    const bool custom_icons_disabled = volume && volume->custom_icons_disabled;
+    custom = custom && !custom_icons_disabled;
     INTEGER saved_error = ResErr;
     INTEGER saved = C_CurResFile();
     Handle previous_top = MR(TopMapHndl);
@@ -472,7 +481,7 @@ int ROMlib_read_file_icon(FSSpec* spec, uint32 creator, uint32 type, boolean_t c
             Str255 name;
             C_GetResInfo(first, &resource_id, &resource_type, name);
             id = CW(resource_id);
-            found = TRUE;
+            found = !custom_icons_disabled || id != -16455;
         }
         if (found) {
             unsigned char* data[] = {icon->mono, icon->small, icon->color4, icon->color8, icon->small4, icon->small8};

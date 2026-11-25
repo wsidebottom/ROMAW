@@ -1,11 +1,11 @@
 /*+===================================================================
   File:      qPicstuff.c
 
-  Summary:   Implements q picstuff support for Macintosh QuickDraw graphics.
+  Summary:   Draws QuickDraw pictures and walks picture records for Picture Utilities.
 
   Classes:   None.
 
-  Functions: No externally linked function definitions.
+  Functions: C_DrawPicture, ROMlib_walk_picture.
 
   Origin:    Existing repository source in executor/src/quickdraw; original attribution and provenance comments are
              preserved below.
@@ -960,6 +960,111 @@ PRIVATE wps wparray[] = {
 };
 
 #define RGBPat 2
+
+static uint16 picture_word(const Byte* bytes)
+{
+    return ((uint16)bytes[0] << 8) | bytes[1];
+}
+
+static OSErr picture_skip_arguments(const Byte* data, size_t remaining, uint32 codes, size_t* payload_size)
+{
+    static const uint8 fixed_sizes[] = {
+        [BYT] = 1, [WRD] = 2, [LNG] = 4, [PNT] = 4, [RCT] = 8, [PAT] = 8, [RGB] = 6,
+    };
+    size_t length = 0;
+    for (; codes; codes >>= 4) {
+        const unsigned code = codes & 15;
+        size_t size = code < NELEM(fixed_sizes) ? fixed_sizes[code] : 0;
+        const size_t available = remaining - length;
+        const Byte* argument = data + length;
+        switch (code) {
+        case SAM:
+            *payload_size = length;
+            return noErr;
+        case TXT:
+            if (!available)
+                return ROMLIB_PICT_DATA_ERR;
+            size = 1 + argument[0];
+            break;
+        case RGN:
+        case PLY:
+        case DAT:
+            if (available < 2)
+                return ROMLIB_PICT_DATA_ERR;
+            size = picture_word(argument);
+            if (code == DAT)
+                size += 2;
+            if (size < 2)
+                return ROMLIB_PICT_DATA_ERR;
+            break;
+        case PXP:
+            if (available < 2)
+                return ROMLIB_PICT_DATA_ERR;
+            if (picture_word(argument) != RGBPat)
+                return ROMLIB_PICT_REFERENCE_REQUIRED;
+            size = 2 + 8 + sizeof(RGBColor);
+            break;
+        case SPL:
+            return ROMLIB_PICT_REFERENCE_REQUIRED;
+        }
+        if (size > available)
+            return ROMLIB_PICT_DATA_ERR;
+        length += size;
+    }
+    *payload_size = length;
+    return noErr;
+}
+
+OSErr ROMlib_walk_picture(PicHandle picture, ROMlib_picture_visitor visit, void* opaque)
+{
+    if (!picture || !STARH(picture) || !visit)
+        return paramErr;
+    const Size extent = GetHandleSize((Handle)picture);
+    const Byte* source = (const Byte*)STARH(picture);
+    if (extent < 12 || !ROMlib_pict_header_valid(source, extent))
+        return ROMLIB_PICT_DATA_ERR;
+    size_t end = extent, offset = 10;
+    const bool version2 = end >= 14 && !memcmp(source + offset, "\0\x11\x02\xff", 4);
+    if (version2)
+        offset += 4;
+    else {
+        if (source[offset] != 0x11 || source[offset + 1] != 1)
+            return ROMLIB_PICT_REFERENCE_REQUIRED;
+        const uint16 declared = picture_word(source);
+        if (declared)
+            end = declared;
+        offset += 2;
+    }
+
+    while (offset < end) {
+        if (version2) {
+            offset += offset & 1;
+            if (offset > end || end - offset < 2)
+                break;
+        }
+        const uint16 opcode = version2 ? picture_word(source + offset) : source[offset];
+        offset += version2 ? 2 : 1;
+        if (opcode == 0xff)
+            return noErr;
+        size_t size = 0;
+        OSErr error;
+        if (opcode < NELEM(wparray))
+            error = picture_skip_arguments(source + offset, end - offset, wparray[opcode].argcode & ARGMASK, &size);
+        else if (version2 && opcode == 0x0c00) {
+            size = 24;
+            error = noErr;
+        }
+        else
+            return ROMLIB_PICT_REFERENCE_REQUIRED;
+        if (error || size > end - offset)
+            return error ? error : ROMLIB_PICT_DATA_ERR;
+        error = visit(opcode, source + offset, size, opaque);
+        if (error)
+            return error;
+        offset += size;
+    }
+    return ROMLIB_PICT_DATA_ERR;
+}
 
 /*
  * NOTE: we move nextbytep even if we're calling someone else's routine

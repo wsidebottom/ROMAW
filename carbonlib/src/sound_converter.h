@@ -19,7 +19,9 @@
 #include "rsys/mace.h"
 #include <stdlib.h>
 
-enum converter_sample_format { sample_unsigned8, sample_big16, sample_little16, sample_mace3, sample_mace6 };
+enum converter_sample_format {
+    sample_unsigned8, sample_signed8, sample_big16, sample_little16, sample_mace3, sample_mace6
+};
 
 typedef struct {
     uint32_t rate, channels, stride;
@@ -99,6 +101,10 @@ static int sound_converter_read_format(const unsigned char* data, int input, sou
         format->format = sample_unsigned8;
         format->stride = format->channels;
     }
+    else if (code == TICK("twos") && bits == 8) {
+        format->format = sample_signed8;
+        format->stride = format->channels;
+    }
     else if ((code == TICK("twos") || code == TICK("sowt") || code == TICK("NONE")) && bits == 16) {
         format->format = code == TICK("sowt") ? sample_little16 : sample_big16;
         format->stride = 2 * format->channels;
@@ -157,8 +163,8 @@ static sound_converter* sound_converter_record(uint32_t address)
         input->channels > 2 || output->channels < 1 || output->channels > 2 || (unsigned)input->format > sample_mace6 ||
         (unsigned)output->format > sample_little16 ||
         input->stride !=
-            input->channels * (input->format == sample_unsigned8 || input->format == sample_mace6 ? 1 : 2) ||
-        output->stride != output->channels * (output->format == sample_unsigned8 ? 1 : 2))
+            input->channels * (input->format <= sample_signed8 || input->format == sample_mace6 ? 1 : 2) ||
+        output->stride != output->channels * (output->format <= sample_signed8 ? 1 : 2))
         return NULL;
     if (converter->pending_offset > converter->pending_size || converter->pending_size % output->stride ||
         converter->pending_offset % output->stride || (!converter->pending != !converter->pending_size))
@@ -222,6 +228,8 @@ static int16_t sound_read_pcm(const unsigned char* data, enum converter_sample_f
 {
     if (format == sample_unsigned8)
         return ((int)data[0] - 128) * 256;
+    if (format == sample_signed8)
+        return ((int)(data[0] ^ 0x80) - 128) * 256;
     if (format == sample_little16)
         return (int16_t)((uint16_t)data[1] << 8 | data[0]);
     return (int16_t)((uint16_t)data[0] << 8 | data[1]);
@@ -231,6 +239,10 @@ static unsigned char* sound_write_pcm(unsigned char* data, enum converter_sample
 {
     if (format == sample_unsigned8) {
         *data++ = (uint16_t)((int32_t)sample + 32768) >> 8;
+        return data;
+    }
+    if (format == sample_signed8) {
+        *data++ = (uint16_t)sample >> 8;
         return data;
     }
     if (format == sample_little16) {

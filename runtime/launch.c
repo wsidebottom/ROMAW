@@ -88,6 +88,7 @@
 
 #include "rsys/options.h"
 #include "rsys/cquick.h"
+#include "rsys/picture.h"
 #include "rsys/desk.h"
 #include "rsys/parse.h"
 #include "rsys/romaw.h"
@@ -1652,6 +1653,7 @@ PUBLIC OSErr NewLaunch(StringPtr fName_arg, INTEGER vRefNum_arg, LaunchParamBloc
         reset_low_globals();
         ROMlib_InitZones(offset_no_change); /* too late to change memory offset */
         ROMlib_InitGWorlds();
+        ROMlib_pict_info_reinit();
         hle_reinit();
         AE_reinit();
         print_reinit();

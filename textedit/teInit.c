@@ -59,8 +59,19 @@ P2(PUBLIC pascal trap, TEHandle, TENew, Rect*, dst, Rect*, view)
 
     te_size = ((sizeof(TERec) - sizeof TE_LINE_STARTS(teh)) + 4 * sizeof *TE_LINE_STARTS(teh));
     teh = (TEHandle)NewHandle(te_size);
+    if (!teh)
+        return NULL;
 
-    hText = RM(NewHandle(0));
+    Handle text = NewHandle(0);
+    tehiddenh hidden = text ? (tehiddenh)NewHandleClear(sizeof(tehidden)) : NULL;
+    if (!hidden) {
+        if (text)
+            DisposHandle(text);
+        DisposHandle((Handle)teh);
+        MemErr = CWC(memFullErr);
+        return NULL;
+    }
+    hText = RM(text);
     GetFontInfo(&finfo);
     if (thePort) {
         tx_font = PORT_TX_FONT_X(thePort);
@@ -88,10 +99,9 @@ P2(PUBLIC pascal trap, TEHandle, TENew, Rect*, dst, Rect*, view)
     tehlinestarts[0] = 0;
     tehlinestarts[1] = 0; /* this one is only for mix & match w/mac */
 
-    temptehiddenh = RM((tehiddenh)NewHandle(sizeof(tehidden)));
+    temptehiddenh = RM(hidden);
     /* don't merge with line above */
     HIDDEN_RAW_SET(*(HIDDEN_tehiddenh*)&STARH(teh)->recalBack, temptehiddenh);
-    memset(STARH(TEHIDDENH(teh)), 0, sizeof(tehidden));
 
     TE_SLAM(teh);
 

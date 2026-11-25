@@ -84,6 +84,7 @@
 #include "rsys/mman.h"
 #include "rsys/prefs.h"
 #include "rsys/soundopts.h"
+#include "rsys/fileplay.h"
 #include "rsys/system_error.h"
 #include "rsys/emustubs.h"
 #include "rsys/gestalt.h"
@@ -3126,6 +3127,18 @@ STUB(Microseconds)
 
 enum { power_unimplemented = -4 };
 
+/* Power Manager preferences belong to the emulated machine. Keeping a timeout
+   configured does not confer the corresponding portable hardware feature. */
+static struct {
+    uint8 sleep_timeout;
+    uint8 disk_timeout;
+    uint8 dim_timeout;
+    BOOLEAN automatic_sleep_disabled;
+    BOOLEAN spindown_disabled;
+    BOOLEAN dimming_disabled;
+    BOOLEAN dimming_suspended;
+} power_preferences;
+
 STUB(IMVI_IdleUpdate)
 {
     if (EM_D1 == 0xa285) {
@@ -3140,6 +3153,7 @@ STUB(IMVI_IdleUpdate)
 
 STUB(PowerDispatch)
 {
+    const uint8 argument = EM_D0 >> 16;
     switch ((uint16)EM_D0) {
     case 0x01: /* PMFeatures: fixed-clock desktop board, with no portable power hardware. */
     case 0x0c: /* GetScaledBatteryInfo: empty flag, warning and level bytes. */
@@ -3157,13 +3171,49 @@ STUB(PowerDispatch)
     case 0x12: /* FullProcessorSpeed: the next restart uses the fixed clock. */
         EM_D0 = TRUE;
         break;
+    case 0x02: /* GetSleepTimeout */
+        EM_D0 = power_preferences.sleep_timeout;
+        break;
+    case 0x03: /* SetSleepTimeout */
+        power_preferences.sleep_timeout = argument;
+        break;
+    case 0x04: /* GetHardDiskTimeout */
+        EM_D0 = power_preferences.disk_timeout;
+        break;
+    case 0x05: /* SetHardDiskTimeout */
+        power_preferences.disk_timeout = argument;
+        break;
+    case 0x08: /* IsSpindownDisabled */
+        EM_D0 = power_preferences.spindown_disabled;
+        break;
+    case 0x09: /* SetSpindownDisable */
+        power_preferences.spindown_disabled = argument != 0;
+        break;
+    case 0x0d: /* AutoSleepControl */
+        power_preferences.automatic_sleep_disabled = argument == 0;
+        break;
     case 0x1c: /* Unavailable BatteryTimeRec measurements are zero. */
         if (EM_A0)
             for (unsigned field = 0; field < 4; ++field)
                 WRITEUL(EM_A0 + field * sizeof(uint32), 0);
         break;
+    case 0x1d: /* GetDimmingTimeout */
+        EM_D0 = power_preferences.dim_timeout;
+        break;
+    case 0x1e: /* SetDimmingTimeout */
+        power_preferences.dim_timeout = argument;
+        break;
+    case 0x1f: /* DimmingControl */
+        power_preferences.dimming_disabled = argument == 0;
+        break;
+    case 0x20: /* IsDimmingControlDisabled */
+        EM_D0 = power_preferences.dimming_disabled;
+        break;
+    case 0x21: /* IsAutoSlpControlDisabled */
+        EM_D0 = power_preferences.automatic_sleep_disabled;
+        break;
     case 0x24: {
-        const unsigned activity = (uint8)(EM_D0 >> 16);
+        const unsigned activity = argument;
         if (activity < ROMlib_power_activity_count) {
             ROMlib_power_note_activity(activity, CL(Ticks_UL.u));
             EM_D0 = noErr;
@@ -3183,6 +3233,12 @@ STUB(PowerDispatch)
             EM_D0 = paramErr;
         break;
     }
+    case 0x2b: /* GetDimSuspendState */
+        EM_D0 = power_preferences.dimming_suspended;
+        break;
+    case 0x2c: /* SetDimSuspendState */
+        power_preferences.dimming_suspended = argument != 0;
+        break;
     default:
         EM_D0 = power_unimplemented;
         break;
@@ -3277,12 +3333,16 @@ PRIVATE selector_table_entry_t sound_table[] = {
     {0x02180008, PTOCBLOCK(SndGetSysBeepState)},
     {0x021C0014, PTOCBLOCK(SPBCloseDevice)},
     {0x02240018, PTOCBLOCK(GetSysBeepVolume)},
+    {0x02240024, PTOCBLOCK(GetSysBeepVolume)},
     {0x02280014, PTOCBLOCK(SPBPauseRecording)},
     {0x02280018, PTOCBLOCK(SetSysBeepVolume)},
+    {0x02280024, PTOCBLOCK(SetSysBeepVolume)},
     {0x022C0014, PTOCBLOCK(SPBResumeRecording)},
     {0x022C0018, PTOCBLOCK(GetDefaultOutputVolume)},
+    {0x022C0024, PTOCBLOCK(GetDefaultOutputVolume)},
     {0x02300014, PTOCBLOCK(SPBStopRecording)},
     {0x02300018, PTOCBLOCK(SetDefaultOutputVolume)},
+    {0x02300024, PTOCBLOCK(SetDefaultOutputVolume)},
     {0x03080008, PTOCBLOCK(SndStopFilePlay)},
     {0x030C0014, PTOCBLOCK(SPBSignInDevice)},
     {0x03140008, PTOCBLOCK(SndManagerStatus)},
@@ -3292,6 +3352,7 @@ PRIVATE selector_table_entry_t sound_table[] = {
     {0x04240014, PTOCBLOCK(SPBRecordToFile)},
     {0x04400014, PTOCBLOCK(SPBMillisecondsToBytes)},
     {0x04440014, PTOCBLOCK(SPBBytesToMilliseconds)},
+    {0x044C0018, {ROMlib_get_sound_compression_name, 0x16a}}, /* Pascal: OSErr (OSType, Str255). */
     {0x05100008, PTOCBLOCK(SndChannelStatus)},
     {0x05140014, PTOCBLOCK(SPBGetIndexedDevice)},
     {0x05180014, PTOCBLOCK(SPBOpenDevice)},
@@ -3304,7 +3365,9 @@ PRIVATE selector_table_entry_t sound_table[] = {
     {0x06400018, PTOCBLOCK(SndSetInfo)},
     {0x07080014, PTOCBLOCK(SndRecordToFile)},
     {0x07100018, PTOCBLOCK(GetCompressionInfo)},
+    {0x07580014, {ROMlib_parse_aiff_header, 0x2b6a}},
     {0x08040014, PTOCBLOCK(SndRecord)},
+    {0x085C0014, {ROMlib_parse_snd_header, 0x5b6a}},
     {0x0B4C0014, PTOCBLOCK(SetupAIFFHeader)},
     {0x0D000008, PTOCBLOCK(SndStartFilePlay)},
     {0x0D480014, PTOCBLOCK(SetupSndHeader)},

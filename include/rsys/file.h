@@ -252,6 +252,7 @@ typedef struct PACKED {
 
         hfs_access_t hfs;
     } u;
+    boolean_t custom_icons_disabled;
 } VCBExtra;
 
 enum {

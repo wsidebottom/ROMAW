@@ -21,6 +21,7 @@
 #include "MemoryMgr.h"
 #include "file_manager.h"
 #include "rsys/cfm.h"
+#include <stdio.h>
 #include <stdlib.h>
 
 static int navigation_result(ROMlib_carbon_ppc_frame* call, int32_t result)
@@ -241,6 +242,10 @@ enum {
     nav_action_open = 2,
     nav_action_save = 3,
     nav_action_choose = 4,
+    nav_action_new_folder = 5,
+    nav_action_save_changes = 6,
+    nav_action_dont_save_changes = 7,
+    nav_action_discard_changes = 8,
 };
 
 static int navigation_saved(const char* name, ROMlib_carbon_ppc_frame* call, int32_t unavailable)
@@ -407,18 +412,71 @@ static int carbon_NavPutFile(ROMlib_carbon_ppc_frame* call)
     return navigation_modal(call, "NavPutFile", 1);
 }
 
+static int navigation_catalog_flags(ROMlib_catalog_choice choice, uint32_t flags)
+{
+    uint32_t allowed = nav_option_no_type_popup | nav_option_no_translate | nav_option_no_translate_items |
+                       0x20; /* Save-only stationery option. */
+    if (choice != romlib_choose_object)
+        allowed |= nav_option_previews | nav_option_multiple;
+    return !(flags & ~allowed);
+}
+
+static int navigation_catalog_modal(ROMlib_carbon_ppc_frame* call, const char* name, ROMlib_catalog_choice choice)
+{
+    const uint32_t reply = call->words[1], options = call->words[2];
+    if (!reply || !ROMlib_carbon_try_guest_memory(reply, nav_reply_size, 1))
+        return navigation_result(call, paramErr);
+    if (call->words[0] || call->words[3] || (choice != romlib_create_folder && call->words[4]))
+        return navigation_fallback(name, call);
+    const Byte* records = options ? ROMlib_carbon_try_guest_memory(options, nav_options_size, 0) : NULL;
+    if (options && !records)
+        return navigation_result(call, paramErr);
+    const uint32_t flags = options ? cfp_read(options + 2) : 0xe4;
+    if (!navigation_catalog_flags(choice, flags))
+        return navigation_fallback(name, call);
+    if (records && (records[0] || records[1] || cfp_read(options + 6) != UINT32_MAX || records[0x0a] ||
+                    records[0x20a] || records[0x30a] || records[0x40a] || records[0x50a] ||
+                    cfp_read(options + 0x60a) || cfp_read(options + 0x60e)))
+        return navigation_fallback(name, call);
+    _Alignas(128) StandardFileReply file = {0};
+    const OSErr status = ROMlib_choose_catalog(choice, records ? (StringPtr)(records + 0x10a) : NULL, &file);
+    return status ? navigation_result(call, status) : navigation_select_reply(call, &file, false, NULL, false);
+}
+
+static int carbon_NavChooseFolder(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_modal(call, "NavChooseFolder", romlib_choose_folder);
+}
+
+static int carbon_NavChooseObject(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_modal(call, "NavChooseObject", romlib_choose_object);
+}
+
+static int carbon_NavChooseVolume(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_modal(call, "NavChooseVolume", romlib_choose_volume);
+}
+
+static int carbon_NavNewFolder(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_modal(call, "NavNewFolder", romlib_create_folder);
+}
+
 typedef struct navigation_dialog {
     struct navigation_dialog* next;
     Ptr token;
     nav_types types;
     void* save_name;
-    Str255 prompt, filename;
+    Str255 prompt, filename, action_label, cancel_label;
     StandardFileReply result;
+    ROMlib_catalog_choice choice;
     uint32_t action, accepted_action;
     int running, disposed;
 } navigation_dialog;
 
 static navigation_dialog* navigation_dialogs;
+static void navigation_preview_reset(void);
 
 static navigation_dialog** navigation_link(uint32_t token)
 {
@@ -441,6 +499,7 @@ void ROMlib_carbon_navigation_reset(void)
 {
     while (navigation_dialogs)
         navigation_destroy(&navigation_dialogs);
+    navigation_preview_reset();
 }
 
 static int navigation_string(uint32_t address, Str255 output)
@@ -452,6 +511,169 @@ static int navigation_string(uint32_t address, Str255 output)
     uint32_t type;
     return string && cfp_call("CFStringGetTypeID", NULL, 0, &type) && ROMlib_carbon_cf_type_id(string) == type &&
            (uint8_t)ROMlib_carbon_cf_string_pascal((void*)string, output, sizeof(Str255), 0);
+}
+
+static void navigation_confirmation_message(Str255 message, const Byte* filename, const Byte* client, uint32_t context,
+                                            bool discard)
+{
+    if (message[0])
+        return;
+    const int name_length = filename[0];
+    const int client_length = client[0];
+    const char* ending = context == 2 ? " before quitting" : context == 1 ? " before closing" : "";
+    int length;
+    if (discard)
+        length = name_length ? snprintf((char*)message + 1, 255, "Discard changes to %.*s?", name_length, filename + 1)
+                             : snprintf((char*)message + 1, 255, "Discard the unsaved changes?");
+    else if (name_length)
+        length = snprintf((char*)message + 1, 255, "Save changes to %.*s%s?", name_length, filename + 1, ending);
+    else if (context == 2 && client_length)
+        length = snprintf((char*)message + 1, 255, "Save changes before quitting %.*s?", client_length, client + 1);
+    else
+        length = snprintf((char*)message + 1, 255, "Save the unsaved changes%s?", ending);
+    message[0] = length < 0 ? 0 : MIN(length, 254);
+}
+
+static OSErr navigation_confirm(Str255 message, Str255 action_label, Str255 cancel_label, bool discard,
+                                uint32_t* selection)
+{
+    Str255 save = "\004Save", discard_label = "\007Discard", cancel = "\006Cancel", dont_save = "\012Don't Save";
+    AlertStdAlertParamRec parameters = {.defaultButton = CWC(1), .cancelButton = CWC(2)};
+    const Byte* action = action_label[0] ? action_label : discard ? discard_label : save;
+    const Byte* cancel_text = cancel_label[0] ? cancel_label : cancel;
+    const size_t action_size = action[0] + 1, cancel_size = cancel_text[0] + 1;
+    Ptr labels = NewPtr(action_size + cancel_size + (discard ? 0 : dont_save[0] + 1));
+    if (!labels)
+        return memFullErr;
+    memcpy(labels, action, action_size);
+    memcpy(labels + action_size, cancel_text, cancel_size);
+    PP_ASSIGN(parameters.defaultText, (StringPtr)labels);
+    PP_ASSIGN(parameters.cancelText, (StringPtr)(labels + action_size));
+    if (!discard) {
+        Ptr other = labels + action_size + cancel_size;
+        memcpy(other, dont_save, dont_save[0] + 1);
+        PP_ASSIGN(parameters.otherText, (StringPtr)other);
+    }
+    INTEGER item;
+    const OSErr error = ROMlib_standard_alert(1, message, NULL, &parameters, &item);
+    DisposPtr(labels);
+    if (!error)
+        *selection = CW(item);
+    return error;
+}
+
+static int navigation_legacy_confirmation(ROMlib_carbon_ppc_frame* call, const char* name, bool discard, bool custom)
+{
+    const unsigned reply_index = discard || custom ? 1 : 2;
+    const uint32_t reply = call->words[reply_index], options = call->words[0];
+    const uint32_t context = discard || custom ? 0 : call->words[1];
+    if (!reply || !ROMlib_carbon_try_guest_memory(reply, sizeof(uint32_t), 1) || context > 2)
+        return navigation_result(call, paramErr);
+    if (call->words[reply_index + 1])
+        return navigation_fallback(name, call);
+    const Byte* records = options ? ROMlib_carbon_try_guest_memory(options, nav_options_size, 0) : NULL;
+    if ((options && !records) || (custom && (!records || !records[0x50a])))
+        return navigation_result(call, paramErr);
+    if (records && (records[0] || records[1] || records[0x10a] || cfp_read(options + 6) != UINT32_MAX))
+        return navigation_fallback(name, call);
+    Str255 message = {0}, filename = {0}, client = {0}, action_label = {0}, cancel_label = {0};
+    if (records) {
+        const Byte* supplied_name = records + 0x40a;
+        const Byte* supplied_client = records + 0x0a;
+        memcpy(filename, supplied_name, supplied_name[0] + 1);
+        memcpy(client, supplied_client, supplied_client[0] + 1);
+        if (custom) {
+            const Byte* supplied_message = records + 0x50a;
+            memcpy(message, supplied_message, supplied_message[0] + 1);
+        }
+        const Byte* supplied_action = records + 0x20a;
+        const Byte* supplied_cancel = records + 0x30a;
+        memcpy(action_label, supplied_action, supplied_action[0] + 1);
+        memcpy(cancel_label, supplied_cancel, supplied_cancel[0] + 1);
+    }
+    navigation_confirmation_message(message, filename, client, context, discard);
+    uint32_t selection;
+    const OSErr error = navigation_confirm(message, action_label, cancel_label, discard, &selection);
+    return (error || cfp_write(reply, selection)) && navigation_result(call, error);
+}
+
+static int carbon_NavAskSaveChanges(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_legacy_confirmation(call, "NavAskSaveChanges", false, false);
+}
+
+static int carbon_NavCustomAskSaveChanges(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_legacy_confirmation(call, "NavCustomAskSaveChanges", false, true);
+}
+
+static int carbon_NavAskDiscardChanges(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_legacy_confirmation(call, "NavAskDiscardChanges", true, false);
+}
+
+static int navigation_publish(ROMlib_carbon_ppc_frame* call, uint32_t output, navigation_dialog* dialog)
+{
+    dialog->token = NewPtr(4);
+    if (!dialog->token) {
+        ROMlib_carbon_cf_release(dialog->save_name);
+        free(dialog);
+        return navigation_result(call, memFullErr);
+    }
+    if (!cfp_write(output, US_TO_SYN68K(dialog->token))) {
+        DisposPtr(dialog->token);
+        ROMlib_carbon_cf_release(dialog->save_name);
+        free(dialog);
+        return 0;
+    }
+    dialog->next = navigation_dialogs;
+    navigation_dialogs = dialog;
+    return navigation_result(call, noErr);
+}
+
+static int navigation_create_confirmation(ROMlib_carbon_ppc_frame* call, const char* name, bool discard)
+{
+    const uint32_t output = call->words[discard ? 3 : 4], options = call->words[0];
+    const uint32_t context = discard ? 0 : call->words[1];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, sizeof(uint32_t), 1) || context > 2)
+        return navigation_result(call, paramErr);
+    if (call->words[discard ? 1 : 2])
+        return navigation_fallback(name, call);
+    const Byte* bytes = options ? ROMlib_carbon_try_guest_memory(options, 0x32, 0) : NULL;
+    if (options && !bytes)
+        return navigation_result(call, paramErr);
+    Str255 message = {0}, filename = {0}, client = {0}, action_label = {0}, cancel_label = {0};
+    if (bytes) {
+        if (bytes[0] || bytes[1] || cfp_read(options + 6) != UINT32_MAX || cfp_read(options + 0x2a) != 2 ||
+            cfp_read(options + 0x2e) || cfp_read(options + 0x0e) ||
+            !navigation_string(cfp_read(options + 0x0a), client) ||
+            !navigation_string(cfp_read(options + 0x12), action_label) ||
+            !navigation_string(cfp_read(options + 0x16), cancel_label) ||
+            !navigation_string(cfp_read(options + 0x1a), filename) ||
+            !navigation_string(cfp_read(options + 0x1e), message))
+            return navigation_fallback(name, call);
+    }
+    if (!cfp_write(output, 0))
+        return 0;
+    navigation_dialog* dialog = calloc(1, sizeof *dialog);
+    if (!dialog)
+        return navigation_result(call, memFullErr);
+    navigation_confirmation_message(message, filename, client, context, discard);
+    memcpy(dialog->prompt, message, message[0] + 1);
+    memcpy(dialog->action_label, action_label, action_label[0] + 1);
+    memcpy(dialog->cancel_label, cancel_label, cancel_label[0] + 1);
+    dialog->accepted_action = discard ? nav_action_discard_changes : nav_action_save_changes;
+    return navigation_publish(call, output, dialog);
+}
+
+static int carbon_NavCreateAskSaveChangesDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_create_confirmation(call, "NavCreateAskSaveChangesDialog", false);
+}
+
+static int carbon_NavCreateAskDiscardChangesDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_create_confirmation(call, "NavCreateAskDiscardChangesDialog", true);
 }
 
 static int navigation_create(ROMlib_carbon_ppc_frame* call, const char* name, uint32_t accepted_action)
@@ -490,27 +712,18 @@ static int navigation_create(ROMlib_carbon_ppc_frame* call, const char* name, ui
         return navigation_fallback(name, call);
     if (!cfp_write(output, 0))
         return 0;
-
     navigation_dialog* dialog = calloc(1, sizeof *dialog);
     if (!dialog)
         return navigation_result(call, memFullErr);
-    dialog->token = NewPtr(4);
-    if (!dialog->token) {
-        free(dialog);
-        return navigation_result(call, memFullErr);
-    }
     dialog->accepted_action = accepted_action;
     dialog->types = types;
     memcpy(dialog->prompt, prompt, prompt[0] + 1);
     memcpy(dialog->filename, filename, filename[0] + 1);
     if (save_name && !(dialog->save_name = ROMlib_carbon_cf_string_copy(0, SYN68K_TO_US_CHECK0(save_name)))) {
-        DisposPtr(dialog->token);
         free(dialog);
         return navigation_result(call, memFullErr);
     }
-    dialog->next = navigation_dialogs;
-    navigation_dialogs = dialog;
-    return cfp_write(output, US_TO_SYN68K(dialog->token)) && navigation_result(call, noErr);
+    return navigation_publish(call, output, dialog);
 }
 
 static int carbon_NavCreateGetFileDialog(ROMlib_carbon_ppc_frame* call)
@@ -526,6 +739,59 @@ static int carbon_NavCreateChooseFileDialog(ROMlib_carbon_ppc_frame* call)
 static int carbon_NavCreatePutFileDialog(ROMlib_carbon_ppc_frame* call)
 {
     return navigation_create(call, "NavCreatePutFileDialog", nav_action_save);
+}
+
+static int navigation_catalog_create(ROMlib_carbon_ppc_frame* call, const char* name, ROMlib_catalog_choice choice)
+{
+    const uint32_t options = call->words[0];
+    const uint32_t output = call->words[choice == romlib_choose_object ? 5 : choice == romlib_create_folder ? 3 : 4];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1))
+        return navigation_result(call, paramErr);
+    if (call->words[1] || (choice != romlib_create_folder && call->words[2]) ||
+        (choice == romlib_choose_object && call->words[3]))
+        return navigation_fallback(name, call);
+    const Byte* records = options ? ROMlib_carbon_try_guest_memory(options, 0x32, 0) : NULL;
+    if (options && !records)
+        return navigation_result(call, paramErr);
+    const uint32_t flags = options ? cfp_read(options + 2) : 0xe4;
+    if (!navigation_catalog_flags(choice, flags))
+        return navigation_fallback(name, call);
+    Str255 title = {0};
+    if (records && (records[0] || records[1] || cfp_read(options + 6) != UINT32_MAX ||
+                    cfp_read(options + 0x2a) != 2 || cfp_read(options + 0x2e) || cfp_read(options + 0x0a) ||
+                    cfp_read(options + 0x12) || cfp_read(options + 0x16) || cfp_read(options + 0x1a) ||
+                    cfp_read(options + 0x1e) || cfp_read(options + 0x22) || cfp_read(options + 0x26) ||
+                    !navigation_string(cfp_read(options + 0x0e), title)))
+        return navigation_fallback(name, call);
+    if (!cfp_write(output, 0))
+        return 0;
+    navigation_dialog* dialog = calloc(1, sizeof *dialog);
+    if (!dialog)
+        return navigation_result(call, memFullErr);
+    dialog->choice = choice;
+    dialog->accepted_action = choice == romlib_create_folder ? nav_action_new_folder : nav_action_choose;
+    memcpy(dialog->prompt, title, title[0] + 1);
+    return navigation_publish(call, output, dialog);
+}
+
+static int carbon_NavCreateChooseFolderDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_create(call, "NavCreateChooseFolderDialog", romlib_choose_folder);
+}
+
+static int carbon_NavCreateChooseObjectDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_create(call, "NavCreateChooseObjectDialog", romlib_choose_object);
+}
+
+static int carbon_NavCreateChooseVolumeDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_create(call, "NavCreateChooseVolumeDialog", romlib_choose_volume);
+}
+
+static int carbon_NavCreateNewFolderDialog(ROMlib_carbon_ppc_frame* call)
+{
+    return navigation_catalog_create(call, "NavCreateNewFolderDialog", romlib_create_folder);
 }
 
 static int carbon_NavDialogDispose(ROMlib_carbon_ppc_frame* call)
@@ -548,20 +814,42 @@ static int carbon_NavDialogRun(ROMlib_carbon_ppc_frame* call)
     if (dialog->running || dialog->action)
         return navigation_result(call, nav_wrong_state);
 
+    if (dialog->accepted_action >= nav_action_save_changes) {
+        const uint32_t token = call->words[0];
+        uint32_t selection;
+        dialog->running = 1;
+        const OSErr error = navigation_confirm(dialog->prompt, dialog->action_label, dialog->cancel_label,
+                                               dialog->accepted_action == nav_action_discard_changes, &selection);
+        dialog->running = 0;
+        if (dialog->disposed)
+            navigation_destroy(navigation_link(token));
+        else if (!error)
+            dialog->action = selection == 1 ? dialog->accepted_action
+                                             : selection == 3 ? nav_action_dont_save_changes : nav_action_cancel;
+        return navigation_result(call, error);
+    }
+
     _Alignas(128) StandardFileReply file = {0};
     _Alignas(256) Str255 filename, prompt;
     memcpy(filename, dialog->filename, dialog->filename[0] + 1);
     memcpy(prompt, dialog->prompt, dialog->prompt[0] + 1);
     const int saving = dialog->accepted_action == nav_action_save;
     dialog->running = 1;
-    int ok = navigation_pick(&file, saving, &dialog->types, US_TO_SYN68K(prompt), US_TO_SYN68K(filename));
+    OSErr status = noErr;
+    int ok = 1;
+    if (dialog->choice)
+        status = ROMlib_choose_catalog(dialog->choice, prompt, &file);
+    else
+        ok = navigation_pick(&file, saving, &dialog->types, US_TO_SYN68K(prompt), US_TO_SYN68K(filename));
     dialog->running = 0;
     if (dialog->disposed) {
         navigation_destroy(navigation_link(US_TO_SYN68K(dialog->token)));
-        return ok && navigation_result(call, noErr);
+        return ok && navigation_result(call, status);
     }
     if (!ok)
         return 0;
+    if (status)
+        return navigation_result(call, status);
     if (file.sfGood && saving) {
         if (file.sfFile.name[0] >= sizeof file.sfFile.name)
             return navigation_result(call, paramErr);
@@ -595,6 +883,8 @@ static int carbon_NavDialogGetReply(ROMlib_carbon_ppc_frame* call)
     const navigation_dialog* dialog = *navigation_link(call->words[0]);
     if (!dialog)
         return navigation_fallback("NavDialogGetReply", call);
+    if (dialog->accepted_action >= nav_action_save_changes)
+        return navigation_result(call, nav_wrong_class);
     if (!dialog->action)
         return navigation_result(call, nav_wrong_state);
     if (!call->words[1] || !ROMlib_carbon_try_guest_memory(call->words[1], nav_carbon_reply_size, 1))

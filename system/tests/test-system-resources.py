@@ -68,7 +68,7 @@ class SystemResourcesTest(unittest.TestCase):
     def test_all_resources(self):
         records = builder.read_resources(SOURCE)
         fork = ResourceFork(builder.build_fork(records))
-        self.assertEqual(len(records), 251)
+        self.assertEqual(len(records), 253)
         self.assertEqual(len(fork.records), len(records))
         catalog = builder.load_scope(SOURCE)[0]
         self.assertEqual(len(catalog["resources"]), len(records))

@@ -48,6 +48,7 @@
 #include "rsys/time.h"
 #include "rsys/toolevent.h"
 #include "rsys/system_resources.h"
+#include "rsys/soundopts.h"
 
 /*
  * NOTE: HandToHand is not directly called by the outside world.
@@ -990,8 +991,9 @@ A2(PUBLIC trap, void, Delay, LONGINT, n, LONGINT*, ftp) /* IMII-384 */
 
 P1(PUBLIC pascal trap, void, SysBeep, INTEGER, i) /* SYSTEM DEPENDENT */
 {
-    extern INTEGER ROMlib_sysbeep_state;
     if (!(ROMlib_sysbeep_state & 1))
+        return;
+    if (ROMlib_sound_play_alert())
         return;
 #if defined(MAC)
     DebugStr("\004Beep");

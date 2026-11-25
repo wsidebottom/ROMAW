@@ -240,6 +240,26 @@ static int appearance_dispatch(unsigned proc_info, unsigned selector, ROMlib_car
            appearance_client_result(call, result);
 }
 
+/* Appearance's classic Window Manager selectors use the same WDEF metadata
+   and collapse operations as the corresponding WindowsLib entries. */
+#define APPEARANCE_WINDOW(name, proc_info, selector, native)                   \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                   \
+    {                                                                        \
+        bool patched;                                                        \
+        if (!appearance_dispatch_patch(&patched))                            \
+            return 0;                                                        \
+        return patched ? appearance_dispatch(proc_info, selector, call, call) \
+                       : carbon_window_##native(call);                       \
+    }
+
+APPEARANCE_WINDOW(IsWindowCollapsable, 0x398, 0x0f, WMIsWindowCollapsable)
+APPEARANCE_WINDOW(IsWindowCollapsed, 0x398, 0x10, WMIsWindowCollapsed)
+APPEARANCE_WINDOW(CollapseWindow, 0x7b8, 0x11, WMCollapseWindow)
+APPEARANCE_WINDOW(CollapseAllWindows, 0x1b8, 0x12, WMCollapseAllWindows)
+APPEARANCE_WINDOW(GetWindowFeatures, 0xfb8, 0x13, WMGetWindowFeatures)
+
+#undef APPEARANCE_WINDOW
+
 int32_t ROMlib_carbon_draw_theme_panel(const void* bounds, uint32_t state, enum ROMlib_carbon_theme_panel panel)
 {
     if (!bounds || state > 2 || !thePort || !ROMlib_valid_qd_port(thePort))
@@ -576,6 +596,459 @@ static bool appearance_custom_engine(const char* name, uint32_t offset, ROMlib_c
     return current && current != builtin;
 }
 
+/* The Platinum engine keeps the active accent table in the Appearance
+   state reached through the System globals pointer. */
+static const ColorTable* appearance_accent_table(uint32_t* address, uint32_t* extent)
+{
+    uint32_t globals, state;
+    if (!cfp_get(0x2b6, &globals) || !globals || !cfp_get(globals + 0x2a8, &state) || !state ||
+        !cfp_get(state, address) || !*address)
+        return NULL;
+    const ColorTable* table = cfp_handle_data(*address, extent, 0);
+    if (!table || *extent < offsetof(ColorTable, ctTable))
+        return NULL;
+    const int16_t last = CW(table->ctSize);
+    if (last < -1 || (unsigned)(last + 1) > (*extent - offsetof(ColorTable, ctTable)) / sizeof(ColorSpec))
+        return NULL;
+    return table;
+}
+
+static int carbon_GetThemeAccentColors(ROMlib_carbon_ppc_frame* call)
+{
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    if (patched)
+        return appearance_dispatch(0x3b8, 0x25, call, call);
+
+    const uint32_t output = call->words[0];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, sizeof(uint32_t), 1))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref = {0};
+    if (appearance_custom_engine("GetThemeAccentColors", 0x393d4, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+
+    uint32_t source, extent;
+    if (!ref.function || !appearance_accent_table(&source, &extent))
+        return cfp_write(output, 0) && appearance_client_result(call, -30564); /* themeHasNoAccentsErr */
+    Handle original = (Handle)SYN68K_TO_US(source);
+    const SignedByte saved = HGetState(original);
+    HLock(original);
+    Handle copy = NewHandle(extent);
+    const OSErr status = MemError();
+    if (copy)
+        memcpy(STARH(copy), STARH(original), extent);
+    HSetState(original, saved);
+    if (!cfp_write(output, copy ? US_TO_SYN68K(copy) : 0)) {
+        if (copy)
+            DisposHandle(copy);
+        return 0;
+    }
+    return appearance_client_result(call, status);
+}
+
+static int carbon_DrawThemeFocusRegion(ROMlib_carbon_ppc_frame* call)
+{
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    if (patched)
+        return appearance_dispatch(0x7b8, 0x23, call, call);
+    uint32_t extent;
+    if (!cfp_handle_data(call->words[0], &extent, 0) || extent < sizeof(Region) ||
+        !thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref = {0};
+    if (appearance_custom_engine("DrawThemeFocusRegion", 0x39350, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    const bool focused = (uint8_t)call->words[1] != 0;
+    RgnHandle outer = NewRgn();
+    if (!outer)
+        return appearance_client_result(call, memFullErr);
+    RgnHandle inner = focused ? NULL : NewRgn();
+    if (!focused && !inner) {
+        DisposeRgn(outer);
+        return appearance_client_result(call, memFullErr);
+    }
+    CopyRgn((RgnHandle)SYN68K_TO_US(call->words[0]), outer);
+    InsetRgn(outer, -3, -3);
+
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    if (focused) {
+        RGBColor color = {0};
+        uint32_t table;
+        const ColorTable* accents = ref.function ? appearance_accent_table(&table, &extent) : NULL;
+        if (accents && (int16_t)CW(accents->ctSize) >= 3)
+            memcpy(&color, &accents->ctTable[3].rgb, sizeof color);
+        RGBForeColor(&color);
+        PenSize(2, 2);
+        FrameRgn(outer);
+    }
+    else {
+        CopyRgn(outer, inner);
+        InsetRgn(inner, 2, 2);
+        DiffRgn(outer, inner, outer);
+        EraseRgn(outer);
+        DisposeRgn(inner);
+    }
+    draw_state_restore(&saved);
+    DisposeRgn(outer);
+    return appearance_client_result(call, noErr);
+}
+
+static bool appearance_platinum_uses_gray(int16_t depth, bool color_device)
+{
+    return depth >= (color_device ? 8 : 4);
+}
+
+static void appearance_foreground_shade(uint16_t shade)
+{
+    const uint16_t channel = CW(shade);
+    RGBColor color = {channel, channel, channel};
+    RGBForeColor(&color);
+}
+
+static OSErr appearance_draw_clipped(RgnHandle area, ROMlib_device_draw_proc draw, void* data)
+{
+    RgnHandle original_clip = NewRgn();
+    if (!original_clip)
+        return memFullErr;
+    GetClip(original_clip);
+    SectRgn(area, original_clip, area);
+    SetClip(area);
+    const OSErr error = ROMlib_device_loop(area, draw, data, 0);
+    SetClip(original_clip);
+    DisposeRgn(original_clip);
+    return error;
+}
+
+typedef struct {
+    Rect bounds;
+    bool horizontal, active, monochrome;
+} appearance_tick_drawing;
+
+static void appearance_draw_tick(INTEGER depth, INTEGER flags, GDHandle device, void* context)
+{
+    (void)device;
+    const appearance_tick_drawing* tick = context;
+    const bool uses_gray = !tick->monochrome && appearance_platinum_uses_gray(depth, (flags & 1) != 0);
+    const bool horizontal = tick->horizontal;
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    MoveTo(CW(tick->bounds.left) + 1, CW(tick->bounds.top) + 1);
+    if (uses_gray)
+        appearance_foreground_shade(tick->active ? 0 : 0x7777);
+    else {
+        Pattern stipple = {0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55};
+        Pattern empty = {0};
+        ForeColor(blackColor);
+        PenPat(tick->active ? empty : stipple);
+    }
+    Line(horizontal ? 5 : 0, horizontal ? 0 : 5);
+    if (uses_gray && tick->active) {
+        appearance_foreground_shade(0x8888);
+        Move(horizontal ? 1 : 0, horizontal ? 0 : 1);
+        Line(horizontal ? 0 : 1, horizontal ? 1 : 0);
+        Line(horizontal ? -6 : 0, horizontal ? 0 : -6);
+        ForeColor(whiteColor);
+        Move(-1, -1);
+        Line(horizontal ? 0 : -1, horizontal ? -1 : 0);
+        Line(horizontal ? 6 : 0, horizontal ? 0 : 6);
+    }
+    draw_state_restore(&saved);
+}
+
+static int carbon_DrawThemeTickMark(ROMlib_carbon_ppc_frame* call)
+{
+    const void* input = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    if (!input || !thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref = {0};
+    if (appearance_custom_engine("DrawThemeTickMark", 0x3e78, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    appearance_tick_drawing tick;
+    memcpy(&tick.bounds, input, sizeof tick.bounds);
+    if (EmptyRect(&tick.bounds))
+        return appearance_client_result(call, noErr);
+    tick.horizontal = RECT_WIDTH(&tick.bounds) > RECT_HEIGHT(&tick.bounds);
+    tick.active = call->words[1] == 1;
+    uint32_t address, extent;
+    const ColorTable* accents = ref.function ? appearance_accent_table(&address, &extent) : NULL;
+    tick.monochrome = accents && (int16_t)CW(accents->ctSize) == -1;
+    RgnHandle area = NewRgn();
+    if (!area)
+        return appearance_client_result(call, memFullErr);
+    RectRgn(area, &tick.bounds);
+    const OSErr error = appearance_draw_clipped(area, appearance_draw_tick, &tick);
+    DisposeRgn(area);
+    return appearance_client_result(call, error);
+}
+
+static int appearance_DrawThemeScrollBarDelimiters(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t state = call->words[2];
+    const void* input = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof(Rect), 0) : NULL;
+    if (!(uint16_t)call->words[0] || !input || state > 1 || (call->words[3] & ~0x3fdU) ||
+        !thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref;
+    if (appearance_custom_engine("DrawThemeScrollBarDelimiters", 0xa538, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    Rect bounds;
+    memcpy(&bounds, input, sizeof bounds);
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    const uint32_t brush = state ? 17 : 18;
+    ROMlib_carbon_ppc_frame arguments = *call;
+    arguments.words[0] = brush;
+    arguments.words[1] = 32;
+    arguments.words[2] = 1;
+    const bool brush_set = !patched || appearance_dispatch(0x1ab8, 1, &arguments, &arguments);
+    if (brush_set) {
+        if (!patched)
+            appearance_foreground_shade(state ? 0 : 0x5555);
+        const int baseline = CW(bounds.bottom) - 15;
+        const int divider = CW(bounds.right) - 15;
+        MoveTo(CW(bounds.left), baseline);
+        LineTo(CW(bounds.right), baseline);
+        MoveTo(divider, CW(bounds.top));
+        LineTo(divider, baseline);
+    }
+    draw_state_restore(&saved);
+    return brush_set && appearance_client_result(call, noErr);
+}
+
+static int carbon_DrawThemeScrollBarDelimiters(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[2] = appearance_classic_draw_state(call->words[2]);
+    return appearance_DrawThemeScrollBarDelimiters(call);
+}
+
+static int appearance_apply_background(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t kind = call->words[0];
+    const uint32_t state = call->words[2];
+    if (kind < 1 || kind > 4 || state > (kind == 2 ? 2U : 1U) || !appearance_has_rect(call->words[1]))
+        return appearance_client_result(call, paramErr);
+
+    ROMlib_carbon_reference reference;
+    if (appearance_custom_engine("ApplyThemeBackground", 0x2d40, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if (!thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+
+    /* The built-in Platinum engine uses a solid background pattern and changes
+       the port's background color without painting the supplied rectangle. */
+    const int16_t depth = call->words[3];
+    const bool color_device = (uint8_t)call->words[4] != 0;
+    const bool use_gray = appearance_platinum_uses_gray(depth, color_device);
+    const uint16_t shade = kind == 1 || !state ? 0xeeee : 0xdddd;
+    const uint16_t channel = CW(use_gray ? shade : 0xffff);
+    RGBColor color = {channel, channel, channel};
+    Pattern solid = {0};
+    BackPat(solid);
+    RGBBackColor(&color);
+    return appearance_client_result(call, noErr);
+}
+
+static int carbon_ApplyThemeBackground(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[2] = appearance_classic_draw_state(call->words[2]);
+    return appearance_apply_background(call);
+}
+
+static int appearance_ApplyThemeBackground(ROMlib_carbon_ppc_frame* call)
+{
+    return appearance_apply_background(call);
+}
+
+static void appearance_tab_pane_bevel(Rect rect, uint16_t leading, uint16_t trailing)
+{
+    const int left = CW(rect.left), top = CW(rect.top);
+    const int right = CW(rect.right) - 1, bottom = CW(rect.bottom) - 1;
+    if (right <= left || bottom <= top)
+        return;
+    appearance_foreground_shade(leading);
+    MoveTo(left, bottom - 1);
+    LineTo(left, top);
+    LineTo(right - 1, top);
+    appearance_foreground_shade(trailing);
+    MoveTo(left + 1, bottom);
+    LineTo(right, bottom);
+    LineTo(right, top + 1);
+}
+
+static void appearance_tab_pane_corners(Rect rect)
+{
+    const int left = CW(rect.left), top = CW(rect.top);
+    const int right = CW(rect.right) - 1, bottom = CW(rect.bottom) - 1;
+    if (right <= left || bottom <= top)
+        return;
+    appearance_foreground_shade(0xdddd);
+    MoveTo(left, bottom);
+    LineTo(left, bottom);
+    MoveTo(right, top);
+    LineTo(right, top);
+}
+
+static int appearance_DrawThemeTabPane(ROMlib_carbon_ppc_frame* call)
+{
+    Rect* bounds = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    const uint32_t state = call->words[1];
+    if (!bounds || EmptyRect(bounds) || state > 1)
+        return appearance_client_result(call, paramErr);
+
+    ROMlib_carbon_reference reference;
+    if (appearance_custom_engine("DrawThemeTabPane", 0x3320, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if (!thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+
+    Rect rect = *bounds;
+    if (!RectInRgn(&rect, PORT_VIS_REGION(thePort)))
+        return appearance_client_result(call, noErr);
+
+    GDHandle device = GetGDevice();
+    const int16_t depth = device ? PIXMAP_PIXEL_SIZE(GD_PMAP(device)) : 1;
+    const bool color_device = device && (GD_FLAGS(device) & (1 << gdDevType));
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    if (!appearance_platinum_uses_gray(depth, color_device)) {
+        appearance_foreground_shade(0xffff);
+        PaintRect(&rect);
+        appearance_foreground_shade(0);
+        FrameRect(&rect);
+    }
+    else {
+        appearance_foreground_shade(0xeeee);
+        PaintRect(&rect);
+        appearance_foreground_shade(state ? 0 : 0x5555);
+        FrameRect(&rect);
+        if (state) {
+            InsetRect(&rect, 1, 1);
+            appearance_tab_pane_bevel(rect, 0xcccc, 0x9999);
+            appearance_tab_pane_corners(rect);
+            InsetRect(&rect, 1, 1);
+            appearance_tab_pane_bevel(rect, 0xffff, 0xbbbb);
+        }
+    }
+    draw_state_restore(&saved);
+    return appearance_client_result(call, noErr);
+}
+
+static int carbon_DrawThemeTabPane(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[1] = appearance_classic_draw_state(call->words[1]);
+    return appearance_DrawThemeTabPane(call);
+}
+
+static void appearance_popup_arrow_bits(uint16_t* rows, unsigned orientation, int size, bool inactive)
+{
+    const int length = 3 + size * 2;
+    const int radius = length / 2;
+    const bool horizontal = (orientation & 1) == 0;
+    const int height = horizontal ? length : radius + 1;
+    const int width = horizontal ? radius + 1 : length;
+    const int parity = orientation == 0 || orientation == 3 ? radius & 1 : 0;
+    const bool reversed = orientation == 1 || orientation == 2;
+    for (int y = 0; y < height; ++y) {
+        uint16_t bits = 0;
+        for (int x = 0; x < width; ++x) {
+            const int rise = horizontal ? abs(y - radius) : abs(x - radius);
+            const int distance = horizontal ? x : y;
+            const int run = reversed ? radius - distance : distance;
+            if (rise <= run && (!inactive || ((x + y) & 1) == parity))
+                bits |= 0x8000U >> x;
+        }
+        rows[y] = CW(bits);
+    }
+}
+
+static int appearance_DrawThemePopupArrow(ROMlib_carbon_ppc_frame* call)
+{
+    const Rect* source = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    if (!source)
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference reference;
+    if (appearance_custom_engine("DrawThemePopupArrow", 0x4358, &reference))
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+
+    GrafPtr port = thePort;
+    Rect bounds = *source;
+    if (EmptyRect(&bounds))
+        return appearance_client_result(call, noErr);
+    if (!port || !ROMlib_valid_qd_port(port))
+        return appearance_client_result(call, paramErr);
+    if (!RectInRgn(&bounds, PORT_VIS_REGION(port)))
+        return appearance_client_result(call, noErr);
+
+    const uint16_t orientation = call->words[1], size = call->words[2];
+    const uint32_t state = call->words[3];
+    if (orientation > 3 || size > 3 || state > 3)
+        return appearance_client_result(call, paramErr);
+
+    RgnHandle original_clip = NewRgn();
+    if (!original_clip)
+        return appearance_client_result(call, memFullErr);
+    GetClip(original_clip);
+    ClipRect(&bounds);
+    SectRgn(PORT_CLIP_REGION(port), original_clip, PORT_CLIP_REGION(port));
+
+    GDHandle device = GetGDevice();
+    const int16_t depth = device ? PIXMAP_PIXEL_SIZE(GD_PMAP(device)) : 1;
+    const bool color_device = device && (GD_FLAGS(device) & (1 << gdDevType));
+    const bool solid_inactive = !state && appearance_platinum_uses_gray(depth, color_device);
+    const int length = 3 + size * 2, narrow = length / 2 + 1;
+    const int width = (orientation & 1) ? length : narrow;
+    const int height = (orientation & 1) ? narrow : length;
+    Rect destination = {bounds.top, bounds.left, CW(CW(bounds.top) + height), CW(CW(bounds.left) + width)};
+    draw_state_t saved;
+    draw_state_save(&saved);
+    int completed = 1;
+    if (call->words[4]) {
+        _Alignas(8) Rect erase_bounds = destination;
+        const ROMlib_carbon_ppc_frame arguments = {
+            .words = {US_TO_SYN68K(&erase_bounds), call->words[5], depth, color_device},
+        };
+        uint32_t ignored;
+        completed = ROMlib_carbon_invoke_pascal(call->words[4], 0x1bc0, &arguments, &ignored);
+    }
+    if (!ROMlib_valid_qd_port(port)) {
+        DisposeRgn(original_clip);
+        return appearance_client_result(call, paramErr);
+    }
+    SetPort(port);
+    if (completed && !EmptyRect(&destination)) {
+        _Alignas(32) uint16_t rows[9];
+        appearance_popup_arrow_bits(rows, orientation, size, !state && !solid_inactive);
+        BitMap mask = {.rowBytes = CWC(2), .bounds = {0, 0, CW(height), CW(width)}};
+        FIELD_ASSIGN_RAW(mask.baseAddr, RM((Ptr)rows));
+        PenNormal();
+        appearance_foreground_shade(solid_inactive ? 0x7777 : 0);
+        RGBColor paper = ROMlib_white_rgb_color;
+        RGBBackColor(&paper);
+        CopyBits(&mask, PORT_BITS_FOR_COPY(port), &mask.bounds, &destination, srcOr, NULL);
+    }
+    draw_state_restore(&saved);
+    SetClip(original_clip);
+    DisposeRgn(original_clip);
+    return completed && appearance_client_result(call, noErr);
+}
+
+static int carbon_DrawThemePopupArrow(ROMlib_carbon_ppc_frame* call)
+{
+    call->words[3] = appearance_classic_draw_state(call->words[3]);
+    return appearance_DrawThemePopupArrow(call);
+}
+
 static int carbon_GetThemeStandaloneGrowBoxBounds(ROMlib_carbon_ppc_frame* call)
 {
     Rect* bounds = call->words[3] ? ROMlib_carbon_try_guest_memory(call->words[3], sizeof *bounds, 1) : NULL;
@@ -704,13 +1177,16 @@ typedef struct {
     bool horizontal, show_thumb;
 } appearance_scroll_thumb;
 
+enum { appearance_arrow_style_field = -0x75b0 };
+static uint16_t appearance_arrow_style;
+
 static uint16_t appearance_platinum_preference(const ROMlib_carbon_reference* ref, int32_t offset)
 {
     uint16_t value;
     const void* stored =
         ref->toc ? ROMlib_carbon_try_guest_memory(US_TO_SYN68K(ref->toc) + offset, sizeof value, 0) : NULL;
     if (!stored)
-        return 0;
+        return offset == appearance_arrow_style_field ? appearance_arrow_style : 0;
     memcpy(&value, stored, sizeof value);
     return CW(value);
 }
@@ -758,6 +1234,148 @@ static appearance_scroll_thumb appearance_scroll_track(const appearance_track_in
     return result;
 }
 
+static bool appearance_scroll_from_guest(const appearance_track_info* track, uint32_t address,
+                                         const ROMlib_carbon_reference* ref, appearance_scroll_thumb* result)
+{
+    int32_t view_size = 0;
+    const bool proportional = appearance_platinum_preference(ref, -0x75ae) == 1;
+    if (proportional && track->enable_state == 0) {
+        uint32_t encoded;
+        const void* view = ROMlib_carbon_try_guest_memory(address + sizeof *track, sizeof encoded, 0);
+        if (!view)
+            return false;
+        memcpy(&encoded, view, sizeof encoded);
+        view_size = CL(encoded);
+    }
+    *result = appearance_scroll_track(track, view_size, proportional);
+    return true;
+}
+
+static OSErr appearance_slider_thumb_region(RgnHandle region, const appearance_slider_geometry* slider,
+                                            unsigned direction)
+{
+    /* Build the 1-bit silhouette in a horizontal coordinate system. The
+       vertical thumb is the transpose of the same shape. */
+    _Alignas(32) uint16_t pixels[16] = {0};
+    const bool pointed = direction == 1 || direction == 2;
+    const unsigned width = pointed ? 15 : 13;
+    for (unsigned y = 0; y < NELEM(pixels); ++y) {
+        const unsigned row = direction == 1 ? 15 - y : y;
+        const unsigned inset = pointed ? (row >= 10 ? row - 9 : row == 0) : (y == 0 || y == 15);
+        for (unsigned x = inset; x < width - inset; ++x) {
+            const unsigned line = slider->horizontal ? y : x;
+            const unsigned bit = slider->horizontal ? x : y;
+            pixels[line] |= 0x8000U >> bit;
+        }
+    }
+    for (unsigned row = 0; row < NELEM(pixels); ++row)
+        pixels[row] = CW(pixels[row]);
+    const int bottom = slider->horizontal ? 16 : width;
+    const int right = slider->horizontal ? width : 16;
+    BitMap mask = {.rowBytes = CWC(2), .bounds = {0, 0, CW(bottom), CW(right)}};
+    FIELD_ASSIGN_RAW(mask.baseAddr, RM((Ptr)pixels));
+    const OSErr error = BitMapToRegion(region, &mask);
+    if (!error) {
+        const Rect thumb = slider->horizontal ? slider->thumb : appearance_transpose_rect(slider->thumb);
+        OffsetRgn(region, CW(thumb.left), CW(thumb.top));
+    }
+    return error;
+}
+
+static int carbon_GetThemeTrackThumbRgn(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t address = call->words[0];
+    const void* input = address ? ROMlib_carbon_try_guest_memory(address, sizeof(appearance_track_info), 0) : NULL;
+    uint32_t extent;
+    if (!input || !cfp_handle_data(call->words[1], &extent, 1) || extent < sizeof(Region))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref = {0};
+    if (appearance_custom_engine("GetThemeTrackThumbRgn", 0x3b5c, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+
+    appearance_track_info track;
+    memcpy(&track, input, sizeof track);
+    const uint16_t kind = CW(track.kind);
+    RgnHandle region = (RgnHandle)SYN68K_TO_US(call->words[1]);
+    if (kind <= 1) {
+        appearance_scroll_thumb scroll;
+        if (!appearance_scroll_from_guest(&track, address, &ref, &scroll))
+            return appearance_client_result(call, paramErr);
+        if (scroll.show_thumb) {
+            const Rect bounds = scroll.horizontal ? scroll.thumb : appearance_transpose_rect(scroll.thumb);
+            RectRgn(region, &bounds);
+        }
+        return appearance_client_result(call, noErr);
+    }
+    if (kind == 2) {
+        const uint8_t* direction = ROMlib_carbon_try_guest_memory(address + sizeof track, 1, 0);
+        if (!direction)
+            return appearance_client_result(call, paramErr);
+        const appearance_slider_geometry slider = appearance_slider(&track, *direction);
+        return appearance_client_result(call, appearance_slider_thumb_region(region, &slider, *direction));
+    }
+    return kind > 4 && ref.function ? ROMlib_carbon_invoke_frame(ref.function, call)
+                                    : appearance_client_result(call, paramErr);
+}
+
+static int carbon_HitTestThemeTrack(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t address = call->words[0];
+    const void* input = address ? ROMlib_carbon_try_guest_memory(address, sizeof(appearance_track_info), 0) : NULL;
+    void* output = call->words[2] ? ROMlib_carbon_try_guest_memory(call->words[2], sizeof(INTEGER), 1) : NULL;
+    if (!input || !output)
+        return appearance_client_result(call, 0);
+    ROMlib_carbon_reference ref = {0};
+    if (appearance_custom_engine("HitTestThemeTrack", 0x39bc, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    appearance_track_info track;
+    memcpy(&track, input, sizeof track);
+    const uint16_t kind = CW(track.kind);
+    if (kind > 4 && ref.function)
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+
+    INTEGER part = 0;
+    memcpy(output, &part, sizeof part);
+    Point point = {(int16_t)(call->words[1] >> 16), (int16_t)call->words[1]};
+    if (kind > 2 || track.enable_state || !C_PtInRect(point, &track.bounds))
+        return appearance_client_result(call, 0);
+
+    Rect thumb, pages;
+    bool horizontal;
+    if (kind <= 1) {
+        appearance_scroll_thumb scroll;
+        if (!appearance_scroll_from_guest(&track, address, &ref, &scroll) || !scroll.show_thumb)
+            return appearance_client_result(call, 0);
+        thumb = scroll.thumb;
+        pages = scroll.drag;
+        horizontal = scroll.horizontal;
+    }
+    else {
+        const uint8_t* direction = ROMlib_carbon_try_guest_memory(address + sizeof track, 1, 0);
+        if (!direction)
+            return appearance_client_result(call, 0);
+        const appearance_slider_geometry slider = appearance_slider(&track, *direction);
+        thumb = slider.thumb;
+        pages = slider.drag;
+        pages.left = CW(CW(pages.left) - 5);
+        pages.right = CW(CW(pages.right) + 5);
+        horizontal = slider.horizontal;
+    }
+    if (!horizontal)
+        point = (Point){point.h, point.v};
+    Rect previous = pages;
+    previous.right = thumb.left;
+    pages.left = thumb.right;
+    if (C_PtInRect(point, &thumb))
+        part = CWC(inThumb);
+    else if (C_PtInRect(point, &previous))
+        part = CWC(inPageUp);
+    else if (C_PtInRect(point, &pages))
+        part = CWC(inPageDown);
+    memcpy(output, &part, sizeof part);
+    return appearance_client_result(call, part != 0);
+}
+
 enum appearance_track_query { appearance_drag_rect, appearance_offset_position, appearance_region_position, appearance_live_value };
 
 static bool appearance_region_bounds(uint32_t address, Rect* bounds)
@@ -794,17 +1412,9 @@ static int appearance_query_track(ROMlib_carbon_ppc_frame* call, enum appearance
     if (kind <= 1) {
         if (track.enable_state != 0 && query != appearance_drag_rect && ref.function)
             return ROMlib_carbon_invoke_frame(ref.function, call);
-        int32_t view_size = 0;
-        const bool proportional = appearance_platinum_preference(&ref, -0x75ae) == 1;
-        if (proportional && track.enable_state == 0) {
-            uint32_t encoded;
-            const void* view = ROMlib_carbon_try_guest_memory(address + sizeof track, sizeof encoded, 0);
-            if (!view)
-                return appearance_client_result(call, paramErr);
-            memcpy(&encoded, view, sizeof encoded);
-            view_size = CL(encoded);
-        }
-        const appearance_scroll_thumb scroll = appearance_scroll_track(&track, view_size, proportional);
+        appearance_scroll_thumb scroll;
+        if (!appearance_scroll_from_guest(&track, address, &ref, &scroll))
+            return appearance_client_result(call, paramErr);
         drag = scroll.drag;
         thumb = scroll.thumb;
         horizontal = scroll.horizontal;
@@ -946,7 +1556,7 @@ static int appearance_scroll_arrows_entry(ROMlib_carbon_ppc_frame* call, bool hi
     Rect bounds;
     memcpy(&bounds, source, sizeof bounds);
     appearance_scroll_geometry layout = appearance_scroll_arrows(bounds, (uint8_t)call->words[3], (uint8_t)call->words[1],
-                                                                 appearance_platinum_preference(&ref, -0x75b0));
+                                                                 appearance_platinum_preference(&ref, appearance_arrow_style_field));
     memcpy(output, &layout.track, sizeof layout.track);
     if (!hit_test)
         return appearance_client_result(call, noErr);
@@ -982,6 +1592,130 @@ static int carbon_GetThemeMenuTitleOffset(ROMlib_carbon_ppc_frame* call)
     if (appearance_custom_engine("GetThemeMenuTitleOffset", 0x2738, &ref))
         return ROMlib_carbon_invoke_frame(ref.function, call);
     return appearance_client_result(call, 0);
+}
+
+static int carbon_GetThemeMenuTitleExtra(ROMlib_carbon_ppc_frame* call)
+{
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    if (patched)
+        return appearance_dispatch(0x7b8, 0x21, call, call);
+    void* output = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(INTEGER), 1) : NULL;
+    if (!output)
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref;
+    if (appearance_custom_engine("GetThemeMenuTitleExtra", 0x392cc, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    const INTEGER width = CW((uint8_t)call->words[1] ? 9 : 13);
+    memcpy(output, &width, sizeof width);
+    return appearance_client_result(call, noErr);
+}
+
+static int carbon_GetThemeMenuBarShape(ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference ref;
+    if (appearance_custom_engine("GetThemeMenuBarShape", 0x53b8, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    return appearance_client_result(call, 0); /* The Platinum menu bar uses the rounded shape. */
+}
+
+static OSErr appearance_menu_background_region(Rect* rect, RgnHandle output)
+{
+    RgnHandle shadow = NewRgn();
+    if (!shadow)
+        return memFullErr;
+    RectRgn(output, rect);
+    InsetRgn(output, -1, -1);
+    CopyRgn(output, shadow);
+    OffsetRgn(shadow, 1, 1);
+    UnionRgn(output, shadow, output);
+    DisposeRgn(shadow);
+    return noErr;
+}
+
+static int carbon_GetThemeMenuBackgroundRegion(ROMlib_carbon_ppc_frame* call)
+{
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    if (patched)
+        return appearance_dispatch(0x3bb8, 0x1c, call, call);
+    const void* bounds = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    uint32_t extent;
+    if (!bounds || !cfp_handle_data(call->words[2], &extent, 1) || extent < sizeof(Region))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref;
+    if (appearance_custom_engine("GetThemeMenuBackgroundRegion", 0x39150, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    Rect rect;
+    memcpy(&rect, bounds, sizeof rect);
+    RgnHandle output = (RgnHandle)SYN68K_TO_US(call->words[2]);
+    return appearance_client_result(call, appearance_menu_background_region(&rect, output));
+}
+
+static void appearance_draw_menu_background(INTEGER depth, INTEGER flags, GDHandle device, void* context)
+{
+    (void)device;
+    const Rect* rect = context;
+    const int top = CW(rect->top), left = CW(rect->left), bottom = CW(rect->bottom), right = CW(rect->right);
+    const bool uses_gray = appearance_platinum_uses_gray(depth, (flags & 1) != 0);
+    draw_state_t saved;
+    draw_state_save(&saved);
+    PenNormal();
+    const uint16_t shade = uses_gray ? CWC(0xdddd) : CWC(0xffff);
+    const RGBColor paper = {shade, shade, shade};
+    RGBBackColor(&paper);
+    EraseRect(rect);
+    if (uses_gray) {
+        appearance_foreground_shade(0xffff);
+        MoveTo(left, bottom - 2);
+        LineTo(left, top);
+        LineTo(right - 2, top);
+        appearance_foreground_shade(0x9999);
+        Move(1, 1);
+        LineTo(right - 1, bottom - 1);
+        LineTo(left + 1, bottom - 1);
+    }
+    ForeColor(blackColor);
+    MoveTo(left - 1, top);
+    LineTo(left - 1, bottom - 1);
+    LineTo(right, bottom);
+    LineTo(right, top - 1);
+    LineTo(left - 1, top - 1);
+    if (uses_gray)
+        appearance_foreground_shade(0x2222);
+    MoveTo(left + 1, bottom + 1);
+    LineTo(right + 1, bottom + 1);
+    LineTo(right + 1, top + 1);
+    draw_state_restore(&saved);
+}
+
+static int carbon_DrawThemeMenuBackground(ROMlib_carbon_ppc_frame* call)
+{
+    bool patched;
+    if (!appearance_dispatch_patch(&patched))
+        return 0;
+    if (patched)
+        return appearance_dispatch(0xbb8, 0x1b, call, call);
+    const void* bounds = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(Rect), 0) : NULL;
+    if (!bounds || !thePort || !ROMlib_valid_qd_port(thePort))
+        return appearance_client_result(call, paramErr);
+    ROMlib_carbon_reference ref;
+    if (appearance_custom_engine("DrawThemeMenuBackground", 0x39110, &ref))
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+    Rect rect;
+    memcpy(&rect, bounds, sizeof rect);
+    if (EmptyRect(&rect))
+        return appearance_client_result(call, noErr);
+    RgnHandle area = NewRgn();
+    if (!area)
+        return appearance_client_result(call, memFullErr);
+    OSErr error = appearance_menu_background_region(&rect, area);
+    if (!error)
+        error = appearance_draw_clipped(area, appearance_draw_menu_background, &rect);
+    DisposeRgn(area);
+    return appearance_client_result(call, error);
 }
 
 static int appearance_GetThemeMinimumDepth(ROMlib_carbon_ppc_frame* call)
@@ -1349,8 +2083,16 @@ static int appearance_get_preference(const char* name, uint32_t offset, int32_t 
                                      ROMlib_carbon_ppc_frame* call)
 {
     ROMlib_carbon_reference reference;
-    if (!ROMlib_carbon_load_reference("AppearanceLib", name, &reference))
-        return appearance_client_result(call, width == 1 ? 0 : appearance_unimplemented);
+    if (!ROMlib_carbon_load_reference("AppearanceLib", name, &reference)) {
+        if (field != appearance_arrow_style_field)
+            return appearance_client_result(call, width == 1 ? 0 : appearance_unimplemented);
+        const uint16_t encoded = CW(appearance_arrow_style);
+        void* output = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof encoded, 1) : NULL;
+        if (!output)
+            return appearance_client_result(call, paramErr);
+        memcpy(output, &encoded, sizeof encoded);
+        return appearance_client_result(call, noErr);
+    }
     if (!appearance_reference_layout(&reference, offset))
         return ROMlib_carbon_invoke_frame(reference.function, call);
 
@@ -1370,8 +2112,17 @@ static int appearance_set_preference(const char* name, uint32_t offset, int32_t 
                                      uint32_t style_limit, ROMlib_carbon_ppc_frame* call)
 {
     ROMlib_carbon_reference reference;
-    if (!ROMlib_carbon_load_reference("AppearanceLib", name, &reference))
-        return appearance_client_result(call, appearance_unimplemented);
+    if (!ROMlib_carbon_load_reference("AppearanceLib", name, &reference)) {
+        if (field != appearance_arrow_style_field)
+            return appearance_client_result(call, appearance_unimplemented);
+        const uint16_t style = call->words[0];
+        if (style > style_limit)
+            return appearance_client_result(call, paramErr);
+        appearance_arrow_style = style;
+        if ((uint8_t)call->words[1] && GrayRgn)
+            PaintBehind(NULL, MR(GrayRgn));
+        return appearance_client_result(call, noErr);
+    }
     if (!appearance_reference_layout(&reference, offset))
         return ROMlib_carbon_invoke_frame(reference.function, call);
 
@@ -2133,14 +2884,14 @@ static int carbon_IterateThemeVariants(ROMlib_carbon_ppc_frame* call)
     }
 
 APPEARANCE_GET(GetThemeScrollBarThumbStyle, 0x9734, -0x75ae, 2)
-APPEARANCE_GET(GetThemeScrollBarArrowStyle, 0x97e0, -0x75b0, 2)
+APPEARANCE_GET(GetThemeScrollBarArrowStyle, 0x97e0, appearance_arrow_style_field, 2)
 APPEARANCE_GET(GetThemeCheckBoxStyle, 0x9858, -0x75b2, 2)
 APPEARANCE_GET(GetThemeSoundMask, 0x167f4, 0x4464, 4)
 APPEARANCE_GET(AreThemeSoundsEnabled, 0x168ec, 0x45a2, 1)
 APPEARANCE_GET(GetThemeSoundPanningSpread, 0x169e0, 0x4468, 4)
 
 APPEARANCE_SET(SetThemeScrollBarThumbStyle, 0x96b4, -0x75ae, TICK("tsty"), 1)
-APPEARANCE_SET(SetThemeScrollBarArrowStyle, 0x9758, -0x75b0, TICK("asty"), 2)
+APPEARANCE_SET(SetThemeScrollBarArrowStyle, 0x9758, appearance_arrow_style_field, TICK("asty"), 2)
 APPEARANCE_SET(SetThemeCheckBoxStyle, 0x9804, -0x75b2, 0, 1)
 APPEARANCE_SET(SetThemeSoundPanningSpread, 0x16990, 0x4468, TICK("panp"), 0)
 

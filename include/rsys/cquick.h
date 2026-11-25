@@ -557,6 +557,9 @@ typedef struct draw_state {
 extern void draw_state_save(draw_state_t* draw_state);
 extern void draw_state_restore(draw_state_t* draw_state);
 
+typedef void (*ROMlib_device_draw_proc)(INTEGER depth, INTEGER flags, GDHandle device, void* data);
+extern OSErr ROMlib_device_loop(RgnHandle region, ROMlib_device_draw_proc draw, void* data, DeviceLoopFlags flags);
+
 extern struct qd_color_elt {
     RGBColor rgb;
     LONGINT value;

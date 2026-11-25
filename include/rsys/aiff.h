@@ -22,7 +22,7 @@
 typedef int (*aiff_read_proc)(void*, uint32_t, void*, uint32_t);
 
 typedef struct {
-    uint32_t frames, rate, offset, input_size;
+    uint32_t frames, rate, offset, input_size, format;
     unsigned channels, bits, little_endian, compression;
 } aiff_info;
 
@@ -42,13 +42,12 @@ static uint32_t aiff_rate(const uint8_t* p)
     return mantissa >> (16430 - exponent);
 }
 
-/* Result: 0 success, -208 malformed/unsupported PCM, -223 unknown codec,
-   -36 read failure. No output is published on error. */
-static int aiff_parse(aiff_read_proc read, void* context, uint32_t size, aiff_info* output)
+/* Read the on-disk frame count and sample extent without requiring a decoder. */
+static int aiff_read_header(aiff_read_proc read, void* context, uint32_t size, aiff_info* output)
 {
     uint8_t header[24];
     aiff_info info = {0};
-    uint32_t end, position = 12, sound_size = 0;
+    uint32_t end, position = 12;
     int common = 0, sound = 0, compressed;
     if (!output || size < 12)
         return -208;
@@ -76,19 +75,18 @@ static int aiff_parse(aiff_read_proc read, void* context, uint32_t size, aiff_in
             info.frames = aiff_long(header + 2);
             info.bits = (unsigned)header[6] << 8 | header[7];
             info.rate = aiff_rate(header + 8);
+            info.format = aiff_long((const uint8_t*)"NONE");
             if (compressed) {
                 if ((unsigned)header[22] > length - 23)
                     return -208;
+                info.format = aiff_long(header + 18);
                 info.little_endian = !memcmp(header + 18, "sowt", 4);
                 if (!memcmp(header + 18, "MAC3", 4))
                     info.compression = 3;
                 else if (!memcmp(header + 18, "MAC6", 4))
                     info.compression = 4;
-                if (!info.compression && !info.little_endian && memcmp(header + 18, "NONE", 4) &&
-                    memcmp(header + 18, "twos", 4))
-                    return -223;
             }
-            if ((info.channels != 1 && info.channels != 2) || (info.bits != 8 && info.bits != 16) || !info.rate)
+            if (!info.channels || info.channels > INT16_MAX || !info.bits || info.bits > 64 || !info.rate)
                 return -208;
         }
         else if (!memcmp(header, "SSND", 4)) {
@@ -100,25 +98,46 @@ static int aiff_parse(aiff_read_proc read, void* context, uint32_t size, aiff_in
             if (offset > length - 8)
                 return -208;
             info.offset = payload + 8 + offset;
-            sound_size = length - 8 - offset;
+            info.input_size = length - 8 - offset;
         }
         position = payload + length + (length & 1);
     }
     if (!common || !sound)
         return -208;
-    uint64_t input_size;
+    uint64_t needed = info.input_size;
+    if (info.compression)
+        needed = (uint64_t)info.frames * info.channels * (info.compression == 3 ? 2 : 1);
+    else if (info.format == aiff_long((const uint8_t*)"NONE") ||
+             info.format == aiff_long((const uint8_t*)"twos") || info.little_endian)
+        needed = (uint64_t)info.frames * info.channels * ((info.bits + 7) / 8);
+    if (needed > info.input_size)
+        return -208;
+    info.input_size = needed;
+    *output = info;
+    return 0;
+}
+
+/* Result: 0 success, -208 malformed/unsupported PCM, -223 unknown codec,
+   -36 read failure. No output is published on error. */
+static int aiff_parse(aiff_read_proc read, void* context, uint32_t size, aiff_info* output)
+{
+    aiff_info info;
+    if (!output)
+        return -208;
+    const int error = aiff_read_header(read, context, size, &info);
+    if (error)
+        return error;
+    if (!info.compression && !info.little_endian && info.format != aiff_long((const uint8_t*)"NONE") &&
+        info.format != aiff_long((const uint8_t*)"twos"))
+        return -223;
+    if ((info.channels != 1 && info.channels != 2) || (info.bits != 8 && info.bits != 16))
+        return -208;
     if (info.compression) {
         /* MACE COMM counts packet frames; each expands to six PCM frames. */
         if (info.frames > (UINT32_MAX - 1) / 6)
             return -208;
-        input_size = (uint64_t)info.frames * info.channels * (info.compression == 3 ? 2 : 1);
         info.frames *= 6;
     }
-    else
-        input_size = (uint64_t)info.frames * info.channels * (info.bits / 8);
-    if (input_size > sound_size)
-        return -208;
-    info.input_size = input_size;
     *output = info;
     return 0;
 }

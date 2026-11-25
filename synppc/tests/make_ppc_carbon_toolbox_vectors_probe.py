@@ -1698,6 +1698,7 @@ def file_operations(probe):
     p.expect(1, "PBAllocContigAsync completes exactly once on the caller's block")
     p.emit(0x807E2028)
     p.expect(8, "PBAllocContigAsync publishes the actual count")
+    aiff_file_operations(probe, reference, payload)
     success("FSClose", [reference])
 
     for name, locked in (("HSetFLock", 1), ("HRstFLock", 0)):
@@ -1723,6 +1724,81 @@ def file_operations(probe):
     p.emit(0x807E1FD0)
     p.nonzero("DirCreate returns the new catalog directory ID")
     delete(folder_name)
+
+
+def aiff_file_operations(probe, reference, payload):
+    p = probe.p
+    buffer = probe.ptr(0x1FF0)
+    count = probe.ptr(0x1FE8)
+    description = probe.far_raw(bytes([0xA5]) * 36)
+    base = description[1]
+
+    def read_word(offset, value):
+        probe.call("SetFPos", [reference, 1, offset])
+        p.expect(0, "seek to the generated AIFF field")
+        p.emit(0x38600004, 0x907E1FE8)
+        probe.call("FSRead", [reference, count, buffer])
+        p.expect(0, "read the generated AIFF field")
+        p.emit(0x807E1FF0)
+        p.expect(value, "AIFF chunk geometry and sample bytes are in file order")
+
+    for codec, kind, header_size, sound_offset, frame_offset, sample_bytes, frames in (
+        (b"NONE", b"AIFF", 54, 38, 22, 7, 7),
+        (b"MAC3", b"AIFC", 82, 66, 34, 8, 4),
+    ):
+        for data_bytes in (0, sample_bytes):
+            probe.call("SetFPos", [reference, 1, 1])
+            p.expect(0, "seek to the same nonzero AIFF start")
+            probe.call("SetupAIFFHeader", [reference, 1, 44100 << 16, 8, int.from_bytes(codec, "big"), data_bytes, 0])
+            p.expect(0, "build a placeholder or final sampled sound file header")
+            probe.call("GetFPos", [reference, count])
+            p.expect(0, "get the post-header file mark")
+            p.emit(0x807E1FE8)
+            p.expect(1 + header_size, "SetupAIFFHeader leaves the mark at the first sample byte")
+            if not data_bytes:
+                p.emit(0x38600008, 0x907E1FE8)
+                probe.call("FSWrite", [reference, count, payload])
+                p.expect(0, "append samples directly after the placeholder header")
+
+        for offset, value in (
+            (0, 0x464F524D),
+            (4, header_size),
+            (8, int.from_bytes(kind, "big")),
+            (frame_offset, frames),
+            (sound_offset, 0x53534E44),
+            (sound_offset + 4, 8 + sample_bytes),
+            (header_size, 0x41524449),
+        ):
+            read_word(1 + offset, value)
+
+        # The file parser reads a FORM at the beginning of the file even when
+        # the caller's current mark is elsewhere.
+        probe.call("SetFPos", [reference, 1, 0])
+        p.expect(0, "seek to the beginning of a sampled sound file")
+        probe.call("SetupAIFFHeader", [reference, 1, 44100 << 16, 8, int.from_bytes(codec, "big"), sample_bytes, 0])
+        p.expect(0, "write the readable FORM at file offset zero")
+        probe.call("ParseAIFFHeader", [reference, description, probe.ptr(base + 28), probe.ptr(base + 32)])
+        p.expect(0, "parse a sound file header from a nonzero current mark")
+        format_code = int.from_bytes(b"twos" if codec == b"NONE" else codec, "big")
+        for field, value in ((4, format_code), (8, 0x00010008), (12, 44100 << 16), (28, frames), (32, header_size)):
+            probe.arguments([probe.ptr(base + field)], 0)
+            p.emit(0x80630000)
+            p.expect(value, "the AIFF description reports the encoding, file frame count and sample data offset")
+        probe.call("GetFPos", [reference, count])
+        p.expect(0, "read the current mark after parsing")
+        p.emit(0x807E1FE8)
+        p.expect(header_size, "ParseAIFFHeader restores the caller's file mark")
+
+    probe.call("SetFPos", [reference, 1, 0])
+    p.expect(0, "seek to the FORM signature")
+    p.emit(0x38600008, 0x907E1FE8)
+    probe.call("FSWrite", [reference, count, payload])
+    p.expect(0, "replace the FORM signature with malformed data")
+    probe.call("ParseAIFFHeader", [reference, description, probe.ptr(base + 28), probe.ptr(base + 32)])
+    p.expect(-208, "reject a file without a valid FORM signature")
+    probe.arguments([probe.ptr(base + 32)], 0)
+    p.emit(0x80630000)
+    p.expect(82, "a rejected AIFF leaves the previous data offset intact")
 
 
 def launch_services_operations(probe):
@@ -2892,6 +2968,7 @@ def apple_event_operations(probe):
     p.emit(0x807E1EA8)
     p.expect(1, "AECountItems reports the appended descriptor")
     call("AEGetNthPtr", [listing, 1, wildcard, keyword, dtype, output, 4, length])
+    call("AEGetNthPtr", [listing, 1, wildcard, 0, 0, output, 4, 0])
     p.emit(0x807E1EA0)
     p.expect(0x64617461, "AEGetNthPtr copies the stored descriptor bytes")
     p.emit(0x807E1EAC)
@@ -2930,12 +3007,31 @@ def apple_event_operations(probe):
     call("AEPutParamDesc", [event, key, descriptor])
 
     _, current = probe.raw(bytes(12))
+    saved = packed_event[1]
+    saved_event, saved_reply = ptr(saved), ptr(saved + 8)
+    suspend_mode, suspend_status = saved + 16, saved + 20
+    call("AEManagerInfo", [0x76657273, output])
+    p.emit(0x807E1EA0)
+    p.expect(0x01058000, "AEManagerInfo returns the System 9 packed NumVersion")
+    call("AEManagerInfo", [0x72656372, output])
+    p.emit(0x807E1EA0)
+    p.expect(0, "AEManagerInfo reports the number of active recorders")
+    call("AEManagerInfo", [0x3F3F3F3F, output], -50)
+    call("AEManagerInfo", [0x76657273, 0], -50)
+    p.emit(0x38000000, 0x901E0000 | suspend_mode)
     call("AEGetTheCurrentEvent", [ptr(current)])
     p.emit(0x807E0000 | current)
     p.expect(0x6E756C6C, "there is no current Apple event before dispatch")
     main_code, p.code = p.code, []
     p.emit(0x9421FFC0, 0x7C0802A6, 0x90010044, 0x93C10038, 0x7C5E1378, 0x90BE1EE0)
-    p.emit(0x80830004, 0x909E0000 | (current + 8))
+    p.emit(0x80C30004, 0x90DE0000 | (current + 8))
+    p.emit(0x801E0000 | suspend_mode, 0x2C000000, 0)
+    skip_suspend = len(p.code) - 1
+    p.emit(0x80030000, 0x901E0000 | saved, 0x90DE0000 | (saved + 4))
+    p.emit(0x80040000, 0x901E0000 | (saved + 8), 0x80040004, 0x901E0000 | (saved + 12))
+    probe.call("AESuspendTheCurrentEvent", [saved_event])
+    p.emit(0x907E0000 | suspend_status)
+    p.code[skip_suspend] = 0x41820000 | (len(p.code) - skip_suspend) * 4
     probe.call("AEGetTheCurrentEvent", [ptr(current)])
     probe.call("AEInteractWithUser", [0, 0, 0])
     p.emit(0x907E1EE4, 0x83C10038, 0x80010044, 0x7C0803A6, 0x38210040, 0x38600000, 0x4E800020)
@@ -2948,7 +3044,8 @@ def apple_event_operations(probe):
     call("AEGetEventHandler", [event_class, event_id, ptr(0x1EC4), ptr(0x1EC8), 0])
     p.emit(0x807E1EC8)
     p.expect(0x1234ABCD, "AEGetEventHandler returns the registered reference value")
-    for mode, status in ((0x10, -1713), (0x20, 0), (0, 0)):
+
+    def post_and_dispatch(mode):
         call("AESend", [event, 0, mode | 1, 0, -1, 0, 0])  # kAENoReply to self
         # Earlier Appearance checks can leave preference-change broadcasts in
         # the same queue as the launch event and the synthetic self-send.
@@ -2967,6 +3064,9 @@ def apple_event_operations(probe):
         p.code[dispatched] = 0x40820000 | (len(p.code) - dispatched) * 4
         p.emit(0x807E1EE0)
         p.expect(0x1234ABCD, "AEProcessAppleEvent dispatches the event posted by AESend")
+
+    for mode, status in ((0x10, -1713), (0x20, 0), (0, 0)):
+        post_and_dispatch(mode)
         p.emit(0x807E0000 | current)
         p.expect(0x61657674, "the current Apple event is available inside its handler")
         p.emit(0x807E0000 | (current + 4), 0x809E0000 | (current + 8), 0x7C632278)
@@ -2979,6 +3079,33 @@ def apple_event_operations(probe):
         p.emit(0x807E1EE4)
         p.expect(status, f"interaction follows Apple event send mode {mode:#x}")
         call("AEInteractWithUser", [0, 0, 0])
+    call("AESetTheCurrentEvent", [event], -1708)
+    call("AEResumeTheCurrentEvent", [event, 0, 0, 0], -1708)
+    for dispatcher, refcon, expected in ((0, 0, 0), (slot(0x1EC0), 0xFEDCBA98, 0xFEDCBA98), (-1, 0, 0x1234ABCD)):
+        p.emit(0x38000001, 0x901E0000 | suspend_mode, 0x901E0000 | suspend_status)
+        post_and_dispatch(0x10)
+        p.emit(0x807E0000 | suspend_status)
+        p.expect(0, "the event handler successfully suspended its current event")
+        call("AEGetTheCurrentEvent", [ptr(current)])
+        p.emit(0x807E0000 | current)
+        p.expect(0x6E756C6C, "a suspended event disappears from the active dispatch")
+        call("AEGetParamPtr", [saved_event, key, wildcard, dtype, output, 4, length])
+        p.emit(0x807E1EA0)
+        p.expect(0x64617461, "the suspended event still owns its original data")
+        call("AESetTheCurrentEvent", [saved_event])
+        call("AEGetTheCurrentEvent", [ptr(current)])
+        p.emit(0x807E0000 | (current + 4), 0x809E0000 | (saved + 4))
+        p.equal("manual handling exposes the original suspended descriptor")
+        call("AEInteractWithUser", [0, 0, 0], -1713)
+        call("AEResumeTheCurrentEvent", [saved_event, event, 0, 0], -1709)
+        p.emit(0x38000000, 0x901E0000 | suspend_mode, 0x901E1EE0)
+        call("AEResumeTheCurrentEvent", [saved_event, saved_reply, dispatcher, refcon])
+        p.emit(0x807E1EE0)
+        p.expect(expected, "the resume dispatch mode selects the expected callback")
+        call("AEGetTheCurrentEvent", [ptr(current)])
+        p.emit(0x807E0000 | current)
+        p.expect(0x6E756C6C, "the manual current event clears when handling finishes")
+        call("AEResumeTheCurrentEvent", [saved_event, 0, 0, 0], -1708)
     call("AERemoveEventHandler", [event_class, event_id, slot(0x1EC0), 0])
     probe.call("DisposeAEEventHandlerUPP", [slot(0x1EC0)])
     for item in (event, target, listing, descriptor):
@@ -3178,6 +3305,167 @@ def manager_operations(probe):
     p.expect(0, "SndGetSysBeepState returns the updated state")
     probe.call("SndSetSysBeepState", [slot(scratch)])
     p.expect(0, "SndSetSysBeepState restores the initial state")
+
+
+def picture_utility_operations(probe):
+    p = probe.p
+    base = 0x2040
+    picture, bad_picture, session, output = base, base + 4, base + 12, base + 16
+    original = struct.pack(">H4h", 0, 3, 4, 19, 24) + bytes.fromhex(
+        "001102ff001affff000000000031000300040013001800a0000700a0000700ff"
+    )
+
+    def handle(data, target):
+        source = probe.far_raw(data)
+        probe.call("NewHandle", [len(data)])
+        p.nonzero("allocate a picture input")
+        p.emit(0x907E0000 | target)
+        probe.arguments([source, probe.slot(target), len(data)], 0)
+        p.emit(0x80840000)
+        p.call("BlockMoveData")
+
+    def call(name, arguments, result=0):
+        probe.call(name, arguments)
+        p.expect(result, name + " returns the expected Picture Utilities status")
+
+    def word(offset, expected, message):
+        p.emit(0x807E0000 | (output + offset))
+        p.expect(expected, message)
+
+    handle(original, picture)
+    handle(original[:-2], bad_picture)
+    call("GetPictInfo", [probe.slot(picture), probe.ptr(output), 5, 1, 1, 0])
+    word(2, 1, "GetPictInfo finds the RGB foreground color")
+    word(28, 0x00100014, "GetPictInfo reports the normalized source size")
+    word(40, 1, "GetPictInfo counts the painted rectangle")
+    word(72, 2, "GetPictInfo counts repeated picture comments")
+    word(76, 1, "GetPictInfo reports a distinct comment ID")
+    p.emit(0x807E0000 | (output + 10), 0x80630000, 0xA063000A)
+    p.expect(0xFFFF, "a one-color table contains the recorded red component")
+    p.emit(0x807E0000 | (output + 80), 0x80630000, 0x80630000)
+    p.expect(0x00020007, "the comment handle reports its count and ID")
+    probe.call("DisposeHandle", [probe.slot(output + 10)])
+    probe.call("DisposeHandle", [probe.slot(output + 80)])
+    call("GetPictInfo", [probe.slot(picture), probe.ptr(output), 0, 0, 0, 1], -11000)
+    call("NewPictInfo", [probe.ptr(session), 4, 0, 0, 0])
+    call("RecordPictInfo", [probe.slot(session), probe.slot(picture)])
+    call("RecordPictInfo", [probe.slot(session), probe.slot(bad_picture)], -11005)
+    call("RecordPictInfo", [probe.slot(session), probe.slot(picture)])
+    call("RetrievePictInfo", [probe.slot(session), probe.ptr(output), 0])
+    word(40, 2, "a failed record preserves previous rectangle counts")
+    word(72, 4, "retrieval combines comments from both pictures")
+    call("DisposePictInfo", [probe.slot(session)])
+    p.emit(0x807E0000 | (output + 80), 0x80630000, 0x80630000)
+    p.expect(0x00040007, "retrieved comment handle survives disposing the accumulator")
+    probe.call("DisposeHandle", [probe.slot(output + 80)])
+    call("DisposePictInfo", [0], -11001)
+    probe.call("DisposeHandle", [probe.slot(picture)])
+    probe.call("DisposeHandle", [probe.slot(bad_picture)])
+
+    world, pixmap, pixels = base, base + 4, base + 124
+    p.emit(0x38001234, 0x901E0000 | pixels)
+    bounds = probe.far_raw(struct.pack(">4h", 0, 0, 1, 1))
+    call("NewGWorldFromPtr", [probe.ptr(world), 32, bounds, 0, 0, 0, probe.ptr(pixels), 4])
+    probe.call("GetGWorldPixMap", [probe.slot(world)])
+    p.nonzero("the borrowed GWorld has a pixmap")
+    p.emit(0x907E0000 | pixmap)
+    call("GetPixMapInfo", [probe.slot(pixmap), probe.ptr(output), 1, 1, 1, 0])
+    word(2, 1, "GetPixMapInfo returns one color when requested")
+    word(68, 1, "GetPixMapInfo counts its direct pixmap")
+    probe.call("DisposeHandle", [probe.slot(output + 10)])
+    call("NewPictInfo", [probe.ptr(session), 0, 0, 0, 0])
+    call("RecordPixMapInfo", [probe.slot(session), probe.slot(pixmap)])
+    call("RecordPixMapInfo", [probe.slot(session), probe.slot(pixmap)])
+    call("RetrievePictInfo", [probe.slot(session), probe.ptr(output), 0])
+    word(68, 2, "RecordPixMapInfo accumulates both recordings")
+    call("DisposePictInfo", [probe.slot(session)])
+    probe.call("DisposeGWorld", [probe.slot(world)])
+
+
+def network_location_operations(probe):
+    p = probe.p
+    base = 0x2040
+    ptr = lambda offset: probe.ptr(base + offset)
+    slot = lambda offset: probe.slot(base + offset)
+    service, extra = probe.far_raw(b"http,ftp\0"), probe.far_raw(b"ssh\0")
+    missing = probe.far_raw(b"telnet\0")
+    url_text = b"https://example.test/"
+    url = probe.far_raw(url_text + b"\0")
+    name = probe.far_raw(b"local\0")
+    protocols = probe.far_raw(b"dns,slp\0")
+
+    def call(name, arguments, expected=0):
+        probe.call(name, arguments)
+        p.expect(expected, name + " returns the expected result")
+
+    def save(name, arguments, offset):
+        probe.call(name, arguments)
+        p.nonzero(name + " creates a guest object")
+        p.emit(0x907E0000 | (base + offset))
+
+    def word(offset, expected, message):
+        p.emit(0x807E0000 | (base + offset))
+        p.expect(expected, message)
+
+    call("NSLLibraryVersion", [], 0x10100)
+    save("NSLMakeNewServicesList", [service], 0)
+    call("NSLServiceIsInServiceList", [slot(0), missing], 0)
+    probe.call("NSLAddServiceToServicesList", [ptr(52), slot(0), extra])
+    word(52, 0, "adding a service returns noErr in the NSLError structure")
+    word(56, 0, "adding a service clears the NSLError context")
+    call("NSLServiceIsInServiceList", [slot(0), extra], 1)
+    call("NSLMakeServicesRequestPB", [slot(0), ptr(4)])
+    probe.call("NSLDisposeServicesList", [slot(0)])
+    call("NSLParseServicesRequestPB", [slot(4), ptr(8), ptr(12)])
+    p.emit(0x807E0000 | (base + 8), 0x80630000)
+    p.expect(3, "the request owns an independent copy of the three services")
+    p.emit(0xA07E0000 | (base + 12))
+    p.expect(21, "the request parser returns the complete service list length")
+    call("NSLFreeTypedDataPtr", [slot(4)])
+    save("NewPtr", [16], 4)
+    call("NSLFreeURL", [slot(4)])
+
+    save("NSLMakeNewNeighborhood", [name, protocols], 16)
+    save("NSLCopyNeighborhood", [slot(16)], 20)
+    call("NSLFreeNeighborhood", [slot(16)])
+    call("NSLGetNeighborhoodLength", [slot(20)], 30)
+    probe.call("NSLGetNameFromNeighborhood", [slot(20), ptr(8), ptr(12)])
+    word(12, 5, "the neighborhood copy retains the name length")
+    p.emit(0x807E0000 | (base + 8), 0x80630000)
+    p.expect(0x6C6F6361, "the neighborhood copy retains the Pascal name bytes")
+    call("NSLFreeNeighborhood", [slot(20)])
+
+    call("NSLGetServiceFromURL", [url, ptr(8), ptr(12)])
+    p.emit(0xA07E0000 | (base + 12))
+    p.expect(5, "the URL service excludes the colon")
+    record = b"\x05local" + bytes(8)
+    registration = probe.far_raw(struct.pack(">4sI", b"NSL_", 8 + len(record) + len(url_text)) + record + url_text)
+    call("NSLParseServiceRegistrationPB", [registration, ptr(8), ptr(12), ptr(16), ptr(20)])
+    p.emit(0xA07E0000 | (base + 12))
+    p.expect(14, "registration parsing reports the serialized neighborhood extent")
+    p.emit(0xA07E0000 | (base + 20))
+    p.expect(len(url_text), "registration parsing reports the nonterminated URL extent")
+    p.emit(0x807E0000 | (base + 16), 0x80630000)
+    p.expect(0x68747470, "registration parsing points to the URL in the packet")
+
+    results = probe.far_raw(b"ftp://first,http://next")
+    probe.arguments([results], 0)
+    p.emit(0x907E0000 | (base + 72), 0x38000017, 0x901E0000 | (base + 76), 0x38000000, 0x901E0000 | (base + 8))
+    call("NSLGetNextUrl", [ptr(64), ptr(8), ptr(12)], 1)
+    word(12, 11, "the first URL ends at the comma")
+    call("NSLGetNextUrl", [ptr(64), ptr(8), ptr(12)], 1)
+    word(12, 11, "the second URL ends at the buffer boundary")
+    call("NSLGetNextUrl", [ptr(64), ptr(8), ptr(12)], 0)
+    word(8, 0, "URL iteration clears the cursor after exhaustion")
+
+    neighborhoods = probe.far_raw(record + record)
+    probe.arguments([neighborhoods], 0)
+    p.emit(0x907E0000 | (base + 72), 0x3800001C, 0x901E0000 | (base + 76), 0x38000007, 0x901E0000 | (base + 118))
+    call("NSLGetNextNeighborhood", [ptr(64), ptr(8), ptr(12)], 1)
+    word(12, 14, "the first neighborhood is a packed record")
+    call("NSLGetNextNeighborhood", [ptr(64), ptr(8), ptr(12)], 1)
+    call("NSLGetNextNeighborhood", [ptr(64), ptr(8), ptr(12)], 0)
+    word(12, 0, "neighborhood iteration clears the length after exhaustion")
 
 
 def classic_utility_operations(probe):
@@ -3691,6 +3979,119 @@ def theme_font_operations(probe):
     for field, offset in (("Font", 16), ("Size", 20), ("Face", 24)):
         probe.call("Text" + field, [probe.slot(base + offset)])
     probe.call("BlockMoveData", [saved, ptr(0), 52])
+    theme_text_operations(probe)
+
+
+def theme_text_operations(probe):
+    p = probe.p
+    base = 0x2040
+    ptr = lambda offset: probe.ptr(base + offset)
+    slot = lambda offset: probe.slot(base + offset)
+
+    def check(name, args, status=0):
+        probe.call(name, args)
+        p.expect(status, name + " returns the expected Appearance text status")
+
+    def load(offset, register=3, opcode=0x807E0000):
+        p.emit((opcode + ((register - 3) << 21)) | (base + offset))
+
+    def retain_string(offset, text):
+        probe.call("CFStringCreateWithCString", [0, probe.far_raw(text + b"\0"), 0])
+        p.nonzero("create a theme text fixture")
+        p.emit(0x907E0000 | (base + offset))
+
+    retain_string(0, b"Abc")
+    retain_string(4, b"one\rtwo")
+    retain_string(8, b"Appearance text truncation")
+    retain_string(12, b"")
+    probe.call("GetGWorld", [ptr(16), ptr(20)])
+    bounds = probe.far_raw(struct.pack(">4h", 0, 0, 40, 96))
+    check("NewGWorld", [ptr(24), 32, bounds, 0, 0, 0])
+    probe.call("GetGWorldPixMap", [slot(24)])
+    p.nonzero("resolve the theme text drawing pixmap")
+    p.emit(0x907E0000 | (base + 28))
+    check("LockPixels", [slot(28)], 1)
+    probe.call("SetGWorld", [slot(24), 0])
+    probe.call("TextFont", [0])
+    probe.call("TextSize", [12])
+    probe.call("TextFace", [0])
+    probe.call("GetFontInfo", [ptr(32)])
+
+    short_text = probe.far_raw(b"Abc")
+    check("GetThemeTextDimensions", [slot(0), 200, 1, 0, ptr(40), ptr(44)])
+    probe.call("TextWidth", [short_text, 0, 3])
+    p.emit(0x38830001)
+    load(42, opcode=0xA07E0000)
+    p.equal("single-line Appearance measurement includes a pixel of width padding")
+    load(32, register=4, opcode=0xA07E0000)
+    load(34, register=5, opcode=0xA07E0000)
+    p.emit(0x7C842A14)
+    load(40, opcode=0xA07E0000)
+    p.equal("single-line height adds the font ascent and descent")
+    load(34, register=4, opcode=0xA07E0000)
+    p.emit(0x7C8400D0)
+    load(44, opcode=0xA87E0000)
+    p.equal("single-line baseline is measured up from the bottom")
+
+    p.emit(0x38000060, 0xB01E0000 | (base + 42))
+    check("GetThemeTextDimensions", [slot(4), 200, 1, 1, ptr(40), ptr(44)])
+    load(42, opcode=0xA07E0000)
+    p.expect(96, "wrapped measurement preserves the width constraint")
+    load(32, register=4, opcode=0xA07E0000)
+    load(34, register=5, opcode=0xA07E0000)
+    p.emit(0x7C842A14, 0x5484083C)
+    load(38, register=5, opcode=0xA07E0000)
+    p.emit(0x7C842A14)
+    load(40, opcode=0xA07E0000)
+    p.equal("two lines include one leading interval")
+    check("GetThemeTextDimensions", [slot(12), 200, 1, 0, ptr(40), ptr(44)])
+    load(40)
+    p.expect(0, "empty text measures zero")
+    check("GetThemeTextDimensions", [slot(0), 200, 1, 0, ptr(40), 0], -50)
+    p.emit(0x38000001, 0x901E0000 | (base + 48), 0x901E0000 | (base + 52))
+    check("GetThemeTextShadowOutset", [200, 1, ptr(48)])
+    load(48)
+    load(52, register=4)
+    p.emit(0x7C632378)
+    p.expect(0, "Classic Appearance text has no extra shadow outset")
+    check("GetThemeTextShadowOutset", [99, 1, ptr(48)], -50)
+
+    probe.call("CFStringCreateMutableCopy", [0, 0, slot(8)])
+    p.nonzero("allocate a mutable string to truncate")
+    p.emit(0x907E0000 | (base + 56))
+    check("TruncateThemeText", [slot(56), 200, 1, 1000, 0, ptr(60)])
+    load(60, opcode=0x887E0000)
+    p.expect(0, "the truncation flag stays clear when all glyphs fit")
+    check("TruncateThemeText", [slot(56), 200, 1, 45, 0, ptr(60)])
+    load(60, opcode=0x887E0000)
+    p.expect(1, "the truncation flag reports the actual edit")
+    probe.call("CFStringGetLength", [slot(56)])
+    p.emit(0x3863FFFF, 0x907E0000 | (base + 64))
+    probe.call("CFStringGetCharacterAtIndex", [slot(56), slot(64)])
+    p.expect(0x2026, "end truncation replaces the tail with an ellipsis")
+    check("TruncateThemeText", [slot(8), 200, 1, 45, 0, ptr(60)], -50)
+
+    target = probe.far_raw(struct.pack(">4h", 1, 2, 40, 96))
+    check("DrawThemeTextBox", [slot(0), 200, 1, 0, target, -2, 0])
+    probe.call("GetPen", [ptr(68)])
+    load(32, register=4, opcode=0xA07E0000)
+    p.emit(0x38840001)
+    load(68, opcode=0xA07E0000)
+    p.equal("single-line theme drawing positions the pen on the font baseline")
+    probe.call("TextWidth", [short_text, 0, 3])
+    p.emit(0x38830003)
+    load(70, opcode=0xA07E0000)
+    p.equal("theme drawing advances the pen by the actual text width")
+    check("DrawThemeTextBox", [slot(4), 0, 1, 1, target, 1, 0])
+    probe.call("GetPortTextFont", [slot(24)])
+    p.expect(0, "theme drawing restores the original font")
+    probe.call("GetPortTextSize", [slot(24)])
+    p.expect(12, "theme drawing restores the original size")
+    probe.call("SetGWorld", [slot(16), slot(20)])
+    probe.call("UnlockPixels", [slot(28)])
+    probe.call("DisposeGWorld", [slot(24)])
+    for offset in (0, 4, 8, 12, 56):
+        probe.call("CFRelease", [slot(offset)])
 
 
 def theme_cursor_operations(probe):
@@ -5095,6 +5496,147 @@ def sound_input_operations(probe):
     call("SPBStopRecording", [port], -229)
 
 
+def sound_manager_operations(probe):
+    p = probe.p
+    _, base = probe.far_raw(bytes([0xA5]) * 76)
+
+    def read(offset, halfword=False):
+        probe.arguments([probe.ptr(base + offset)], 0)
+        p.emit(0xA0630000 if halfword else 0x80630000)
+
+    for index, (getter, setter) in enumerate(
+        (("GetSysBeepVolume", "SetSysBeepVolume"), ("GetDefaultOutputVolume", "SetDefaultOutputVolume"))
+    ):
+        saved = base + 4 * index
+        probe.call(getter, [probe.ptr(saved)])
+        p.expect(0, "read the original sound volume")
+        for volume in (0, 0x004000C0):
+            probe.call(setter, [volume])
+            p.expect(0, "set the device's packed sound gain")
+            probe.call(getter, [probe.ptr(base + 8)])
+            p.expect(0, "read the live sound gain")
+            read(8)
+            p.expect(volume, "sound gain preserves both 8.8 channels in guest order")
+        probe.call(setter, [probe.slot(saved)])
+        p.expect(0, "restore the original sound volume")
+
+    handle = probe.slot(base + 12)
+    probe.call("NewHandle", [96])
+    p.nonzero("allocate caller-owned sound resource storage")
+    slot = base + 12
+    p.emit(0x3C9E0000 | ((slot + 0x8000) >> 16), 0x90640000 | (slot & 0xFFFF))
+    rate = 44100 << 16
+    for channels, bits, codec, data_bytes, header_size, encoding in (
+        (1, 8, b"NONE", 12, 42, 0x003C),
+        (2, 16, b"NONE", 12, 84, 0xFF3C),
+        (1, 8, b"MAC3", 12, 84, 0xFE3C),
+    ):
+        probe.call(
+            "SetupSndHeader",
+            [handle, channels, rate, bits, int.from_bytes(codec, "big"), 60, data_bytes, probe.ptr(base + 16)],
+        )
+        p.expect(0, "construct a playable sampled-sound resource header")
+        read(16, halfword=True)
+        p.expect(header_size, "the header length locates the caller's sample data")
+        probe.arguments([handle], 0)
+        p.emit(0x80630000, 0xA0630028)
+        p.expect(encoding, "the sampled sound header sets the correct encoding and base note")
+        probe.arguments([handle], 0)
+        p.emit(0x80630000, 0x8063001C)
+        p.expect(rate, "unsigned 16.16 sample rates above 32 kHz survive")
+        probe.call("GetHandleSize", [handle])
+        p.expect(96, "header construction leaves the caller's handle size intact")
+        probe.call("ParseSndHeader", [handle, probe.ptr(base + 40), probe.ptr(base + 68), probe.ptr(base + 72)])
+        p.expect(0, "parse the caller's sampled sound resource")
+        code = b"MAC3" if codec == b"MAC3" else b"raw " if bits == 8 else b"twos"
+        frames = data_bytes // (channels * (2 if codec == b"MAC3" else bits // 8))
+        for field, value in (
+            (44, int.from_bytes(code, "big")),
+            (48, (channels << 16) | bits),
+            (52, rate),
+            (68, frames),
+            (72, header_size),
+        ):
+            read(field)
+            p.expect(value, "the resource description reports the encoding, stored frame count and data offset")
+    probe.call("SetHandleSize", [handle, 24])
+    probe.call("ParseSndHeader", [handle, probe.ptr(base + 40), probe.ptr(base + 68), probe.ptr(base + 72)])
+    p.expect(-206, "reject a sampled sound header truncated inside the handle")
+    read(72)
+    p.expect(84, "a rejected sound resource leaves the previous data offset intact")
+    probe.call("DisposeHandle", [handle])
+    struct.pack_into(">I", p.data, base + 20, 20)
+    probe.call("GetCompressionInfo", [3, 0, 2, 8, probe.ptr(base + 20)])
+    p.expect(0, "query actual MACE packet geometry")
+    for offset, value in ((20, 20), (24, 0x4D414333), (28, 0x00030006), (32, 0x00020004), (36, 0x00010000)):
+        read(offset)
+        p.expect(value, "compression info records real encoded and decoded packet geometry")
+    sound_preference_operations(probe)
+
+
+def sound_preference_operations(probe):
+    p = probe.p
+    _, base = probe.far_raw(bytes(24))
+    pref_type = int.from_bytes(b"tSPr", "big")
+    name = probe.far_raw(b"\x18ROMAW sound fixture data")
+    file_name = probe.far_raw(b"\x11Sound Preferences")
+    source, destination = probe.slot(base), probe.slot(base + 4)
+
+    def save(offset):
+        address = base + offset
+        p.emit(0x3C9E0000 | ((address + 0x8000) >> 16), 0x90640000 | (address & 0xFFFF))
+
+    def check(name, arguments, expected=0):
+        probe.call(name, arguments)
+        p.expect(expected, name + " returns the expected result")
+
+    for offset, size in ((0, 8), (4, 0)):
+        probe.call("NewHandle", [size])
+        p.nonzero("allocate a caller-owned sound preference handle")
+        save(offset)
+
+    probe.call("CurResFile")
+    save(8)
+    for size, value in ((4, 0x12345678), (8, 0xDFEAFE77)):
+        probe.call("SetHandleSize", [source, size])
+        probe.arguments([source, value], 0)
+        p.emit(0x80630000, 0x90830000)
+        if size == 8:
+            p.emit(0x90830004)
+        check("SetSoundPreference", [pref_type, name, source])
+        probe.arguments([source], 0)
+        p.emit(0x80630000, 0x38800000, 0x90830000)
+        check("GetSoundPreference", [pref_type, name, destination])
+        check("GetHandleSize", [destination], size)
+        probe.arguments([destination], 0)
+        p.emit(0x80630000, 0x80630000)
+        p.expect(value, "the saved preference owns a copy of the original caller data")
+    probe.call("CurResFile")
+    p.emit(0x7C651B78)
+    probe.arguments([probe.slot(base + 8)], 0)
+    p.emit(0x38850000)
+    p.equal("sound preferences restore the caller's current resource file")
+
+    check("FindFolder", [0x8000, int.from_bytes(b"pref", "big"), 0, probe.ptr(base + 12), probe.ptr(base + 16)])
+    probe.arguments([probe.ptr(base + 12)], 0)
+    p.emit(0xA8630000)
+    save(20)
+    probe.call("HOpenResFile", [probe.slot(base + 20), probe.slot(base + 16), file_name, 3])
+    p.nonzero("reopen the classic Sound Preferences resource file")
+    save(20)
+    probe.call("Get1NamedResource", [pref_type, name])
+    p.nonzero("the preferences are stored as a classic named resource")
+    save(16)
+    probe.call("RemoveResource", [probe.slot(base + 16)])
+    check("ResError", [])
+    probe.call("DisposeHandle", [probe.slot(base + 16)])
+    probe.call("CloseResFile", [probe.slot(base + 20)])
+    check("ResError", [])
+    probe.call("UseResFile", [probe.slot(base + 8)])
+    probe.call("DisposeHandle", [source])
+    probe.call("DisposeHandle", [destination])
+
+
 def sound_converter_operations(probe):
     p = probe.p
     _, base = probe.raw(bytes(96))
@@ -5138,6 +5680,17 @@ def sound_converter_operations(probe):
     call("Close", [converter])
 
     source = probe.raw(b"\xA5\x5A\x11\xE3")
+    signed = probe.far_raw(struct.pack(">I4sHH4I", 0, b"twos", 1, 8, 8000 << 16, 0, 0, 0))
+    for input_format, output_format in ((signed, raw), (raw, signed)):
+        call("Open", [input_format, output_format, probe.ptr(base)])
+        call("BeginConversion", [converter])
+        call("ConvertBuffer", [converter, source, 4, probe.ptr(base + 24), result_frames, result_bytes])
+        word(8, 4, "signed and unsigned byte encodings have the same frame geometry")
+        word(12, 4, "signed and unsigned byte conversions preserve the byte count")
+        word(24, 0x25DA9163, "signed AIFF bytes and offset-binary sound-resource bytes differ in their top bit")
+        call("EndConversion", [converter, 0, result_frames, result_bytes])
+        call("Close", [converter])
+
     for code, packet_bytes in ((b"MAC3", 2), (b"MAC6", 1)):
         encoded = format_record(code, 8000, 1, 8)
         call("Open", [encoded, raw, probe.ptr(base)])
@@ -5285,6 +5838,28 @@ def power_activity_operations(probe):
     ):
         probe.call(name, arguments)
         p.expect(expected, name + " reports the fixed-clock desktop hardware")
+
+    timeouts = (
+        ("SetSleepTimeout", "GetSleepTimeout", 0xC1),
+        ("SetHardDiskTimeout", "GetHardDiskTimeout", 0x7F),
+        ("SetDimmingTimeout", "GetDimmingTimeout", 0xA6),
+    )
+    for setter, _, value in timeouts:
+        probe.call(setter, [0xBEEF0000 | value])
+    for _, getter, value in timeouts:
+        probe.call(getter)
+        p.expect(value, getter + " returns its own stored unsigned byte")
+
+    for setter, getter, inverted in (
+        ("AutoSleepControl", "IsAutoSlpControlDisabled", True),
+        ("DimmingControl", "IsDimmingControlDisabled", True),
+        ("SetSpindownDisable", "IsSpindownDisabled", False),
+        ("SetDimSuspendState", "GetDimSuspendState", False),
+    ):
+        for enabled in (0, 1):
+            probe.call(setter, [0xA5A50000 | enabled])
+            probe.call(getter)
+            p.expect(enabled ^ inverted, getter + " reads the live policy flag")
 
     _, buffer = probe.far_raw(bytes([0xA5]) * 24)
     probe.call("GetBatteryTimes", [1, probe.ptr(buffer + 4)])
@@ -5448,6 +6023,96 @@ def navigation_operations(probe):
     p.expect(1, "disposing the reply releases its saved filename exactly once")
     probe.call("CFRelease", [probe.slot(carbon + 28)])
     call("NavDisposeReply", [0], -50)
+
+    confirmation = probe.ptr(legacy + 28)
+    output = probe.ptr(carbon + 28)
+    options_address = probe.ptr(options)
+    creation_address = probe.ptr(creation)
+    dialog = probe.slot(carbon + 28)
+    call("NavAskSaveChanges", [options_address, 3, confirmation, 0, 0], -50)
+    call("NavAskDiscardChanges", [options_address, 0, 0, 0], -50)
+    call("NavCustomAskSaveChanges", [options_address, confirmation, 0, 0], -50)
+    p.emit(0x3C00034E, 0x60006176, 0x901E0000 | (options + 0x50A))
+    for name, arguments, key, result in (
+        ("NavAskSaveChanges", [options_address, 1, confirmation, 0, 0], 13, 1),
+        ("NavCustomAskSaveChanges", [options_address, confirmation, 0, 0], 27, 2),
+        ("NavAskDiscardChanges", [options_address, confirmation, 0, 0], 13, 1),
+    ):
+        call("PostEvent", [3, key])
+        call(name, arguments)
+        word(legacy + 28, result, "the legacy alert writes the actual selected button")
+    p.emit(0x38000000, 0x981E0000 | (options + 0x50A))
+
+    for name, arguments, key, action in (
+        ("NavCreateAskSaveChangesDialog", [creation_address, 2, 0, 0, output], 13, 6),
+        ("NavCreateAskDiscardChangesDialog", [creation_address, 0, 0, output], 27, 1),
+        ("NavCreateAskDiscardChangesDialog", [creation_address, 0, 0, output], 13, 8),
+    ):
+        call(name, arguments)
+        p.emit(0x807E0000 | (carbon + 28))
+        p.nonzero("create an unshown Navigation confirmation dialog")
+        call("NavDialogGetUserAction", [dialog], 0)
+        call("PostEvent", [3, key])
+        call("NavDialogRun", [dialog])
+        call("NavDialogGetUserAction", [dialog], action)
+        call("NavDialogGetReply", [dialog, probe.ptr(carbon)], -5695)
+        call("NavDialogRun", [dialog], -5694)
+        probe.call("NavDialogDispose", [dialog])
+
+    p.emit(0x38000007, 0x901E0000 | (options + 2), 0x901E0000 | (creation + 2))
+    reply = probe.ptr(legacy)
+    for chooser in ("NavChooseFolder", "NavChooseObject", "NavChooseVolume", "NavNewFolder"):
+        call(chooser, [0, 0, options_address], -50)
+        call("PostEvent", [3, 27])
+        call(chooser, [0, reply, options_address, 0, 0, 0], -128)
+        word(legacy, 0, "cancelling a legacy chooser leaves its reply invalid")
+        call("NavDisposeReply", [reply])
+
+    # Use space in the unused file-name field before installing the Pack3 fixture.
+    volume_spec, volume_size, volume_count = options + 0x440, options + 0x48C, options + 0x490
+    selection = probe.ptr(legacy + 6)
+    for chooser, arguments in (
+        ("NavCreateChooseFolderDialog", [0, 0, 0, 0, output]),
+        ("NavCreateChooseObjectDialog", [creation_address, 0, 0, 0, 0, output]),
+        ("NavCreateChooseVolumeDialog", [0, 0, 0, 0, output]),
+        ("NavCreateNewFolderDialog", [0, 0, 0, output]),
+    ):
+        volume_dialog = chooser == "NavCreateChooseVolumeDialog"
+        call(chooser, arguments)
+        call("NavDialogGetUserAction", [dialog], 0)
+        call("NavDialogGetReply", [dialog, reply], -5694)
+        call("PostEvent", [3, 13 if volume_dialog else 27])
+        call("NavDialogRun", [dialog])
+        call("NavDialogGetUserAction", [dialog], 4 if volume_dialog else 1)
+        call("NavDialogGetReply", [dialog, reply])
+        word(legacy, 0x00020100 if volume_dialog else 0x00020000, "chooser reports reply validity")
+        if volume_dialog:
+            call("AECountItems", [selection, probe.ptr(volume_count)])
+            word(volume_count, 1, "the volume chooser returns a single item")
+            call("AEGetNthPtr", [selection, 1, 0x66737320, 0, 0, probe.ptr(volume_spec), 70, probe.ptr(volume_size)])
+            word(volume_size, 70, "the chosen volume uses the packed FSSpec layout")
+            word(volume_spec + 2, 1, "the chosen volume has the root parent ID")
+            p.emit(0x887E0000 | (volume_spec + 6))
+            p.nonzero("the chosen volume retains its actual Macintosh name")
+        call("NavDisposeReply", [reply])
+        probe.call("NavDialogDispose", [dialog])
+
+    # Create the folder beside the fixture in its writable, isolated directory.
+    old_disk, old_directory = options + 0x494, options + 0x498
+    p.emit(0xA0800214, 0x909E0000 | old_disk, 0x80800398, 0x909E0000 | old_directory)
+    p.emit(0x809E1FC0, 0x7C8400D0, 0xB0800214, 0x809E1F42, 0x90800398)
+    call("NavCreateNewFolderDialog", [0, 0, 0, output])
+    call("PostEvent", [3, 13])
+    call("PostEvent", [3, 13])
+    call("NavDialogRun", [dialog])
+    call("NavDialogGetUserAction", [dialog], 5)
+    call("NavDialogGetReply", [dialog, reply])
+    call("AEGetNthPtr", [selection, 1, 0x66737320, 0, 0, probe.ptr(volume_spec), 70, probe.ptr(volume_size)])
+    word(volume_spec + 6, 0x0F756E74, "the result identifies the newly created folder")
+    call("FSpDelete", [probe.ptr(volume_spec)])
+    call("NavDisposeReply", [reply])
+    probe.call("NavDialogDispose", [dialog])
+    p.emit(0x809E0000 | old_disk, 0xB0800214, 0x809E0000 | old_directory, 0x90800398)
 
     # The fake Pack3 callback returns a guest FSSpec without opening a dialog.
     # Use the unused tails of the fixture's Pascal strings for its descriptor and state.
@@ -5617,6 +6282,82 @@ def navigation_operations(probe):
     p.expect(0, "the save reply clears its extension visibility and reserved byte")
     call("CFStringGetLength", [probe.slot(legacy + 24)], 4)
     file_selection(0x00020101, 0xFFFE0000, 0x04726F6F)
+
+    # Reuse the completed dialog's scratch storage for the on-disk preview.
+    spec, descriptor, reference = state, state + 72, state + 80
+    rect, area, observed = state + 84, state + 92, state + 100
+    saved_map, preview_map, has_preview = state + 108, state + 112, state + 116
+    world, old_world, old_device, pixmap = state + 120, state + 124, state + 128, state + 132
+    pascal_name = probe.far_raw(b"\x12NavPreview Fixture")
+    bounds = struct.pack(">4h", 0, 0, 24, 24)
+    picture = struct.pack(">H", 22) + bounds + b"\x11\x01\x31" + bounds + b"\xff"
+    source = probe.far_raw(picture)
+    target = probe.far_raw(struct.pack(">4h", 4, 4, 20, 20))
+    white = probe.far_raw(b"\xff" * 6)
+
+    file = probe.ptr(spec)
+    obj = probe.ptr(descriptor)
+    call("FSMakeFSSpec", [probe.slot(0x1FC0), probe.slot(0x1F42), pascal_name, file], -43)
+    probe.call("FSpCreateResFile", [file, 0x524F4D57, 0x54455854, -1])
+    call("ResError", [])
+    probe.call("CurResFile", [])
+    p.emit(0x907E0000 | saved_map)
+    probe.call("FSpOpenResFile", [file, 3])
+    p.emit(0x907E0000 | preview_map)
+    call("ResError", [])
+    call("AECreateDesc", [0x66737320, file, 70, obj])
+    call("NavHasPreview", [obj, 0], -50)
+    call("NavHasPreview", [obj, probe.ptr(has_preview)])
+    p.emit(0x887E0000 | has_preview)
+    p.expect(0, "a resource fork without a preview reports false")
+    call("NavCreatePreview", [obj, 0, source, len(picture)], -50)
+    for _ in range(2):
+        call("NavCreatePreview", [obj, 0x50494354, source, len(picture)])
+        call("NavHasPreview", [obj, probe.ptr(has_preview)])
+        p.emit(0x887E0000 | has_preview)
+        p.expect(1, "a current preview is discoverable through its pnot resource")
+    probe.call("Count1Resources", [0x50494354])
+    p.expect(1, "replacing a preview removes the older owned picture")
+    probe.call("CurResFile")
+    p.emit(0x809E0000 | preview_map)
+    p.equal("preview updates leave the caller's resource map open and selected")
+    probe.call("CloseResFile", [probe.slot(preview_map)])
+    probe.call("UseResFile", [probe.slot(saved_map)])
+
+    probe.call("NavCreatePreviewReference")
+    p.nonzero("allocate a Navigation preview reference")
+    p.emit(0x907E0000 | reference, 0x38000000, 0x901E0000 | rect, 0x3C000018, 0x60000018)
+    p.emit(0x901E0000 | (rect + 4))
+    ref = probe.slot(reference)
+    call("NavGetPreviewArea", [ref, probe.ptr(area)])
+    word(area, 0, "a new preview has an empty area")
+    call("NavGetPreviewArea", [ref, 0], -50)
+    probe.call("GetGWorld", [probe.ptr(old_world), probe.ptr(old_device)])
+    call("NewGWorld", [probe.ptr(world), 32, probe.ptr(rect), 0, 0, 0])
+    probe.call("GetGWorldPixMap", [probe.slot(world)])
+    p.nonzero("get the preview destination pixmap")
+    p.emit(0x907E0000 | pixmap)
+    call("LockPixels", [probe.slot(pixmap)], 1)
+    probe.call("SetGWorld", [probe.slot(world), 0])
+    probe.call("RGBBackColor", [white])
+    probe.call("EraseRect", [probe.ptr(rect)])
+    call("NavSetupPreview", [ref, probe.slot(world), obj, probe.ptr(rect), 0, 0])
+    call("NavSetPreviewArea", [ref, target])
+    call("NavGetPreviewArea", [ref, probe.ptr(area)])
+    word(area, 0x00040004, "NavGetPreviewArea returns the changed origin")
+    word(area + 4, 0x00140014, "NavGetPreviewArea returns the changed bounds")
+    call("NavDrawPreview", [ref, 0, 1])
+    probe.call("GetCPixel", [8, 8, probe.ptr(observed)])
+    word(observed, 0, "the cached QuickDraw picture paints in the preview area")
+    probe.call("GetCPixel", [2, 2, probe.ptr(observed)])
+    word(observed, 0xFFFFFFFF, "preview drawing leaves pixels outside its bounds intact")
+    call("NavHandlePreviewEvent", [ref, 0])
+    probe.call("NavDisposePreviewReference", [ref])
+    call("AEDisposeDesc", [obj])
+    probe.call("SetGWorld", [probe.slot(old_world), probe.slot(old_device)])
+    probe.call("UnlockPixels", [probe.slot(pixmap)])
+    probe.call("DisposeGWorld", [probe.slot(world)])
+    call("FSpDelete", [file])
 
 
 def url_access_operations(probe, destination):
@@ -8079,6 +8820,24 @@ def window_metadata_operations(probe, window, base):
         p.expect(0, "expand the hidden window through the other implementation")
     probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
 
+    probe.call("WMGetWindowFeatures", [window, probe.ptr(original_features)], side=1)
+    store(status)
+    probe.call("GetWindowFeatures", [window, probe.ptr(features)])
+    load(status, 4)
+    p.equal("Appearance and WindowsLib return the same WDEF query result")
+    load(features, 3)
+    load(original_features, 4)
+    p.equal("Appearance and WindowsLib share the WDEF feature bits")
+    probe.call("SetWindowFeatures", [window, 4], side=1)
+    probe.scalar("IsWindowCollapsable", [window], 1)
+    probe.scalar("CollapseAllWindows", [1], 0)
+    probe.scalar("IsWindowCollapsed", [window], 0)
+    probe.scalar("CollapseWindow", [window, 1], 0)
+    probe.scalar("WMIsWindowCollapsed", [window], 1)
+    probe.scalar("WMCollapseWindow", [window, 0], 0)
+    probe.scalar("IsWindowCollapsed", [window], 0)
+    probe.call("SetWindowFeatures", [window, probe.slot(initial)], side=1)
+
     probe.scalar("HiliteWindowFrameForDrag", [0, 1], -5600)
     probe.call("SetWindowFeatures", [window, 0x80], side=1)
     for side in (0, 1):
@@ -8769,6 +9528,45 @@ def icon_rgb_operations(probe):
     family, input_pixels, output_pixels = (base + i * 4 for i in range(3))
     saved = probe.far_raw(bytes(12))
     probe.call("BlockMoveData", [probe.ptr(base), saved, 12])
+
+    if not probe.original_only:
+        probe.call("GetDeepIconsEnabled", [probe.ptr(base)])
+        p.expect(0, "read the current deep icon setting")
+        p.emit(0x887E0000 | base, 0x907E0000 | (base + 4), 0x68630001, 0x907E0000 | (base + 8))
+        probe.call("SetDeepIconsEnabled", [probe.slot(base + 8)])
+        p.expect(0, "change the deep icon setting")
+        probe.call("GetDeepIconsEnabled", [probe.ptr(base)])
+        p.expect(0, "read the updated deep icon setting")
+        p.emit(0x887E0000 | base, 0x809E0000 | (base + 8))
+        p.equal("the deep icon switch takes effect")
+        probe.call("SetDeepIconsEnabled", [probe.slot(base + 4)])
+        p.expect(0, "restore the original deep icon setting")
+
+        probe.call("FindFolder", [-32768, 0x6D616373, 0, probe.ptr(base + 8), probe.ptr(base + 4)])
+        p.expect(0, "find the System Folder volume for the custom icon setting")
+        p.emit(0xA87E0000 | (base + 8), 0x907E0000 | (base + 8))
+        probe.call("GetCustomIconsEnabled", [probe.slot(base + 8), probe.ptr(base)])
+        p.expect(0, "read the current volume's custom icon setting")
+        p.emit(0x887E0000 | base, 0x907E0000 | (base + 4), 0x68630001)
+        p.emit(0x907E0000 | base)
+        probe.call("SetCustomIconsEnabled", [probe.slot(base + 8), probe.slot(base)])
+        p.expect(0, "set the custom icon preference for the mounted volume")
+        probe.call("GetCustomIconsEnabled", [probe.slot(base + 8), probe.ptr(base + 3)])
+        p.expect(0, "read the changed custom icon preference")
+        p.emit(0x887E0000 | (base + 3), 0x809E0000 | (base + 4), 0x68840001)
+        p.equal("the per-volume custom icon setting takes effect")
+        probe.call("SetCustomIconsEnabled", [probe.slot(base + 8), probe.slot(base + 4)])
+        p.expect(0, "restore the original custom icon setting")
+
+        probe.call("GetIconDevice", [probe.ptr(base)])
+        probe.call("GetMainDevice")
+        p.nonzero("the display has a main QuickDraw device")
+        p.emit(0x907E0000 | (base + 4))
+        probe.call("SetIconDevice", [probe.slot(base + 4)])
+        probe.call("GetIconDevice", [probe.ptr(base + 8)])
+        p.emit(0x807E0000 | (base + 4), 0x809E0000 | (base + 8))
+        p.equal("the icon device is read back through Icon Utilities")
+        probe.call("SetIconDevice", [probe.slot(base)])
 
     def load(data, slot):
         source = probe.far_raw(data)
@@ -9556,6 +10354,8 @@ def romaw_service_operations(probe):
     call("WakeUpProcess", [output])
     probe.call("MaxMem", [ptr(base + 44)])
     p.nonzero("MaxMem returns available contiguous memory")
+    code = probe.far_raw(bytes.fromhex("386000074e800020"))
+    probe.call("MakeDataExecutable", [code, 8])
     probe.call("GetMBarHeight")
     p.nonzero("the installed menu bar has a measurable height")
     call("GetThemeMenuBarHeight", [output])
@@ -11104,6 +11904,28 @@ def component_operations(probe):
     expect("UnregisterComponent", [first], 0)
     expect("UnregisterComponent", [second], 0)
     expect("CountComponents", [query], 0)
+
+    codec = int.from_bytes(b"rCdc", "big")
+    decoder = probe.far_raw(struct.pack(">5I", int.from_bytes(b"sdec", "big"), codec, 0, 0, 0))
+    codec_name = probe.far_raw(bytes(256))
+    probe.call("NewHandle", [4])
+    p.nonzero("allocate a registered sound codec name")
+    store(56)
+    p.emit(0x80830000, 0x3C600352, 0x60633358, 0x90640000)
+    probe.call("RegisterComponent", [decoder, descriptor, 0, slot(base + 56), 0, 0])
+    p.nonzero("register a named sound decompressor")
+    store(44)
+    probe.call("DisposeHandle", [slot(base + 56)])
+    expect("GetCompressionName", [codec, codec_name], 0)
+    probe.arguments([codec_name], 0)
+    p.emit(0x80630000)
+    p.expect(0x03523358, "the Sound Manager reads the registered component's Pascal name")
+    expect("UnregisterComponent", [slot(base + 44)], 0)
+    expect("GetCompressionName", [codec, codec_name], -192)
+    probe.arguments([codec_name], 0)
+    p.emit(0x80630000)
+    p.expect(0x03523358, "a missing codec preserves the name buffer")
+
     probe.call("DisposeRoutineDescriptor", [descriptor])
 
     query = probe.far_raw(struct.pack(">5I", 0x43507273, 0x74657374, 0, 0, 0))
@@ -12224,8 +13046,7 @@ def debug_registry_operations(probe):
     probe.call("DisposeDebugComponentCallbackUPP", [descriptor_value])
     # The busy bits are in the guest queue headers. Restore both before
     # checking the status so later sections see the original queues.
-    p.emit(0xA0600160, 0x907E0000 | base, 0xA0600D92, 0x907E0000 | (base + 4),
-           0x38604000, 0xB0600160, 0xB0600D92)
+    p.emit(0xA0600160, 0x907E0000 | base, 0xA0600D92, 0x907E0000 | (base + 4), 0x38604000, 0xB0600160, 0xB0600D92)
     probe.call("TaskLevel")
     p.emit(0x809E0000 | base, 0xB0800160, 0x809E0000 | (base + 4), 0xB0800D92)
     p.expect(0x30, "TaskLevel reports active VBL and deferred-task queues")
@@ -12250,8 +13071,10 @@ def debug_registry_operations(probe):
     p.nonzero("allocate a DebugAssert output handler")
     p.emit(0x907E0000 | (base + 12))
     probe.call("InstallDebugAssertOutputHandler", [descriptor_value])
-    probe.call("DebugAssert", [component, 17, probe.far_raw(b"X\x00"), 0, 0,
-                               probe.far_raw(b"Disk:Sources:Unit.c\x00"), 37, -42])
+    probe.call(
+        "DebugAssert",
+        [component, 17, probe.far_raw(b"X\x00"), 0, 0, probe.far_raw(b"Disk:Sources:Unit.c\x00"), 37, -42],
+    )
     message = b"Assert failed: X\r     file: Unit.c\r     line: 37\r    error: -42"
     encoded = bytes([len(message)]) + message
     for slot, expected, label in (
@@ -12304,7 +13127,6 @@ def appearance_geometry_operations(probe):
             p.expect(status, f"measure track kind {kind}")
             check_rect(struct.pack(">4h", *expected), f"track kind {kind}")
 
-
     slider = probe.far_raw(struct.pack(">H4h4iHBBB", 2, top, left, bottom, right, 0, 100, 50, 0, 1, 0, 0, 2))
     _, region_address = probe.far_raw(struct.pack(">H4h", 10, 10, 53, 26, 68))
     region_handle = probe.far_raw(bytes(4))
@@ -12326,9 +13148,37 @@ def appearance_geometry_operations(probe):
             p.emit(0x80630000)
             p.expect(expected, name + " returns the expected slider position")
 
+    _, thumb_slot = probe.far_raw(bytes(4))
+    thumb = probe.slot(thumb_slot)
+    probe.call("NewRgn")
+    p.nonzero("allocate a caller-owned slider thumb region")
+    p.emit(0x3C9E0000 | ((thumb_slot + 0x8000) >> 16), 0x90640000 | (thumb_slot & 0xFFFF))
+    for side in (0, 1):
+        probe.call("GetThemeTrackThumbRgn", [slider, thumb], side=side)
+        p.expect(0, "construct the pointed slider thumb region")
+        probe.call("GetRegionBounds", [thumb, output])
+        check_rect(struct.pack(">4h", 10, 48, 26, 63), "slider thumb")
+        for y, x, inside in ((10, 48, 0), (11, 48, 1), (25, 55, 1), (25, 49, 0)):
+            probe.call("PtInRgn", [(y << 16) | x, thumb])
+            p.expect(inside, "the thumb silhouette includes its point and clips its corners")
+        for y, x, part in ((16, 35, 22), (16, 55, 129), (16, 80, 23), (41, 55, 0)):
+            probe.call("HitTestThemeTrack", [slider, (y << 16) | x, output], side=side)
+            p.expect(int(part != 0), "the slider reports whether the point hits a part")
+            probe.arguments([output], 0)
+            p.emit(0xA0630000)
+            p.expect(part, "hit testing identifies the page and indicator parts")
+    probe.call("DisposeRgn", [thumb])
+
     original_style = probe.far_raw(bytes(4))
     probe.call("GetThemeScrollBarArrowStyle", [original_style])
     p.expect(0, "snapshot the existing scrollbar arrow preference")
+    probe.call("SetThemeScrollBarArrowStyle", [1, 0])
+    p.expect(0, "set the paired scrollbar arrow style")
+    probe.call("GetThemeScrollBarArrowStyle", [output])
+    p.expect(0, "read back the paired scrollbar arrow style")
+    probe.arguments([output], 0)
+    p.emit(0xA0630000)
+    p.expect(1, "the getter sees the live scrollbar arrow style")
     probe.call("SetThemeScrollBarArrowStyle", [0, 0])
     p.expect(0, "measure classic scrollbars with single arrows")
     bar = probe.far_raw(struct.pack(">4h", 10, 20, 26, 120))
@@ -12338,7 +13188,9 @@ def appearance_geometry_operations(probe):
         p.expect(0, "measure the track between the scrollbar arrows")
         check_rect(struct.pack(">4h", 10, 35, 26, 105), "scrollbar track")
         for horizontal_point, expected in ((22, 20), (75, 0), (119, 21)):
-            probe.call("HitTestThemeScrollBarArrows", [bar, 0, 0, 1, (16 << 16) | horizontal_point, output, part], side=side)
+            probe.call(
+                "HitTestThemeScrollBarArrows", [bar, 0, 0, 1, (16 << 16) | horizontal_point, output, part], side=side
+            )
             p.expect(int(expected != 0), "hit-test the scrollbar arrows")
             probe.arguments([part], 0)
             p.emit(0xA0630000)
@@ -12348,6 +13200,7 @@ def appearance_geometry_operations(probe):
     p.emit(0xA0630000, 0x90640000)
     probe.call("SetThemeScrollBarArrowStyle", [probe.slot(saved_offset), 0])
     p.expect(0, "restore the original scrollbar arrow preference")
+
 
 def appearance_state_operations(probe):
     p = probe.p
@@ -12801,8 +13654,20 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     math_rows.extend(
         {"name": name, "original_library": "MathOracle"}
         for name in (
-            "num2dec", "dec2str", "str2dec", "dec2num", "dec2s", "dec2l", "nan", "nanf", "nanl",
-            "num2decl", "dec2numl", "dec2f", "frexpl", "ldexpl",
+            "num2dec",
+            "dec2str",
+            "str2dec",
+            "dec2num",
+            "dec2s",
+            "dec2l",
+            "nan",
+            "nanf",
+            "nanl",
+            "num2decl",
+            "dec2numl",
+            "dec2f",
+            "frexpl",
+            "ldexpl",
         )
     )
     wide_source = (ROOT / "carbonlib/src/math_wide_entries.h").read_text()
@@ -12812,7 +13677,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     math_rows += [{"name": name, "original_library": "Math64Oracle"} for name, _ in wide_entries]
     file_entries, file_names = file_cases() if not (original_only or math_only) else ([], set())
     color_profiles = file_entries and write_color_profile_reference(destination)
-    interface_rows = vector_cases("interface_vectors.h", 175) if file_entries else []
+    interface_rows = vector_cases("interface_vectors.h", 179) if file_entries else []
     if file_entries:
         interface_rows.extend(
             dict(name=name, vector=0x17A0, info=info, selector=selector, result="int16_t")
@@ -12822,9 +13687,12 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 ("SetDialogTracksCursor", 0x7A8, 0x306),
             )
         )
-    manager_rows = vector_cases("manager_vectors.h", 135) if file_entries else []
+    manager_rows = vector_cases("manager_vectors.h", 153) if file_entries else []
     browser_control_rows = data_browser_control_cases() if file_entries else []
     native_names = file_names | {row["name"] for row in interface_rows + manager_rows}
+    native_names.update(
+        {"GetWindowFeatures", "IsWindowCollapsable", "IsWindowCollapsed", "CollapseWindow", "CollapseAllWindows"}
+    )
     if file_entries and not original_only:
         native_names.update(windows_metadata_names(ROOT))
         native_names.update(("MoveDialogItem", "SizeDialogItem", "GetSystemFont", "GetControlBounds"))
@@ -12965,6 +13833,8 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
         native_names.update(re.findall(r"^CARBON_FIXMATH_WIDE\((\w+),", wide_source, re.M))
         native_names.update(CLASSIC_STATE_APIS)
+        network_location = (ROOT / "carbonlib/src/network_location.h").read_text()
+        native_names.update(re.findall(r"^static int carbon_(NSL\w+)\(", network_location, re.M))
         native_names.update(("LSGetApplicationForInfo", "_CFGetFSSpecFromURL"))
         text_edit_exports = (ROOT / "carbonlib/src/exports.c").read_text()
         native_names.update(re.findall(r"^CARBON_TEXT_EDIT\((TE\w+),", text_edit_exports, re.M))
@@ -12977,6 +13847,12 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
             (
                 "UseThemeFont",
                 "GetThemeFont",
+                "DrawThemeTextBox",
+                "TruncateThemeText",
+                "GetThemeTextDimensions",
+                "GetThemeTextShadowOutset",
+                "GetPen",
+                "CFStringCreateMutableCopy",
                 "GetSmallSystemFont",
                 "GetViewsFont",
                 "GetThemeFontSmoothing",
@@ -13020,9 +13896,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         native_names.update(re.findall(r"^CARBON_SOUND_INPUT\((\w+),", sound_input, re.M))
         sound_converter = (ROOT / "carbonlib/src/sound_converter.h").read_text()
         native_names.update(re.findall(r"^static int carbon_(SoundConverter\w+)\(", sound_converter, re.M))
-        native_names.update(
-            ("AEObjectInit", "AESetObjectCallbacks", "GetSubmenuParentChoosable", "MatchAliasNoUI")
-        )
+        native_names.update(("AEObjectInit", "AESetObjectCallbacks", "GetSubmenuParentChoosable", "MatchAliasNoUI"))
         native_names.update(DEBUG_REGISTRY_APIS)
         native_names.update(HEAP_DIAGNOSTIC_APIS)
         native_names.update(
@@ -13052,9 +13926,31 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "NavGetDefaultDialogCreationOptions",
                 "NavGetFile",
                 "NavChooseFile",
+                "NavChooseFolder",
+                "NavChooseObject",
+                "NavChooseVolume",
+                "NavNewFolder",
+                "NavCreatePreview",
+                "NavHasPreview",
+                "NavCreatePreviewReference",
+                "NavDisposePreviewReference",
+                "NavSetupPreview",
+                "NavDrawPreview",
+                "NavHandlePreviewEvent",
+                "NavGetPreviewArea",
+                "NavSetPreviewArea",
                 "NavPutFile",
+                "NavAskSaveChanges",
+                "NavAskDiscardChanges",
+                "NavCustomAskSaveChanges",
+                "NavCreateAskSaveChangesDialog",
+                "NavCreateAskDiscardChangesDialog",
                 "NavCreateGetFileDialog",
                 "NavCreateChooseFileDialog",
+                "NavCreateChooseFolderDialog",
+                "NavCreateChooseObjectDialog",
+                "NavCreateChooseVolumeDialog",
+                "NavCreateNewFolderDialog",
                 "NavCreatePutFileDialog",
                 "NavDialogDispose",
                 "NavDialogRun",
@@ -13379,6 +14275,8 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         "GetThemeTrackThumbPositionFromOffset",
                         "GetThemeTrackThumbPositionFromRegion",
                         "GetThemeTrackLiveValue",
+                        "GetThemeTrackThumbRgn",
+                        "HitTestThemeTrack",
                         "GetThemeScrollBarTrackRect",
                         "HitTestThemeScrollBarArrows",
                     )
@@ -13455,6 +14353,11 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                             "WMIsWindowCollapsable",
                             "WMIsWindowCollapsed",
                             "WindowManagerSetThemeWindowBackground",
+                            "IsWindowCollapsable",
+                            "IsWindowCollapsed",
+                            "CollapseWindow",
+                            "CollapseAllWindows",
+                            "GetWindowFeatures",
                         )
                     ]
                     if not text_only
@@ -13530,6 +14433,9 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     if manager_rows:
         probe.section("Toolbox manager dispatchers", lambda: patched_vectors(probe, manager_rows, sides=(0,)))
         probe.section("Installed Toolbox manager operations", lambda: manager_operations(probe))
+        if not original_only:
+            probe.section("Picture and pixmap analysis", lambda: picture_utility_operations(probe))
+            probe.section("Network Services Location records", lambda: network_location_operations(probe))
         probe.section("Classic Printing Manager", lambda: printing_operations(probe))
     if file_entries:
         probe.section("Classic utility register traps", lambda: register_vectors(probe, utility_registers, sides=(0,)))
@@ -13548,6 +14454,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         probe.section("Classic date, time and machine location", lambda: classic_clock_and_location(probe))
         probe.section("Carbon Sound Input", lambda: sound_input_operations(probe))
         probe.section("Carbon Sound Converter PCM and MACE streams", lambda: sound_converter_operations(probe))
+        probe.section("Sound Manager volume and resource headers", lambda: sound_manager_operations(probe))
         probe.section("Power Manager activity timers", lambda: power_activity_operations(probe))
         probe.section("Code Fragment Manager connections", lambda: code_fragment_operations(probe, destination))
         probe.section("Navigation Services options and replies", lambda: navigation_operations(probe))

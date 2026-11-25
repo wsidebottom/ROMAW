@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_resize_screen, gd_allocate_main_device, gd_set_bpp
+  Functions: ROMlib_device_loop, ROMlib_resize_screen, gd_allocate_main_device, gd_set_bpp
 
   Origin:    Existing repository source in executor/src/quickdraw; original attribution and provenance comments are
              preserved below.
@@ -426,31 +426,32 @@ P1(PUBLIC pascal trap, GDHandle, GetNextDevice, GDHandle, cur_device)
     return GD_NEXT_GD(cur_device);
 }
 
-P4(PUBLIC pascal trap, void, DeviceLoop, RgnHandle, rgn, DeviceLoopDrawingProcPtr, drawing_proc, LONGINT, user_data,
-   DeviceLoopFlags, flags)
+OSErr ROMlib_device_loop(RgnHandle rgn, ROMlib_device_draw_proc draw, void* data, DeviceLoopFlags flags)
 {
-    GDHandle gd;
-    RgnHandle save_vis_rgn_x;
-    RgnHandle sect_rgn, gd_rect_rgn;
-
     /* SuperMario QuickDraw/DeviceLoop.a primes an offscreen loop with the
        current GDevice, not DeviceList. A single device calls the drawing proc
        directly without replacing visRgn. Otherwise offscreen controls can be
        clipped to the physical screen and receive the wrong pixel depth. */
     GDHandle first = MR(TheGDevice) != MR(MainDevice) ? MR(TheGDevice) : MR(DeviceList);
     if (first && !GD_NEXT_GD(first)) {
-        CToPascalCall(drawing_proc, CTOP_DeviceLoopDrawingProcTemplate, PIXMAP_PIXEL_SIZE(GD_PMAP(first)),
-                      GD_FLAGS(first), first, user_data);
-        return;
+        draw(PIXMAP_PIXEL_SIZE(GD_PMAP(first)), GD_FLAGS(first), first, data);
+        return noErr;
     }
 
-    save_vis_rgn_x = PP_RAW(PORT_VIS_REGION_X(thePort));
-
-    sect_rgn = NewRgn();
-    gd_rect_rgn = NewRgn();
+    GrafPtr port = thePort;
+    RgnHandle saved_vis_raw = PP_RAW(PORT_VIS_REGION_X(port));
+    RgnHandle saved_vis = PORT_VIS_REGION(port);
+    RgnHandle sect_rgn = NewRgn();
+    if (!sect_rgn)
+        return memFullErr;
+    RgnHandle gd_rect_rgn = NewRgn();
+    if (!gd_rect_rgn) {
+        DisposeRgn(sect_rgn);
+        return memFullErr;
+    }
 
     /* Loop over all GDevices, looking for active screens. */
-    for (gd = first; gd; gd = GD_NEXT_GD(gd))
+    for (GDHandle gd = first; gd; gd = GD_NEXT_GD(gd))
         if ((GD_FLAGS_X(gd) & CWC((1 << screenDevice) | (1 << screenActive))) ==
             CWC((1 << screenDevice) | (1 << screenActive))) {
             /* NOTE: I'm blowing off some flags that come into play when
@@ -464,29 +465,46 @@ P4(PUBLIC pascal trap, void, DeviceLoop, RgnHandle, rgn, DeviceLoopDrawingProcPt
 
                 /* Map the GDevice rect into thePort local coordinates. */
                 gd_rect = GD_RECT(gd);
-                port_bounds = &(PORT_BOUNDS(thePort));
+                port_bounds = &(PORT_BOUNDS(port));
                 OffsetRect(&gd_rect, CW(port_bounds->left), CW(port_bounds->top));
 
                 /* Intersect GDevice rect with the specified region. */
                 RectRgn(gd_rect_rgn, &gd_rect);
                 SectRgn(gd_rect_rgn, rgn, sect_rgn);
 
-                SectRgn(sect_rgn, PORT_VIS_REGION(thePort), sect_rgn);
+                SectRgn(sect_rgn, saved_vis, sect_rgn);
 
                 /* Save it away in thePort. */
-                FIELD_ASSIGN_RAW(PORT_VIS_REGION_X(thePort), RM(sect_rgn));
+                FIELD_ASSIGN_RAW(PORT_VIS_REGION_X(port), RM(sect_rgn));
             }
 
-            if ((flags & allDevices) || !EmptyRgn(sect_rgn)) {
-                CToPascalCall(drawing_proc, CTOP_DeviceLoopDrawingProcTemplate, PIXMAP_PIXEL_SIZE(GD_PMAP(gd)),
-                              GD_FLAGS(gd), gd, user_data);
-            }
+            if ((flags & allDevices) || !EmptyRgn(sect_rgn))
+                draw(PIXMAP_PIXEL_SIZE(GD_PMAP(gd)), GD_FLAGS(gd), gd, data);
         }
 
-    FIELD_ASSIGN_RAW(PORT_VIS_REGION_X(thePort), save_vis_rgn_x);
+    FIELD_ASSIGN_RAW(PORT_VIS_REGION_X(port), saved_vis_raw);
 
     DisposeRgn(gd_rect_rgn);
     DisposeRgn(sect_rgn);
+    return noErr;
+}
+
+typedef struct {
+    DeviceLoopDrawingProcPtr procedure;
+    LONGINT user_data;
+} pascal_device_draw;
+
+static void draw_pascal_device(INTEGER depth, INTEGER flags, GDHandle device, void* context)
+{
+    const pascal_device_draw* draw = context;
+    CToPascalCall(draw->procedure, CTOP_DeviceLoopDrawingProcTemplate, depth, flags, device, draw->user_data);
+}
+
+P4(PUBLIC pascal trap, void, DeviceLoop, RgnHandle, rgn, DeviceLoopDrawingProcPtr, drawing_proc, LONGINT, user_data,
+   DeviceLoopFlags, flags)
+{
+    pascal_device_draw draw = {drawing_proc, user_data};
+    ROMlib_device_loop(rgn, draw_pascal_device, &draw, flags);
 }
 
 P4(PUBLIC pascal trap, void, DeviceLoopDrawingProcTemplate, INTEGER, depth, INTEGER, deviceFlags, GDHandle,

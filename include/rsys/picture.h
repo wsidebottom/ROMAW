@@ -25,6 +25,19 @@
 
 #include "rsys/quick.h"
 
+enum {
+    ROMLIB_PICT_VERSION_ERR = -11000,
+    ROMLIB_PICT_ID_ERR = -11001,
+    ROMLIB_PICT_VERB_ERR = -11002,
+    ROMLIB_PICT_COLORS_ERR = -11004,
+    ROMLIB_PICT_DATA_ERR = -11005,
+    ROMLIB_PICT_REFERENCE_REQUIRED = -4,
+};
+
+typedef OSErr (*ROMlib_picture_visitor)(uint16 opcode, const Byte* arguments, size_t length, void* opaque);
+OSErr ROMlib_walk_picture(PicHandle picture, ROMlib_picture_visitor visit, void* opaque);
+void ROMlib_pict_info_reinit(void);
+
 #define PIC_SHORT_COMMENT 0xA0
 #define PIC_LONG_COMMENT 0xA1
 

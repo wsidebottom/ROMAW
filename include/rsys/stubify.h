@@ -5334,7 +5334,7 @@ extern toolstuff_t toolstuff[NTOOLENTRIES];
 #define AEResetTimer(A1) (C_AEResetTimer((A1)))
 #define AECoercePtr(A1, A2, A3, A4, A5) (C_AECoercePtr((A1), (A2), (A3), (A4), (A5)))
 #define AECoerceDesc(A1, A2, A3) (C_AECoerceDesc((A1), (A2), (A3)))
-#define AEManagerInfo(A1) (C_AEManagerInfo((A1)))
+#define AEManagerInfo(A1, A2) (C_AEManagerInfo((A1), (A2)))
 #define AEDisposeToken(A1) (C_AEDisposeToken((A1)))
 #define AEREesolve(A1, A2, A3) (C_AEREesolve((A1), (A2), (A3)))
 #define AERemoveObjectAccessor(A1, A2, A3, A4) (C_AERemoveObjectAccessor((A1), (A2), (A3), (A4)))

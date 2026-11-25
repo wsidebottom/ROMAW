@@ -24,4 +24,6 @@ void ROMlib_fileplay_mix(SndChannelPtr, struct hunger_info);
 void ROMlib_fileplay_cancel(SndChannelPtr);
 void ROMlib_fileplay_reset(void);
 void ROMlib_fileplay_poll(void);
+OSErr ROMlib_parse_aiff_header(INTEGER refnum, void* description, uint32* frames, uint32* offset);
+OSErr ROMlib_parse_snd_header(Handle resource, void* description, uint32* frames, uint32* offset);
 #endif
