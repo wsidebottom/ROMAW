@@ -5,7 +5,56 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Latest validated bundle: completed FPSP frames (2026-11-26)
+## Latest validated bundle: move-out stage retirement (2026-11-27)
+
+FRESTORE now resolves the older E3 writeback before retiring a quiet E1
+move-out stage. The completed writeback can no longer reactivate a frame
+without a pending exception. The following FPU instruction executes normally,
+and an idle FSAVE writes only its four-byte header. This resolves the combined
+E3/E1 zero-vector case recorded at the preceding checkpoint.
+
+The new 368,640-case matrix covers checked/native CPU and memory, both page
+sizes, postincrement, all rounding/precision settings, eight formats, every
+destination FPR, E1/E3/combined stages and previous null/idle states. It checks
+quiet completion, enabled SNAN, nonmaskable integer SNAN, older enabled INEX,
+nonmaskable overflow and packed-conversion priority. Registers, FPCR, FPSR,
+FPIAR, the next FNOP and FSAVE tail bytes are verified. Its exact fixture
+rejects the preceding CPU archive. Cold AOT emits four bodies; warm replay
+loads all four with zero compilation.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. The native FPU runner reports 1,714,422 cases. Basic saved-state and
+146 Motorola FPSP cases pass in both dispatch modes at two FPSP load addresses.
+MMU recovery retains 8,107,168 stream cases. Mapped AOT recovery passes
+3,618,920 cases per process, with 1,262,191 hits and zero compilations warm.
+The emitted memory image and native runner branch match the prior proof:
+twenty kernel groups and 45 verified roots per Windows/Linux ABI remain
+covered by that exact-source evidence.
+
+ROMAW was rebuilt from application base `8c9bcdfb53a21f5c2b2de059d18c1d009f420e25`,
+including the latest committed application changes at snapshot creation.
+Its 66-file bundle at
+`build/68040-moveout-resume-stage/bin` is promoted to
+`build/68040-current/bin`; the preceding bundle is preserved at
+`build/68040-pre-moveout-resume-bin-20261127`.
+The audit at
+`build/68040-moveout-resume-output/68040-moveout-resume-source-audit.json`
+matches 179 CPU inputs, 162 fixtures and four identical CPU archives.
+CPU build ID is `402e35679eba26a4db9e7efb703fd0441bf8a1658ee9fbf76e7cdc4b65c8e4a6`;
+archive SHA256 is
+`7c46b6740da30f5fe16367d9cf9684311bed4de956a5aa259f85dd058c26299d`.
+Help returns zero with 7,669 bytes. Browser and 68K Speedometer reach their
+startup loops after 30,951 and
+77,160 native entries, with null checkpoints and no Windows
+exception. Speedometer issues one FPU query. These remain startup checks.
+
+The broader goal remains active: compound descriptor/locked cache-push
+continuations, further active-stack/double-fault variants, physical instruction
+prefetch, snoop integration and remaining FPU busy/FPSP saved-state, encoding
+and special-value audits still require work. Full 68040 and ROMAW-wide paged
+Toolbox compatibility are not established.
+
+## Completed FPSP frames (2026-11-26)
 
 Restoring an FPSP-completed E1 frame with no enabled exception now leaves the
 FPU idle. Its existing result and control state remain live; the following FPU

@@ -1040,8 +1040,6 @@ static void state_frame(FPUContext* context)
                 : stages ? writeback || unsupported || valid_arithmetic || move_out || software_completed ? pending : 11
                          : 0;
             cpu_state.fpu.null_state = 0;
-            if (move_out && !pending)
-                cpu_state.fpu.frame_size = 0;
             if (writeback && !pending) {
                 floatx80 wb = frame_read_extended(restored + 0x18);
                 uint64 low = (uint64)(restored[0x3c] & 3) << 62;
@@ -1060,9 +1058,9 @@ static void state_frame(FPUContext* context)
                 cpu_state.fpu.frame_size = stages ? size : 0;
                 cpu_state.fpu.pending_vector = stages ? pending : 0;
             }
-            /* FPSP has already completed this software instruction. With
-               no enabled exception remaining, there is no pipeline to replay. */
-            if (software_completed && !pending)
+            /* Move-out and software-completed stages need no arithmetic replay.
+               Retire them only after any older writeback has resolved. */
+            if ((move_out || software_completed) && !pending)
                 cpu_state.fpu.frame_size = 0;
             if (((stages & 4) || (size == 100 && restored[8] == 0xfe)) && valid_arithmetic && !pending) {
                 context->restoring = 1;

@@ -512,6 +512,12 @@ EOF
       "$fixture/fpsp-completion-test.exe" "$(wslpath -m "$fixture/fpsp-completion")" 0
       "$fixture/fpsp-completion-test.exe" "$(wslpath -m "$fixture/fpsp-completion")" 1
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-moveout-resume-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/moveout-resume-test.exe"
+      mkdir "$fixture/moveout-resume"
+      "$fixture/moveout-resume-test.exe" "$(wslpath -m "$fixture/moveout-resume")" 0
+      "$fixture/moveout-resume-test.exe" "$(wslpath -m "$fixture/moveout-resume")" 1
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/flat-fpu-native-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_fpu_finish_captured,--wrap=syn68k_fpu_finish_destination,--wrap=syn68k_fpu_finish_frame \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_effective_address,--wrap=trap_direct,--wrap=trap_exception -o "$fixture/flat-test.exe"
@@ -815,6 +821,10 @@ EOF
         syn68k/tests/mapped-fpsp-completion-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o syn68k/obj/tests/mapped-fpsp-completion-test.exe
       syn68k/obj/tests/mapped-fpsp-completion-test.exe
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-fpu-moveout-resume-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o syn68k/obj/tests/mapped-fpu-moveout-resume-test.exe
+      syn68k/obj/tests/mapped-fpu-moveout-resume-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
         syn68k/tests/flat-fpu-native-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_fpu_finish_captured,--wrap=syn68k_fpu_finish_destination,--wrap=syn68k_fpu_finish_frame \

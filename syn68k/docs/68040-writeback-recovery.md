@@ -173,6 +173,25 @@ are checked, including live trace/CCR changes after operand capture. Normal
 cases also verify load sign extension and preserved Dn upper bytes. Additional
 active-stack EA cases remain part of the wider exception/addressing audit.
 
+## Writeback before move-out retirement
+
+FRESTORE resolves the older E3 writeback before retiring a completed E1
+move-out stage. Clearing the stage before writeback allowed the writeback
+continuation to reactivate a frame with no pending exception. Retirement now
+happens after that continuation, preserving the older result without sending
+the following FPU instruction to vector 1.
+
+The 368,640-case matrix covers checked/native CPU and memory, both page sizes,
+postincrement, all rounding/precision settings, eight formats, every destination
+FPR, E1/E3/combined stages and prior null/idle states. Quiet cases check the
+written-back value and idle four-byte FSAVE. Exception controls retain enabled
+SNAN, nonmaskable integer SNAN, older enabled INEX and nonmaskable overflow
+priority; packed conversions retain unsupported-operand handling after the
+older writeback resolves. All FPRs, FPCR, FPSR, FPIAR, the following FNOP and
+FSAVE tail bytes are checked. The exact fixture rejects the preceding archive.
+Grouped FPU and cold/warm AOT runners include this fixture; warm replay requires
+zero compilations.
+
 ## Completed FPSP instruction frames
 
 The S/X markers distinguish a software-completed instruction from an
@@ -190,10 +209,6 @@ controls, the following FNOP, and an idle four-byte FSAVE with untouched tail
 storage. Its exact fixture rejects the preceding CPU archive. Grouped FPU
 and cold/warm AOT checks include this matrix; warm replay requires zero
 compilations.
-
-A separate combined E3-writeback/E1-FMOVE-out continuation still retains a
-zero pending vector after the older writeback completes. That continuation
-remains under investigation; this matrix covers completed software E1 frames.
 
 ## Captured FRESTORE frames
 
