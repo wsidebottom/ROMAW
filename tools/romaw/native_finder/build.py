@@ -476,6 +476,7 @@ def main():
         SOURCE / "main.cpp",
         SOURCE / "files.cpp",
         SOURCE / "font_preview.cpp",
+        SOURCE / "sound_preview.cpp",
         SOURCE / "stuffit.cpp",
         SOURCE / "archive.cpp",
         SOURCE / "archive_picker.cpp",

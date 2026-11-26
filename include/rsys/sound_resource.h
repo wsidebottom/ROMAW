@@ -64,7 +64,8 @@ static int resource_sound_read(const uint8_t* bytes, size_t size, resource_sound
         unsigned number = resource_word(command);
         if (number == 0) /* nullCmd */
             continue;
-        if ((number != 0x8051 && (playback || number != 0x8050)) || header)
+        /* SndPlay treats the first soundCmd in format 2 as a bufferCmd. */
+        if ((number != 0x8051 && !(number == 0x8050 && (!playback || (format == 2 && i == 0)))) || header)
             return -206;
         header = resource_long(command + 4);
     }

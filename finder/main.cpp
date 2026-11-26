@@ -21,6 +21,7 @@
 #include "generated/build_version.h"
 #include "finder/files.h"
 #include "finder/font_preview.h"
+#include "finder/sound_preview.h"
 #include "finder/stuffit.h"
 #include "finder/archive.h"
 #include "rsys/archive_types.h"
@@ -1834,12 +1835,20 @@ constexpr unsigned unavailable_suitcase_commands[] = {open_command,
                                                       special_cleanup_command,
                                                       label_popup_command};
 
+constexpr uint32_t sound_resource_type = 0x736e6420; // snd
+constexpr uint32_t sound_file_type = 0x7366696c; // sfil
+
+bool previewable_member(const SuitcaseMember& member)
+{
+    return is_preview_font(member.resource_type) || member.resource_type == sound_resource_type;
+}
+
 void preview_suitcase_member(const Item& item, const SuitcaseMember& member);
 
-int selected_preview_font(const SuitcaseView& view)
+int selected_preview_member(const SuitcaseView& view)
 {
     int selected = selected_item_after(view.list, view.members.size(), -1);
-    if (selected < 0 || !is_preview_font(view.members[selected].resource_type) ||
+    if (selected < 0 || !previewable_member(view.members[selected]) ||
         selected_item_after(view.list, view.members.size(), selected) >= 0)
         return -1;
     return selected;
@@ -1856,7 +1865,7 @@ bool suitcase_blocks_command(unsigned id)
 bool command_suitcase(SuitcaseView& view, unsigned id)
 {
     if (id == open_command) {
-        int index = selected_preview_font(view);
+        int index = selected_preview_member(view);
         if (index >= 0)
             preview_suitcase_member(view.item, view.members[index]);
         return true;
@@ -1905,24 +1914,26 @@ struct SuitcaseSnapshot {
     bool data_fork;
 };
 
-SuitcaseSnapshot read_suitcase(const Item& item)
+SuitcaseSnapshot read_suitcase(const Item& item, bool data_only = false)
 {
     if (!item.image_volume) {
-        auto metadata = mac_file(item.path);
-        if (!metadata.fork.empty())
-            return {std::move(metadata.fork), false};
+        if (!data_only) {
+            auto metadata = mac_file(item.path);
+            if (!metadata.fork.empty())
+                return {std::move(metadata.fork), false};
+        }
         return {read_bytes(item.path), true};
     }
     FinderImageEntry catalog{};
     if (ROMlib_finder_image_info(item.image_volume, item.image_parent, item.image_name.c_str(), &catalog) ||
         catalog.id != item.image_id)
-        throw std::runtime_error("The suitcase is no longer available.");
-    const bool resource = catalog.resource_size != 0;
+        throw std::runtime_error("The file on the mounted image is no longer available.");
+    const bool resource = !data_only && catalog.resource_size != 0;
     const uint32_t size = resource ? catalog.resource_size : catalog.data_size;
     if (!size)
         return {{}, true};
     if (size > 64u * 1024 * 1024)
-        throw std::runtime_error("The suitcase is too large to open.");
+        throw std::runtime_error("The file is too large to preview.");
     Bytes bytes(size);
     int16_t fork = 0;
     int16_t error = ROMlib_finder_image_open_source_fork(item.image_volume, item.image_parent, item.image_name.c_str(),
@@ -1938,17 +1949,56 @@ SuitcaseSnapshot read_suitcase(const Item& item)
             error = close_error;
     }
     if (error)
-        throw std::runtime_error("Cannot read the suitcase's fork (Macintosh error " + std::to_string(error) + ").");
+        throw std::runtime_error("Cannot read the file's fork (Macintosh error " + std::to_string(error) + ").");
     return {std::move(bytes), !resource};
 }
 
 void preview_suitcase_member(const Item& item, const SuitcaseMember& member)
 {
     classic::WaitingCursor waiting;
-    auto fork = read_suitcase_fork(read_suitcase(item).bytes);
+    auto contents = read_suitcase(item).bytes;
+    if (member.resource_type == sound_resource_type) {
+        MacFile sound;
+        sound.fork = std::move(contents);
+        play_sound_preview(mac_resource(sound, sound_resource_type, member.resource_id));
+        return;
+    }
+    auto fork = read_suitcase_fork(contents);
     auto identity = item.path.wstring() + L":" + std::to_wstring(member.resource_type) + L":" +
                     std::to_wstring(member.resource_id);
     show_font_preview(desktop, instance, identity, member.name, fork, {member.resource_type, member.resource_id});
+}
+
+bool is_sound_file(const Item& item)
+{
+    switch (item.mac.type) {
+    case sound_file_type:
+    case sound_resource_type:
+    case 0x41494646: // AIFF
+    case 0x41494643: // AIFC
+    case 0x57415645: // WAVE
+        return true;
+    }
+    if (item.mac.has_finder_info && item.mac.type)
+        return false;
+    const auto extension = fs::path(item.name).extension().wstring();
+    return !_wcsicmp(extension.c_str(), L".aif") || !_wcsicmp(extension.c_str(), L".aiff") ||
+           !_wcsicmp(extension.c_str(), L".aifc") || !_wcsicmp(extension.c_str(), L".wav");
+}
+
+void preview_sound_file(const Item& item)
+{
+    classic::WaitingCursor waiting;
+    const bool classic_sound = item.mac.type == sound_file_type || item.mac.type == sound_resource_type;
+    auto source = read_suitcase(item, !classic_sound);
+    if (source.data_fork) {
+        play_sound_preview(std::move(source.bytes));
+        return;
+    }
+    MacFile sound;
+    sound.fork = std::move(source.bytes);
+    auto resource = mac_resource(sound, sound_resource_type);
+    play_sound_preview(resource.empty() ? read_suitcase(item, true).bytes : std::move(resource));
 }
 
 bool is_standalone_font(uint32_t type)
@@ -2074,8 +2124,8 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
             break;
         if (drag->hdr.code == NM_DBLCLK ||
             (drag->hdr.code == LVN_KEYDOWN && reinterpret_cast<const NMLVKEYDOWN*>(lp)->wVKey == VK_RETURN)) {
-            int index = drag->hdr.code == NM_DBLCLK ? drag->iItem : selected_preview_font(*view);
-            if (index >= 0 && size_t(index) < view->members.size() && is_preview_font(view->members[index].resource_type))
+            int index = drag->hdr.code == NM_DBLCLK ? drag->iItem : selected_preview_member(*view);
+            if (index >= 0 && size_t(index) < view->members.size() && previewable_member(view->members[index]))
                 try {
                     preview_suitcase_member(view->item, view->members[index]);
                 }
@@ -2273,6 +2323,10 @@ void open_item(HWND owner, Item item)
             preview_font_file(item);
             return;
         }
+        if (is_sound_file(item)) {
+            preview_sound_file(item);
+            return;
+        }
         if (item.mac.kind == FINDER_CLASSIC_DOCUMENT && (item.mac.flags & stationery_flag)) {
             open_stationery(owner, item);
             return;
@@ -2321,6 +2375,8 @@ void open_item(HWND owner, Item item)
         open_suitcase(item);
     else if (is_standalone_font(item.mac.type))
         preview_font_file(item);
+    else if (is_sound_file(item))
+        preview_sound_file(item);
     else if (FinderIsDiskImage(item.path.c_str())) {
         wchar_t details[1024]{};
         classic::WaitingCursor waiting;
@@ -5729,7 +5785,7 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                     }
                     for (unsigned id : unavailable_suitcase_commands)
                         EnableMenuItem(bar, id, MF_BYCOMMAND | MF_GRAYED);
-                    if (selected_preview_font(*suitcase) >= 0)
+                    if (selected_preview_member(*suitcase) >= 0)
                         EnableMenuItem(bar, open_command, MF_BYCOMMAND | MF_ENABLED);
                     EnableMenuItem(bar, 4, MF_BYPOSITION | MF_GRAYED);
                     for (unsigned i = 0; i < folder_column_count; ++i) {
@@ -6588,6 +6644,7 @@ extern "C" int romaw_finder_main(void)
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        stop_sound_preview();
         desktop_icons.reset();
         copies.cancel_all();
         while (!folders.empty())
@@ -6618,6 +6675,7 @@ extern "C" int romaw_finder_main(void)
         return 0;
     }
     catch (const std::exception& e) {
+        stop_sound_preview();
         copies.cancel_all();
         failure(nullptr, e);
         return 1;

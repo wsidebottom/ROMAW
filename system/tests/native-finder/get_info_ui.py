@@ -146,11 +146,16 @@ def _check_get_info(
 
         memory_app = make_68k(fixture)
         resources = module("suitcase_resources", root / "tools/romaw/system_resources.py")
+        sound_rate = 22050
+        samples = bytes(160 if index % 56 < 28 else 96 for index in range(sound_rate * 2))
+        # A legacy format-2 soundCmd followed by an unsigned 8-bit SoundHeader.
+        snd = (struct.pack(">5HI", 2, 0, 1, 0x8050, 0, 14) +
+               struct.pack(">5IBB", 0, len(samples), sound_rate << 16, 0, 0, 0, 60) + samples)
         fork = resources.build_fork(
             [
                 (b"FOND", 129, 0, b"Caf\x8e", b"font family"),
                 (b"NFNT", 130, 0, None, b"bitmap font"),
-                (b"snd ", 128, 0, b"Chime", b"sound"),
+                (b"snd ", 128, 0, b"Chime", snd),
                 (b"DRVR", 131, 0, b"Calculator", b"accessory"),
                 (b"KCHR", 132, 0, b"Test Layout", b"keyboard layout"),
                 (b"STR#", 128, 0, b"Internal", b"\0\0"),
@@ -176,6 +181,22 @@ def _check_get_info(
                 table + file_type + b"MACS" + bytes(24) + (b"" if data_fork else contents)
             )
         (fixture / "Suitcase Drop Folder").mkdir()
+        chime_fork = resources.build_fork([(b"snd ", 129, 0, b"Standalone Chime", snd)])
+        (fixture / "Standalone Chime").write_bytes(b"")
+        (fixture / "._Standalone Chime").write_bytes(
+            struct.pack(">II16xHIIIIII", 0x51607, 0x20000, 2, 9, 50, 32, 2, 82, len(chime_fork)) +
+            b"sfilMACS" + bytes(24) + chime_fork
+        )
+        import wave
+
+        with wave.open(str(fixture / "Preview.wav"), "wb") as stream:
+            stream.setparams((1, 1, sound_rate, 0, "NONE", "not compressed"))
+            stream.writeframes(samples)
+        comm = struct.pack(">HIH", 1, len(samples), 8) + bytes.fromhex("400DAC44000000000000")
+        ssnd = bytes(8) + bytes(value ^ 0x80 for value in samples)
+        aiff = b"AIFFCOMM" + struct.pack(">I", len(comm)) + comm + b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
+        (fixture / "Preview.aiff").write_bytes(b"FORM" + struct.pack(">I", len(aiff)) + aiff)
+        (fixture / "Broken.aiff").write_bytes(b"FORM\x00\x00\x00\x10AIFF")
         # Use a real outline and a deterministic one-bit strike with a
         # nonempty glyph for each printable ASCII code.
         strike_height = 9
@@ -330,6 +351,18 @@ def _check_get_info(
             assert read(handle, remote + 512, c.byref(text), c.sizeof(text), None)
             rows.append(text.value)
         return field, rows
+
+    def double_click_item(window, name):
+        listing, rows = list_rows(window)
+        row = rows.index(name)
+        send(listing, LVM_ENSUREVISIBLE, row, 0)
+        bounds = w.RECT(1, 0, 0, 0)
+        assert write(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+        assert send(listing, LVM_GETITEMRECT, row, remote)
+        assert read(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+        point = (bounds.left + bounds.right) // 2 | ((bounds.top + bounds.bottom) // 2 << 16)
+        for message, state in ((WM_LBUTTONDOWN, 1), (WM_LBUTTONUP, 0), (WM_LBUTTONDBLCLK, 1), (WM_LBUTTONUP, 0)):
+            assert post(listing, message, state, point)
 
     def command(folder, name, cmd):
         field, rows = list_rows(folder)
@@ -531,6 +564,11 @@ def _check_get_info(
         drag(system, "Caf\u00e9", mounted, 285, 145)
         wait(lambda: "Caf\u00e9" in list_rows(mounted)[1], "copy font family to mounted image")
         assert "Caf\u00e9" in list_rows(system)[1]
+        drag(system, "Chime", mounted, 285, 145)
+        wait(lambda: "Chime" in list_rows(mounted)[1], "copy sound to mounted image")
+        double_click_item(mounted, "Chime")
+        time.sleep(0.2)
+        assert not windows(None, "FinderNotice"), "Cannot play the sound from the mounted image"
         mounted_suitcase = open_item(mounted, "Caf\u00e9", "FinderSuitcase")
         assert set_bounds(mounted_suitcase, None, 397, 44, 350, 210, 0x10)
         assert list_rows(mounted_suitcase)[1] == ["Caf\u00e9"]
@@ -590,29 +628,42 @@ def _check_get_info(
 
         command(desktop, "Preview Fonts", FINDER_OPEN)
         suitcase = wait(lambda: named(desktop, "FinderSuitcase", "Preview Fonts"), "open preview fonts")
-        listing, rows = list_rows(suitcase)
-
-        def double_click(name):
-            row = rows.index(name)
-            bounds = w.RECT(1, 0, 0, 0)
-            assert write(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
-            assert send(listing, LVM_GETITEMRECT, row, remote)
-            assert read(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
-            point = (bounds.left + bounds.right) // 2 | ((bounds.top + bounds.bottom) // 2 << 16)
-            for message, state in ((WM_LBUTTONDOWN, 1), (WM_LBUTTONUP, 0), (WM_LBUTTONDBLCLK, 1), (WM_LBUTTONUP, 0)):
-                assert post(listing, message, state, point)
-
-        double_click("Preview Family")
+        double_click_item(suitcase, "Preview Family")
         check_window("Preview Family", ((17, 26), (67, 79), (135, 153)))
-        double_click("Bitmap font #2569")
+        double_click_item(suitcase, "Bitmap font #2569")
         check_window("Preview Family 9", ((17, 26),))
-        double_click("Preview Outline")
+        double_click_item(suitcase, "Preview Outline")
         check_window("Preview Outline", ((17, 35),))
         assert post(suitcase, WM_CLOSE, 0, 0)
         wait(lambda: suitcase not in windows(desktop, "FinderSuitcase"), "close Preview Fonts")
         command(desktop, "Outline File", FINDER_OPEN)
         check_window("Outline File", ((17, 35),))
         print("PASS font family, bitmap strike, and embedded and standalone outline previews", flush=True)
+
+    def check_sound_previews():
+        command(desktop, "Test Resource Suitcase", FINDER_OPEN)
+        suitcase = wait(lambda: named(desktop, "FinderSuitcase", "Test Resource Suitcase"), "open sound suitcase")
+        for window, name in (
+            (suitcase, "Chime"),
+            (desktop, "Standalone Chime"),
+            (desktop, "Preview.aiff"),
+            (desktop, "Preview.wav"),
+        ):
+            before = time.monotonic()
+            double_click_item(window, name)
+            time.sleep(0.2)
+            notices = windows(None, "FinderNotice")
+            assert not notices, (name, [caption(child) for notice in notices for child in windows(notice)])
+            assert list_rows(window)[1]
+            assert time.monotonic() - before < 1.8, f"{name} blocked Finder while playing"
+        assert post(suitcase, WM_CLOSE, 0, 0)
+        wait(lambda: suitcase not in windows(desktop, "FinderSuitcase"), "close sound suitcase")
+        double_click_item(desktop, "Broken.aiff")
+        notice = wait(lambda: next(iter(windows(None, "FinderNotice")), None), "invalid sound notice")
+        assert any("AIFF sound is damaged" in caption(child) for child in windows(notice))
+        assert post(notice, WM_COMMAND, 1, 0)
+        wait(lambda: not windows(None, "FinderNotice"), "close invalid sound notice")
+        print("PASS asynchronous double-click playback for suitcase, standalone, AIFF and WAV sounds", flush=True)
 
     def icon_command(view, command_):
         icon = named(view, "Static", "Get Info icon")
@@ -1395,6 +1446,7 @@ def _check_get_info(
         check_memory_panel()
         check_suitcases()
         check_font_previews()
+        check_sound_previews()
         check_suitcase_drags()
         view, _ = info(desktop, "Host Text.txt")
         assert named(view, "Static", "Plain text fixture"), [caption(x) for x in windows(view)]
