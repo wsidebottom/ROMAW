@@ -150,6 +150,7 @@ def main():
         ("Long" * 12, b"", b""),
         ("LargeFork", DATA, RESOURCE * 100),
         ("Reordered", DATA, RESOURCE),
+        ("PaddedResource", DATA, RESOURCE),
         ("FinderOnly", DATA, b""),
     ):
         source = OUT / "binary-input.zip"
@@ -176,6 +177,11 @@ def main():
                 + FINDER
                 + b"Finder comment"
             )
+        elif name == "PaddedResource":
+            # A resource-fork rewrite appended the working fork after obsolete bytes.
+            stale = bytes(range(256)) * 280
+            mac_metadata = bytearray(mac_metadata[:82] + stale + resource)
+            struct.pack_into(">I", mac_metadata, 42, 82 + len(stale))
         elif name == "FinderOnly":
             mac_metadata = struct.pack(">II16xHIII", 0x51607, 0x20000, 1, 9, 38, 32) + FINDER
         with zipfile.ZipFile(raw, "w") as archive:

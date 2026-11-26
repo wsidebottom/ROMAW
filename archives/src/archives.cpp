@@ -238,14 +238,15 @@ std::vector<Item> unstuff(const Bytes& bytes, const std::function<bool()>& cance
 // Replace only the resource payload. Keeping a trailing resource in place also
 // preserves absolute ATTR offsets inside extended FinderInfo. Other layouts
 // with such offsets cannot safely be repacked.
-Bytes with_resource(const Bytes& raw, const Bytes& resource)
+Bytes with_resource(const Bytes& raw, const Bytes& resource, size_t offset_limit = SIZE_MAX)
 {
     auto finder = metadata_part(raw, 9);
     unsigned count = word(raw, 24);
     for (unsigned i = 0; i < count; ++i) {
         size_t record = 26 + i * 12;
-        if (number(raw, record) == 2 && number(raw, record + 4) + number(raw, record + 8) == raw.size()) {
-            Bytes result(raw.begin(), raw.begin() + number(raw, record + 4));
+        size_t offset = number(raw, record + 4);
+        if (number(raw, record) == 2 && offset <= offset_limit && offset + number(raw, record + 8) == raw.size()) {
+            Bytes result(raw.begin(), raw.begin() + offset);
             store(result, record + 8, uint32_t(resource.size()));
             result.insert(result.end(), resource.begin(), resource.end());
             return result;
@@ -596,8 +597,10 @@ Bytes macbinary(const Item& item, const std::function<bool()>& cancelled)
     require(finder.empty() || finder.size() >= 32, "Incomplete MacBinary Finder information");
     if (finder.empty())
         finder.resize(32);
-    auto secondary = with_resource(original, {});
-    require(secondary.size() <= 65535, "MacBinary secondary metadata exceeds 65535 bytes");
+    // Appended resource forks can leave obsolete bytes in the AppleDouble
+    // prefix. Repack its referenced entries if that prefix cannot fit.
+    auto secondary = with_resource(original, {}, UINT16_MAX);
+    require(secondary.size() <= UINT16_MAX, "MacBinary secondary metadata exceeds 65535 bytes");
     Bytes result(128);
     result[1] = name.size();
     std::copy(name.begin(), name.end(), result.begin() + 2);
