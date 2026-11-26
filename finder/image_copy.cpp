@@ -682,6 +682,8 @@ struct ImageImport {
                     return;
                 publish(top);
                 mac_error(ROMlib_finder_image_flush(reference));
+                if (!top.source.empty())
+                    job.published_sources.push_back(top.source);
                 if (host_moving) {
                     host_lease->remove();
                     host_lease.reset();

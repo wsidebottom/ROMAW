@@ -961,6 +961,47 @@ static OSErr image_desktop_write(ImageDesktopFiles* source, const void* data, si
     return error;
 }
 
+/* Hold the File Manager's writable fork while validating and publishing the
+ * edit. A failed write restores the original bytes before releasing it. */
+int16_t ROMlib_finder_image_replace_fork(int16_t reference, uint32_t parent, const char* name, uint32_t id,
+                                       int resource, const void* before, uint32_t before_size,
+                                       const void* after, uint32_t after_size)
+{
+    OSErr error = ROMlib_finder_image_check_mutable(reference, parent, name, id);
+    ImageDesktopFiles fork = {0};
+    fork.reference = reference;
+    fork.capacity = 8192;
+    fork.files[0] = -1;
+    if (!error)
+        error = ROMlib_finder_image_open_fork(reference, parent, name, resource, &fork.files[0]);
+    if (error)
+        return error;
+    LONGINT length = 0;
+    error = GetEOF(fork.files[0], &length);
+    if (!error && (uint32_t)length != before_size)
+        error = fBsyErr;
+    unsigned char check[8192];
+    fork.buffer = NewPtrSys(fork.capacity);
+    if (!error && !fork.buffer)
+        error = memFullErr;
+    for (uint32_t offset = 0; !error && offset < before_size;) {
+        uint32_t count = MIN(before_size - offset, sizeof check);
+        if (!image_desktop_read(&fork, 0, offset, check, count) ||
+            memcmp(check, (const unsigned char*)before + offset, count))
+            error = fBsyErr;
+        offset += count;
+    }
+    if (!error) {
+        error = image_desktop_write(&fork, after, after_size);
+        if (error && image_desktop_write(&fork, before, before_size))
+            error = ioErr;
+    }
+    if (fork.buffer)
+        DisposPtr(fork.buffer);
+    OSErr close_error = FSClose(fork.files[0]);
+    return error ? error : close_error;
+}
+
 static OSErr create_image_desktop_file(int16_t reference, const char* name, const char* type)
 {
     unsigned char info[32] = {0};

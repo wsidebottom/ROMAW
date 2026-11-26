@@ -70,7 +70,27 @@ struct SuitcaseMember {
     std::wstring name;
     const wchar_t* kind;
     uint32_t icon_type;
+    uint32_t resource_type;
+    int16_t resource_id;
 };
+
+using ResourceKey = std::pair<uint32_t, int16_t>;
+struct SuitcaseResource {
+    ResourceKey key;
+    uint8_t attributes;
+    Bytes name, payload;
+};
+
+struct SuitcaseFork {
+    uint16_t attributes = 0;
+    Bytes reserved_header;
+    std::vector<SuitcaseResource> resources;
+};
+
+SuitcaseFork read_suitcase_fork(const Bytes& fork);
+Bytes encode_suitcase_fork(const SuitcaseFork& fork);
+void replace_host_suitcase_fork(const fs::path& path, const Bytes& fork, bool data_fork);
+void create_host_resource_file(const fs::path& path, uint32_t type, uint32_t creator, const Bytes& fork);
 
 bool is_mac_suitcase(const MacFile& file);
 // Read the Finder-visible members by name and kind without decoding resource payloads.
@@ -134,6 +154,8 @@ struct CopyJob {
     bool stuffit_folders = false; // Explicitly approved on the UI thread.
     bool zip_folders = false;
     std::shared_ptr<void> source_owner; // Retain private extraction data until worker/image import completion.
+    // Top-level source files successfully published. Skipped conflicts are absent.
+    std::vector<fs::path> published_sources;
     // Published before terminal state; only the UI consumes completed moves.
     std::vector<std::pair<fs::path, fs::path>> moved;
     // Format-changing archive moves cannot use pathname-only Undo. Close their old
@@ -202,6 +224,16 @@ class HostMoveLease {
     virtual void read(const fs::path& path, uint64_t offset, void* buffer, size_t count) = 0;
     virtual void verify() = 0;
     virtual void remove() = 0;
+};
+
+// Own a reserved temporary directory until its transfer has completed.
+struct TransferStaging {
+    fs::path path;
+
+    TransferStaging();
+    ~TransferStaging();
+    TransferStaging(const TransferStaging&) = delete;
+    TransferStaging& operator=(const TransferStaging&) = delete;
 };
 
 std::shared_ptr<HostMoveLease> lock_host_move(const std::vector<HostFileStamp>& stamps);

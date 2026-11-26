@@ -44,8 +44,10 @@ FINDER_OPEN = 100
 FINDER_GET_INFO = 103
 FINDER_COPY = 107
 FINDER_PASTE = 108
+FINDER_ICONS = 110
 FINDER_LIST = 111
 FINDER_CLEAR = 124
+FINDER_SMALL_ICONS = 136
 
 
 def icon_clipboard_reader(api, user, kernel):
@@ -153,17 +155,26 @@ def _check_get_info(
                 (b"STR#", 128, 0, b"Internal", b"\0\0"),
             ]
         )
-        for name, file_type, data_fork in (
-            ("Test Resource Suitcase", b"zsys", False),
-            ("Test Data Suitcase", b"ZSYS", True),
+        fonts = resources.build_fork([(b"FOND", 210, 0, b"Test Font", b"font")])
+        accessories = resources.build_fork(
+            [(b"DRVR", 17, 0, b"Test Accessory", b"accessory"), (b"STR ", -15840, 0, None, b"owned")]
+        )
+        empty = resources.build_fork([])
+        for name, file_type, data_fork, contents in (
+            ("Test Resource Suitcase", b"zsys", False, fork),
+            ("Test Data Suitcase", b"ZSYS", True, fork),
+            ("Test Font Suitcase", b"FFIL", False, fonts),
+            ("Test DA Suitcase", b"DFIL", False, accessories),
+            ("Empty DA Suitcase", b"DFIL", True, empty),
         ):
-            (fixture / name).write_bytes(fork if data_fork else b"")
+            (fixture / name).write_bytes(contents if data_fork else b"")
             table = struct.pack(">II16xHIII", 0x51607, 0x20000, 1 if data_fork else 2, 9, 38 if data_fork else 50, 32)
             if not data_fork:
-                table += struct.pack(">III", 2, 82, len(fork))
+                table += struct.pack(">III", 2, 82, len(contents))
             (fixture / ("._" + name)).write_bytes(
-                table + file_type + b"MACS" + bytes(24) + (b"" if data_fork else fork)
+                table + file_type + b"MACS" + bytes(24) + (b"" if data_fork else contents)
             )
+        (fixture / "Suitcase Drop Folder").mkdir()
     image = base / "Get Info Test.hfv"
     shutil.copyfile(root / "build/image-desktop-fixture/DesktopMetadata.hfv", image)
     local = profile / "AppData" / "Local"
@@ -374,12 +385,20 @@ def _check_get_info(
 
     def check_suitcases():
         expected = ["Bitmap font #130", "Caf\u00e9", "Calculator", "Chime", "Test Layout"]
-        for name in ("Test Resource Suitcase", "Test Data Suitcase"):
+        for name, labels, kinds in (
+            ("Test Resource Suitcase", expected, ("Bitmap font", "Font family", "Desk accessory", "Sound", "Keyboard layout")),
+            ("Test Data Suitcase", expected, ("Bitmap font", "Font family", "Desk accessory", "Sound", "Keyboard layout")),
+            ("Test Font Suitcase", ["Test Font"], ("Font family",)),
+            ("Test DA Suitcase", ["Test Accessory"], ("Desk accessory",)),
+        ):
             command(desktop, name, FINDER_OPEN)
             window = wait(lambda: named(desktop, "FinderSuitcase", name), f"open {name}")
             listing, names = list_rows(window)
-            assert names == expected, names
-            for index, kind in enumerate(("Bitmap font", "Font family", "Desk accessory", "Sound", "Keyboard layout")):
+            assert names == labels, names
+            for cmd, mode in ((FINDER_ICONS, 0), (FINDER_SMALL_ICONS, 3), (FINDER_LIST, 1)):
+                assert post(desktop, WM_COMMAND, cmd, 0)
+                wait(lambda: send(listing, 0x108F) == mode, f"{name} switches to view {mode}")  # LVM_GETVIEW
+            for index, kind in enumerate(kinds):
                 lv = ListItem(subitem=1, text=remote + 512, capacity=512)
                 assert write(handle, remote, c.byref(lv), c.sizeof(lv), None)
                 send(listing, LVM_GETITEMTEXTW, index, remote)
@@ -387,8 +406,119 @@ def _check_get_info(
                 assert read(handle, remote + 512, c.byref(label), c.sizeof(label), None)
                 assert label.value == kind
             assert post(window, WM_CLOSE, 0, 0)
-            wait(lambda: not named(desktop, "FinderSuitcase", name), f"close {name}")
-        print("PASS classic members in resource-fork and data-fork suitcases", flush=True)
+            wait(lambda: window not in windows(desktop, "FinderSuitcase"), f"close {name}")
+        print("PASS icon, small-icon and list views for System, font and DA suitcases", flush=True)
+
+    def check_suitcase_drags():
+        set_bounds = api(u, "SetWindowPos", w.BOOL, w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT)
+        map_point = api(u, "MapWindowPoints", c.c_int, w.HWND, w.HWND, c.POINTER(w.POINT), w.UINT)
+        window_at = api(u, "WindowFromPoint", w.HWND, w.POINT)
+        set_cursor = api(u, "SetCursorPos", w.BOOL, c.c_int, c.c_int)
+        get_cursor = api(u, "GetCursorPos", w.BOOL, c.POINTER(w.POINT))
+        button_state = api(u, "GetAsyncKeyState", w.SHORT, c.c_int)
+        mouse = api(u, "mouse_event", None, w.DWORD, w.DWORD, w.DWORD, w.DWORD, word)
+        foreground = api(u, "SetForegroundWindow", w.BOOL, w.HWND)
+
+        def open_item(owner, name, kind):
+            command(owner, name, FINDER_OPEN)
+            return wait(lambda: named(desktop, kind, name), f"open {name}")
+
+        def drag(source, name, target, x, y):
+            listing, names = list_rows(source)
+            row = names.index(name)
+            send(listing, LVM_ENSUREVISIBLE, row, 0)
+            bounds = w.RECT(1, 0, 0, 0)  # LVIR_ICON
+            assert write(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+            assert send(listing, LVM_GETITEMRECT, row, remote)
+            assert read(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+            start = w.POINT((bounds.left + bounds.right) // 2, (bounds.top + bounds.bottom) // 2)
+            map_point(listing, None, c.byref(start), 1)
+            end = w.POINT(x, y)
+            map_point(target, None, c.byref(end), 1)
+            foreground(desktop)
+
+            def covered_by(window, point):
+                hit = window_at(point)
+                while hit and hit != window:
+                    hit = get_parent(hit)
+                return hit == window
+
+            assert covered_by(listing, start) and covered_by(target, end), "Both sides of the drag must be visible"
+            previous = w.POINT()
+            assert button_state(1) >= 0 and get_cursor(c.byref(previous))
+            current = previous
+
+            def move(point):
+                nonlocal current
+                actual = w.POINT()
+                assert get_cursor(c.byref(actual))
+                if (actual.x, actual.y) != (current.x, current.y):
+                    raise RuntimeError("The pointer moved independently during the suitcase drag")
+                assert set_cursor(point.x, point.y)
+                current = point
+                time.sleep(0.12)
+
+            move(start)
+            mouse(0x0002, 0, 0, 0, 0)
+            try:
+                time.sleep(0.12)
+                direction = 1 if end.x > start.x else -1
+                move(w.POINT(start.x + direction * 12, start.y))
+                move(end)
+            finally:
+                mouse(0x0004, 0, 0, 0, 0)
+                time.sleep(0.12)
+                actual = w.POINT()
+                if get_cursor(c.byref(actual)) and (actual.x, actual.y) == (current.x, current.y):
+                    set_cursor(previous.x, previous.y)
+
+        source = open_item(desktop, "Test DA Suitcase", "FinderSuitcase")
+        target = open_item(desktop, "Empty DA Suitcase", "FinderSuitcase")
+        assert set_bounds(source, None, 28, 44, 350, 210, 0x10)
+        assert set_bounds(target, None, 397, 44, 350, 210, 0x10)
+        drag(source, "Test Accessory", target, 155, 94)
+        wait(lambda: list_rows(target)[1] == ["Test Accessory"] and not list_rows(source)[1], "move accessory")
+        assert b"owned" in (fixture / "Empty DA Suitcase").read_bytes()
+        folder = open_item(desktop, "Suitcase Drop Folder", "FinderFolder")
+        assert set_bounds(folder, None, 28, 44, 350, 210, 0x10)
+        drag(target, "Test Accessory", folder, 155, 94)
+        wait(lambda: not list_rows(target)[1], "export accessory and remove source member")
+        exported = wait(
+            lambda: next((x for x in (fixture / "Suitcase Drop Folder").iterdir() if x.name.startswith("Test Accessory")), None),
+            "exported accessory file",
+        )
+        # The private Applications folder uses AppleDouble.
+        assert b"owned" in exported.with_name("._" + exported.name).read_bytes()
+        assert set_bounds(source, None, 397, 44, 350, 210, 0x10)
+        drag(folder, exported.name, source, 155, 94)
+        wait(lambda: list_rows(source)[1] == ["Test Accessory"] and not exported.exists(), "import test accessory")
+        print("PASS same-volume suitcase and folder moves preserve owned DA resources", flush=True)
+        assert post(source, WM_CLOSE, 0, 0)
+        assert post(target, WM_CLOSE, 0, 0)
+        assert post(folder, WM_CLOSE, 0, 0)
+
+        system = open_item(desktop, "Test Resource Suitcase", "FinderSuitcase")
+        mounted = open_item(desktop, "Desktop Metadata", "FinderFolder")
+        assert set_bounds(system, None, 28, 44, 350, 210, 0x10)
+        assert set_bounds(mounted, None, 397, 44, 350, 210, 0x10)
+        drag(system, "Caf\u00e9", mounted, 285, 145)
+        wait(lambda: "Caf\u00e9" in list_rows(mounted)[1], "copy font family to mounted image")
+        assert "Caf\u00e9" in list_rows(system)[1]
+        mounted_suitcase = open_item(mounted, "Caf\u00e9", "FinderSuitcase")
+        assert set_bounds(mounted_suitcase, None, 397, 44, 350, 210, 0x10)
+        assert list_rows(mounted_suitcase)[1] == ["Caf\u00e9"]
+        fonts = open_item(desktop, "Test Font Suitcase", "FinderSuitcase")
+        assert set_bounds(fonts, None, 28, 44, 350, 210, 0x10)
+        drag(fonts, "Test Font", mounted_suitcase, 208, 110)
+        wait(lambda: list_rows(mounted_suitcase)[1] == ["Caf\u00e9", "Test Font"], "update an image suitcase")
+        assert list_rows(fonts)[1] == ["Test Font"]
+        assert post(mounted_suitcase, WM_CLOSE, 0, 0)
+        wait(lambda: mounted_suitcase not in windows(desktop, "FinderSuitcase"), "close image suitcase")
+        mounted_suitcase = open_item(mounted, "Caf\u00e9", "FinderSuitcase")
+        assert list_rows(mounted_suitcase)[1] == ["Caf\u00e9", "Test Font"]
+        print("PASS cross-volume copies and writable image suitcase updates", flush=True)
+        for window in (system, fonts, mounted_suitcase, mounted):
+            assert post(window, WM_CLOSE, 0, 0)
 
     def icon_command(view, command_):
         icon = named(view, "Static", "Get Info icon")
@@ -1155,7 +1285,7 @@ def _check_get_info(
     try:
         assert remote, "Could not allocate the list-view message buffer"
         desktop = wait(lambda: named(None, "FinderFolder", "ROMAW"), "native Finder desktop")
-        assert (local / "Finder").is_dir(), "Finder settings must stay in the test profile"
+        assert (profile / ".romaw" / "Finder").is_dir(), "Finder settings must stay in the test profile"
         if icons:
             check_icons()
             return
@@ -1170,6 +1300,7 @@ def _check_get_info(
             return
         check_memory_panel()
         check_suitcases()
+        check_suitcase_drags()
         view, _ = info(desktop, "Host Text.txt")
         assert named(view, "Static", "Plain text fixture"), [caption(x) for x in windows(view)]
         close(view)

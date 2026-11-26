@@ -105,6 +105,9 @@ int16_t ROMlib_finder_image_check_mutable(int16_t reference, uint32_t parent, co
 int16_t ROMlib_finder_image_move(int16_t reference, uint32_t parent, const char* name, uint32_t id,
                                  uint32_t target_parent);
 int16_t ROMlib_finder_image_flush(int16_t reference);
+int16_t ROMlib_finder_image_replace_fork(int16_t reference, uint32_t parent, const char* name, uint32_t id,
+                                       int resource, const void* before, uint32_t before_size,
+                                       const void* after, uint32_t after_size);
 /* Root Icon<CR>, .VolumeIcon.icns or an older Desktop custom family. */
 int ROMlib_finder_image_volume_icon(int16_t reference, FinderIcon* result);
 /* Decode ICO/ICNS data-fork artwork without opening a second image connection. */

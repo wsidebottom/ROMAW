@@ -1675,14 +1675,14 @@ void open_stationery(HWND owner, const Item& item)
 constexpr wchar_t suitcase_window_class[] = L"FinderSuitcase";
 
 struct SuitcaseView {
-    fs::path path;
-    int16_t volume = 0;
-    uint32_t id = 0;
+    Item item;
     std::vector<SuitcaseMember> members;
+    std::vector<SuitcaseMember> dragged;
+    POINT grab{};
     std::vector<classic::IconViewImage> artwork;
     HWND list = nullptr;
     HIMAGELIST images = nullptr, small_images = nullptr;
-    FolderView mode = FolderView::list;
+    FolderView mode = FolderView::icons;
     bool owned = false;
 
     ~SuitcaseView()
@@ -1694,13 +1694,28 @@ struct SuitcaseView {
     }
 };
 
-SuitcaseView* active_suitcase()
+SuitcaseView* suitcase_view(HWND window)
 {
-    HWND window = classic::active_window();
     wchar_t type[32]{};
     if (!GetClassNameW(window, type, std::size(type)) || wcscmp(type, suitcase_window_class))
         return nullptr;
     return reinterpret_cast<SuitcaseView*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+}
+
+SuitcaseView* active_suitcase()
+{
+    return suitcase_view(classic::active_window());
+}
+
+SuitcaseView* suitcase_at(HWND window)
+{
+    for (; window && window != desktop; window = GetParent(window)) {
+        if (auto* view = suitcase_view(window))
+            return view;
+        if (!(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD))
+            break;
+    }
+    return nullptr;
 }
 
 void paint_suitcase_icons(HDC dc, void* context)
@@ -1734,6 +1749,14 @@ LRESULT CALLBACK suitcase_list_proc(HWND list, UINT msg, WPARAM wp, LPARAM lp, U
     auto* view = reinterpret_cast<SuitcaseView*>(data);
     if (msg == WM_NCDESTROY)
         RemoveWindowSubclass(list, suitcase_list_proc, id);
+    if (msg == WM_LBUTTONDOWN) {
+        view->grab = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(list, &view->grab);
+    }
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE && !view->dragged.empty()) {
+        SendMessageW(GetParent(list), WM_CANCELMODE, 0, 0);
+        return 0;
+    }
     if (view->mode != FolderView::list && msg == WM_ERASEBKGND)
         return 1;
     if (view->mode != FolderView::list && (msg == WM_PAINT || msg == WM_PRINTCLIENT)) {
@@ -1817,7 +1840,7 @@ bool command_suitcase(SuitcaseView& view, unsigned id)
             set_suitcase_view(view, mode);
             ViewPreferences presentation;
             presentation.view = mode;
-            save(L"SuitcaseViews", path_key(view.path), encode_folder_view(presentation));
+            save(L"SuitcaseViews", path_key(view.item.path), encode_folder_view(presentation));
             return true;
         }
     if (id == select_all_command) {
@@ -1845,8 +1868,19 @@ HICON suitcase_icon(uint32_t type)
 }
 
 // Use the File Manager's read-only fork path for both locked and writable images.
-Bytes read_image_suitcase(const Item& item)
+struct SuitcaseSnapshot {
+    Bytes bytes;
+    bool data_fork;
+};
+
+SuitcaseSnapshot read_suitcase(const Item& item)
 {
+    if (!item.image_volume) {
+        auto metadata = mac_file(item.path);
+        if (!metadata.fork.empty())
+            return {std::move(metadata.fork), false};
+        return {read_bytes(item.path), true};
+    }
     FinderImageEntry catalog{};
     if (ROMlib_finder_image_info(item.image_volume, item.image_parent, item.image_name.c_str(), &catalog) ||
         catalog.id != item.image_id)
@@ -1854,7 +1888,7 @@ Bytes read_image_suitcase(const Item& item)
     const bool resource = catalog.resource_size != 0;
     const uint32_t size = resource ? catalog.resource_size : catalog.data_size;
     if (!size)
-        return {};
+        return {{}, true};
     if (size > 64u * 1024 * 1024)
         throw std::runtime_error("The suitcase is too large to open.");
     Bytes bytes(size);
@@ -1873,7 +1907,48 @@ Bytes read_image_suitcase(const Item& item)
     }
     if (error)
         throw std::runtime_error("Cannot read the suitcase's fork (Macintosh error " + std::to_string(error) + ").");
-    return bytes;
+    return {std::move(bytes), !resource};
+}
+
+void drop_suitcase_members(HWND owner, const Item& item, const std::vector<SuitcaseMember>& members, POINT point);
+
+void populate_suitcase(SuitcaseView& view, const Bytes& bytes)
+{
+    auto members = suitcase_members(bytes);
+    std::stable_sort(members.begin(), members.end(),
+                     [](const auto& a, const auto& b) { return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0; });
+    const auto list = view.list;
+    classic::RedrawBatch redraw(list);
+    ListView_DeleteAllItems(list);
+    ImageList_RemoveAll(view.images);
+    ImageList_RemoveAll(view.small_images);
+    view.members.clear();
+    view.artwork.clear();
+    std::map<uint32_t, classic::IconViewImage> images;
+    for (auto& member : members) {
+        auto [image, added] = images.try_emplace(member.icon_type);
+        if (added) {
+            HICON normal = suitcase_icon(member.icon_type);
+            auto selected = selected_icon_cache.find(normal);
+            HICON alternate = selected == selected_icon_cache.end() ? normal : selected->second;
+            image->second = {ImageList_AddIcon(view.images, normal), ImageList_AddIcon(view.images, alternate)};
+            if (image->second.normal < 0 || image->second.selected < 0 ||
+                ImageList_AddIcon(view.small_images, normal) != image->second.normal ||
+                ImageList_AddIcon(view.small_images, alternate) != image->second.selected)
+                throw std::runtime_error("Cannot load suitcase icons.");
+        }
+        LVITEMW row{};
+        row.mask = LVIF_TEXT | LVIF_IMAGE;
+        row.iItem = int(view.members.size());
+        row.pszText = member.name.data();
+        row.iImage = image->second.normal;
+        if (ListView_InsertItem(list, &row) == -1)
+            throw std::runtime_error("Cannot add a suitcase item.");
+        ListView_SetItemText(list, row.iItem, 1, const_cast<wchar_t*>(member.kind));
+        view.members.push_back(std::move(member));
+        view.artwork.push_back(image->second);
+    }
+    set_suitcase_view(view, view.mode);
 }
 
 // Suitcase members are resource records, so display them in a separate
@@ -1881,6 +1956,8 @@ Bytes read_image_suitcase(const Item& item)
 LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
 {
     auto* view = reinterpret_cast<SuitcaseView*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (!view && msg != WM_NCCREATE)
+        return DefWindowProcW(window, msg, wp, lp);
     switch (msg) {
     case WM_NCCREATE:
         view = static_cast<SuitcaseView*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
@@ -1917,40 +1994,74 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
             classic::style_list(list);
             if (!SetWindowSubclass(list, suitcase_list_proc, 1, reinterpret_cast<DWORD_PTR>(view)))
                 return -1;
-            std::map<uint32_t, classic::IconViewImage> images;
-            view->artwork.reserve(view->members.size());
-            for (const auto& member : view->members) {
-                auto [image, added] = images.try_emplace(member.icon_type);
-                if (added) {
-                    HICON normal = suitcase_icon(member.icon_type);
-                    auto selected = selected_icon_cache.find(normal);
-                    HICON alternate = selected == selected_icon_cache.end() ? normal : selected->second;
-                    image->second = {ImageList_AddIcon(view->images, normal),
-                                     ImageList_AddIcon(view->images, alternate)};
-                    if (image->second.normal < 0 || image->second.selected < 0 ||
-                        ImageList_AddIcon(view->small_images, normal) != image->second.normal ||
-                        ImageList_AddIcon(view->small_images, alternate) != image->second.selected)
-                        return -1;
-                }
-                view->artwork.push_back(image->second);
-            }
+            populate_suitcase(*view, read_suitcase(view->item).bytes);
         }
         catch (const std::exception&) {
             return -1;
         }
-        for (size_t i = 0; i < view->members.size(); ++i) {
-            LVITEMW row{};
-            row.mask = LVIF_TEXT | LVIF_IMAGE;
-            row.iItem = int(i);
-            row.pszText = view->members[i].name.data();
-            row.iImage = view->artwork[i].normal;
-            if (ListView_InsertItem(list, &row) == -1)
-                return -1;
-            ListView_SetItemText(list, int(i), 1, const_cast<wchar_t*>(view->members[i].kind));
-        }
-        set_suitcase_view(*view, view->mode);
         return 0;
     }
+    case WM_NOTIFY: {
+        const auto* drag = reinterpret_cast<const NMLISTVIEW*>(lp);
+        if (drag->hdr.hwndFrom != view->list || drag->hdr.code != LVN_BEGINDRAG ||
+            drag->iItem < 0 || size_t(drag->iItem) >= view->members.size())
+            break;
+        try {
+            for (int i = -1; (i = selected_item_after(view->list, view->members.size(), i)) >= 0;)
+                view->dragged.push_back(view->members[i]);
+            if (view->dragged.empty())
+                view->dragged.push_back(view->members[drag->iItem]);
+            auto position = drag->ptAction;
+            ClientToScreen(view->list, &position);
+            POINT origin{};
+            const auto& member = view->members[drag->iItem];
+            auto images = view->mode == FolderView::icons ? view->images : view->small_images;
+            auto bitmap = classic::drag_artwork(view->list, images, view->artwork[drag->iItem].selected,
+                                                drag->iItem, member.name.c_str(), origin);
+            drag_image.begin(view->list, drag->iItem, view->grab, position, nullptr, bitmap, origin);
+            SetCapture(window);
+        }
+        catch (const std::exception& error) {
+            view->dragged.clear();
+            drag_image.end();
+            failure(window, error);
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (!view->dragged.empty()) {
+            POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ClientToScreen(window, &point);
+            drag_image.move(point);
+            return 0;
+        }
+        break;
+    case WM_LBUTTONUP:
+        if (!view->dragged.empty()) {
+            auto members = std::exchange(view->dragged, {});
+            auto item = view->item;
+            POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ClientToScreen(window, &point);
+            drag_image.end();
+            ReleaseCapture();
+            try {
+                drop_suitcase_members(window, item, members, point);
+            }
+            catch (const std::exception& error) {
+                failure(IsWindow(window) ? window : desktop, error);
+            }
+            return 0;
+        }
+        break;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (!view->dragged.empty()) {
+            view->dragged.clear();
+            drag_image.end();
+            if (GetCapture() == window)
+                ReleaseCapture();
+        }
+        break;
     case WM_DRAWITEM: {
         const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
         if (!view || wp != 1 || draw->itemID >= view->members.size())
@@ -2000,30 +2111,21 @@ void open_suitcase(Item& item)
 {
     for (HWND existing = nullptr; (existing = FindWindowExW(desktop, existing, suitcase_window_class, nullptr));) {
         auto* view = reinterpret_cast<SuitcaseView*>(GetWindowLongPtrW(existing, GWLP_USERDATA));
-        if (view && view->volume == item.image_volume &&
-            (item.image_volume ? view->id == item.image_id : _wcsicmp(view->path.c_str(), item.path.c_str()) == 0)) {
+        if (view && view->item.image_volume == item.image_volume &&
+            (item.image_volume ? view->item.image_id == item.image_id
+                               : _wcsicmp(view->item.path.c_str(), item.path.c_str()) == 0)) {
             classic::activate(existing);
             SetFocus(existing);
             return;
         }
     }
     classic::WaitingCursor waiting;
-    auto bytes = item.image_volume ? read_image_suitcase(item) : std::move(item.mac.fork);
-    if (!item.image_volume && bytes.empty()) {
-        bytes = mac_file(item.path).fork;
-        if (bytes.empty())
-            bytes = read_bytes(item.path);
-    }
     auto view = std::make_unique<SuitcaseView>();
-    view->path = item.path;
-    view->volume = item.image_volume;
-    view->id = item.image_id;
-    view->members = suitcase_members(bytes);
-    auto saved = settings_path_value(preferences, L"SuitcaseViews", view->path);
+    view->item = item;
+    view->item.mac.fork.clear();
+    auto saved = settings_path_value(preferences, L"SuitcaseViews", item.path);
     if (!saved.empty())
         view->mode = decode_folder_view(saved).view;
-    std::stable_sort(view->members.begin(), view->members.end(),
-                     [](const auto& a, const auto& b) { return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0; });
     WNDCLASSW type{};
     type.hInstance = instance;
     type.lpszClassName = suitcase_window_class;
@@ -3651,6 +3753,7 @@ void publish_completed_operations()
             }
             follow_moves(moved);
             op->job->replacements.clear();
+            op->job->source_owner.reset();
             if (op->job->state == CopyJob::complete && op->on_complete)
                 completions.emplace_back(op->job, std::move(op->on_complete));
             auto open = folders;
@@ -4271,6 +4374,423 @@ void folder_context_menu(FolderWindow& folder, POINT screen)
     unsigned selected_command = classic::track_context_menu(desktop, popup.get(), screen);
     if (selected_command && IsWindow(window))
         PostMessageW(window, WM_COMMAND, selected_command, 0);
+}
+
+bool same_suitcase(const Item& a, const Item& b)
+{
+    return a.image_volume == b.image_volume &&
+           (a.image_volume ? a.image_id == b.image_id : !_wcsicmp(a.path.c_str(), b.path.c_str()));
+}
+
+bool copy_suitcase_drop(const Item& source, int16_t volume, const fs::path& path)
+{
+    bool same = source.image_volume || volume ? source.image_volume == volume
+                                              : same_storage_volume(source.path, path);
+    return drag_copies(same, GetKeyState(VK_MENU) < 0 || GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0);
+}
+
+void require_writable_suitcase(const Item& item, const SuitcaseFork& fork)
+{
+    if (fork.attributes & 128) // mapReadOnly
+        throw std::runtime_error("The suitcase resource map is locked.");
+    if (item.image_volume) {
+        if (ROMlib_finder_image_check_mutable(item.image_volume, item.image_parent, item.image_name.c_str(),
+                                              item.image_id))
+            throw std::runtime_error("The suitcase is locked or unavailable.");
+    }
+    else {
+        auto attributes = GetFileAttributesW(item.path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || attributes & FILE_ATTRIBUTE_READONLY)
+            throw std::runtime_error("The suitcase is locked or unavailable.");
+    }
+}
+
+void replace_suitcase(const Item& item, const SuitcaseSnapshot& before, const Bytes& after)
+{
+    if (item.image_volume) {
+        auto error = ROMlib_finder_image_replace_fork(item.image_volume, item.image_parent, item.image_name.c_str(),
+                                                     item.image_id, !before.data_fork, before.bytes.data(),
+                                                     uint32_t(before.bytes.size()), after.data(), uint32_t(after.size()));
+        if (error)
+            throw std::runtime_error("Cannot update the image suitcase (Macintosh error " + std::to_string(error) + ").");
+    }
+    else {
+        auto actual = read_suitcase(item);
+        if (actual.data_fork != before.data_fork || actual.bytes != before.bytes)
+            throw std::runtime_error("The suitcase changed during the transfer.");
+        replace_host_suitcase_fork(item.path, after, before.data_fork);
+    }
+}
+
+void refresh_suitcase(const Item& item, const Bytes& bytes)
+{
+    for (HWND window = nullptr; (window = FindWindowExW(desktop, window, suitcase_window_class, nullptr));)
+        if (auto* view = suitcase_view(window); view && same_suitcase(view->item, item))
+            populate_suitcase(*view, bytes);
+}
+
+auto find_suitcase_resource(const SuitcaseFork& fork, const ResourceKey& key)
+{
+    return std::find_if(fork.resources.begin(), fork.resources.end(), [&](const auto& r) { return r.key == key; });
+}
+
+// Preserve the accessory's owned resources (Inside Macintosh, Resource
+// Manager) and a font family's size/style associations.
+std::set<ResourceKey> suitcase_dependencies(const SuitcaseFork& fork, const SuitcaseResource& resource)
+{
+    std::set<ResourceKey> keys;
+    if (resource.key.first == 0x44525652 && resource.key.second >= 0 && resource.key.second <= 63) {
+        const unsigned base = 0xc000u | (unsigned(resource.key.second) << 5);
+        for (const auto& candidate : fork.resources)
+            if ((uint16_t(candidate.key.second) & 0xffe0u) == base)
+                keys.insert(candidate.key);
+        return keys;
+    }
+    const auto& bytes = resource.payload;
+    if (resource.key.first != 0x464f4e44 || bytes.size() < 54) // FOND
+        return keys;
+    auto word_at = [&](size_t offset) { return unsigned(bytes[offset]) << 8 | bytes[offset + 1]; };
+    unsigned count = (word_at(52) + 1) & 0xffff;
+    if (count > (bytes.size() - 54) / 6)
+        return keys;
+    for (unsigned i = 0; i < count; ++i) {
+        size_t entry = 54 + 6 * i;
+        int16_t id = int16_t(word_at(entry + 4));
+        if (word_at(entry) == 0) {
+            ResourceKey key{0x73666e74, id}; // sfnt
+            if (find_suitcase_resource(fork, key) != fork.resources.end())
+                keys.insert(key);
+        }
+        else {
+            ResourceKey key{0x4e464e54, id}; // NFNT, or the old FONT slot
+            if (find_suitcase_resource(fork, key) == fork.resources.end())
+                key.first = 0x464f4e54;
+            if (find_suitcase_resource(fork, key) != fork.resources.end())
+                keys.insert(key);
+        }
+    }
+    return keys;
+}
+
+std::set<ResourceKey> suitcase_member_keys(const SuitcaseFork& fork, const SuitcaseMember& member)
+{
+    ResourceKey key{member.resource_type, member.resource_id};
+    auto resource = find_suitcase_resource(fork, key);
+    if (resource == fork.resources.end())
+        throw std::runtime_error("The suitcase member changed during the drag.");
+    auto keys = suitcase_dependencies(fork, *resource);
+    keys.insert(key);
+    return keys;
+}
+
+SuitcaseFork select_suitcase_resources(const SuitcaseFork& source, const std::set<ResourceKey>& keys)
+{
+    SuitcaseFork result;
+    for (const auto& resource : source.resources)
+        if (keys.count(resource.key))
+            result.resources.push_back(resource);
+    return result;
+}
+
+void require_removable_resources(const SuitcaseFork& source, const std::set<ResourceKey>& keys)
+{
+    for (const auto& resource : source.resources) {
+        if (keys.count(resource.key)) {
+            if (resource.attributes & 8) // resProtected
+                throw std::runtime_error("A selected suitcase resource is protected.");
+            continue;
+        }
+        for (auto key : suitcase_dependencies(source, resource))
+            if (keys.count(key))
+                throw std::runtime_error("This font resource belongs to a family still in the suitcase. Copy it or move the family.");
+    }
+}
+
+void remove_suitcase_resources(SuitcaseFork& source, const std::set<ResourceKey>& keys)
+{
+    require_removable_resources(source, keys);
+    source.resources.erase(std::remove_if(source.resources.begin(), source.resources.end(),
+                                          [&](const auto& r) { return keys.count(r.key) != 0; }),
+                           source.resources.end());
+}
+
+// Test every collision before changing the destination. An identical
+// dependency can be shared by more than one item in a suitcase.
+bool merge_suitcase_resources(HWND owner, SuitcaseFork& target, const SuitcaseFork& incoming)
+{
+    auto equal = [](const auto& a, const auto& b) {
+        return a.attributes == b.attributes && a.name == b.name && a.payload == b.payload;
+    };
+    bool conflict = false;
+    for (const auto& resource : incoming.resources) {
+        auto found = find_suitcase_resource(target, resource.key);
+        if (found == target.resources.end() || equal(*found, resource))
+            continue;
+        if (found->attributes & 8)
+            throw std::runtime_error("The destination contains a protected resource with the same ID.");
+        for (const auto& owner_resource : target.resources)
+            if (find_suitcase_resource(incoming, owner_resource.key) == incoming.resources.end() &&
+                suitcase_dependencies(target, owner_resource).count(resource.key))
+                throw std::runtime_error("An existing suitcase member still uses a resource with that ID.");
+        conflict = true;
+    }
+    if (conflict && !classic::confirm(owner, L"Replace resources with matching IDs in the destination suitcase?",
+                                      L"Replace"))
+        return false;
+    for (const auto& resource : incoming.resources) {
+        auto found = find_suitcase_resource(target, resource.key);
+        if (found == target.resources.end())
+            target.resources.push_back(resource);
+        else
+            target.resources[size_t(found - target.resources.begin())] = resource;
+    }
+    return true;
+}
+
+bool suitcase_accepts(const Item& item, const SuitcaseMember& member)
+{
+    if (item.mac.type == 0x5a535953 || item.mac.type == 0x7a737973) // ZSYS
+        return true;
+    if (item.mac.type == 0x4446494c || item.mac.type == 0x6466696c) // DFIL
+        return member.resource_type == 0x44525652;
+    return member.icon_type == 0x4646494c || member.icon_type == 0x6666696c || member.icon_type == 0x7466696c;
+}
+
+struct SuitcaseDrop {
+    FolderWindow* window = nullptr;
+    fs::path path;
+    int16_t volume = 0;
+    uint32_t directory = 0;
+    std::optional<Item> suitcase;
+};
+
+SuitcaseDrop suitcase_drop_at(POINT point)
+{
+    HWND hit = WindowFromPoint(point);
+    if (auto* view = suitcase_at(hit))
+        return {nullptr, view->item.path, view->item.image_volume, 0, view->item};
+    for (HWND window = hit; window; window = GetParent(window)) {
+        auto found = std::find_if(folders.begin(), folders.end(), [&](auto* f) { return window == f->window; });
+        if (found != folders.end()) {
+            auto* folder = *found;
+            SuitcaseDrop target{folder, folder->desktop ? desktop_folder : folder->path, folder->image_volume,
+                                 folder->image_directory, {}};
+            LVHITTESTINFO position{};
+            position.pt = point;
+            ScreenToClient(folder->list, &position.pt);
+            int index = ListView_HitTest(folder->list, &position);
+            if (index >= 0 && index < int(folder->items.size())) {
+                const auto& item = folder->items[index];
+                if (item.folder)
+                    return {folder, item.path, item.image_volume, item.image_id, {}};
+                if (is_mac_suitcase(item.mac))
+                    return {folder, item.path, item.image_volume, 0, item};
+                if (item.special == 3)
+                    return {}; // A suitcase resource has no independent recycle-bin identity.
+            }
+            return target;
+        }
+        if (!(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD))
+            break;
+    }
+    return {};
+}
+
+void drop_suitcase_members(HWND owner, const Item& item, const std::vector<SuitcaseMember>& members, POINT point)
+{
+    auto target = suitcase_drop_at(point);
+    if ((!target.window && !target.suitcase) || (target.suitcase && same_suitcase(item, *target.suitcase)))
+        return;
+    classic::WaitingCursor waiting;
+    const bool copying = copy_suitcase_drop(item, target.volume, target.path);
+    auto before = read_suitcase(item);
+    auto source = read_suitcase_fork(before.bytes);
+    std::vector<std::set<ResourceKey>> per_member;
+    std::set<ResourceKey> keys;
+    for (const auto& member : members) {
+        if (target.suitcase && !suitcase_accepts(*target.suitcase, member))
+            throw std::runtime_error("The destination suitcase cannot contain this kind of resource.");
+        per_member.push_back(suitcase_member_keys(source, member));
+        keys.insert(per_member.back().begin(), per_member.back().end());
+    }
+    if (!copying) {
+        require_writable_suitcase(item, source);
+        require_removable_resources(source, keys);
+    }
+    if (target.suitcase) {
+        auto original = read_suitcase(*target.suitcase);
+        auto destination = read_suitcase_fork(original.bytes);
+        require_writable_suitcase(*target.suitcase, destination);
+        if (!merge_suitcase_resources(owner, destination, select_suitcase_resources(source, keys)))
+            return;
+        auto after = encode_suitcase_fork(destination);
+        Bytes remaining;
+        if (!copying) {
+            remove_suitcase_resources(source, keys);
+            remaining = encode_suitcase_fork(source);
+        }
+        replace_suitcase(*target.suitcase, original, after);
+        try {
+            if (!copying)
+                replace_suitcase(item, before, remaining);
+        }
+        catch (...) {
+            // If the source changed, retain the destination copy.
+            refresh_suitcase(*target.suitcase, after);
+            throw;
+        }
+        if (!copying)
+            refresh_suitcase(item, remaining);
+        refresh_suitcase(*target.suitcase, after);
+        return;
+    }
+    // Use normal resource files so host and image transfers can handle
+    // file conflicts and Windows MacBinary conversion.
+    auto scratch = std::make_shared<TransferStaging>();
+    std::vector<fs::path> paths;
+    for (size_t i = 0; i < members.size(); ++i) {
+        const auto& member = members[i];
+        auto name = member.name;
+        for (auto& character : name)
+            if (character < 32 || wcschr(L"<>:\"/\\|?*", character))
+                character = L'_';
+        while (!name.empty() && (name.back() == L'.' || name.back() == L' '))
+            name.pop_back();
+        if (name.empty() || hidden_metadata(scratch->path / name))
+            name = std::wstring(member.kind) + L" " + std::to_wstring(member.resource_id);
+        auto path = unique_item(scratch->path, name);
+        create_host_resource_file(path, member.icon_type, 0,
+                                  encode_suitcase_fork(select_suitcase_resources(source, per_member[i])));
+        paths.push_back(std::move(path));
+    }
+    auto job = target.volume ? copy_into_image(copies, paths, {}, target.volume, target.directory, target.path)
+                             : copies.start(paths, target.path, TransferKind::copy);
+    if (!job)
+        return;
+    job->source_owner = scratch;
+    if (copying) {
+        show_operation(job);
+        return;
+    }
+    show_operation(job, 0, [item, before = std::move(before), source = std::move(source), paths = std::move(paths),
+                            per_member = std::move(per_member)](const CopyJob& finished) mutable {
+        std::set<ResourceKey> moved;
+        for (size_t i = 0; i < paths.size(); ++i)
+            if (std::find(finished.published_sources.begin(), finished.published_sources.end(), paths[i]) !=
+                finished.published_sources.end())
+                moved.insert(per_member[i].begin(), per_member[i].end());
+        if (moved.empty())
+            return;
+        remove_suitcase_resources(source, moved);
+        auto remaining = encode_suitcase_fork(source);
+        replace_suitcase(item, before, remaining);
+        refresh_suitcase(item, remaining);
+    });
+}
+
+bool standalone_suitcase_member(uint32_t type)
+{
+    switch (type) {
+    case 0x6466696c: // dfil
+    case 0x6666696c: // ffil
+    case 0x7466696c: // tfil
+    case 0x7366696c: // sfil
+    case 0x6b66696c: // kfil
+        return true;
+    default:
+        return false;
+    }
+}
+
+void drop_files_in_suitcase(HWND owner, const Item& target, const std::vector<Item>& items)
+{
+    classic::WaitingCursor waiting;
+    for (const auto& item : items) {
+        if (same_suitcase(item, target))
+            continue;
+        if (item.folder || item.special || !(standalone_suitcase_member(item.mac.type) ||
+                                            is_mac_suitcase(item.mac)))
+            throw std::runtime_error("Only Macintosh fonts, sounds, keyboard layouts, and desk accessories can be installed here.");
+        if (item.mac.type == 0x5a535953 || item.mac.type == 0x7a737973)
+            throw std::runtime_error("Open the System suitcase and drag the individual items to transfer.");
+        const bool copying = copy_suitcase_drop(item, target.image_volume, target.path);
+        std::vector<HostFileStamp> stamps;
+        std::vector<fs::path> companions;
+        FinderImageEntry catalog{};
+        if (item.image_volume) {
+            if (ROMlib_finder_image_info(item.image_volume, item.image_parent, item.image_name.c_str(), &catalog) ||
+                catalog.id != item.image_id)
+                throw std::runtime_error("The source file is no longer available.");
+        }
+        else if (!copying) {
+            companions = mac_companions(item.path);
+            stamps.push_back(host_file_stamp(item.path));
+            for (const auto& companion : companions)
+                stamps.push_back(host_file_stamp(companion));
+        }
+        auto source = read_suitcase(item);
+        auto members = suitcase_members(source.bytes);
+        if (members.empty() || std::any_of(members.begin(), members.end(),
+                                          [&](const auto& member) { return !suitcase_accepts(target, member); }))
+            throw std::runtime_error("The destination suitcase cannot contain this file's resources.");
+        auto fork = read_suitcase_fork(source.bytes);
+        std::set<ResourceKey> keys;
+        for (const auto& member : members) {
+            auto associated = suitcase_member_keys(fork, member);
+            keys.insert(associated.begin(), associated.end());
+        }
+        auto incoming = select_suitcase_resources(fork, keys);
+        if (!copying) {
+            uint64_t data_size = item.image_volume ? catalog.data_size : fs::file_size(item.path);
+            if (item.mac.macbinary) {
+                ImportedFile wrapper;
+                if (!read_macbinary(item.path, wrapper))
+                    throw std::runtime_error("The MacBinary source is no longer available.");
+                data_size = wrapper.data_size;
+            }
+            if ((!source.data_fork && data_size) || incoming.resources.size() != fork.resources.size())
+                throw std::runtime_error("This file contains other data. Hold Option or Control to copy its resources.");
+            if (item.image_volume)
+                require_writable_suitcase(item, fork);
+        }
+        auto original = read_suitcase(target);
+        auto destination = read_suitcase_fork(original.bytes);
+        require_writable_suitcase(target, destination);
+        if (!merge_suitcase_resources(owner, destination, incoming))
+            continue;
+        std::shared_ptr<HostMoveLease> lease;
+        if (!copying) {
+            auto actual = read_suitcase(item);
+            if (actual.data_fork != source.data_fork || actual.bytes != source.bytes)
+                throw std::runtime_error("The source file changed during the transfer.");
+            if (!item.image_volume) {
+                if (mac_companions(item.path) != companions)
+                    throw std::runtime_error("The source file's forks changed during the transfer.");
+                lease = lock_host_move(stamps);
+                lease->verify();
+            }
+        }
+        auto after = encode_suitcase_fork(destination);
+        replace_suitcase(target, original, after);
+        refresh_suitcase(target, after);
+        if (!copying) {
+            if (item.image_volume)
+                delete_image_items(item.image_volume, {{item.image_parent, item.image_id, item.image_name}});
+            else {
+                lease->remove();
+                lease.reset();
+            }
+            history.clear();
+            follow_moves({{item.path, {}}});
+            for (HWND window = nullptr; (window = FindWindowExW(desktop, window, suitcase_window_class, nullptr));)
+                if (auto* view = suitcase_view(window); view && same_suitcase(view->item, item)) {
+                    DestroyWindow(window);
+                    break;
+                }
+        }
+    }
+    for (auto* folder : folders)
+        refresh_catalog_window(*folder);
 }
 
 // Interpret a screen-space drop as a folder copy or document launch, using a
@@ -5337,6 +5857,13 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 // The live cursor may already have moved beyond the drop point.
                 POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 ClientToScreen(w, &point);
+                if (auto suitcase = suitcase_drop_at(point).suitcase) {
+                    std::vector<Item> items;
+                    for (int index : drag_indices)
+                        items.push_back(source->items.at(index));
+                    drop_files_in_suitcase(w, *suitcase, items);
+                    return 0;
+                }
                 std::vector<HWND> folder_windows;
                 for (const auto* folder : folders)
                     folder_windows.push_back(folder->window);

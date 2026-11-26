@@ -1072,6 +1072,7 @@ void run(const std::shared_ptr<CopyJob>& job)
                             job->moved.push_back({replacement->originals[i], replacement->backups[i]});
                 }
                 job->moved.push_back({root.source, root.target});
+                job->published_sources.push_back(root.source);
                 --job->items;
                 continue;
             }
@@ -1233,6 +1234,7 @@ void run(const std::shared_ptr<CopyJob>& job)
                             job->moved.push_back({replacement->originals[i], replacement->backups[i]});
                 }
             }
+            job->published_sources.push_back(root.source);
             // Only empty format directories remain in this private container.
             std::error_code ignored;
             fs::remove_all(root.temporary, ignored);
@@ -1289,6 +1291,25 @@ bool same_storage_volume(const fs::path& source, const fs::path& destination)
 bool windows_destination(const fs::path& folder)
 {
     return destination_format(folder) == StorageFormat::windows;
+}
+
+TransferStaging::TransferStaging()
+{
+    const auto root = fs::temp_directory_path();
+    static std::atomic<unsigned> serial{0};
+    for (unsigned tries = 0; tries < 100; ++tries) {
+        path = root / (L"ROMAW-transfer-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                       std::to_wstring(++serial));
+        if (fs::create_directory(path))
+            return;
+    }
+    throw std::runtime_error("Cannot reserve private transfer staging.");
+}
+
+TransferStaging::~TransferStaging()
+{
+    std::error_code ignored;
+    fs::remove_all(path, ignored);
 }
 
 HostFileStamp host_file_stamp(const fs::path& path)
@@ -1763,9 +1784,10 @@ std::vector<SuitcaseMember> suitcase_members(const Bytes& fork)
         throw std::runtime_error("Invalid suitcase resource names");
     for (unsigned i = 0; i < map.count; ++i) {
         const size_t entry = map.offset + map.types + 2 + i * 8;
+        const uint32_t resource_type = be32(fork, entry);
         const wchar_t* kind;
         uint32_t icon_type;
-        switch (be32(fork, entry)) {
+        switch (resource_type) {
         case 0x464f4e44: // FOND
             kind = L"Font family";
             icon_type = 0x4646494c; // FFIL
@@ -1820,10 +1842,117 @@ std::vector<SuitcaseMember> suitcase_members(const Bytes& fork)
             }
             if (label.empty())
                 label = std::wstring(kind) + L" #" + std::to_wstring(int16_t(be16(fork, ref)));
-            members.push_back({std::move(label), kind, icon_type});
+            members.push_back({std::move(label), kind, icon_type, resource_type, int16_t(be16(fork, ref))});
         }
     }
     return members;
+}
+
+SuitcaseFork read_suitcase_fork(const Bytes& fork)
+{
+    SuitcaseFork result;
+    if (fork.empty())
+        return result;
+    const auto map = resource_map(fork);
+    const size_t names = be16(fork, map.offset + 26);
+    const size_t first_ref = map.types + 2 + map.count * 8;
+    const size_t data = be32(fork, 0), data_size = be32(fork, 8);
+    if (data < 16 || data + data_size > map.offset || map.types < 28 || names < first_ref || names > map.length)
+        throw std::runtime_error("Invalid suitcase resource map.");
+    result.attributes = be16(fork, map.offset + 22);
+    result.reserved_header = slice(fork, 16, data - 16);
+    std::set<ResourceKey> keys;
+    for (unsigned i = 0; i < map.count; ++i) {
+        size_t entry = map.offset + map.types + 2 + i * 8;
+        uint32_t type = be32(fork, entry);
+        unsigned count = be16(fork, entry + 4) + 1;
+        size_t refs = resource_references(fork, map, entry, count) - map.offset;
+        if (refs < first_ref || refs > names || count > (names - refs) / 12)
+            throw std::runtime_error("Invalid suitcase resource references.");
+        for (unsigned j = 0; j < count; ++j) {
+            size_t ref = map.offset + refs + j * 12;
+            SuitcaseResource resource{{type, int16_t(be16(fork, ref))}, fork[ref + 4], {}, {}};
+            if (!keys.insert(resource.key).second)
+                throw std::runtime_error("Duplicate resource IDs in suitcase.");
+            unsigned name = be16(fork, ref + 2);
+            if (name != UINT16_MAX) {
+                if (name >= map.length - names)
+                    throw std::runtime_error("Invalid suitcase resource name.");
+                size_t start = map.offset + names + name;
+                if (fork[start] > map.length - names - name - 1)
+                    throw std::runtime_error("Truncated suitcase resource name.");
+                resource.name = slice(fork, start, fork[start] + 1);
+            }
+            size_t offset = (size_t(fork[ref + 5]) << 16) | be16(fork, ref + 6);
+            if (offset > data_size || data_size - offset < 4)
+                throw std::runtime_error("Invalid suitcase resource data offset.");
+            size_t length = be32(fork, data + offset);
+            if (length > data_size - offset - 4)
+                throw std::runtime_error("Truncated suitcase resource data.");
+            resource.payload = slice(fork, data + offset + 4, length);
+            result.resources.push_back(std::move(resource));
+        }
+    }
+    return result;
+}
+
+Bytes encode_suitcase_fork(const SuitcaseFork& fork)
+{
+    std::map<uint32_t, std::vector<const SuitcaseResource*>> groups;
+    for (const auto& record : fork.resources)
+        groups[record.key.first].push_back(&record);
+    const size_t data_base = std::max<size_t>(256, 16 + fork.reserved_header.size());
+    size_t names_at = 30 + groups.size() * 8 + fork.resources.size() * 12;
+    if (names_at > UINT16_MAX)
+        throw std::runtime_error("Too many items in the suitcase.");
+    Bytes data(data_base), map(names_at), names;
+    std::copy(fork.reserved_header.begin(), fork.reserved_header.end(), data.begin() + 16);
+    auto store = [](Bytes& bytes, size_t offset, uint32_t value, unsigned count) {
+        for (unsigned i = 0; i < count; ++i)
+            bytes[offset + i] = value >> (8 * (count - 1 - i));
+    };
+    store(map, 22, fork.attributes & ~0x60u, 2); // Clear mapChanged and mapCompact after rewriting.
+    store(map, 24, 28, 2);
+    store(map, 26, names_at, 2);
+    store(map, 28, uint16_t(groups.size() - 1), 2);
+    size_t type_at = 30, ref = 30 + groups.size() * 8;
+    for (const auto& [type, records] : groups) {
+        store(map, type_at, type, 4);
+        store(map, type_at + 4, records.size() - 1, 2);
+        store(map, type_at + 6, ref - 28, 2);
+        type_at += 8;
+        for (const auto* record : records) {
+            size_t offset = data.size() - data_base;
+            if (offset > 0xFFFFFF || names.size() >= UINT16_MAX)
+                throw std::runtime_error("Suitcase resource offsets exceed the classic format limit.");
+            store(map, ref, uint16_t(record->key.second), 2);
+            store(map, ref + 2, record->name.empty() ? UINT16_MAX : unsigned(names.size()), 2);
+            // RsrcChanged describes in-memory state rather than saved attributes.
+            store(map, ref + 4, (uint32_t(record->attributes & ~2u) << 24) | uint32_t(offset), 4);
+            ref += 12;
+            names.insert(names.end(), record->name.begin(), record->name.end());
+            size_t padding = record->payload.size() & 1u;
+            constexpr size_t capacity = 64u * 1024 * 1024;
+            if (data.size() > capacity - 4 - padding ||
+                record->payload.size() > capacity - data.size() - 4 - padding)
+                throw std::runtime_error("Suitcase is too large.");
+            data.resize(data.size() + 4);
+            store(data, data.size() - 4, record->payload.size(), 4);
+            data.insert(data.end(), record->payload.begin(), record->payload.end());
+            if (padding)
+                data.push_back(0);
+        }
+    }
+    if (map.size() + names.size() > UINT16_MAX || data.size() + map.size() + names.size() > 64u * 1024 * 1024)
+        throw std::runtime_error("Suitcase resource map is too large.");
+    map.insert(map.end(), names.begin(), names.end());
+    store(data, 0, data_base, 4);
+    store(data, 4, data.size(), 4);
+    store(data, 8, data.size() - data_base, 4);
+    store(data, 12, map.size(), 4);
+    std::copy_n(data.begin(), 16, map.begin());
+    data.insert(data.end(), map.begin(), map.end());
+    return data;
 }
 
 // Hide fork/database files and both current and legacy unfinished-copy
@@ -1858,7 +1987,7 @@ bool hidden_metadata(const fs::path& p)
 namespace {
 // Write replacement metadata to a new temporary file and publish it only after
 // the complete write and close succeed.
-void write_sidecar(const fs::path& p, const fs::path& path, const Bytes& b)
+void write_sidecar(const fs::path& p, const fs::path& path, const Bytes& b, bool replace_data = false)
 {
     if (mac_file(p).macbinary)
         throw std::runtime_error("Extract this MacBinary file before editing its Finder metadata.");
@@ -1877,7 +2006,10 @@ void write_sidecar(const fs::path& p, const fs::path& path, const Bytes& b)
         fs::remove(temporary);
         win_error(error ? error : ERROR_WRITE_FAULT);
     }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    bool replaced = replace_data ? ReplaceFileW(path.c_str(), temporary.c_str(), nullptr, 0, nullptr, nullptr)
+                                 : MoveFileExW(temporary.c_str(), path.c_str(),
+                                               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (!replaced) {
         auto e = GetLastError();
         fs::remove(temporary);
         win_error(e);
@@ -2123,11 +2255,11 @@ void set_label(const fs::path& p, unsigned label)
     set_finder_flags(p, 14, label * 2);
 }
 
-// Publish FinderInfo and the resource fork in the same AppleDouble write.
-// An existing split fork stays behind the new primary companion.
-void write_icon_metadata(const fs::path& path, const Bytes* fork, bool custom, bool carrier)
+// Publish FinderInfo and the resource fork together, retaining unrelated entries.
+static void write_host_metadata(const fs::path& path, const Bytes* fork, std::optional<bool> custom, bool carrier,
+                                const Bytes* supplied_info = nullptr, const fs::path& existing = {})
 {
-    auto target = sidecar(path);
+    auto target = existing.empty() ? sidecar(path) : existing;
     auto original = read_bytes(target);
     if (original.empty() && fs::exists(target))
         throw std::runtime_error("The sidecar is invalid; original preserved.");
@@ -2153,7 +2285,9 @@ void write_icon_metadata(const fs::path& path, const Bytes* fork, bool custom, b
             else if (entry.type != 2 || !fork)
                 parts.emplace_back(entry.type, slice(original, entry.offset, entry.length));
         }
-    if (info.empty()) {
+    if (supplied_info)
+        info = *supplied_info;
+    else if (info.empty()) {
         auto raw = read_bytes(path.parent_path() / MAC_STORAGE_INFO_DIRECTORY / path.filename());
         ROMAWMacStorageEntry compact;
         if (romaw_mac_storage_find(raw.data(), raw.size(), raw.size(), 9, 1, &compact))
@@ -2166,8 +2300,8 @@ void write_icon_metadata(const fs::path& path, const Bytes* fork, bool custom, b
         if (be32(info, 0) == 0 && be32(info, 4) == 0)
             std::copy_n("iconMACS", 8, info.begin());
     }
-    else
-        info[8] = (info[8] & ~4u) | (custom ? 4 : 0);
+    else if (custom)
+        info[8] = (info[8] & ~4u) | (*custom ? 4 : 0);
     parts.emplace_back(9, std::move(info));
     if (fork)
         parts.emplace_back(2, *fork);
@@ -2189,6 +2323,57 @@ void write_icon_metadata(const fs::path& path, const Bytes* fork, bool custom, b
             throw std::runtime_error("Invalid AppleDouble entry; original preserved.");
     }
     write_sidecar(path, target, result);
+}
+
+void write_icon_metadata(const fs::path& path, const Bytes* fork, bool custom, bool carrier)
+{
+    write_host_metadata(path, fork, custom, carrier);
+}
+
+void replace_host_suitcase_fork(const fs::path& path, const Bytes& fork, bool data_fork)
+{
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_DIRECTORY))
+        throw std::runtime_error("The suitcase is locked or unavailable.");
+    if (data_fork) {
+        write_sidecar(path, path, fork, true);
+        return;
+    }
+    // Match the same first populated fork selected by mac_file. In
+    // particular, classic split storage keeps its original resource file.
+    for (const auto& companion : mac_companions(path)) {
+        auto bytes = read_bytes(companion);
+        if (companion.parent_path().filename() == MAC_STORAGE_RESOURCE_DIRECTORY && !bytes.empty()) {
+            write_sidecar(path, companion, fork);
+            return;
+        }
+        ROMAWMacStorageEntry entry{};
+        if (romaw_mac_storage_find(bytes.data(), bytes.size(), bytes.size(), 2, 1, &entry) && entry.length) {
+            write_host_metadata(path, &fork, std::nullopt, false, nullptr, companion);
+            return;
+        }
+    }
+    throw std::runtime_error("The suitcase resource fork is no longer available.");
+}
+
+void create_host_resource_file(const fs::path& path, uint32_t type, uint32_t creator, const Bytes& fork)
+{
+    Bytes info(32);
+    for (unsigned i = 0; i < 4; ++i) {
+        info[i] = type >> (24 - 8 * i);
+        info[4 + i] = creator >> (24 - 8 * i);
+    }
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        win_error(GetLastError());
+    CloseHandle(file);
+    try {
+        write_host_metadata(path, &fork, std::nullopt, false, &info);
+    }
+    catch (...) {
+        DeleteFileW(path.c_str());
+        throw;
+    }
 }
 
 void set_stationery(const fs::path& p, bool stationery)

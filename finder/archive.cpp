@@ -3,7 +3,7 @@
 
   Summary:   Stage verified archives and publish only to compatible host folders or mounted images.
 
-  Classes:   ArchiveSource, ArchiveDestination, Staging; CopyJob.
+  Classes:   ArchiveSource, ArchiveDestination, TransferStaging; CopyJob.
 
   Functions: finder::archive_destination_allowed, finder::extract_archives.
 
@@ -24,33 +24,6 @@
 
 namespace finder {
 namespace {
-struct Staging {
-    fs::path path;
-
-    Staging()
-    {
-        wchar_t temporary[32768]{};
-        if (!GetTempPathW(std::size(temporary), temporary))
-            throw std::system_error(GetLastError(), std::system_category());
-        static std::atomic<unsigned> serial{0};
-        for (unsigned tries = 0; tries < 100; ++tries) {
-            path = fs::path(temporary) /
-                   (L"ROMAW-archive-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++serial));
-            if (CreateDirectoryW(path.c_str(), nullptr))
-                return;
-            if (GetLastError() != ERROR_ALREADY_EXISTS)
-                throw std::system_error(GetLastError(), std::system_category());
-        }
-        throw std::runtime_error("Cannot reserve private archive staging");
-    }
-
-    ~Staging()
-    {
-        std::error_code ignored;
-        fs::remove_all(path, ignored);
-    }
-};
-
 Bytes source_bytes(const ArchiveSource& source)
 {
     if (!source.volume)
@@ -137,7 +110,7 @@ std::shared_ptr<CopyJob> extract_archives(Copies& copies, const std::vector<Arch
             }
         }
     }
-    auto staging = std::make_shared<Staging>();
+    auto staging = std::make_shared<TransferStaging>();
     auto write = [](const fs::path& path, const Bytes& bytes) {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
