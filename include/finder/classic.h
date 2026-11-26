@@ -156,6 +156,7 @@ int message_box(HWND owner, const wchar_t* text, UINT flags);
 void about_box(HWND owner);
 // IDYES replaces, IDNO skips, IDCANCEL stops this transfer only.
 int conflict_box(HWND owner, const wchar_t* text);
+int yes_no_cancel_box(HWND owner, const wchar_t* text);
 bool confirm(HWND owner, const wchar_t* text, const wchar_t* affirmative);
 // Return label 0..7, or -1 if dismissed without a selection.
 int choose_label(HWND owner, int checked);

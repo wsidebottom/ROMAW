@@ -3776,10 +3776,10 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 SetPropW(b, L"FinderDefault", reinterpret_cast<HANDLE>(1));
             return b;
         };
-        if (data->conflict) {
-            button(L"Stop", IDCANCEL, r.right - 278, 76);
-            button(L"Skip", IDNO, r.right - 192, 76);
-            SetFocus(button(L"Replace", IDYES, r.right - 106, 88));
+        if ((data->flags & MB_TYPEMASK) == MB_YESNOCANCEL) {
+            button(data->conflict ? L"Stop" : L"Cancel", IDCANCEL, r.right - 278, 76);
+            button(data->conflict ? L"Skip" : L"No", IDNO, r.right - 192, 76);
+            SetFocus(button(data->conflict ? L"Replace" : L"Yes", IDYES, r.right - 106, 88));
         }
         else if (data->flags & MB_YESNO) {
             button(L"Cancel", IDNO, r.right - 210, 76);
@@ -3983,7 +3983,7 @@ static int run_notice(HWND owner, Notice data)
         }
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
             int command = data.conflict || (data.flags & MB_YESNO) ? IDYES : IDOK;
-            if (data.conflict) {
+            if ((data.flags & MB_TYPEMASK) == MB_YESNOCANCEL) {
                 int focused = GetDlgCtrlID(GetFocus());
                 if (focused == IDYES || focused == IDNO || focused == IDCANCEL)
                     command = focused;
@@ -4036,6 +4036,11 @@ int message_box(HWND owner, const wchar_t* text, UINT flags)
 int conflict_box(HWND owner, const wchar_t* text)
 {
     return notice(owner, text, MB_YESNOCANCEL | MB_ICONWARNING, nullptr, L"Replace", true);
+}
+
+int yes_no_cancel_box(HWND owner, const wchar_t* text)
+{
+    return notice(owner, text, MB_YESNOCANCEL | MB_ICONINFORMATION, nullptr);
 }
 
 // Present the requested affirmative action and return true only for an

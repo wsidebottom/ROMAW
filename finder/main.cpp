@@ -1403,10 +1403,8 @@ void copy_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& fol
 
 // Preserve the classic same-volume move / cross-volume copy default. A mixed
 // selection may create two independent jobs, each with its own cancellation.
-void drag_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& folder)
+void drag_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& folder, bool option, bool shift)
 {
-    bool option = GetKeyState(VK_MENU) < 0 || GetKeyState(VK_CONTROL) < 0;
-    bool shift = GetKeyState(VK_SHIFT) < 0;
     std::vector<fs::path> moving, copying;
     for (const auto& path : paths)
         (drag_copies(same_storage_volume(path, folder), option, shift) ? copying : moving).push_back(path);
@@ -1547,6 +1545,59 @@ void make_windows_shortcut(Item item)
         if (!folder->desktop && !folder->image_volume &&
             _wcsicmp(folder->path.c_str(), windows_desktop_path.c_str()) == 0)
             refresh(*folder);
+}
+
+// Ask once per drop. The caller keeps its original transfer selection for No.
+int offer_windows_shortcuts(HWND owner, const std::vector<Item>& applications)
+{
+    if (applications.empty())
+        return IDNO;
+    std::wstring question =
+        applications.size() == 1
+            ? L"“" + applications.front().name + L"” is a Macintosh application. Make a Windows shortcut instead?"
+            : L"This selection includes Macintosh applications. Make Windows shortcuts for them instead?";
+    auto answer = classic::yes_no_cancel_box(owner, question.c_str());
+    if (answer == IDYES) {
+        classic::WaitingCursor waiting;
+        for (const auto& item : applications)
+            make_windows_shortcut(item);
+    }
+    return answer;
+}
+
+void drop_host_items(HWND owner, std::vector<fs::path> paths, fs::path target)
+{
+    const bool option = GetKeyState(VK_MENU) < 0 || GetKeyState(VK_CONTROL) < 0;
+    const bool shift = GetKeyState(VK_SHIFT) < 0;
+    if (_wcsicmp(target.c_str(), windows_desktop_path.c_str()) == 0) {
+        std::vector<Item> applications;
+        for (const auto& path : paths) {
+            try {
+                auto metadata = mac_file(path);
+                if (metadata.kind == FINDER_CLASSIC_APPLICATION && !fs::is_directory(path)) {
+                    Item item;
+                    item.path = path;
+                    item.name = mac_display_name(path, metadata);
+                    item.mac = std::move(metadata);
+                    applications.push_back(std::move(item));
+                }
+            }
+            catch (...) {
+                // Ordinary files still use the normal transfer path if metadata is unavailable.
+            }
+        }
+        int answer = offer_windows_shortcuts(owner, applications);
+        if (answer == IDCANCEL)
+            return;
+        if (answer == IDYES)
+            paths.erase(std::remove_if(paths.begin(), paths.end(),
+                                       [&](const auto& path) {
+                                           return std::any_of(applications.begin(), applications.end(),
+                                                              [&](const auto& app) { return app.path == path; });
+                                       }),
+                        paths.end());
+    }
+    drag_to(IsWindow(owner) ? owner : desktop, paths, target, option, shift);
 }
 
 void open_item(HWND owner, Item item);
@@ -4033,7 +4084,7 @@ void drop(FolderWindow& destination, POINT screen, const std::vector<fs::path>& 
             return;
         }
         if (item.folder) {
-            drag_to(destination.window, paths, item.path);
+            drop_host_items(destination.window, paths, item.path);
             return;
         }
     }
@@ -4043,7 +4094,7 @@ void drop(FolderWindow& destination, POINT screen, const std::vector<fs::path>& 
             show_operation(job);
         return;
     }
-    drag_to(destination.window, paths, destination.desktop ? desktop_folder : destination.path);
+    drop_host_items(destination.window, paths, destination.desktop ? desktop_folder : destination.path);
 }
 
 // Mounted sources are copied, preserving their original image and both forks.
@@ -4087,8 +4138,15 @@ void drop_image(FolderWindow& source, FolderWindow& destination, POINT screen)
     }
     auto volumes = image_volumes();
     std::vector<ImageCopySource> selections;
+    std::vector<Item> applications;
+    std::vector<size_t> application_indices;
+    const bool windows_target = !target_volume && _wcsicmp(target.c_str(), windows_desktop_path.c_str()) == 0;
     for (int selected : drag_indices) {
         const auto& item = source.items.at(selected);
+        if (windows_target && !item.folder && item.mac.kind == FINDER_CLASSIC_APPLICATION) {
+            application_indices.push_back(selections.size());
+            applications.push_back(item);
+        }
         auto volume = std::find_if(volumes.begin(), volumes.end(),
                                    [&](const auto& v) { return v.reference == item.image_volume; });
         if (volume == volumes.end())
@@ -4116,13 +4174,21 @@ void drop_image(FolderWindow& source, FolderWindow& destination, POINT screen)
                               item.image_volume,
                               {item.image_parent, item.image_id, item.image_name}});
     }
-    classic::WaitingCursor waiting;
     bool same_volume = target_volume == source.image_volume;
     bool option = GetKeyState(VK_MENU) < 0 || GetKeyState(VK_CONTROL) < 0;
     auto kind = !same_volume                                 ? TransferKind::copy
                 : !option                                    ? TransferKind::move
                 : target_directory == source.image_directory ? TransferKind::duplicate
                                                              : TransferKind::copy;
+    const int answer = offer_windows_shortcuts(destination.window, applications);
+    if (answer == IDCANCEL)
+        return;
+    if (answer == IDYES)
+        for (auto app = application_indices.rbegin(); app != application_indices.rend(); ++app)
+            selections.erase(selections.begin() + *app);
+    if (selections.empty())
+        return;
+    classic::WaitingCursor waiting;
     auto job = target_volume ? copy_into_image(copies, {}, selections, target_volume, target_directory, target, kind)
                              : copy_image_items(copies, selections, target);
     if (job)
