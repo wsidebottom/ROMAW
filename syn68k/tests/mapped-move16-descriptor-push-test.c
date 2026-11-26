@@ -388,6 +388,14 @@ int main(int argc, char** argv)
                 for (unsigned trace = 0; trace < 4; ++trace)
                     for (unsigned form = 0; form < 5; form += 4)
                         descriptor_case(mode,page,0,2,form,2,1,user,trace,15,0,0,1);
+    /* MOVE16 continuation uses the closed memory image, rather than a persisted
+       instruction body. Also exercise the shared mapped-code cache in this bus. */
+    unsigned matrix_cases = cases;
+    for (unsigned mode = 0; mode < 3; ++mode)
+        instruction_view(mode);
+    assert(cases == matrix_cases + 3);
+    cases = matrix_cases;
+    puts("3 persistent cache-backed instruction-view sentinel cases passed");
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
