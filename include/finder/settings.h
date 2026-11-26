@@ -25,7 +25,7 @@ void save_host_window(HWND window, const std::filesystem::path& ini);
 // Restore host placement, falling back to the historical Desktop geometry.
 bool restore_host_window(HWND window, const std::filesystem::path& ini);
 // Move legacy storage only when current storage is absent; never merge trees.
-std::filesystem::path settings_directory(const std::filesystem::path& local);
+std::filesystem::path settings_directory(const std::filesystem::path& profile, const std::filesystem::path& local);
 // Best-effort removal of retired global keys; a missing file stays missing.
 void remove_startup_preferences(const std::filesystem::path& path);
 // This historical UTF-16 hash is a persistence format; changing it loses keys.

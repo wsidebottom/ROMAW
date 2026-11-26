@@ -5648,9 +5648,8 @@ extern "C" int romaw_finder_main(void)
         wchar_t* local = nullptr;
         if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)))
             throw std::runtime_error("Cannot locate application settings");
-        auto local_directory = fs::path(local);
-        CoTaskMemFree(local);
-        preferences = settings_directory(local_directory) / L"settings.ini";
+        std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> local_directory(local, CoTaskMemFree);
+        preferences = settings_directory(romaw_folder.parent_path(), fs::path(local_directory.get())) / L"settings.ini";
         show_hidden = profile_string(L"View", L"ShowHidden", L"0") == L"1";
         spring_folders = profile_string(L"View", L"SpringFolders", L"1") == L"1";
         desktop_folder = preferences.parent_path() / L"Desktop";

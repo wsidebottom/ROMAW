@@ -23,6 +23,7 @@
 #include "finder/settings.h"
 #include <windows.h>
 #include <algorithm>
+#include <array>
 #include <sstream>
 #include <cstdint>
 #include <vector>
@@ -31,13 +32,8 @@ namespace finder {
 namespace fs = std::filesystem;
 
 namespace {
-// The old name is retained only to read settings written before the rename.
-// Derive the pre-rename storage path solely for migration and compatibility
-// lookups.
-fs::path legacy_directory(const fs::path& directory)
-{
-    return directory.parent_path() / L"Finder64";
-}
+// The old roots remain lookup keys for paths recorded before the move.
+std::array<fs::path, 2> previous_roots;
 
 // Translate a rooted storage path without rewriting unrelated text or sibling
 // prefixes; preserve the original suffix spelling.
@@ -55,14 +51,24 @@ std::wstring remap_path(const std::wstring& value, const fs::path& from, const f
 }
 }
 
-// Move legacy state as one directory only when the current directory is
-// absent. Never merge or overwrite an existing current tree.
-fs::path settings_directory(const fs::path& local)
+// Move one existing directory as a unit on the first launch that uses .romaw.
+fs::path settings_directory(const fs::path& profile, const fs::path& local)
 {
-    auto current = local / L"Finder";
-    auto legacy = legacy_directory(current);
-    if (!fs::exists(current) && fs::is_directory(legacy))
-        fs::rename(legacy, current);
+    auto current = profile / L"Finder";
+    previous_roots = {};
+    if (!local.empty())
+        previous_roots = {local / L"Finder", local / L"Finder64"};
+    if (!fs::exists(current)) {
+        fs::create_directories(profile);
+        for (const auto& source : previous_roots)
+            if (!source.empty() && fs::is_directory(source)) {
+                std::error_code error;
+                fs::rename(source, current, error);
+                if (error && !fs::is_directory(current))
+                    throw fs::filesystem_error("Cannot move Finder settings", source, current, error);
+                break;
+            }
+    }
     fs::create_directories(current);
     return current;
 }
@@ -97,7 +103,13 @@ std::wstring settings_value(const fs::path& ini, const wchar_t* section, const s
     std::vector<wchar_t> buffer(32768);
     GetPrivateProfileStringW(section, key.c_str(), fallback, buffer.data(), DWORD(buffer.size()), ini.c_str());
     auto directory = ini.parent_path();
-    return remap_path(buffer.data(), legacy_directory(directory), directory);
+    for (const auto& old : previous_roots)
+        if (!old.empty()) {
+            auto mapped = remap_path(buffer.data(), old, directory);
+            if (mapped != buffer.data())
+                return mapped;
+        }
+    return buffer.data();
 }
 
 // Prefer current path-keyed settings, then retry the old storage-path key
@@ -108,10 +120,16 @@ std::wstring settings_path_value(const fs::path& ini, const wchar_t* section, co
     if (!value.empty())
         return value;
     auto directory = ini.parent_path();
-    auto old_path = remap_path(path.wstring(), directory, legacy_directory(directory));
-    if (old_path == path.wstring())
-        return value;
-    return settings_value(ini, section, settings_path_key(old_path));
+    for (const auto& old : previous_roots)
+        if (!old.empty()) {
+            auto old_path = remap_path(path.wstring(), directory, old);
+            if (old_path != path.wstring()) {
+                value = settings_value(ini, section, settings_path_key(old_path));
+                if (!value.empty())
+                    break;
+            }
+        }
+    return value;
 }
 
 // WINDOWPLACEMENT keeps the restored rectangle independently of the visible

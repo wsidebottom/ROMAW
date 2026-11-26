@@ -61,12 +61,10 @@ The generator also accepts `--debug` and `--output-dir` for isolated builds.
 On Windows, use Python 3 with the requirements above and the MSYS2 x64 toolchain;
 `FINDER_TOOLCHAIN` overrides its default `C:/msys64/mingw64/bin` location.
 
-Existing `%LOCALAPPDATA%\Finder64` state is moved to `%LOCALAPPDATA%\Finder`
-on first launch when the new directory does not already exist. The INI file and
-Desktop/Trash contents are preserved, including Unicode names. Legacy saved
-window paths, path-keyed geometry, icon positions and Put Away records are read
-through compatibility mappings. If both directories exist, current Finder state
-takes precedence and the old directory is left untouched.
+Finder stores its user data in `%USERPROFILE%\.romaw\Finder`. On first launch,
+Finder moves the existing `%LOCALAPPDATA%\Finder` or `Finder64` directory there
+when the destination is absent. Compatibility lookups resolve old window paths,
+path-keyed geometry, icon positions and Put Away records to the moved files.
 
 ## Classic software launcher
 
@@ -246,10 +244,10 @@ assets retain their existing native compositing path.
   release their row snapshot. Virtual drive icons remain desktop objects and
   cannot be transferred as ordinary host folders.
 - Window geometry, open folders and icon positions saved in
-  `%LOCALAPPDATA%\Finder\settings.ini`.
+  `%USERPROFILE%\.romaw\Finder\settings.ini`.
 
 Desktop items use the ROMAW volume's existing `Desktop Folder` when present;
-otherwise they use `%LOCALAPPDATA%\Finder\Desktop`. Desktop items with a saved
+otherwise they use `%USERPROFILE%\.romaw\Finder\Desktop`. Desktop items with a saved
 classic position take their coordinates from Finder Info. A native drag or
 Clean Up saves a local override until the item's classic coordinates change.
 Icons use the same classic Desktop DB/DF

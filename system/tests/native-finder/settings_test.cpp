@@ -48,7 +48,8 @@ int main()
     assert(StringFromGUID2(guid, id, std::size(id)));
     auto root = fs::path(temporary) / (L"Finder-settings-" + std::wstring(id));
     auto old = root / L"Finder64";
-    auto current = root / L"Finder";
+    auto profile = root / L".romaw";
+    auto current = profile / L"Finder";
     auto nested = fs::path(L"Desktop/Nested \u65e5\u672c");
     fs::create_directories(old / nested);
     fs::create_directories(old / L"Trash");
@@ -66,7 +67,7 @@ int main()
     put(ini, L"Labels", L"1", L"Cool project");
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, ini.c_str());
     auto original = bytes(ini);
-    assert(settings_directory(root) == current);
+    assert(settings_directory(profile, root) == current);
     ini = current / L"settings.ini";
     assert(!fs::exists(old) && bytes(ini) == original);
     assert(bytes(current / nested / L"File") == "desktop data");
@@ -80,27 +81,39 @@ int main()
     assert(settings_path_value(ini, L"PutAway", current / L"Trash/Item") == (current / nested / L"Original").wstring());
     put(ini, L"WindowsNative", settings_path_key(current / nested), L"30,40,800,600");
     assert(settings_path_value(ini, L"WindowsNative", current / nested) == L"30,40,800,600");
-    assert(settings_directory(root) == current);
+    assert(settings_directory(profile, root) == current);
     // Existing current settings take precedence without changing either tree.
     fs::create_directory(old);
     std::ofstream(old / L"settings.ini") << "legacy settings";
     auto saved = bytes(ini);
-    assert(settings_directory(root) == current && bytes(ini) == saved);
+    assert(settings_directory(profile, root) == current && bytes(ini) == saved);
     assert(bytes(old / L"settings.ini") == "legacy settings");
     auto blocked = root / L"Blocked";
     fs::create_directories(blocked / L"Finder64");
+    fs::create_directory(blocked / L".romaw");
     std::ofstream(blocked / L"Finder64/settings.ini") << "preserved";
-    std::ofstream(blocked / L"Finder") << "existing file";
+    std::ofstream(blocked / L".romaw/Finder") << "existing file";
     bool failed = false;
     try {
-        settings_directory(blocked);
+        settings_directory(blocked / L".romaw", blocked);
     }
     catch (const fs::filesystem_error&) {
         failed = true;
     }
     assert(failed && bytes(blocked / L"Finder64/settings.ini") == "preserved");
-    assert(bytes(blocked / L"Finder") == "existing file");
-    assert(settings_directory(root / L"Fresh") == root / L"Fresh/Finder");
+    assert(bytes(blocked / L".romaw/Finder") == "existing file");
+    assert(settings_directory(root / L"Fresh", {}) == root / L"Fresh/Finder");
+    auto local = root / L"Local";
+    auto previous = local / L"Finder";
+    auto migrated = root / L"Moved";
+    fs::create_directories(previous / L"Shortcut Icons");
+    std::ofstream(previous / L"Shortcut Icons/Application.ico") << "icon data";
+    put(previous / L"settings.ini", L"Session", L"Window1", (previous / nested).wstring());
+    assert(settings_directory(migrated, local) == migrated / L"Finder");
+    assert(!fs::exists(previous));
+    assert(bytes(migrated / L"Finder/Shortcut Icons/Application.ico") == "icon data");
+    assert(settings_value(migrated / L"Finder/settings.ini", L"Session", L"Window1") ==
+           (migrated / L"Finder" / nested).wstring());
     auto runtime_prefs = root / L"ROMAW.prefs";
     std::ofstream(runtime_prefs)
         << "[ROMAW]\r\nStartup=ROMAW Finder\r\nBrowser=old app\r\nOther=keep\r\n[Elsewhere]\r\nStartup=unchanged\r\n";
