@@ -5,6 +5,58 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Latest validated bundle: physical snoop lowering (2026-11-27)
+
+Source checkpoint `d2397f65` adds accepted external-master snoops to the
+physical cache and mapped-memory bindings, with packet and typed native roots.
+Both physical cache banks obey their snoop state transitions, including
+instruction-line invalidation on enabled external writes and SC=2 reads.
+Scalar dirty sink writes latch input before any bank changes. MMU, CPU
+registers and the CPU store-attempt flag are unaffected; disabled caches
+continue to participate. Read misses and nonintervening hits leave memory
+response to the board.
+
+The 1,045,880-case state/SC/TT/dirty-mask/offset/alias/ownership matrix passes
+in reference/sanitized runs and through emitted packet and bus entries on
+Windows and Linux x64. All 21 native groups pass on each ABI, with 47 verified
+roots and no imports. The CPU archive's emitted image matches the independently
+generated Windows image. Both checked and emitted earlier candidates fail the
+final metadata-alias regression at the expected input-latching assertion.
+
+A mapped 24-case regression checks CPU and memory dispatch combinations,
+dirty source/sink and clean invalidation with caches disabled, and external
+code writes for all SC encodings. Changing a cached MOVEQ into a two-word FABS
+checks opcode family, instruction length, instruction-cache visibility and
+FPU execution. Its cold/warm AOT runs pass, with no warm compilation.
+Inhibited external writes wait for guest CINVL to change the instruction view;
+enabled writes invalidate it.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. The FPU group retains 1,714,422 reported cases.
+MMU stream recovery retains 8,107,168 cases; mapped AOT recovery passes
+3,618,920 per process with 1,262,191 warm hits and zero warm compilation.
+Basic saved-state and 146 Motorola FPSP cases pass in both dispatch modes
+at two load addresses.
+
+ROMAW uses application base `caa0da54aa5cf3219e333e2480ef7a4a76008941` with the tested
+CPU archive. The 66-file bundle at `build/68040-snoop3-stage/bin` is promoted
+to `build/68040-current/bin`; the previous bundle is retained at
+`build/68040-pre-snoop3-bin-20261127`.
+`build/68040-snoop3-output/68040-snoop3-source-audit.json` matches
+179 CPU inputs, 165 fixtures and four identical CPU archives.
+CPU build ID is `0671b6be564aeca21de5a2b15c561dea4ecaf452ea6c803df0148e8f86e47a7e`;
+archive SHA256 is `b743876fa2a3227b489abb1d4e5c33faee0082d8d667a808d8bf1742cd5a21ee`.
+Help, Browser and 68K Speedometer startup pass. Browser/Speedometer reach
+30,940/77,153 native entries with null checkpoints and no Windows exception;
+Speedometer issues one FPU query.
+
+The broader goal remains active. Valid source-miss compound descriptor pushes,
+further locked/active-stack/double-fault continuations, physical instruction
+prefetch, in-flight victim-buffer/partial external transaction integration,
+and remaining FPU busy/FPSP, encoding and special-value audits remain open.
+The snoop API does not claim pin-level arbitration/termination timing.
+Full 68040 and ROMAW-wide paged Toolbox compatibility remain unproven.
+
 ## Valid descriptor regression follow-up (2026-11-27)
 
 The original descriptor-push fixture used U=0,M=1, which UM 3.2.1 prohibits.
@@ -34,7 +86,7 @@ an uncached source read and a destination descriptor push fault in all three
 execution modes. That remains open; cached-source replay must not be extended
 to it without establishing safe bus sequencing and the appropriate frame.
 
-## Latest validated bundle: MOVE16 descriptor pushes (2026-11-27)
+## MOVE16 descriptor pushes (2026-11-27)
 
 Source checkpoint `7d562350` certifies the compound fault where MOVE16 obtains
 its source from cache before a destination descriptor U update encounters a
