@@ -57,6 +57,8 @@ enum ConfigDriveFormat {
 /* Stable UI order: Windows, OSX, Netatalk, BasiliskII, ROMAW. */
 const char* config_drive_format_name(int format);
 int config_drive_format(const char* path);
+/* Register the native Finder's PC-only desktop root before starting workers. */
+int config_drive_set_windows_desktop(const char* path);
 int config_drive_detect_format(const char* directory);
 int config_drive_prefs_save_formats(const char* path, const int formats[26], const char* const* directories,
                                     size_t count);

@@ -44,6 +44,7 @@
 static _Atomic uint32_t sidecar_drives;
 static _Atomic int sidecar_formats[26];
 static char* sidecar_apps;
+static char* windows_desktop;
 static char* drive_prefs_path;
 static char* sidecar_directories[CONFIG_DRIVE_DIRECTORY_LIMIT];
 static size_t sidecar_directory_count;
@@ -119,13 +120,25 @@ const char* config_drive_format_name(int format)
     return format >= CONFIG_DRIVE_UNDECLARED && format <= CONFIG_DRIVE_ROMAW ? names[format] : NULL;
 }
 
+int config_drive_set_windows_desktop(const char* path)
+{
+    char* normalized = path ? drive_path_normalize(path) : NULL;
+    if (path && !normalized)
+        return 0;
+    free(windows_desktop);
+    windows_desktop = normalized;
+    return 1;
+}
+
 int config_drive_format(const char* path)
 {
     char* normalized = drive_path_normalize(path);
     if (!normalized)
         return CONFIG_DRIVE_UNDECLARED;
     int format = CONFIG_DRIVE_UNDECLARED;
-    if (sidecar_apps && drive_path_inside(sidecar_apps, normalized))
+    if (windows_desktop && drive_path_inside(windows_desktop, normalized))
+        format = CONFIG_DRIVE_WINDOWS;
+    else if (sidecar_apps && drive_path_inside(sidecar_apps, normalized))
         format = CONFIG_DRIVE_OSX;
     else if (isalpha((unsigned char)normalized[0]) && normalized[1] == ':')
         format = atomic_load(&sidecar_formats[toupper((unsigned char)normalized[0]) - 'A']);
@@ -215,6 +228,10 @@ int config_drive_sidecars(const char* path)
     char* normalized = drive_path_normalize(path);
     if (!normalized)
         return 0;
+    if (windows_desktop && drive_path_inside(windows_desktop, normalized)) {
+        free(normalized);
+        return 0;
+    }
     int compatible = sidecar_apps && drive_path_inside(sidecar_apps, normalized);
     for (size_t i = 0; !compatible && i < sidecar_directory_count; ++i)
         compatible = drive_path_inside(sidecar_directories[i], normalized);

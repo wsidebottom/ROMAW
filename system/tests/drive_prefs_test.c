@@ -140,6 +140,13 @@ int main(void)
         assert(config_drive_format("A:/") == CONFIG_DRIVE_WINDOWS);
         assert(config_drive_format("b:/Folder") == CONFIG_DRIVE_OSX);
         assert(config_drive_format("C:/Folder") == CONFIG_DRIVE_NETATALK);
+        assert(config_drive_set_windows_desktop("C:/Users/William/Desktop"));
+        assert(config_drive_format("c:\\users\\william\\Desktop\\Nested") == CONFIG_DRIVE_WINDOWS);
+        assert(!config_drive_sidecars("C:/Users/William/Desktop/Nested"));
+        assert(config_drive_format("C:/Users/William/Desktop Backup") == CONFIG_DRIVE_NETATALK);
+        assert(config_drive_sidecars("C:/Users/William/Desktop Backup"));
+        assert(config_drive_set_windows_desktop(NULL));
+        assert(config_drive_format("C:/Users/William/Desktop") == CONFIG_DRIVE_NETATALK);
         assert(config_drive_format("D:/") == CONFIG_DRIVE_BASILISKII);
         assert(config_drive_format("E:/") == CONFIG_DRIVE_ROMAW);
         assert(config_drive_format("F:/") == CONFIG_DRIVE_UNDECLARED);

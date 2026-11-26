@@ -140,13 +140,16 @@ struct DriveMetadata {
     std::chrono::steady_clock::time_point completed;
 };
 
+constexpr int windows_desktop_volume = 5;
+constexpr wchar_t windows_desktop_name[] = L"Windows Desktop";
+
 struct Item {
     fs::path path;
     std::wstring name;
     MacFile mac;
     std::shared_ptr<DriveMetadata> drive_metadata;
     ViewEntry details;
-    // Roles: ordinary item, drive, ROMAW volume, Trash, mounted image. icon is a list index,
+    // Roles: ordinary item, drive, ROMAW volume, Trash, mounted image, Windows Desktop. icon is a list index,
     // not an owned HICON; decoded handles are retained in the shared icon cache.
     int special = 0, icon = 0, selected_icon = 0;
     bool folder = false, attributes_known = false, trash_full = false;
@@ -223,7 +226,7 @@ HICON volume_lock_icon = nullptr;
 std::array<HICON, 2> disclosure_icons{};
 std::array<HICON, 10> classic_art{};
 std::array<HICON, 4> frame_art{};
-fs::path executable_folder, preferences, desktop_folder, romaw_folder;
+fs::path executable_folder, preferences, desktop_folder, romaw_folder, windows_desktop_path;
 std::vector<FolderWindow*> folders;
 std::vector<Item> apple_items;
 std::vector<std::unique_ptr<Operation>> operations;
@@ -578,9 +581,21 @@ item_icon(Item& item)
         result = icon(data, label);
     if (item.special == 3)
         result = asset_icon(item.trash_full ? full_trash_asset : 3);
+    if (item.special == windows_desktop_volume) {
+        // Ask the shell for its Desktop namespace icon, independent of folder customizations.
+        PIDLIST_ABSOLUTE desktop_id = nullptr;
+        SHFILEINFOW native{};
+        if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &desktop_id))) {
+            if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(desktop_id), 0, &native, sizeof native,
+                               SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON))
+                result = native.hIcon;
+            CoTaskMemFree(desktop_id);
+        }
+    }
     if (!result && item.special == 1 && item.drive_metadata && item.drive_metadata->custom.present)
         result = icon(item.drive_metadata->custom, label);
-    if (!result && item.special != 1 && item.folder && !item.image_volume && custom_folder_icon(item.path, data))
+    if (!result && item.special != 1 && item.special != windows_desktop_volume && item.folder && !item.image_volume &&
+        custom_folder_icon(item.path, data))
         result = icon(data, label);
     if (!result && !item.mac.fork.empty() && (item.mac.flags & 0x400) &&
         finder_parse_custom_icon(item.mac.fork.data(), item.mac.fork.size(), &data))
@@ -803,6 +818,8 @@ std::string file_manager_path(const std::wstring& name)
 // application's resource fork for each document of a given type.
 std::wstring item_kind(const Item& item, DocumentKinds& kinds)
 {
+    if (item.special == windows_desktop_volume)
+        return L"PC disk";
     if (!item.folder && item.mac.kind == FINDER_CLASSIC_DOCUMENT && item.mac.type && item.mac.creator &&
         !(item.mac.flags & 0x8000) && (!item.image_volume || !item.image_application.empty())) {
         auto directory = item.image_volume ? fs::path{} : item.path.parent_path();
@@ -1018,7 +1035,7 @@ void refresh(FolderWindow& f)
             if (item.drive_metadata)
                 item.mac = item.drive_metadata->mac;
         }
-        else if (special != 3)
+        else if (special != 3 && special != windows_desktop_volume)
             try {
                 item.mac = mac_file(item.path);
             }
@@ -1039,6 +1056,9 @@ void refresh(FolderWindow& f)
                 append(p, volume_display_name(p, std::wstring(1, *p)), 1);
         if (fs::is_directory(romaw_folder))
             append(romaw_folder, L"ROMAW", 2);
+        std::error_code desktop_error;
+        if (fs::is_directory(windows_desktop_path, desktop_error))
+            append(windows_desktop_path, windows_desktop_name, windows_desktop_volume);
         for (const auto& volume : image_volumes()) {
             Item item;
             item.path = image_volume_key(volume);
@@ -1347,7 +1367,8 @@ std::vector<fs::path> selected(FolderWindow& f)
     if (!live_folder(&f))
         return out;
     for (int i = -1; (i = selected_item_after(f.list, f.items.size(), i)) >= 0;)
-        if (i < int(f.items.size()) && f.items[i].special != 3 && !f.items[i].image_volume)
+        if (i < int(f.items.size()) && f.items[i].special != 3 && f.items[i].special != windows_desktop_volume &&
+            !f.items[i].image_volume)
             out.push_back(f.items[i].path);
     return out;
 }
@@ -3499,7 +3520,8 @@ void command(FolderWindow& f, unsigned id)
                 throw std::runtime_error("Cannot open the enclosing image folder");
             open_folder(f.path.parent_path(), nullptr, f.image_volume, parent.id, image_text(parent.name));
         }
-        else if (!f.image_volume && !f.desktop && f.path != f.path.root_path())
+        else if (!f.image_volume && !f.desktop && f.path != f.path.root_path() &&
+                 _wcsicmp(f.path.c_str(), windows_desktop_path.c_str()) != 0)
             open_folder(f.path.parent_path());
         break;
     case new_folder_command: {
@@ -4935,8 +4957,7 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         int hit_index = ListView_HitTest(other->list, &hit);
                         bool on_target = accepts_drag_item(*source, *other, hit_index);
                         bool volume = std::any_of(drag_indices.begin(), drag_indices.end(), [&](int index) {
-                            return source->items[index].special == 1 || source->items[index].special == 2 ||
-                                   source->items[index].special == 4;
+                            return source->items[index].special != 0 && source->items[index].special != 3;
                         });
                         bool image_root = !drag_indices.empty() &&
                                           std::all_of(drag_indices.begin(), drag_indices.end(),
@@ -5414,8 +5435,10 @@ void open_folder(const fs::path& input, std::shared_ptr<Search> search, int16_t 
     height = std::min(height, int(workspace.bottom));
     x = std::clamp(x, 0, std::max(0, int(workspace.right) - width));
     y = std::clamp(y, 0, std::max(0, int(workspace.bottom) - height));
+    const bool windows_desktop_root = _wcsicmp(path.c_str(), windows_desktop_path.c_str()) == 0;
     auto title = f->search                                           ? L"Items Found"
                  : image_volume                                      ? image_title
+                 : windows_desktop_root                              ? windows_desktop_name
                  : _wcsicmp(path.c_str(), romaw_folder.c_str()) == 0 ? L"ROMAW"
                  : path.filename().empty()                           ? volume_display_name(path, path.wstring())
                                                                      : mac_display_name(path, catalog);
@@ -5428,6 +5451,8 @@ void open_folder(const fs::path& input, std::shared_ptr<Search> search, int16_t 
     title_item.path = path;
     title_item.name = title;
     title_item.folder = true;
+    if (windows_desktop_root)
+        title_item.special = windows_desktop_volume;
     try {
         title_item.mac = mac_file(path);
     }
@@ -5462,6 +5487,14 @@ extern "C" int romaw_finder_main(void)
         wchar_t user[32768];
         if (!GetEnvironmentVariableW(L"USERPROFILE", user, std::size(user)))
             throw std::runtime_error("USERPROFILE is unavailable");
+        // Use the current shell location, including a redirected or moved desktop.
+        PWSTR shell_desktop = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DONT_VERIFY, nullptr, &shell_desktop))) {
+            std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> path(shell_desktop, CoTaskMemFree);
+            windows_desktop_path = fs::path(path.get()).lexically_normal();
+            if (!config_drive_set_windows_desktop(windows_desktop_path.u8string().c_str()))
+                throw std::runtime_error("Cannot configure the Windows Desktop volume");
+        }
         romaw_folder = (fs::path(user) / L".romaw/Apps").lexically_normal();
         remove_startup_preferences(romaw_folder.parent_path() / L"ROMAW.prefs");
         wchar_t* local = nullptr;
