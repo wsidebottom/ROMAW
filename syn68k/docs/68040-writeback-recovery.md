@@ -412,7 +412,29 @@ The regression covers all five forms, source/destination word offsets, clean
 and dirty source hits, both cacheable modes, both page sizes, user/supervisor
 access, all trace settings, every push failure beat, partial dirty masks, guest
 PD cleanup and retry, and rejection of malformed records without state changes.
-Its 70,176 cases pass against the fresh archive in the MMU group and in
-both cold and warm AOT processes. The warm run performs no compilation.
-The exact regression rejects the preceding accepted archive. Source cache misses and cache-inhibited source reads followed by a
-destination descriptor push remain outside this certified continuation.
+
+The initial fixture used U=0,M=1. UM 3.2.1 prohibits that descriptor state and
+warns of undefined operation, so those results alone did not establish a
+defined architectural case. The fixture now uses U=0,M=0,WP=1: Table 3-1
+requires a locked RMW to set U before reporting write protection. Its guest
+handler recovers PD, clears WP in PD0 before writing it back, returns through
+RTE, and retries the MOVE16. The retry performs the normal unlocked U/M update.
+
+The corrected 74,496-case matrix includes 4,320 normal write controls with
+U/M=00,10,11, source cache misses and clean/dirty hits. They verify that valid
+unprotected writes update cached descriptors without a spurious push. The
+matrix passes at both optimization levels and in cold/warm AOT processes.
+The persistent instruction-view sentinels emit two bodies cold and load both
+with no warm compilation. The exact fixture rejects the preceding CPU archive;
+the neighboring 96,333-case MOVE16 regression also passes.
+
+These are regression-only changes. The production CPU sources, four archives,
+and all 66 staged/current binary hashes match the preceding full grouped
+validation and ROMAW rebuild. The follow-up audit is
+`build/68040-move16-valid-descriptor-output/source-audit.json`.
+
+Source cache misses and cache-inhibited source reads followed by a destination
+descriptor push remain outside the certified continuation. The valid protected
+descriptor setup reproduces that unsupported delivery after four source bus
+reads, independently of the prohibited U/M combination. The captured source
+must not be represented as a safely replayable cached-source WB2.

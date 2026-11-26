@@ -149,6 +149,13 @@ static void install_cleanup(void)
         put(pc, 2, 0x242f); /* MOVE.L PDn(SP),D2 */
         put(pc + 2, 2, 44 + i * 4);
         pc += 4;
+        if (!i) {
+            /* Guest repair: clear WP after recovering PD0. The initial U=0,
+               M=0, WP=1 descriptor is valid (UM Table 3-1). */
+            put(pc, 2, 0x0282); /* ANDI.L #~4,D2 */
+            put(pc + 2, 4, 0xfffffffbu);
+            pc += 6;
+        }
         put(pc, 2, 0x0eb9); /* MOVES.L D2,physical descriptor line, DFC=0 */
         put(pc + 2, 2, 0x2800);
         put(pc + 4, 4, 0x3000 + i * 4);
@@ -249,7 +256,7 @@ static void rejection_guards(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* orig
 
 static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned hit, unsigned form,
                             unsigned sw, unsigned dw, unsigned user, unsigned trace, unsigned dirty,
-                            unsigned fault, unsigned mutate, unsigned guards)
+                            unsigned fault, unsigned mutate, unsigned guards, unsigned normal)
 {
     Syn68kMappedCPU cpu = fixture(mode, cm, 1, 0, user);
     if (mode == 2)
@@ -265,14 +272,17 @@ static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned 
     unsigned initial_a0 = EM_A0;
     unsigned destination_physical = page ? 0xa040 : 0x9040;
     memset(ram + destination_physical, 0xaa, 16);
-    const unsigned descriptor[] = {(page ? 0xa011u : 0x9011u) | cm << 5,
+    /* U=0,M=1 is prohibited (UM 3.2.1). The fault matrix uses the
+       valid U=0,M=0,WP=1 locked-U transition in Table 3-1. */
+    const unsigned status = normal ? normal == 1 ? 1 : normal == 2 ? 9 : 25 : 5;
+    const unsigned descriptor[] = {(page ? 0xa000u : 0x9000u) | status | cm << 5,
                                    0x11223344, 0x55667788, 0x99aabbcc};
     for (unsigned i = 0; i < 4; ++i)
         put(0x3000 + i * 4, 4, descriptor[i]);
     const unsigned addresses[] = {0xc000, 0x1000, 0x3400, 0x3000};
     for (unsigned way = 0; way < 4; ++way) {
         Syn68kCache040Line* line = &cache.lines[0][0][way];
-        *line = (Syn68kCache040Line){.valid = 1, .dirty = way == 3 ? dirty : way ? 15 : hit == 2 ? 15 : 0,
+        *line = (Syn68kCache040Line){.valid = !!(way || hit), .dirty = way == 3 ? dirty : way ? 15 : hit == 2 ? 15 : 0,
                                     .address = addresses[way]};
         memcpy(line->bytes, ram + addresses[way], 16);
         if (!way)
@@ -288,7 +298,7 @@ static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned 
     else
         put(0x8002, 4, form & 1 ? source : destination);
     install_cleanup();
-    inject_push = 1;
+    inject_push = !normal;
     fault_ordinal = fault;
     mutate_push = mutate;
     locked_updates = 0;
@@ -296,6 +306,34 @@ static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned 
     unsigned expected_sr = (cpu_state.sr & ~31u) | (mutate ? 31 : 0);
     Syn68kMappedRun run;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    if (normal) {
+        assert(run.reason == (trace & 2 ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
+               run.step.vector == (trace & 2 ? 9u : 0u));
+        assert(cpu.pc == 0x8000 + (form == 4 ? 4 : 6) && live_sr() == expected_sr);
+        assert(EM_A0 == (form == 4 ? source + 16 : form < 2 ? initial_a0 + 16 : initial_a0));
+        assert(EM_A1 == (form == 4 ? destination + 16 : destination) && EM_D2 == 0xaabbccdd);
+        assert(!push_count && !locked_updates && source_count == (hit ? 0u : 4u) && dest_count == 4);
+        assert(get(0x3000, 4) == (descriptor[0] | 0x18));
+        Syn68kCache040Line* leaf = resident(0, 0x3000);
+        assert(leaf && leaf->dirty == 15);
+        assert(leaf->bytes[2] == ((descriptor[0] | 0x18) >> 8 & 255) &&
+               leaf->bytes[3] == ((descriptor[0] | 0x18) & 255));
+        for (unsigned i = 0; i < 16; ++i)
+            assert(ram[destination_physical + i] == (hit ? 0x41u : 1u) + i);
+        for (unsigned i = 0; i < 4; ++i) {
+            unsigned word = ((destination >> 2) + i) & 3;
+            assert(observed[1][i] == destination_physical + word * 4 && functions[1][i] == (user ? 1u : 5u));
+            if (!hit) {
+                word = ((source >> 2) + i) & 3;
+                assert(observed[0][i] == 0xc000 + word * 4 && functions[0][i] == (user ? 1u : 5u));
+            }
+        }
+        assert(!hit || (resident(0, 0xc000) && resident(0, 0xc000)->dirty == (hit == 2 ? 15u : 0u)));
+        if (mode == 2)
+            assert(model_calls == model_before);
+        ++cases;
+        return;
+    }
     if (run.reason != SYN68K_MAPPED_EXCEPTION || run.step.vector != 2 || run.step.move16.state != 8) {
         fprintf(stderr, "descriptor push mode=%u page=%u cm=%u hit=%u form=%u sw=%u dw=%u user=%u "
                         "trace=%u dirty=%u fault=%u mutate=%u vector=%u state=%u\n",
@@ -322,11 +360,11 @@ static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned 
            visible(sp + 40, 4) == push_address);
     for (unsigned i = 0; i < 4; ++i)
         assert(visible(sp + 44 + i * 4, 4) == descriptor[i]);
-    assert(syn68k_mapped_cpu_run(&cpu, 11, &run));
+    assert(syn68k_mapped_cpu_run(&cpu, 12, &run));
     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x8000 && live_sr() == expected_sr &&
            EM_A0 == initial_a0 && EM_A1 == destination && EM_D2 == 0xaabbccdd && !locked_updates);
     for (unsigned i = 0; i < 4; ++i)
-        assert(get(0x3000 + i * 4, 4) == descriptor[i]);
+        assert(get(0x3000 + i * 4, 4) == (i ? descriptor[i] : descriptor[i] & ~4u));
     for (unsigned i = 0; i < 16; ++i)
         assert(ram[destination_physical + i] == 0xaa);
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
@@ -337,8 +375,8 @@ static void descriptor_case(unsigned mode, unsigned page, unsigned cm, unsigned 
     assert(EM_A1 == (form == 4 ? destination + 16 : destination) && EM_D2 == 0xaabbccdd);
     assert(EM_A2 == (mutate ? 0x12345678u : 0) && EM_D5 == (mutate ? 0x55667788u : 0));
     assert(live_sr() == expected_sr && cpu_state.fpu.null_state == !mutate);
-    assert(!source_count && dest_count == 4 && push_count == fault + 1 && locked_updates == 1);
-    assert(get(0x3000, 4) == (descriptor[0] | 8));
+    assert(!source_count && dest_count == 4 && push_count == fault + 1 && !locked_updates);
+    assert(get(0x3000, 4) == ((descriptor[0] & ~4u) | 0x18));
     for (unsigned i = 0; i < 16; ++i)
         assert(ram[destination_physical + i] == 0x41 + i);
     for (unsigned i = 0; i < 4; ++i) {
@@ -366,7 +404,7 @@ int main(int argc, char** argv)
                                 for (unsigned user = 0; user < 2; ++user)
                                     for (unsigned trace = 0; trace < 4; ++trace)
                                         for (unsigned fault = 0; fault < 4; ++fault)
-                                            descriptor_case(mode,page,cm,hit,form,sw,dw,user,trace,15,fault,0,0);
+                                            descriptor_case(mode,page,cm,hit,form,sw,dw,user,trace,15,fault,0,0,0);
     for (unsigned mode = 0; mode < 3; ++mode)
         for (unsigned page = 0; page < 2; ++page)
             for (unsigned user = 0; user < 2; ++user)
@@ -374,20 +412,29 @@ int main(int argc, char** argv)
                     for (unsigned form = 0; form < 5; form += 4)
                         for (unsigned dirty = 1; dirty < 15; ++dirty)
                             for (unsigned fault = 0; fault < ((dirty & (dirty - 1)) ? 4u : 1u); ++fault)
-                                descriptor_case(mode,page,0,2,form,2,1,user,trace,dirty,fault,0,0);
+                                descriptor_case(mode,page,0,2,form,2,1,user,trace,dirty,fault,0,0,0);
     for (unsigned mode = 0; mode < 3; ++mode)
         for (unsigned page = 0; page < 2; ++page)
             for (unsigned user = 0; user < 2; ++user)
                 for (unsigned trace = 0; trace < 4; ++trace)
                     for (unsigned form = 0; form < 5; ++form)
                         for (unsigned fault = 0; fault < 4; ++fault)
-                            descriptor_case(mode,page,0,2,form,2,1,user,trace,15,fault,1,0);
+                            descriptor_case(mode,page,0,2,form,2,1,user,trace,15,fault,1,0,0);
     for (unsigned mode = 0; mode < 3; ++mode)
         for (unsigned page = 0; page < 2; ++page)
             for (unsigned user = 0; user < 2; ++user)
                 for (unsigned trace = 0; trace < 4; ++trace)
                     for (unsigned form = 0; form < 5; form += 4)
-                        descriptor_case(mode,page,0,2,form,2,1,user,trace,15,0,0,1);
+                        descriptor_case(mode,page,0,2,form,2,1,user,trace,15,0,0,1,0);
+    for (unsigned mode = 0; mode < 3; ++mode)
+        for (unsigned page = 0; page < 2; ++page)
+            for (unsigned cm = 0; cm < 2; ++cm)
+                for (unsigned hit = 0; hit < 3; ++hit)
+                    for (unsigned form = 0; form < 5; ++form)
+                        for (unsigned user = 0; user < 2; ++user)
+                            for (unsigned trace = 0; trace < 4; ++trace)
+                                for (unsigned state = 1; state < 4; ++state)
+                                    descriptor_case(mode,page,cm,hit,form,2,1,user,trace,15,0,0,0,state);
     /* MOVE16 continuation uses the closed memory image, rather than a persisted
        instruction body. Also exercise the shared mapped-code cache in this bus. */
     unsigned matrix_cases = cases;

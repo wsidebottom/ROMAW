@@ -5,6 +5,35 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Valid descriptor regression follow-up (2026-11-27)
+
+The original descriptor-push fixture used U=0,M=1, which UM 3.2.1 prohibits.
+That setup did not by itself prove behavior for a defined descriptor state.
+The fixture now uses valid U=0,M=0,WP=1, whose locked U update is specified in
+Table 3-1. Guest cleanup recovers PD, clears WP, executes RTE and retries;
+the final unprotected write uses an unlocked descriptor U/M update.
+
+The 70,176 fault/guard cases now use that valid setup. An additional 4,320
+normal-write controls cover all valid U/M combinations, source misses and
+clean/dirty hits, both page sizes, both cacheable modes, all five forms,
+user/supervisor and all trace settings. They assert no spurious push and
+correct RAM/cache descriptor updates. The combined 74,496-case matrix passes
+at both optimization levels and in cold/warm AOT runs, with two cold bodies
+and zero compilation/two hits warm. Three shared instruction-view sentinels
+also pass; the neighboring 96,333-case MOVE16 suite remains green. The final
+fixture rejects the previous CPU archive.
+
+The production CPU inputs and all four archives are unchanged. Both staged
+and current 66-file bundles match the validated rebuild below byte for byte;
+no executable rebuild is needed for this regression-only correction.
+`build/68040-move16-valid-descriptor-output/source-audit.json` records the
+follow-up evidence and the inherited full grouped validation.
+
+A separate valid-descriptor observation still finds unsupported delivery after
+an uncached source read and a destination descriptor push fault in all three
+execution modes. That remains open; cached-source replay must not be extended
+to it without establishing safe bus sequencing and the appropriate frame.
+
 ## Latest validated bundle: MOVE16 descriptor pushes (2026-11-27)
 
 Source checkpoint `7d562350` certifies the compound fault where MOVE16 obtains
