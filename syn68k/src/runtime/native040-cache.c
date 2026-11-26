@@ -1,3 +1,17 @@
+/*+===================================================================
+  File:      native040-cache.c
+
+  Summary:   Lower physical cache transactions and snoops into closed native roots.
+
+  Classes:   None.
+
+  Functions: native040_cache_access, native040_cache_maintain, native040_cache_snoop
+
+  Origin:    Existing ROMAW native cache roots, extended with physical snoop support.
+
+  Copyright and Legal notices: Applicable license: syn68k/COPYING. Original SPDX notice is retained below.
+===================================================================+*/
+
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Closed physical cache roots. Normal RAM is accessed in the emitted body. */
 #include "native040.h"
@@ -86,4 +100,10 @@ __attribute__((used, noinline)) void native040_cache_maintain(Syn68kNative040Cac
     packet->access = syn68k_cache040_maintain_traffic(packet->cache, bind_bus(packet, &binding), packet->caches,
                                                       packet->scope, packet->address, packet->page_shift, packet->push,
                                                       packet->cacr, packet->traffic);
+}
+
+__attribute__((used, noinline)) void native040_cache_snoop(Syn68kNative040Cache* packet)
+{
+    packet->snoop = syn68k_cache040_snoop(packet->cache, packet->address, packet->snoop_control, packet->transfer_type,
+                                          packet->size, packet->writing, packet->line);
 }

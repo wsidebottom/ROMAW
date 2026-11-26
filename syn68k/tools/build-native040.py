@@ -72,6 +72,8 @@ ROOTS = (
     "cache_maintain",
     "memory_cache_maintain",
     "bus_move16",
+    "cache_snoop",
+    "bus_snoop",
 )
 
 

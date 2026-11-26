@@ -434,6 +434,19 @@ Syn68kMMU040Access syn68k_mmu040_move16(Syn68kMMU040Memory* memory, uint32_t log
     return result;
 }
 
+Syn68kCache040Snoop syn68k_mmu040_snoop(Syn68kMMU040Memory* memory, uint32_t physical, unsigned control,
+                                        unsigned transfer_type, unsigned size, int writing, unsigned char bytes[16])
+{
+#if !defined(SYN68K_NATIVE040_TEMPLATE)
+    if (memory && memory->native && memory->native->snoop)
+        return memory->native->snoop(memory, physical, control, transfer_type, size, writing, bytes);
+#endif
+    if (!memory)
+        return (Syn68kCache040Snoop){.fault = CACHE040_BAD_REQUEST};
+    return syn68k_cache040_snoop(memory->cache ? memory->cache->state : 0, physical, control, transfer_type, size,
+                                 writing, bytes);
+}
+
 int syn68k_mmu040_cache_push_ssw(const Syn68kMMU040Access* access, uint16_t* ssw)
 {
     if (!access || !ssw || !access->cache_exception || access->cache.fault != CACHE040_PUSH_FAULT ||

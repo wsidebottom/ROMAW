@@ -1,3 +1,17 @@
+/*+===================================================================
+  File:      cache040.h
+
+  Summary:   Define physical cache state, transfer metadata and external snoop interfaces.
+
+  Classes:   None.
+
+  Functions: Interface declarations; see below.
+
+  Origin:    Existing repository physical cache interface.
+
+  Copyright and Legal notices: Applicable license: syn68k/COPYING. Original SPDX notice is retained below.
+===================================================================+*/
+
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef SYN68K_CACHE040_H
 #define SYN68K_CACHE040_H
@@ -90,12 +104,21 @@ typedef struct {
     unsigned interrupt_level;  /* Maintenance stopped before instruction retirement. */
 } Syn68kCache040Access;
 
+/* Response to one accepted external-master snoop transaction. A miss or
+   nonintervening hit leaves bytes for the embedding's memory controller.
+   No processor memory access, writeback or exception is generated. */
+typedef struct {
+    enum Syn68kCache040Fault fault;
+    unsigned hit, intervention, invalidated;
+    unsigned way[2]; /* Data (0), instruction (1), valid when the hit mask selects it. */
+} Syn68kCache040Snoop;
+
 void syn68k_cache040_init(Syn68kCache040* cache);
 /* One-to-four-byte physical chunks, including three-byte MMU page tails.
    CM is taken from attributes bits 6:5; CACR bit
    31 enables data and bit 15 instruction caching. no_allocate retains normal
    hit behavior but prevents allocation on a miss (exception/table traffic).
-   Snoop transactions are not yet bound. MOVE16 has a separate line API. */
+   External-master snoops and MOVE16 have separate physical APIs. */
 Syn68kCache040Access syn68k_cache040_access(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
                                             unsigned size, int writing, uint32_t value, uint32_t attributes,
                                             uint32_t cacr, int no_allocate);
@@ -118,6 +141,26 @@ Syn68kCache040Access syn68k_cache040_transfer(Syn68kCache040*, const Syn68kCache
    A NULL cache explicitly selects an uncached physical line transaction. */
 Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040*, const Syn68kCache040Bus*, uint32_t address, unsigned fc,
                                             int writing, unsigned char bytes[16], uint32_t attributes, uint32_t cacr);
+/* Completed external-master bus transaction, UM 4.4/4.5 and Figure 4-6.
+   SC=0/3 inhibits snooping; SC=1 supplies dirty reads or sinks scalar dirty
+   writes; SC=2 supplies dirty reads then invalidates, or invalidates writes.
+   TT=0/1 is snoopable; TT=2/3 is not. Both caches may be disabled: only
+   physical tags in both banks are searched, independently of the MMU/ATC.
+   hit/invalidated are bank masks (data=1, instruction=2). Instruction lines
+   invalidate on either snooped write or SC=2 read; SC=1 reads do not snoop IC.
+   size is 1/2/4 or 16. Scalars must fit within one line; split cross-line
+   requests in the embedding. Line bytes are in memory-address order and
+   low address bits 1:0 are ignored. Scalar bytes occupy bytes[0..size).
+   Read output changes only for intervention. Scalar write input is latched
+   before either bank changes.
+   Clean write hits and all line write hits invalidate without intervention.
+   The embedding owns external arbitration/termination and memory response;
+   this API never calls a memory bus. Submit accepted transactions only.
+   An active cache cannot accept a snoopable lookup: retry after its owner
+   yields the bank. Invalid requests preserve both cache and byte buffer. */
+Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040*, uint32_t address, unsigned control, unsigned transfer_type,
+                                          unsigned size, int writing, unsigned char bytes[16]);
+
 /* Physical CINV/CPUSH selection: caches 0=neither, 1=data, 2=instruction, 3=both;
    scope 1=line, 2=page, 3=all. page_shift is 12 or 13. Operations also affect
    disabled caches. A failed push retains captured data in the result; earlier

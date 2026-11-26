@@ -102,6 +102,7 @@ typedef struct Syn68kMMU040Native {
     unsigned flat_page_shift;
     void (*flat_write)(uint32_t address, unsigned size);
     Syn68kMMU040Access (*move16)(Syn68kMMU040Memory*, uint32_t, unsigned, int, unsigned char[16]);
+    Syn68kCache040Snoop (*snoop)(Syn68kMMU040Memory*, uint32_t, unsigned, unsigned, unsigned, int, unsigned char[16]);
 } Syn68kMMU040Native;
 
 /* Byte, word and longword operands; addresses wrap modulo 2^32. Chunks stop at
@@ -128,6 +129,12 @@ Syn68kMMU040Access syn68k_mmu040_write_rmw(Syn68kMMU040Memory* memory, uint32_t 
    cache.cycle has the last bus beat; burst=0 on a successful cache-hit read. */
 Syn68kMMU040Access syn68k_mmu040_move16(Syn68kMMU040Memory*, uint32_t logical, unsigned fc, int writing,
                                         unsigned char bytes[16]);
+/* Board-side physical snoop, independently of MMU enable, TTRs and CACR.
+   This consumes an accepted external transaction; it never invokes descriptor
+   or operand callbacks. Both physical tag banks obey their snoop transitions.
+   The embedding supplies the memory response when intervention is clear. */
+Syn68kCache040Snoop syn68k_mmu040_snoop(Syn68kMMU040Memory*, uint32_t physical, unsigned control,
+                                        unsigned transfer_type, unsigned size, int writing, unsigned char bytes[16]);
 /* Cache-aware translation/PTEST without an operand transfer. Ordinary PTEST
    diagnostic failures update MMUSR; physical cache failures preserve it and
    remain visible in the returned cache result. */

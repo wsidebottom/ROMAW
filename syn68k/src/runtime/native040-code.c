@@ -125,7 +125,9 @@ Syn68kNative040Entry syn68k_native040_entry(enum Syn68kNative040Operation operat
                                 native040_cache_access_offset,
                                 native040_cache_maintain_offset,
                                 native040_memory_cache_maintain_offset,
-                                native040_bus_move16_offset};
+                                native040_bus_move16_offset,
+                                native040_cache_snoop_offset,
+                                native040_bus_snoop_offset};
     _Static_assert(sizeof offsets / sizeof *offsets == NATIVE040_COUNT, "native root table");
     if ((unsigned)operation >= NATIVE040_COUNT || offsets[operation] >= sizeof native040_code)
         return NULL;
@@ -148,7 +150,8 @@ int syn68k_native040_memory(Syn68kMMU040Memory* memory, Syn68kMMU040Native* stor
     Syn68kNative040Entry write = syn68k_native040_entry(NATIVE040_BUS_WRITE);
     Syn68kNative040Entry write_rmw = syn68k_native040_entry(NATIVE040_BUS_WRITE_RMW);
     Syn68kNative040Entry move16 = syn68k_native040_entry(NATIVE040_BUS_MOVE16);
-    if (!read || !write || !write_rmw || !move16)
+    Syn68kNative040Entry snoop = syn68k_native040_entry(NATIVE040_BUS_SNOOP);
+    if (!read || !write || !write_rmw || !move16 || !snoop)
         return 0;
     Syn68kMMU040Native entries = {
         .read =
@@ -158,7 +161,9 @@ int syn68k_native040_memory(Syn68kMMU040Memory* memory, Syn68kMMU040Native* stor
             (Syn68kMMU040Access(*)(Syn68kMMU040Memory*, uint32_t, unsigned, unsigned, uint32_t))(uintptr_t)write_rmw,
         .ram = ram,
         .move16 =
-            (Syn68kMMU040Access(*)(Syn68kMMU040Memory*, uint32_t, unsigned, int, unsigned char[16]))(uintptr_t)move16};
+            (Syn68kMMU040Access(*)(Syn68kMMU040Memory*, uint32_t, unsigned, int, unsigned char[16]))(uintptr_t)move16,
+        .snoop = (Syn68kCache040Snoop(*)(Syn68kMMU040Memory*, uint32_t, unsigned, unsigned, unsigned, int,
+                                         unsigned char[16]))(uintptr_t)snoop};
     *storage = entries;
     memory->native = storage;
     return 1;

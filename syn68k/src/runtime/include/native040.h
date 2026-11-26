@@ -93,6 +93,8 @@ enum Syn68kNative040Operation {
     NATIVE040_CACHE_MAINTAIN,
     NATIVE040_MEMORY_CACHE_MAINTAIN,
     NATIVE040_BUS_MOVE16,
+    NATIVE040_CACHE_SNOOP,
+    NATIVE040_BUS_SNOOP,
     NATIVE040_COUNT
 };
 
@@ -108,6 +110,8 @@ typedef struct {
     Syn68kCache040Access access;
     enum Syn68kCache040Traffic traffic;
     unsigned char line[16];
+    unsigned snoop_control, transfer_type;
+    Syn68kCache040Snoop snoop;
 } Syn68kNative040Cache;
 
 typedef void (*Syn68kNative040Entry)(void*);

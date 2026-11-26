@@ -1,3 +1,18 @@
+/*+===================================================================
+  File:      cache040.c
+
+  Summary:   Implement physical MC68040 cache, snoop and maintenance transactions.
+
+  Classes:   None.
+
+  Functions: syn68k_cache040_access, syn68k_cache040_snoop, syn68k_cache040_move16,
+             syn68k_cache040_maintain
+
+  Origin:    Existing repository cache implementation, extended with physical snoop support.
+
+  Copyright and Legal notices: Applicable license: syn68k/COPYING. Original SPDX notice is retained below.
+===================================================================+*/
+
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Functional cache storage and physical transactions. No CPU globals. */
 #include "cache040.h"
@@ -366,6 +381,66 @@ done:
     if (cache) {
         cache->traffic = CACHE040_NORMAL;
         cache->active = 0;
+    }
+    return result;
+}
+
+Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040* cache, uint32_t address, unsigned control,
+                                          unsigned transfer_type, unsigned size, int writing, unsigned char bytes[16])
+{
+    Syn68kCache040Snoop result = {.fault = CACHE040_BAD_REQUEST};
+    if (!bytes || control > 3 || transfer_type > 3 || (writing != 0 && writing != 1) ||
+        (size != 1 && size != 2 && size != 4 && size != 16) || (size != 16 && size > 16 - (address & 15)))
+        return result;
+    result.fault = CACHE040_OK;
+    if (!cache || !control || control == 3 || transfer_type >= 2)
+        return result;
+    if (cache->active)
+        return (Syn68kCache040Snoop){.fault = CACHE040_BAD_REQUEST};
+    unsigned char input[4];
+    if (writing && size != 16)
+        for (unsigned i = 0; i < size; ++i)
+            input[i] = bytes[i];
+    if (writing || control == 2) {
+        Syn68kCache040Line* instruction = lookup(cache, 1, address);
+        if (instruction) {
+            result.hit = result.invalidated = 2;
+            result.way[1] = (unsigned)(instruction - cache->lines[1][(address >> 4) & 63]);
+            instruction->valid = 0;
+        }
+    }
+    Syn68kCache040Line* line = lookup(cache, 0, address);
+    if (!line)
+        return result;
+    result.hit |= 1;
+    result.way[0] = (unsigned)(line - cache->lines[0][(address >> 4) & 63]);
+    unsigned dirty = line->dirty & 15;
+    if (!writing) {
+        if (dirty) {
+            unsigned char held[16];
+            unsigned offset = size == 16 ? 0 : address & 15;
+            for (unsigned i = 0; i < size; ++i)
+                held[i] = line->bytes[offset + i];
+            for (unsigned i = 0; i < size; ++i)
+                bytes[i] = held[i];
+            result.intervention = 1;
+        }
+        if (control == 2) {
+            line->valid = 0;
+            result.invalidated |= 1;
+        }
+    }
+    else if (control == 1 && dirty && size != 16) {
+        for (unsigned i = 0; i < size; ++i) {
+            unsigned offset = (address & 15) + i;
+            line->bytes[offset] = input[i];
+            line->dirty |= 1u << (offset >> 2);
+        }
+        result.intervention = 1;
+    }
+    else {
+        line->valid = 0;
+        result.invalidated |= 1;
     }
     return result;
 }

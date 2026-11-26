@@ -590,6 +590,12 @@ EOF
         -o "$fixture/rte-user-test.exe"
       "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 0
       "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 1
+      mkdir -p "$fixture/snoop"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-snoop-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_cache040_snoop -o "$fixture/snoop-test.exe"
+      "$fixture/snoop-test.exe" "$(wslpath -m "$fixture/snoop")" 0
+      "$fixture/snoop-test.exe" "$(wslpath -m "$fixture/snoop")" 1
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -884,7 +890,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross read_prefix; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross read_prefix cache_snoop; do
           fixture=native040-test
           extra=()
           case $group in
@@ -898,15 +904,43 @@ EOF
             control) fixture=native040-control-test ;;
             registers) fixture=native040-registers-test ;;
             flat) fixture=native040-flat-test ;;
-            cache) fixture=cache040-test; extra=(-DCACHE040_NATIVE_TEST) ;;
+            cache)
+              fixture=cache040-test
+              extra=(-DCACHE040_NATIVE_TEST)
+              ;;
             cache_ram) fixture=cache040-native-ram-test ;;
-            cache_traffic) fixture=cache040-traffic-test; extra=(-DCACHE040_NATIVE_TEST) ;;
-            mmu_cache) fixture=mmu040-cache-test; extra=(-DMMU040_CACHE_NATIVE) ;;
-            mmu_cache_op) fixture=mmu040-cache-op-test; extra=(-DMMU040_CACHE_NATIVE) ;;
-            cache_move16) fixture=cache040-move16-test; extra=(-DCACHE040_NATIVE_TEST) ;;
-            mmu_move16) fixture=mmu040-move16-test; extra=(-DMMU040_MOVE16_NATIVE -DMMU040_MOVE16_GROUPED) ;;
-            pagecross) fixture=mmu040-pagecross-test; extra=(-DMMU040_PAGECROSS_NATIVE -DMMU040_PAGECROSS_GROUPED) ;;
-            read_prefix) fixture=mmu040-read-prefix-test; extra=(-DPARTIAL_NATIVE -DPARTIAL_NATIVE_GROUPED) ;;
+            cache_traffic)
+              fixture=cache040-traffic-test
+              extra=(-DCACHE040_NATIVE_TEST)
+              ;;
+            mmu_cache)
+              fixture=mmu040-cache-test
+              extra=(-DMMU040_CACHE_NATIVE)
+              ;;
+            mmu_cache_op)
+              fixture=mmu040-cache-op-test
+              extra=(-DMMU040_CACHE_NATIVE)
+              ;;
+            cache_move16)
+              fixture=cache040-move16-test
+              extra=(-DCACHE040_NATIVE_TEST)
+              ;;
+            mmu_move16)
+              fixture=mmu040-move16-test
+              extra=(-DMMU040_MOVE16_NATIVE -DMMU040_MOVE16_GROUPED)
+              ;;
+            pagecross)
+              fixture=mmu040-pagecross-test
+              extra=(-DMMU040_PAGECROSS_NATIVE -DMMU040_PAGECROSS_GROUPED)
+              ;;
+            read_prefix)
+              fixture=mmu040-read-prefix-test
+              extra=(-DPARTIAL_NATIVE -DPARTIAL_NATIVE_GROUPED)
+              ;;
+            cache_snoop)
+              fixture=cache040-snoop-test
+              extra=(-DCACHE040_NATIVE_TEST)
+              ;;
           esac
           if [[ $group == mmu || $group == memory || $group == fc ]]; then extra=(-include syn68k/tests/native040-checks.h); fi
           "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" "${extra[@]}" \
@@ -915,7 +949,7 @@ EOF
           objects+=("$obj/tests/$group.o")
         done
         "$cc" -std=gnu11 "${flags[@]}" "${includes[@]}" syn68k/tests/native040-runner.c \
-          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_mmu040_memory_translate,--wrap=syn68k_mmu040_cache_maintain,--wrap=syn68k_cache040_maintain_interruptible,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic,--wrap=syn68k_cache040_move16 -o "$obj/tests/$executable"
+          "${objects[@]}" -Wl,--gc-sections,--wrap=syn68k_mmu040_translate,--wrap=syn68k_mmu040_memory_translate,--wrap=syn68k_mmu040_cache_maintain,--wrap=syn68k_cache040_maintain_interruptible,--wrap=syn68k_cache040_access,--wrap=syn68k_cache040_maintain,--wrap=syn68k_cache040_transfer,--wrap=syn68k_cache040_maintain_traffic,--wrap=syn68k_cache040_move16,--wrap=syn68k_cache040_snoop -o "$obj/tests/$executable"
         "$obj/tests/$executable"
       done
     )
@@ -927,9 +961,9 @@ EOF
       cd "$root"
       output=${MMU040_CACHE_OBJ:-syn68k/obj/tests/mmu040-cache}
       mkdir -p "$output"
-      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test mmu040-read-prefix-test; do
+      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test mmu040-read-prefix-test cache040-snoop-test; do
         sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
-                 syn68k/src/runtime/cache040.c "syn68k/tests/$fixture.c")
+          syn68k/src/runtime/cache040.c "syn68k/tests/$fixture.c")
         "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \
           -Isyn68k/src/runtime/include "${sources[@]}" -o "$output/cache-test.exe"
         "$output/cache-test.exe"
@@ -1091,6 +1125,11 @@ EOF
         syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/rte-user-test.exe"
       "$output/rte-user-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-snoop-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_cache040_snoop -o "$output/snoop-test.exe"
+      "$output/snoop-test.exe"
     )
     ;;
   threaded-dispatch)

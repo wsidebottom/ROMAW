@@ -293,3 +293,11 @@ __attribute__((used, noinline)) Syn68kMMU040Access native040_bus_move16(Syn68kMM
     NativeMemory bound;
     return syn68k_mmu040_move16(native040_bind_memory(&frame, &bound), address, fc, writing, bytes);
 }
+
+__attribute__((used, noinline)) Syn68kCache040Snoop native040_bus_snoop(Syn68kMMU040Memory* memory, uint32_t physical,
+                                                                        unsigned control, unsigned transfer_type,
+                                                                        unsigned size, int writing,
+                                                                        unsigned char bytes[16])
+{
+    return syn68k_mmu040_snoop(memory, physical, control, transfer_type, size, writing, bytes);
+}
