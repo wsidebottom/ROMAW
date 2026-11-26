@@ -108,6 +108,7 @@ int main()
     auto migrated = root / L"Moved";
     fs::create_directories(previous / L"Shortcut Icons");
     std::ofstream(previous / L"Shortcut Icons/Application.ico") << "icon data";
+    std::ofstream(previous / L"settings.ini", std::ios::binary).write("\xff\xfe", 2);
     put(previous / L"settings.ini", L"Session", L"Window1", (previous / nested).wstring());
     assert(settings_directory(migrated, local) == migrated / L"Finder");
     assert(!fs::exists(previous));
