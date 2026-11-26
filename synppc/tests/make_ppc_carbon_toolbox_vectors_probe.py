@@ -68,6 +68,10 @@ LOCALE_REFERENCE_CALLS = (
     "LocaleOperationLoadData",
     "LocaleOperationUnloadData",
 )
+MENU_PIXEL_REFERENCE_CALLS = (
+    "InvalidateCachedMenuPixels",
+    "InvalidateAllCachedMenuPixels",
+)
 MENU_CLOCK_REFERENCE_CALLS = (
     "IsMenuBarClockEnabled",
     "EnableMenuBarClock",
@@ -11106,11 +11110,13 @@ def menu_clock_operations(probe):
         probe.call("SetMenuBarClockConfig", [invalid_config], side=side)
         p.expect(-50, "reject changing the clock with an unknown version")
         probe.call("IsMenuBarClockEnabled", side=side)
-        probe.arguments([probe.ptr(clock + 24 + 32 * side)], 1)
-        p.emit(0x90640000)
+        p.emit(0x7C641B78)  # mr r4, r3
+        probe.arguments([probe.ptr(clock + 24 + 32 * side)], 0)
+        p.emit(0x90830000)  # stw r4, 0(r3)
         probe.arguments([output], 0)
         p.emit(0x88630002, 0x5463D1BE)
-        probe.arguments([probe.slot(clock + 24 + 32 * side)], 1)
+        p.emit(0x7C641B78)  # mr r4, r3
+        probe.arguments([probe.slot(clock + 24 + 32 * side)], 0)
         p.equal("the enabled query matches the configuration's enabled bit")
         probe.call("RefreshMenuBarClock", side=side)
         p.expect(0, "request a clock redraw")
@@ -11140,8 +11146,33 @@ def menu_clock_operations(probe):
         p.code[skip_enable] = 0x41820000 | (len(p.code) - skip_enable) * 4
         probe.call("SetMenuBarClockConfig", [probe.ptr(clock + 32 * side)], side=side)
         probe.call("IsMenuBarClockEnabled", side=side)
-        probe.arguments([probe.slot(clock + 24 + 32 * side)], 1)
+        p.emit(0x7C641B78)  # mr r4, r3
+        probe.arguments([probe.slot(clock + 24 + 32 * side)], 0)
         p.equal("restoring the configuration preserves the original clock state")
+
+
+def menu_pixel_cache_operations(probe):
+    p = probe.p
+    _, slot = probe.far_raw(bytes(4))
+    menu = probe.slot(slot)
+    probe.call("NewMenu", [8326, probe.far_raw(b"\x04Menu")])
+    p.nonzero("allocate a menu for the pixel cache")
+    p.emit(0x7C641B78)
+    probe.arguments([probe.ptr(slot)], 0)
+    p.emit(0x90830000)
+    items = b";".join([b"Item"] * 34)
+    probe.call("AppendMenu", [menu, probe.far_raw(bytes([len(items)]) + items)])
+    probe.call("InsertMenu", [menu, 0])
+    probe.call("SetMenuWidth", [menu, 80])
+    probe.call("SetMenuHeight", [menu, 24])
+    for side in (0, 1):
+        for _ in range(2):
+            probe.call("InvalidateCachedMenuPixels", [menu], side=side)
+            probe.call("InvalidateAllCachedMenuPixels", side=side)
+        probe.call("CountMenuItems", [menu])
+        p.expect(34, "invalidating an empty cache preserves the live menu")
+    probe.call("DeleteMenu", [8326])
+    probe.call("DisposeMenu", [menu])
 
 
 def menu_manager_operations(probe):
@@ -13726,8 +13757,9 @@ def locale_operations(probe):
             [klass, 4, probe.ptr(base + 40 + side * 4), probe.ptr(base + 64 + side * 32)],
             side=side,
         )
-        probe.arguments([probe.ptr(base + 48 + side * 4)], 1)
-        p.emit(0x90640000)
+        p.emit(0x7C641B78)  # mr r4, r3
+        probe.arguments([probe.ptr(base + 48 + side * 4)], 0)
+        p.emit(0x90830000)  # stw r4, 0(r3)
     for offset in (32, 40, 48):
         probe.arguments([probe.slot(base + offset), probe.slot(base + offset + 4)], 0)
         p.equal("native locale enumeration agrees with the saved fragment")
@@ -13759,8 +13791,9 @@ def locale_operations(probe):
             p.expect(codes, "return US English codes or the unspecified code")
 
         probe.call("LocaleGetRegionLanguageName", [0, probe.ptr(region_names + side * 64)], side=side)
-        probe.arguments([probe.ptr(base + 24 + side * 4)], 1)
-        p.emit(0x90640000)
+        p.emit(0x7C641B78)  # mr r4, r3
+        probe.arguments([probe.ptr(base + 24 + side * 4)], 0)
+        p.emit(0x90830000)  # stw r4, 0(r3)
     probe.arguments([probe.slot(base + 24), probe.slot(base + 28)], 0)
     p.equal("the native and saved region name lookups return the same status")
     for offset in (0, 4):
@@ -14517,6 +14550,8 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     native_names.update(
         {"GetWindowFeatures", "IsWindowCollapsable", "IsWindowCollapsed", "CollapseWindow", "CollapseAllWindows"}
     )
+    if file_entries:
+        native_names.add("UCCompareCollationKeys")
     if file_entries and not original_only:
         native_names.update(windows_metadata_names(ROOT))
         native_names.update(("CopyThemeIdentifier", "GetThemeWindowRegion", "GetThemeWindowRegionHit"))
@@ -14954,6 +14989,11 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
         fsref_oracles = [{"name": name} for name in FSREF_REFERENCE_CALLS] if file_entries else []
         locale_oracles = [{"name": name} for name in LOCALE_REFERENCE_CALLS] if file_entries else []
+        pixel_oracles = (
+            [{"name": name, "original_library": "MenusLib"} for name in MENU_PIXEL_REFERENCE_CALLS]
+            if file_entries
+            else []
+        )
         clock_oracles = (
             [{"name": name, "original_library": "MenusLib"} for name in MENU_CLOCK_REFERENCE_CALLS]
             if file_entries
@@ -14976,6 +15016,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
             + fsref_oracles
             + locale_oracles
             + clock_oracles
+            + pixel_oracles
             + fixed_oracles
             + string_oracles
             + navigation_oracles
@@ -14998,7 +15039,6 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         "SetControlTitleWithCFString",
                         "CopyControlTitleAsCFString",
                         "GetTextAndEncodingFromCFString",
-                        "UCCompareCollationKeys",
                         "QDSaveRegionBits",
                         "QDRestoreRegionBits",
                         "QDDisposeRegionBits",
@@ -15345,6 +15385,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         probe.section("Installed application manager operations", lambda: application_operations(probe))
         probe.section("Carbon control data, focus and window bounds", lambda: control_manager_operations(probe))
         probe.section("Menu bar clock configuration", lambda: menu_clock_operations(probe))
+        probe.section("Menu pixel cache invalidation", lambda: menu_pixel_cache_operations(probe))
         probe.section("Carbon menu state and properties", lambda: menu_manager_operations(probe))
         probe.section("Carbon Help Manager content, callbacks and settings", lambda: help_manager_operations(probe))
         probe.section("Carbon menu command IDs, state and properties", lambda: menu_command_operations(probe))
