@@ -20,6 +20,7 @@
 
 #include "generated/build_version.h"
 #include "finder/files.h"
+#include "finder/font_preview.h"
 #include "finder/stuffit.h"
 #include "finder/archive.h"
 #include "rsys/archive_types.h"
@@ -1833,8 +1834,33 @@ constexpr unsigned unavailable_suitcase_commands[] = {open_command,
                                                       special_cleanup_command,
                                                       label_popup_command};
 
+void preview_suitcase_member(const Item& item, const SuitcaseMember& member);
+
+int selected_preview_font(const SuitcaseView& view)
+{
+    int selected = selected_item_after(view.list, view.members.size(), -1);
+    if (selected < 0 || !is_preview_font(view.members[selected].resource_type) ||
+        selected_item_after(view.list, view.members.size(), selected) >= 0)
+        return -1;
+    return selected;
+}
+
+bool suitcase_blocks_command(unsigned id)
+{
+    return std::find(std::begin(unavailable_suitcase_commands), std::end(unavailable_suitcase_commands), id) !=
+               std::end(unavailable_suitcase_commands) ||
+           (id >= label_command && id < label_command + 8) ||
+           (id >= sort_command && id < sort_command + folder_column_count);
+}
+
 bool command_suitcase(SuitcaseView& view, unsigned id)
 {
+    if (id == open_command) {
+        int index = selected_preview_font(view);
+        if (index >= 0)
+            preview_suitcase_member(view.item, view.members[index]);
+        return true;
+    }
     for (const auto& [command, mode] : folder_view_commands)
         if (id == command) {
             set_suitcase_view(view, mode);
@@ -1847,10 +1873,16 @@ bool command_suitcase(SuitcaseView& view, unsigned id)
         ListView_SetItemState(view.list, -1, LVIS_SELECTED, LVIS_SELECTED);
         return true;
     }
-    return std::find(std::begin(unavailable_suitcase_commands), std::end(unavailable_suitcase_commands), id) !=
-               std::end(unavailable_suitcase_commands) ||
-           (id >= label_command && id < label_command + 8) ||
-           (id >= sort_command && id < sort_command + folder_column_count);
+    return suitcase_blocks_command(id);
+}
+
+// A specimen window has no selection. File commands must never apply to
+// the folder behind an active preview.
+bool preview_blocks_command(unsigned id)
+{
+    return suitcase_blocks_command(id) || id == select_all_command ||
+           std::any_of(std::begin(folder_view_commands), std::end(folder_view_commands),
+                       [&](const auto& entry) { return entry.first == id; });
 }
 
 // Suitcase records have no filesystem path or BNDL. Use the same embedded
@@ -1908,6 +1940,41 @@ SuitcaseSnapshot read_suitcase(const Item& item)
     if (error)
         throw std::runtime_error("Cannot read the suitcase's fork (Macintosh error " + std::to_string(error) + ").");
     return {std::move(bytes), !resource};
+}
+
+void preview_suitcase_member(const Item& item, const SuitcaseMember& member)
+{
+    classic::WaitingCursor waiting;
+    auto fork = read_suitcase_fork(read_suitcase(item).bytes);
+    auto identity = item.path.wstring() + L":" + std::to_wstring(member.resource_type) + L":" +
+                    std::to_wstring(member.resource_id);
+    show_font_preview(desktop, instance, identity, member.name, fork, {member.resource_type, member.resource_id});
+}
+
+bool is_standalone_font(uint32_t type)
+{
+    return type == 0x6666696c || type == 0x7466696c; // ffil or tfil
+}
+
+void preview_font_file(const Item& item)
+{
+    classic::WaitingCursor waiting;
+    auto source = read_suitcase(item);
+    SuitcaseFork fork;
+    // Some standalone outline fonts store the sfnt directly in the data fork.
+    if (source.data_fork && source.bytes.size() >= 4 &&
+        (std::memcmp(source.bytes.data(), "OTTO", 4) == 0 || std::memcmp(source.bytes.data(), "true", 4) == 0 ||
+         std::memcmp(source.bytes.data(), "ttcf", 4) == 0 || std::memcmp(source.bytes.data(), "\0\1\0\0", 4) == 0))
+        fork.resources.push_back({{0x73666e74, 0}, 0, {}, std::move(source.bytes)});
+    else
+        fork = read_suitcase_fork(source.bytes);
+    for (uint32_t type : {0x464f4e44u, 0x73666e74u, 0x4e464e54u, 0x464f4e54u})
+        for (const auto& entry : fork.resources)
+            if (entry.key.first == type) {
+                show_font_preview(desktop, instance, item.path.wstring(), item.name, fork, entry.key);
+                return;
+            }
+    throw std::runtime_error("This file does not contain a previewable font.");
 }
 
 void drop_suitcase_members(HWND owner, const Item& item, const std::vector<SuitcaseMember>& members, POINT point);
@@ -2003,7 +2070,21 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_NOTIFY: {
         const auto* drag = reinterpret_cast<const NMLISTVIEW*>(lp);
-        if (drag->hdr.hwndFrom != view->list || drag->hdr.code != LVN_BEGINDRAG ||
+        if (drag->hdr.hwndFrom != view->list)
+            break;
+        if (drag->hdr.code == NM_DBLCLK ||
+            (drag->hdr.code == LVN_KEYDOWN && reinterpret_cast<const NMLVKEYDOWN*>(lp)->wVKey == VK_RETURN)) {
+            int index = drag->hdr.code == NM_DBLCLK ? drag->iItem : selected_preview_font(*view);
+            if (index >= 0 && size_t(index) < view->members.size() && is_preview_font(view->members[index].resource_type))
+                try {
+                    preview_suitcase_member(view->item, view->members[index]);
+                }
+                catch (const std::exception& error) {
+                    failure(window, error);
+                }
+            return 0;
+        }
+        if (drag->hdr.code != LVN_BEGINDRAG ||
             drag->iItem < 0 || size_t(drag->iItem) >= view->members.size())
             break;
         try {
@@ -2188,6 +2269,10 @@ void open_item(HWND owner, Item item)
             open_suitcase(item);
             return;
         }
+        if (is_standalone_font(item.mac.type)) {
+            preview_font_file(item);
+            return;
+        }
         if (item.mac.kind == FINDER_CLASSIC_DOCUMENT && (item.mac.flags & stationery_flag)) {
             open_stationery(owner, item);
             return;
@@ -2234,6 +2319,8 @@ void open_item(HWND owner, Item item)
         open_folder(item.path);
     else if (is_mac_suitcase(item.mac))
         open_suitcase(item);
+    else if (is_standalone_font(item.mac.type))
+        preview_font_file(item);
     else if (FinderIsDiskImage(item.path.c_str())) {
         wchar_t details[1024]{};
         classic::WaitingCursor waiting;
@@ -4446,23 +4533,16 @@ std::set<ResourceKey> suitcase_dependencies(const SuitcaseFork& fork, const Suit
                 keys.insert(candidate.key);
         return keys;
     }
-    const auto& bytes = resource.payload;
-    if (resource.key.first != 0x464f4e44 || bytes.size() < 54) // FOND
+    if (resource.key.first != 0x464f4e44) // FOND
         return keys;
-    auto word_at = [&](size_t offset) { return unsigned(bytes[offset]) << 8 | bytes[offset + 1]; };
-    unsigned count = (word_at(52) + 1) & 0xffff;
-    if (count > (bytes.size() - 54) / 6)
-        return keys;
-    for (unsigned i = 0; i < count; ++i) {
-        size_t entry = 54 + 6 * i;
-        int16_t id = int16_t(word_at(entry + 4));
-        if (word_at(entry) == 0) {
-            ResourceKey key{0x73666e74, id}; // sfnt
+    for (const auto& entry : font_associations(resource.payload)) {
+        if (!entry.size) {
+            ResourceKey key{0x73666e74, entry.id}; // sfnt
             if (find_suitcase_resource(fork, key) != fork.resources.end())
                 keys.insert(key);
         }
         else {
-            ResourceKey key{0x4e464e54, id}; // NFNT, or the old FONT slot
+            ResourceKey key{0x4e464e54, entry.id}; // NFNT, or the old FONT slot
             if (find_suitcase_resource(fork, key) == fork.resources.end())
                 key.first = 0x464f4e54;
             if (find_suitcase_resource(fork, key) != fork.resources.end())
@@ -5649,13 +5729,25 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                     }
                     for (unsigned id : unavailable_suitcase_commands)
                         EnableMenuItem(bar, id, MF_BYCOMMAND | MF_GRAYED);
+                    if (selected_preview_font(*suitcase) >= 0)
+                        EnableMenuItem(bar, open_command, MF_BYCOMMAND | MF_ENABLED);
                     EnableMenuItem(bar, 4, MF_BYPOSITION | MF_GRAYED);
                     for (unsigned i = 0; i < folder_column_count; ++i) {
                         EnableMenuItem(bar, sort_command + i, MF_BYCOMMAND | MF_GRAYED);
                         CheckMenuItem(bar, sort_command + i, MF_BYCOMMAND | MF_UNCHECKED);
                     }
                 }
-                EnableMenuItem(bar, print_window_command, MF_BYCOMMAND | (active_suitcase() ? MF_GRAYED : MF_ENABLED));
+                bool preview = is_font_preview_window(classic::active_window());
+                if (preview) {
+                    for (unsigned id : unavailable_suitcase_commands)
+                        EnableMenuItem(bar, id, MF_BYCOMMAND | MF_GRAYED);
+                    for (const auto& [command, mode] : folder_view_commands)
+                        EnableMenuItem(bar, command, MF_BYCOMMAND | MF_GRAYED);
+                    EnableMenuItem(bar, select_all_command, MF_BYCOMMAND | MF_GRAYED);
+                    EnableMenuItem(bar, 4, MF_BYPOSITION | MF_GRAYED);
+                }
+                EnableMenuItem(bar, print_window_command,
+                               MF_BYCOMMAND | (preview || active_suitcase() ? MF_GRAYED : MF_ENABLED));
             }
             return 0;
         case WM_PAINT:
@@ -5672,9 +5764,12 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             }
             break;
         case WM_COMMAND:
-            if (f->desktop)
+            if (f->desktop) {
                 if (auto* suitcase = active_suitcase(); suitcase && command_suitcase(*suitcase, LOWORD(wp)))
                     return 0;
+                if (is_font_preview_window(classic::active_window()) && preview_blocks_command(LOWORD(wp)))
+                    return 0;
+            }
             if (LOWORD(wp) == label_popup_command) {
                 // Leave the native menu loop before starting the custom popup.
                 EndMenu();
@@ -5688,7 +5783,7 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             folder_context_menu(*f, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
             return 0;
         case WM_APP + 1:
-            if (f->desktop && active_suitcase())
+            if (f->desktop && (active_suitcase() || is_font_preview_window(classic::active_window())))
                 return 0;
             command(f->desktop ? *command_folder(f) : *f, label_popup_command);
             return 0;

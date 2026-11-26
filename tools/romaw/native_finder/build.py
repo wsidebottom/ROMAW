@@ -475,6 +475,7 @@ def main():
     for source in (
         SOURCE / "main.cpp",
         SOURCE / "files.cpp",
+        SOURCE / "font_preview.cpp",
         SOURCE / "stuffit.cpp",
         SOURCE / "archive.cpp",
         SOURCE / "archive_picker.cpp",

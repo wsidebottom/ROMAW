@@ -87,6 +87,12 @@ struct SuitcaseFork {
     std::vector<SuitcaseResource> resources;
 };
 
+struct FontAssociation {
+    unsigned size, style;
+    int16_t id;
+};
+
+std::vector<FontAssociation> font_associations(const Bytes& family);
 SuitcaseFork read_suitcase_fork(const Bytes& fork);
 Bytes encode_suitcase_fork(const SuitcaseFork& fork);
 void replace_host_suitcase_fork(const fs::path& path, const Bytes& fork, bool data_fork);

@@ -1848,6 +1848,21 @@ std::vector<SuitcaseMember> suitcase_members(const Bytes& fork)
     return members;
 }
 
+std::vector<FontAssociation> font_associations(const Bytes& family)
+{
+    // The count follows the 52-byte FamRec, with six bytes per size/style entry.
+    if (family.size() < 54)
+        return {};
+    unsigned count = (be16(family, 52) + 1) & 0xffff;
+    if (count > (family.size() - 54) / 6)
+        return {};
+    std::vector<FontAssociation> result;
+    result.reserve(count);
+    for (size_t i = 54; count; i += 6, --count)
+        result.push_back({be16(family, i), be16(family, i + 2), int16_t(be16(family, i + 4))});
+    return result;
+}
+
 SuitcaseFork read_suitcase_fork(const Bytes& fork)
 {
     SuitcaseFork result;

@@ -33,6 +33,7 @@ WM_KEYDOWN = 0x100
 WM_KEYUP = 0x101
 WM_LBUTTONDOWN = 0x201
 WM_LBUTTONUP = 0x202
+WM_LBUTTONDBLCLK = 0x203
 VK_ESCAPE = 27
 VK_RETURN = 13
 LVM_GETITEMCOUNT = 0x1004
@@ -175,6 +176,32 @@ def _check_get_info(
                 table + file_type + b"MACS" + bytes(24) + (b"" if data_fork else contents)
             )
         (fixture / "Suitcase Drop Folder").mkdir()
+        # Use a real outline and a deterministic one-bit strike with a
+        # nonempty glyph for each printable ASCII code.
+        strike_height = 9
+        glyphs = 96
+        row_words = glyphs * 4 // 16
+        bitmap = bytes(0x99 if row % 2 else 0xF0 for row in range(strike_height) for _ in range(row_words * 2))
+        locations = struct.pack(f">{glyphs + 1}H", *(column * 4 for column in range(glyphs + 1)))
+        widths = struct.pack(f">{glyphs + 1}H", *([4] * glyphs), 0xFFFF)
+        header = struct.pack(
+            ">H12h", 0x9000, 32, 126, 4, 0, -2, 4, strike_height,
+            5 + row_words * strike_height + len(locations) // 2, 7, 2, 0, row_words,
+        )
+        family = bytes(52) + struct.pack(">HHHh", 0, 9, 0, 2569)
+        outline = (root / "fonts" / "Chicago.ttf").read_bytes()
+        preview_fork = resources.build_fork(
+            [
+                (b"FOND", 20, 0, b"Preview Family", family),
+                (b"NFNT", 2569, 0, None, header + bitmap + locations + widths),
+                (b"sfnt", 21, 0, b"Preview Outline", outline),
+            ]
+        )
+        (fixture / "Preview Fonts").write_bytes(b"")
+        (fixture / "._Preview Fonts").write_bytes(resources.apple_double(preview_fork))
+        (fixture / "Outline File").write_bytes(outline)
+        (fixture / "._Outline File").write_bytes(struct.pack(">II16xHII", 0x51607, 0x20000, 1, 9, 38) +
+                                               struct.pack(">I", 32) + b"tfilMACS" + bytes(24))
     image = base / "Get Info Test.hfv"
     shutil.copyfile(root / "build/image-desktop-fixture/DesktopMetadata.hfv", image)
     local = profile / "AppData" / "Local"
@@ -519,6 +546,73 @@ def _check_get_info(
         print("PASS cross-volume copies and writable image suitcase updates", flush=True)
         for window in (system, fonts, mounted_suitcase, mounted):
             assert post(window, WM_CLOSE, 0, 0)
+
+    def check_font_previews():
+        get_dc = api(u, "GetDC", w.HDC, w.HWND)
+        release_dc = api(u, "ReleaseDC", c.c_int, w.HWND, w.HDC)
+        client_to_screen = api(u, "ClientToScreen", w.BOOL, w.HWND, c.POINTER(w.POINT))
+        gdi = c.WinDLL("gdi32")
+        pixel = api(gdi, "GetPixel", w.DWORD, w.HDC, c.c_int, c.c_int)
+        memory_dc = api(gdi, "CreateCompatibleDC", w.HDC, w.HDC)
+        delete_dc = api(gdi, "DeleteDC", w.BOOL, w.HDC)
+        bitmap = api(gdi, "CreateCompatibleBitmap", w.HBITMAP, w.HDC, c.c_int, c.c_int)
+        select = api(gdi, "SelectObject", w.HANDLE, w.HDC, w.HANDLE)
+        delete = api(gdi, "DeleteObject", w.BOOL, w.HANDLE)
+        blit = api(gdi, "BitBlt", w.BOOL, w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD)
+
+        def check_window(title, samples):
+            window = wait(lambda: named(desktop, "FinderFontPreview", title), f"preview {title}")
+            origin = w.POINT()
+            assert client_to_screen(window, c.byref(origin))
+
+            def glyphs_visible():
+                dc = get_dc(None)
+                assert dc
+                snapshot = memory_dc(dc)
+                height = max(bottom for _, bottom in samples)
+                image = bitmap(dc, 40, height)
+                previous = select(snapshot, image)
+                try:
+                    assert previous and blit(snapshot, 0, 0, 40, height, dc, origin.x + 18, origin.y, 0xCC0020)
+                    return all(
+                        sum(pixel(snapshot, x, y) == 0 for x in range(40) for y in range(top, bottom)) > 12
+                        for top, bottom in samples
+                    )
+                finally:
+                    select(snapshot, previous)
+                    delete(image)
+                    delete_dc(snapshot)
+                    release_dc(None, dc)
+
+            wait(glyphs_visible, f"font glyphs rendered in {title}")
+            assert post(window, WM_CLOSE, 0, 0)
+            wait(lambda: window not in windows(desktop, "FinderFontPreview"), f"close {title}")
+
+        command(desktop, "Preview Fonts", FINDER_OPEN)
+        suitcase = wait(lambda: named(desktop, "FinderSuitcase", "Preview Fonts"), "open preview fonts")
+        listing, rows = list_rows(suitcase)
+
+        def double_click(name):
+            row = rows.index(name)
+            bounds = w.RECT(1, 0, 0, 0)
+            assert write(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+            assert send(listing, LVM_GETITEMRECT, row, remote)
+            assert read(handle, remote, c.byref(bounds), c.sizeof(bounds), None)
+            point = (bounds.left + bounds.right) // 2 | ((bounds.top + bounds.bottom) // 2 << 16)
+            for message, state in ((WM_LBUTTONDOWN, 1), (WM_LBUTTONUP, 0), (WM_LBUTTONDBLCLK, 1), (WM_LBUTTONUP, 0)):
+                assert post(listing, message, state, point)
+
+        double_click("Preview Family")
+        check_window("Preview Family", ((17, 26), (67, 79), (135, 153)))
+        double_click("Bitmap font #2569")
+        check_window("Preview Family 9", ((17, 26),))
+        double_click("Preview Outline")
+        check_window("Preview Outline", ((17, 35),))
+        assert post(suitcase, WM_CLOSE, 0, 0)
+        wait(lambda: suitcase not in windows(desktop, "FinderSuitcase"), "close Preview Fonts")
+        command(desktop, "Outline File", FINDER_OPEN)
+        check_window("Outline File", ((17, 35),))
+        print("PASS font family, bitmap strike, and embedded and standalone outline previews", flush=True)
 
     def icon_command(view, command_):
         icon = named(view, "Static", "Get Info icon")
@@ -1300,6 +1394,7 @@ def _check_get_info(
             return
         check_memory_panel()
         check_suitcases()
+        check_font_previews()
         check_suitcase_drags()
         view, _ = info(desktop, "Host Text.txt")
         assert named(view, "Static", "Plain text fixture"), [caption(x) for x in windows(view)]
