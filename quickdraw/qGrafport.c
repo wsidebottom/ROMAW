@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: ROMlib_QDGetPatternOrigin, ROMlib_QDSetPatternOrigin, ROMlib_fill_pat, ROMlib_initport,
-             ROMlib_pattern_origin, ROMlib_register_qd_port, ROMlib_valid_qd_port
+             ROMlib_pattern_origin, ROMlib_register_qd_port, ROMlib_detach_qd_pixpat, ROMlib_valid_qd_port
 
   Origin:    Existing repository source in executor/src/quickdraw; original attribution and provenance comments are
              preserved below.
@@ -116,6 +116,28 @@ static void unregister_qd_port(GrafPtr port)
 static int live_qd_handle(Handle handle, Size minimum)
 {
     return handle && HandleZone(handle) && GetHandleSize(handle) >= minimum && MemErr == CWC(noErr);
+}
+
+void ROMlib_detach_qd_pixpat(PixPatHandle pattern)
+{
+    Handle list = qd_port_list();
+    if (!list || !pattern)
+        return;
+    const unsigned count = qd_port_count(list, GetHandleSize(list));
+    const Byte* entries = (const Byte*)STARH(list) + sizeof(uint16_t);
+    for (unsigned i = 0; i < count; ++i) {
+        uint32_t address;
+        memcpy(&address, entries + i * sizeof address, sizeof address);
+        GrafPtr port = (GrafPtr)SYN68K_TO_US(CL(address));
+        if (!port || !CGrafPort_p(port))
+            continue;
+        if (CPORT_PEN_PIXPAT(port) == pattern)
+            PP_RAW(CPORT_PEN_PIXPAT_X(port)) = 0;
+        if (CPORT_BK_PIXPAT(port) == pattern)
+            PP_RAW(CPORT_BK_PIXPAT_X(port)) = 0;
+        if (CPORT_FILL_PIXPAT(port) == pattern)
+            PP_RAW(CPORT_FILL_PIXPAT_X(port)) = 0;
+    }
 }
 
 Boolean ROMlib_valid_qd_port(GrafPtr port)
@@ -451,7 +473,7 @@ A1(PUBLIC, void, ROMlib_fill_pat, Pattern, pp) /* INTERNAL */
         PixPatHandle old_fill;
 
         old_fill = CPORT_FILL_PIXPAT(theCPort);
-        if (PIXPAT_TYPE_X(old_fill) == CWC(pixpat_type_orig))
+        if (old_fill && PIXPAT_TYPE_X(old_fill) == CWC(pixpat_type_orig))
             PATASSIGN(PIXPAT_1DATA(old_fill), pp);
         else {
             PixPatHandle new_fill = NewPixPat();

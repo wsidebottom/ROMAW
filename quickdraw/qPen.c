@@ -62,7 +62,9 @@ P1(PUBLIC pascal trap, void, GetPenState, PenState*, ps)
  * NOTE: it's not clear what the Mac does here.  Cotton has been
  *	 wrong about this stuff before.
  */
-        if (PIXPAT_TYPE_X(pen_pixpat) == CWC(pixpat_type_orig))
+        if (!pen_pixpat)
+            PATASSIGN(ps->pnPat, black);
+        else if (PIXPAT_TYPE_X(pen_pixpat) == CWC(pixpat_type_orig))
             /* #warning GetPenState not necessarily implemented correctly... */
             PATASSIGN(ps->pnPat, PIXPAT_1DATA(pen_pixpat));
         else {
@@ -155,7 +157,7 @@ P1(PUBLIC pascal trap, void, PenPat, Pattern, pp)
             PixPatHandle old_pen;
 
             old_pen = CPORT_PEN_PIXPAT(theCPort);
-            if (PIXPAT_TYPE_X(old_pen) == CWC(pixpat_type_orig))
+            if (old_pen && PIXPAT_TYPE_X(old_pen) == CWC(pixpat_type_orig))
                 PATASSIGN(PIXPAT_1DATA(old_pen), pp);
             else {
                 PixPatHandle new_pen = NewPixPat();

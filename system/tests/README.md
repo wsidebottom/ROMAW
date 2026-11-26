@@ -41,6 +41,12 @@ colorization through initialized ROMAW on Windows. It covers 4/8-bit sources,
 and preservation of the source pixels, palette and port colors. `-Executable`
 selects an isolated staged build; this fixture does not require SimFarm assets.
 
+`./system/tests/check-graphics.ps1 pixpat-lifetime` checks disposal of patterns
+installed in multiple GWorlds, clearing of pen/background/fill references,
+subsidiary deallocation, replacement bit patterns and actual 8/32-bit painting.
+It reproduces Kid Pix's preview lifetime without requiring its application assets.
+`-Executable` selects an isolated staged build.
+
 `./system/tests/check-graphics.ps1 window-exposure` checks bringing overlapping
 windows forward after application drawing changes a window's `visRgn`. It
 verifies that covered pixels are repainted and invalidated, uncovered pixels

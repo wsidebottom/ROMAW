@@ -1,5 +1,30 @@
 # Kid Pix compatibility checks
 
+## Pattern preview lifetime
+
+Kid Pix disposes each temporary `GetPixPat` preview while the pattern is still
+installed in its offscreen graphics port, then restores a bit pattern with
+`PenPat`. Windows GDB traced the first invalid lifetime to `DisposPixPat` leaving
+the port's handle intact. Subsequent allocations reused that master pointer;
+later `PenPixPat` disposal followed stale subsidiary handles and invalidated the
+new pattern before `PaintRect` faulted in `xdata_for_pixpat_with_space`.
+
+`DisposPixPat` now clears matching pen, background and fill references in every
+registered color port before freeing the pattern and its subsidiary handles.
+Bit-pattern setters recreate cleared slots. This follows the documented
+[Color QuickDraw pattern lifetime](https://mirrors.apple2.org.za/ftp.apple.asimov.net/documentation/macintosh/Mac%20-%20SpInside%20Mac%20-%20May92%20Text.pdf)
+contract rather than suppressing the renderer's fault or retaining freed data.
+
+`system/tests/check-graphics.ps1 pixpat-lifetime` checks repeated shared-pattern
+disposal across 8-bit and 32-bit GWorlds, all three pattern slots, unrelated port
+preservation, actual deallocation, replacement bit patterns and painted pixels.
+All 64 scenarios passed on the rebuilt Windows executable, along with the
+existing CopyBits colorization and staged GWorld output checks. Windows GDB
+also validated all four color-pattern preview pages (IDs 1300 through 1313,
+1200 through 1213, 1100 through 1113 and 1000 through 1013) and a selected
+color-pattern canvas fill. This checks preview navigation and basic filling,
+not the complete Kid Pix workflow.
+
 ## PowerPC Studio Deluxe startup
 
 The installed suite launcher and `Studio Stuff/Kid Pix` contain PowerPC

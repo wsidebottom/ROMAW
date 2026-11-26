@@ -12,6 +12,27 @@
 #   Copyright and Legal notices: Applicable repository license: COPYING.
 # ===================================================================+
 
+function Invoke-Check-pixpat-lifetime {
+    param(
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
+        [string]$Executable = ''
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $Executable) { $Executable = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $probe = (Join-Path $PSScriptRoot 'pixpat_lifetime_probe.py').Replace('\', '/')
+    $output = & $Gdb -batch -ex 'set pagination off' -ex 'set confirm off' `
+        -ex 'break romaw_finder_main' -ex 'run -sdlaudio test' `
+        -ex "source $probe" -ex 'quit' $Executable 2>&1
+    $status = $LASTEXITCODE
+    $log = Join-Path $root 'build/pixpat-lifetime-test.log'
+    $output | Set-Content -LiteralPath $log
+    if ($status -ne 0 -or -not ($output -match 'PIXPAT_LIFETIME_OK:')) {
+        throw "Pixel-pattern lifetime checks failed; see $log"
+    }
+    Write-Output 'Installed PixPat disposal, shared ports, replacement patterns and pixels passed on Windows.'
+}
+
 function Invoke-Check-window-exposure {
     param(
         [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
@@ -148,4 +169,4 @@ quit 0
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('copybits-colorize', 'gworld-staged', 'quickdraw-host', 'window-exposure') -CheckArguments $args
+Invoke-RegressionCheck -Names @('copybits-colorize', 'gworld-staged', 'pixpat-lifetime', 'quickdraw-host', 'window-exposure') -CheckArguments $args

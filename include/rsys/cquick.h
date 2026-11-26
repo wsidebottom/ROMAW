@@ -176,6 +176,7 @@ static inline GrafPtr ASSERT_NOT_CPORT(void* port)
 
 /* native byte order */
 Boolean ROMlib_register_qd_port(GrafPtr port);
+void ROMlib_detach_qd_pixpat(PixPatHandle pattern);
 Boolean ROMlib_valid_qd_port(GrafPtr port);
 Boolean ROMlib_open_color_port(CGrafPtr port);
 

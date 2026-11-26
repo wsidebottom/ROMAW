@@ -534,6 +534,9 @@ P1(PUBLIC pascal trap, PixPatHandle, GetPixPat, INTEGER, pixpat_id)
 P1(PUBLIC pascal trap, void, DisposPixPat, PixPatHandle, pixpat_h)
 {
     if (pixpat_h) {
+        /* A disposed application pattern must not remain installed in any
+           port: its master pointer can immediately be reused by NewHandle. */
+        ROMlib_detach_qd_pixpat(pixpat_h);
         /* ##### determine which of these checks are necessary, and which
 	 should be asserts that the handles are non-NULL */
         if (PP_RAW(PIXPAT_MAP_X(pixpat_h)))
