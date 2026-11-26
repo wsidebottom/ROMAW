@@ -5,7 +5,50 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Latest validated bundle: move-out stage retirement (2026-11-27)
+## Latest validated bundle: MOVE16 descriptor pushes (2026-11-27)
+
+Source checkpoint `7d562350` certifies the compound fault where MOVE16 obtains
+its source from cache before a destination descriptor U update encounters a
+dirty line push failure. The format-7 PD holds the pushed descriptor line;
+WB2 marks the pending MOVE16. Guest cleanup and RTE retry the original
+instruction without draining WB2 as scalar data or repeating a source bus read.
+Address increments wait for successful completion, while live callback changes
+to other registers, CCR and FPU null state are retained.
+
+The new regression passes 70,176 cases in the MMU group and in each cold/warm
+AOT process. It covers all forms, both page sizes, both cacheable modes, source
+and destination offsets, user/supervisor, trace modes, clean/dirty source hits,
+partial dirty masks and every push beat. It executes guest PD cleanup, RTE
+and retry, and rejects 58 malformed record variants across 96 contexts without
+changing CPU, memory, MMU, cache or bus state. The exact fixture fails against
+the previous accepted archive.
+
+Grouped cache/reference, FPU, MMU, flat MOVE16 and full cold/warm AOT checks
+pass. Basic saved-state and Motorola FPSP checks also pass. Existing FPU,
+stream recovery and native-image coverage are retained; the emitted memory
+image and its native runner branch are unchanged.
+
+ROMAW uses application base `b9f4e437fe5b699e4f18e2d2aa858830b6475d15` and the
+tested CPU archive. Its 66-file bundle at
+`build/68040-move16-descriptor-stage/bin` is promoted to
+`build/68040-current/bin`. The prior bundle is preserved at
+`build/68040-pre-move16-descriptor-bin-20261127`.
+The audit at
+`build/68040-move16-descriptor-output/68040-move16-descriptor-source-audit.json`
+matches 179 CPU inputs, 163 fixtures and four identical archives.
+CPU build ID is `5ddecec4e3d53f946662aa9c256128f01d64a54b15f69bcbd84cc032a013ee8c`;
+archive SHA256 is `914890e28ca053b3153215efb43571ef721cba79ef99a929b261aec18c163c4a`.
+Help, Browser and 68K Speedometer startup pass. Browser/Speedometer report
+30,947/77,155 native entries with null checkpoints and no Windows exception;
+Speedometer makes one FPU query.
+
+Remaining work includes source-miss/cache-inhibited compound descriptor pushes,
+further locked push and active-stack/double-fault continuations, physical
+instruction prefetch, snoop integration, and FPU busy/FPSP saved-state,
+encoding and special-value audits. Full 68040 and paged Toolbox compatibility
+remain unproven.
+
+## Move-out stage retirement (2026-11-27)
 
 FRESTORE now resolves the older E3 writeback before retiring a quiet E1
 move-out stage. The completed writeback can no longer reactivate a frame
