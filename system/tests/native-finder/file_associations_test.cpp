@@ -122,15 +122,33 @@ int main(int argc, char** argv)
         assert(large && small);
         DestroyIcon(large);
         DestroyIcon(small);
-        assert(group.size() == 34 && word(group.data()) == 0 && word(group.data() + 2) == 1 &&
-               word(group.data() + 4) == 2);
         std::ifstream input(std::filesystem::path(argv[1]) / (std::wstring(type.key) + L".ico"), std::ios::binary);
         std::vector<unsigned char> ico((std::istreambuf_iterator<char>(input)), {});
-        assert(ico.size() > 38);
-        for (unsigned i = 0; i < 2; ++i) {
+        assert(ico.size() >= 6);
+        const unsigned count = word(ico.data() + 4);
+        assert(count && ico.size() >= 6 + count * 16);
+        assert(group.size() == 6 + count * 14 && word(group.data()) == 0 && word(group.data() + 2) == 1 &&
+               word(group.data() + 4) == count);
+        for (unsigned i = 0; i < count; ++i) {
             const auto* icon_entry = ico.data() + 6 + i * 16;
             const auto* group_entry = group.data() + 6 + i * 14;
             assert(icon_entry[0] == group_entry[0] && icon_entry[1] == group_entry[1]);
+            assert(word(icon_entry + 6) == word(group_entry + 6));
+            const unsigned width = icon_entry[0] ? icon_entry[0] : 256;
+            const unsigned height = icon_entry[1] ? icon_entry[1] : 256;
+            const auto flags = word(icon_entry + 6) == 1 ? LR_MONOCHROME : LR_DEFAULTCOLOR;
+            auto loaded = static_cast<HICON>(
+                LoadImageW(icon_module, MAKEINTRESOURCEW(type.resource), IMAGE_ICON, width, height, flags));
+            assert(loaded);
+            ICONINFO info{};
+            assert(GetIconInfo(loaded, &info));
+            BITMAP bitmap{};
+            assert(GetObjectW(info.hbmMask, sizeof(bitmap), &bitmap));
+            assert(bitmap.bmWidth == LONG(width) && bitmap.bmHeight == LONG(height * (info.hbmColor ? 1 : 2)));
+            DeleteObject(info.hbmMask);
+            if (info.hbmColor)
+                DeleteObject(info.hbmColor);
+            DestroyIcon(loaded);
             auto pixels = resource(3, word(group_entry + 12));
             auto offset = dword(icon_entry + 12), size = dword(icon_entry + 8);
             assert(size == pixels.size() && offset + size <= ico.size());

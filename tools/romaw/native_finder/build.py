@@ -559,6 +559,7 @@ def main():
                 *link,
                 "-ladvapi32",
                 "-lshell32",
+                "-lgdi32",
                 "-o",
                 image_test,
             ]

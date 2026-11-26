@@ -31,32 +31,44 @@ class Icon(ctypes.Structure):
 
 
 def windows_frames(data):
-    """Decode the generated indexed ICO frames for an independent pixel check."""
+    """Independently decode every generated ICO size and color depth."""
     reserved, kind, count = struct.unpack_from("<HHH", data)
-    assert (reserved, kind, count) == (0, 1, 2)
-    result = {}
+    assert reserved == 0 and kind == 1 and count > 0
+    result = []
     for index in range(count):
         width, height, _, _, planes, depth, length, offset = struct.unpack_from("<BBBBHHII", data, 6 + index * 16)
-        assert planes == 1 and depth == 8 and width in (16, 32) and height == width
+        width, height = width or 256, height or 256
+        assert planes == 1 and depth in (1, 4, 8, 24, 32)
         header, w, h, dib_planes, bits, compression = struct.unpack_from("<IiiHHI", data, offset)
-        assert (header, w, h, dib_planes, bits, compression) == (40, width, height * 2, 1, 8, 0)
+        assert (header, w, h, dib_planes, bits, compression) == (40, width, height * 2, 1, depth, 0)
         assert offset + length <= len(data)
-        palette = [tuple(reversed(data[offset + 40 + i * 4 : offset + 43 + i * 4])) for i in range(256)]
-        pixels = offset + 40 + 1024
-        stride = (width + 3) & ~3
+        colors = struct.unpack_from("<I", data, offset + 32)[0] if depth <= 8 else 0
+        palette = [tuple(reversed(data[offset + 40 + i * 4 : offset + 43 + i * 4])) for i in range(colors)]
+        pixels = offset + 40 + colors * 4
+        stride = ((width * depth + 31) // 32) * 4
         mask = pixels + stride * height
         mask_stride = ((width + 31) // 32) * 4
+        alpha_used = depth == 32 and any(
+            data[pixels + y * stride + x * 4 + 3] for y in range(height) for x in range(width)
+        )
         rows = []
         for y in range(height):
             row = height - y - 1
-            rows.append(
-                [
-                    palette[data[pixels + row * stride + x]]
-                    + (0 if data[mask + row * mask_stride + x // 8] & (128 >> (x % 8)) else 255,)
-                    for x in range(width)
-                ]
-            )
-        result[width] = rows
+            raster = []
+            for x in range(width):
+                if depth <= 8:
+                    bit = x * depth
+                    color = data[pixels + row * stride + bit // 8] >> (8 - depth - bit % 8) & ((1 << depth) - 1)
+                    rgb, alpha = palette[color], 255
+                else:
+                    position = pixels + row * stride + x * (depth // 8)
+                    rgb = tuple(reversed(data[position : position + 3]))
+                    alpha = data[position + 3] if alpha_used else 255
+                if data[mask + row * mask_stride + x // 8] & (128 >> (x % 8)):
+                    alpha = 0
+                raster.append(rgb + (alpha,))
+            rows.append(raster)
+        result.append((width, height, depth, rows))
     return result
 
 
@@ -181,12 +193,13 @@ def main():
         for row in manifest:
             source = mac_icons.decode((ROOT / "bitmaps" / row["source"]).read_bytes())
             windows = windows_frames((work / row["icon"]).read_bytes())
-            assert windows.keys() == {16, 32}
-            for size, pixels in windows.items():
-                assert pixels == mac_icons.rgba(mac_icons.best_frame(source, size, 8))
+            assert len(windows) == len(source), row["key"]
+            for (width, height, depth, pixels), frame in zip(windows, source):
+                assert (width, height, depth) == (frame["size"], frame["height"], frame["depth"])
+                assert pixels == mac_icons.rgba(frame), (row["key"], width, height, depth)
     print(
         f"PASS: {len(wanted_types)} generic types, all {len(wanted)} extensions, "
-        "Finder planes and Windows 16/32px icons match requested ICNS files"
+        "Finder planes and every Windows icon size/depth match requested ICNS files"
     )
 
 

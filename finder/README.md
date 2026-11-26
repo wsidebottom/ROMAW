@@ -281,7 +281,8 @@ direct read-only projection mount their available contents without a repair/back
 mounts. Mounted image volumes appear on the desktop, including restored mounts. Double-click a volume
 to browse its Macintosh catalog directly; Put Away, Eject or dragging its icon to Trash unmounts it.
 Image-file artwork comes from the extension mapping in `tools/generate-folder-icons.py` and the shared
-`bitmaps/file_*.icns` sources. The Windows executable embeds matching 16/32-pixel icon groups
+`bitmaps/file_*.icns` sources. The Windows executable embeds every source size and color depth:
+currently 16, 32 and 48 pixels in monochrome, 16-color and 256-color variants. Icon groups
 101–106 for HFS/HFV/HDA, DMG, ISO/CDR, IMG/IMAGE, TOAST and DSK.
 Choose **Special > Register Disk Image Types…** to register all ten extensions for the
 current Windows user. Registration uses the executable's embedded icons and the command

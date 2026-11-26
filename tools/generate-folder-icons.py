@@ -126,9 +126,7 @@ def generate_windows(output):
     ]
     for key, filename, _, extensions in IMAGE_FILE_TYPES:
         frames = mac_icons.decode((ROOT / "bitmaps" / filename).read_bytes())
-        (output / (key + ".ico")).write_bytes(
-            mac_icons.encode_ico([mac_icons.best_frame(frames, size, 8) for size in (16, 32)])
-        )
+        (output / (key + ".ico")).write_bytes(mac_icons.encode_ico(frames))
         resource_id = WINDOWS_IMAGE_ICON_IDS[key]
         resources.append(f'{resource_id} ICON "{key}.ico"')
         suffixes = ",".join(f'L"{extension}"' for extension in extensions)
