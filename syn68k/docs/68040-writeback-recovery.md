@@ -396,3 +396,23 @@ certified continuation contract. General busy-frame, encoding,
 special-value, privileged/MMU/cache and application compatibility audits are
 still required; these writeback regressions do not establish complete 68040 or
 paged Toolbox compatibility.
+
+### Cached-source MOVE16 destination descriptor pushes
+
+A destination page descriptor U update can encounter a dirty descriptor cache
+line while MOVE16 already holds its source line from a cache hit. That compound
+fault now retains a certified MOVE16 continuation. The format-7 frame keeps the
+physical pushed descriptor line in PD, marks the pending MOVE16 in WB2, and
+returns to the original instruction after guest cleanup and RTE. WB2 is not
+drained as scalar source data. Address register increments occur only after the
+retried MOVE16 completes; live callback changes to other registers, CCR and FPU
+null state survive the fault.
+
+The regression covers all five forms, source/destination word offsets, clean
+and dirty source hits, both cacheable modes, both page sizes, user/supervisor
+access, all trace settings, every push failure beat, partial dirty masks, guest
+PD cleanup and retry, and rejection of malformed records without state changes.
+Its 70,176 cases run in the MMU group and cold/warm AOT group. The focused
+nonpersistent candidate run passes; fresh archive and grouped validation are
+pending. Source cache misses and cache-inhibited source reads followed by a
+destination descriptor push remain outside this certified continuation.

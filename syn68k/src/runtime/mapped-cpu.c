@@ -311,6 +311,40 @@ static int move16_read_fault(const Syn68kIntegerStep* record, int candidate)
            (line->next - record->exception_pc == 4 || line->next - record->exception_pc == 6);
 }
 
+/* The source was acquired from cache before a destination table push failed.
+   No MOVE16 write beat or address update has retired. The guest drains PD,
+   ignores the MOVE16-marked WB2 data and retries the original instruction. */
+static int move16_push_fault(const Syn68kIntegerStep* record, int candidate)
+{
+    const Syn68kMMU040Access* access = &record->access;
+    const Syn68kMOVE16Writeback* line = &record->move16;
+    uint16 push_ssw;
+    if (record->vector != 2 || record->format != 7 || record->cache_restart || record->store_state ||
+        record->store_next || record->store_trace_pc || record->store_ccr || record->store_tail ||
+        record->store_tail_valid || record->store_tail_fc || record->store_tail_address || record->store_locked ||
+        record->store_link_displacement || record->fpu_vector || record->fpu_ea || record->movem_state ||
+        record->movem_ea || record->restartable_read || record->stopped || record->forced_trace ||
+        record->forced_trace_pc || record->prefetch_address || record->flow_changed || record->interrupt_level ||
+        (record->exception_pc & 1) || record->next != record->exception_pc || line->trace_pc ||
+        (line->address & 3) || access->writing != 1 || access->rmw || access->size != 4 || access->completed ||
+        access->bus_error || access->cache_table != 1 || access->cache_exception != 1 ||
+        access->translation.fault != MMU040_PHYSICAL_ABORT || access->cache.fault != CACHE040_PUSH_FAULT ||
+        access->cache.completed || access->cache.cycle.traffic != CACHE040_LOCKED ||
+        access->request != line->address || access->logical != access->request ||
+        record->fault_address != access->logical || (access->fc != 1 && access->fc != 5) ||
+        access->value != line->data[(access->request >> 2) & 3] ||
+        !syn68k_mmu040_cache_push_ssw(access, &push_ssw))
+        return 0;
+    if (candidate) {
+        unsigned mode = (line->command >> 3) & 7;
+        return line->state == 7 && line->command < 512 && mode <= 4 && (mode == 4 || !(line->command >> 6)) &&
+               line->address == (line->destination & ~3u) &&
+               line->next - record->exception_pc == (mode == 4 ? 4u : 6u);
+    }
+    return line->state == 8 && !line->source && !line->destination && !line->command &&
+           (line->next - record->exception_pc == 4 || line->next - record->exception_pc == 6);
+}
+
 static unsigned pending_interrupt(void)
 {
     if (cpu_state.interrupt_pending[7])
@@ -721,6 +755,15 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 else
                     *line = (Syn68kMOVE16Writeback){0};
             }
+            if (result->step.move16.state == 7) {
+                Syn68kMOVE16Writeback* line = &result->step.move16;
+                if (move16_push_fault(&result->step, 1)) {
+                    line->state = 8;
+                    line->source = line->destination = line->command = 0;
+                }
+                else
+                    *line = (Syn68kMOVE16Writeback){0};
+            }
             if (result->step.move16.state == 1) {
                 Syn68kMOVE16Writeback* line = &result->step.move16;
                 if (move16_write_fault(&result->step, 1) &&
@@ -949,14 +992,16 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
             if (physical_push) {
                 const Syn68kCache040Access* push = &record->access.cache;
                 int operand = pending && record->access.completed < record->access.size;
+                int line_pending = record->move16.state == 8;
                 if (offset != 8) {
                     value =
                         offset == 12   ? (uint32)(push_ssw | (ssw & 0xf000)) << 16 | (operand && tail ? tail_status : 0)
-                        : offset == 16 ? (operand ? wb_status
+                        : offset == 16 ? (operand || line_pending ? wb_status
                                           : tail  ? tail_status
                                                   : 0)
                                              << 16
                         : offset == 20 || offset == 40 ? push->push_address
+                        : offset == 32 && line_pending ? record->move16.address
                         : offset == 32 && operand      ? record->access.request
                         : offset == 36 && operand      ? record->access.value
                         : offset == (operand ? 24u : 32u) && tail
@@ -1040,14 +1085,15 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         return 1;
     }
     if ((record->cache_restart && !cache_push_restart(record)) ||
-        (record->move16.state && !move16_write_fault(record, 0) && !move16_read_fault(record, 0)) ||
+        (record->move16.state && !move16_write_fault(record, 0) && !move16_read_fault(record, 0) &&
+         !move16_push_fault(record, 0)) ||
         (record->movem_state && !movem_fault(record)) ||
         ((record->store_state || record->fpu_vector || record->store_tail_valid || record->store_locked) &&
          !scalar_store_fault(record) && !replay_store_fault(record)) ||
         (record->format != 0 && record->format != 2 && record->format != 3 && !restartable_read_fault(record) &&
          !((record->store_state == 2 || record->store_state == 3) && scalar_store_fault(record)) &&
          !replay_store_fault(record) && !movem_fault(record) && !move16_write_fault(record, 0) &&
-         !move16_read_fault(record, 0) && !cache_push_restart(record))) {
+         !move16_read_fault(record, 0) && !move16_push_fault(record, 0) && !cache_push_restart(record))) {
         result->reason = SYN68K_DELIVERY_UNSUPPORTED;
         return 1;
     }

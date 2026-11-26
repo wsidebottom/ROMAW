@@ -392,7 +392,10 @@ static uint32 move16(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68
                                                    .source = source,
                                                    .destination = destination,
                                                    .command = (opcode & 63) | (other << 6),
-                                                   .state = 1};
+                                                   .state = read_cached && context->access.cache_table &&
+                                                                    context->access.cache.fault == CACHE040_PUSH_FAULT
+                                                                ? 7
+                                                                : 1};
             for (unsigned j = 0; j < 4; ++j)
                 step->move16.data[j] = line[j];
         }
