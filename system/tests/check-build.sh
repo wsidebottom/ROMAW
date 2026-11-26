@@ -283,6 +283,12 @@ EOF
       for input in bitmaps/mac-palettes.r tools/resource_catalog.py tools/rez_types.py; do
         grep -Fq "$input" "$obj/finder-metadata/CMakeFiles/romaw-finder-metadata.dir/build.make"
       done
+      # Every Shell image family must invalidate the embedded Windows resources.
+      for input in bitmaps/file_{hfs,dmg,iso,img,toast,dsk}.icns tools/generate-folder-icons.py; do
+        make -C "$obj" -n -W "$workspace/$input" generated/ROMAW-res.o >"$fixture/image-icons-rebuild.log"
+        grep -q 'generate-folder-icons.py --windows-output' "$fixture/image-icons-rebuild.log"
+        grep -q 'windres.*image-file-icons' "$fixture/image-icons-rebuild.log"
+      done
       for pair in 'menu_right_arrow icns menus/stdmdef' 'menu_up_arrow icns menus/stdmdef' \
         'menu_down_arrow icns menus/stdmdef' 'popup_down_arrow icns controls/ctlPopup' \
         'color_picker_normal png quickdraw/qColorPicker' 'color_wheel_4 png ui/color_wheel_bits'; do

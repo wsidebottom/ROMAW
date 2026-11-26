@@ -281,11 +281,14 @@ direct read-only projection mount their available contents without a repair/back
 mounts. Mounted image volumes appear on the desktop, including restored mounts. Double-click a volume
 to browse its Macintosh catalog directly; Put Away, Eject or dragging its icon to Trash unmounts it.
 Image-file artwork comes from the extension mapping in `tools/generate-folder-icons.py` and the shared
-`bitmaps/file_*.icns` sources. The Windows build stages matching 16/32-pixel `.ico` files under
-`windows-binaries/bin/image-file-icons`. Run `register-image-file-types.ps1` beside the executable to
-register the ten extensions for the current Windows user; the script saves the previous registry
-values before changing them. Windows opens these files with `ROMAW.exe -mount "%1"`.
-For a machine-wide installation, run the script with `-AllUsers` from an administrator PowerShell.
+`bitmaps/file_*.icns` sources. The Windows executable embeds matching 16/32-pixel icon groups
+101–106 for HFS/HFV/HDA, DMG, ISO/CDR, IMG/IMAGE, TOAST and DSK.
+Choose **Special > Register Disk Image Types…** to register all ten extensions for the
+current Windows user. Registration uses the executable's embedded icons and the command
+`ROMAW.exe -mount "%1"`; it requires no external script or icon files. Existing extension
+handlers and protected Windows default-app choices are preserved. Choose ROMAW in Windows
+Open with or Default apps when changing an existing default. Failed registration restores
+the registry values already changed by that attempt.
 
 Mounted folder windows read their DInfo/DXInfo and item FInfo/FXInfo directly from the live catalog.
 Saved folder bounds, icon/small-icon/list view selectors and initialized icon coordinates seed the

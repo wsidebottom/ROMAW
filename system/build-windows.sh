@@ -282,8 +282,6 @@ publish_executable "$stage/$executable"
 if [[ $mode == optimized ]]; then
   publish_executable "$stage/ROMAW-optimized.exe"
 fi
-python3 "$workspace/tools/generate-folder-icons.py" --windows-output "$stage/image-file-icons"
-cp "$workspace/tools/register-image-file-types.ps1" "$stage/register-image-file-types.ps1"
 pthread_dll=$($cc -print-file-name=libwinpthread-1.dll)
 if [[ -f "$pthread_dll" ]] && ! cmp -s "$pthread_dll" "$stage/libwinpthread-1.dll"; then
   cp "$pthread_dll" "$stage/libwinpthread-1.dll"

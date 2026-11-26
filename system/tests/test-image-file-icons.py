@@ -119,6 +119,10 @@ def main():
         lookup.argtypes = [ctypes.c_char_p, ctypes.POINTER(Icon)]
         lookup.restype = ctypes.c_int
         manifest = json.loads((work / "mapping.json").read_text())
+        resources = (work / "resources.rc").read_text()
+        assert {row["resource_id"] for row in manifest} == set(range(101, 107))
+        for row in manifest:
+            assert f'{row["resource_id"]} ICON "{row["icon"]}"' in resources
         assert {extension: row["source"] for row in manifest for extension in row["extensions"]} == wanted
         for extension, filename in wanted.items():
             data = (ROOT / "bitmaps" / filename).read_bytes()

@@ -119,7 +119,16 @@ def main():
         cc, cxx, rc = [compiler / name for name in ("gcc.exe", "g++.exe", "windres.exe")]
     else:
         cc, cxx, rc = ["x86_64-w64-mingw32-" + name for name in ("gcc", "g++", "windres")]
-    run([sys.executable, ROOT / "tools/generate-folder-icons.py", "--output", OUT])
+    run(
+        [
+            sys.executable,
+            ROOT / "tools/generate-folder-icons.py",
+            "--output",
+            OUT,
+            "--windows-output",
+            OUT / "image-file-icons",
+        ]
+    )
     # Asset order is consumed by main.cpp: base icons, labels, then notice/menu
     # artwork. Change both the generator and consumers when adding a new slot.
     names = [
@@ -474,6 +483,7 @@ def main():
         SOURCE / "recycle.cpp",
         SOURCE / "clipboard.cpp",
         SOURCE / "actions.cpp",
+        SOURCE / "file_associations.cpp",
         SOURCE / "classic.cpp",
         SOURCE / "text.cpp",
         SOURCE / "romaw.cpp",
@@ -523,6 +533,40 @@ def main():
     run([rc, "-i", manifest, "-o", OUT / "finder-integrated-res.o"])
     # These fixtures execute Windows code (including under WSL interop), not
     # Linux substitutes for the filesystem, drawing or command-line APIs.
+    if args.test:
+        image_resources = OUT / "image-file-icons-test-res.o"
+        run(
+            [
+                rc,
+                "-I" + str(OUT / "image-file-icons"),
+                "-i",
+                OUT / "image-file-icons/resources.rc",
+                "-o",
+                image_resources,
+            ]
+        )
+        image_test = OUT / "file-associations-test.exe"
+        run(
+            [
+                cxx,
+                "-std=c++17",
+                *flags,
+                "-UNDEBUG",
+                *include,
+                TESTS / "file_associations_test.cpp",
+                SOURCE / "file_associations.cpp",
+                image_resources,
+                *link,
+                "-ladvapi32",
+                "-lshell32",
+                "-o",
+                image_test,
+            ]
+        )
+        test_artwork = str(OUT / "image-file-icons")
+        if sys.platform != "win32":
+            test_artwork = subprocess.check_output(["wslpath", "-w", test_artwork], text=True).strip()
+        run([image_test, test_artwork], timeout=120)
     if args.test:
         parser = OUT / "desktop-icons-parser.o"
         run([cc, "-std=c11", *include, "-c", ROOT / "finder-metadata/src/icons.c", "-o", parser])

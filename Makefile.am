@@ -542,8 +542,9 @@ finder-metadata/libromaw-finder-metadata.a: $(metadata_inputs)
 	cmake --build finder-metadata --target romaw-finder-metadata --parallel 10
 ROMAW_LDADD += finder-metadata/libromaw-finder-metadata.a
 ROMAW_LDFLAGS += -mwindows -static-libgcc -static-libstdc++
-ROMAW_LDADD += generated/ROMAW-res.o -loleaut32 -luuid -lsapi -lcomctl32
+ROMAW_LDADD += generated/ROMAW-res.o -loleaut32 -luuid -lsapi -lcomctl32 -ladvapi32
 CLEANFILES += generated/ROMAW-res.o
+CLEANFILES += generated/image-file-icons/*.ico generated/image-file-icons/mapping.json generated/image-file-icons/resources.rc generated/image-file-icons/associations.inc
 generated/ROMAW.ico: $(shared_icons_dir)/ROMAW.icns $(shared_icon_tool_inputs)
 	mkdir -p generated
 	$(PYTHON) $(shared_tools_dir)/mac_icons.py $< $@
@@ -551,9 +552,11 @@ generated/ROMAW.ico: $(shared_icons_dir)/ROMAW.icns $(shared_icon_tool_inputs)
 generated/ROMAW-res.o: $(srcdir)/platform/os/cygwin32/ROMAW.rc \
                       $(srcdir)/platform/os/cygwin32/preferences.rc \
                       $(srcdir)/platform/os/cygwin32/preferences_resource.h \
-                      $(srcdir)/platform/os/cygwin32/preferences_winres.h generated/ROMAW.ico
+                      $(srcdir)/platform/os/cygwin32/preferences_winres.h generated/ROMAW.ico \
+                      $(shared_icon_inputs) $(shared_icon_tool_inputs) $(srcdir)/tools/generate-folder-icons.py
 	mkdir -p generated
-	$(WINDRES) -Igenerated -i $< -o $@ -O coff
+	$(PYTHON) $(srcdir)/tools/generate-folder-icons.py --windows-output generated/image-file-icons
+	$(WINDRES) -Igenerated -Igenerated/image-file-icons -i $< -o $@ -O coff
 
 os_sources = platform/os/cygwin32/cygwin32.c \
              platform/os/cygwin32/winfs.c             \

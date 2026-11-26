@@ -28,6 +28,7 @@
 #include "finder/recycle.h"
 #include "finder/clipboard.h"
 #include "finder/actions.h"
+#include "finder/file_associations.h"
 #include <winioctl.h>
 #include <winnetwk.h>
 #include <psapi.h>
@@ -123,6 +124,7 @@ enum Command {
     extract_to_command,
     romaw_prefs_command,
     windows_shortcut_command,
+    register_images_command,
     label_command = 200,
     sort_command = 300
 };
@@ -3048,6 +3050,7 @@ menu()
     HMENU special = resource_menu(L"&Special", finder_menu_1255);
     AppendMenuW(special, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(special, MF_STRING, operations_command, L"File Operations");
+    AppendMenuW(special, MF_STRING, register_images_command, L"Register Disk Image Types...");
     classic::style_menu(bar);
     return bar;
 }
@@ -3928,6 +3931,16 @@ void command(FolderWindow& f, unsigned id)
         for (auto& o : operations)
             if (IsWindow(o->window))
                 ShowWindow(o->window, SW_SHOWNORMAL);
+        break;
+    case register_images_command:
+        if (classic::message_box(f.window,
+                                 L"Register ROMAW for disk image files for this Windows user?\n\n"
+                                 L"Existing Windows default-app choices will be preserved.",
+                                 MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            register_disk_image_types();
+            message(f.window, L"Disk image types registered.\n\n"
+                              L"To change an existing default, choose ROMAW in Windows Open with or Default apps.");
+        }
         break;
     case about_system_command:
         show_about_system();

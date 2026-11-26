@@ -32,6 +32,9 @@ IMAGE_FILE_TYPES = (
     ("dsk", "file_dsk.icns", 20, (".dsk",)),
 )
 
+# Stable Windows RT_GROUP_ICON IDs; file associations use negative resource IDs.
+WINDOWS_IMAGE_ICON_IDS = {"hfs": 101, "dmg": 102, "iso": 103, "img": 104, "toast": 105, "dsk": 106}
+
 # Used only after custom, bundle and Desktop database artwork has failed.
 GENERIC_FILE_TYPES = (
     ("dfil", "-3991_genericDeskAccessoryIconResource.icns"),
@@ -113,15 +116,28 @@ def generate(output):
 
 
 def generate_windows(output):
-    """Publish matching Shell icons and a registration manifest without image data."""
+    """Publish Shell icons, executable resources and native association tables."""
     output.mkdir(parents=True, exist_ok=True)
     manifest = []
+    resources = ["/* Generated disk-image icon resources; do not edit. */"]
+    associations = [
+        "/* Generated Windows disk-image associations; do not edit. */",
+        "static const struct { const wchar_t *key; unsigned resource; const wchar_t *extensions[4]; } disk_image_types[]={",
+    ]
     for key, filename, _, extensions in IMAGE_FILE_TYPES:
         frames = mac_icons.decode((ROOT / "bitmaps" / filename).read_bytes())
         (output / (key + ".ico")).write_bytes(
             mac_icons.encode_ico([mac_icons.best_frame(frames, size, 8) for size in (16, 32)])
         )
-        manifest.append(dict(key=key, icon=key + ".ico", source=filename, extensions=extensions))
+        resource_id = WINDOWS_IMAGE_ICON_IDS[key]
+        resources.append(f'{resource_id} ICON "{key}.ico"')
+        suffixes = ",".join(f'L"{extension}"' for extension in extensions)
+        associations.append(f'{{L"{key}",{resource_id},{{{suffixes},nullptr}}}},')
+        manifest.append(
+            dict(key=key, icon=key + ".ico", resource_id=resource_id, source=filename, extensions=extensions)
+        )
+    (output / "resources.rc").write_text("\n".join(resources) + "\n")
+    (output / "associations.inc").write_text("\n".join(associations + ["};"]) + "\n")
     (output / "mapping.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
