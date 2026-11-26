@@ -83,6 +83,13 @@ case ${1:-} in
     ;;
 esac
 
+# Both build modes update shared libraries in the toolchain prefix. Hold the
+# workspace lock through linking and staging so another build cannot truncate
+# an output while it is being copied.
+mkdir -p "$workspace/build"
+exec {build_lock}>"$workspace/build/.windows-build.lock"
+flock "$build_lock"
+
 if [[ ${1:-} == --clean ]]; then
   if [[ -f "$obj/Makefile" ]]; then
     make -C "$obj" clean
@@ -246,15 +253,34 @@ if [[ ${1:-} == --libraries ]]; then
   echo "Staged static libraries in $archive_stage"
   exit 0
 fi
+# Validate a private snapshot before touching the previously staged executable.
+staged_exe=$(mktemp "$stage/.romaw-exe.XXXXXX")
+trap 'rm -f -- "$staged_exe"' EXIT
+cp -p ROMAW.exe "$staged_exe"
+if ! LC_ALL=C "$target-objdump" -f "$staged_exe" | grep -F 'file format pei-x86-64' >/dev/null; then
+  echo "Linked ROMAW.exe is not a valid Windows x64 executable; keeping the staged build." >&2
+  exit 1
+fi
+
+publish_executable() {
+  local destination=$1 pending
+  if cmp -s "$staged_exe" "$destination"; then
+    return
+  fi
+  pending=$(mktemp "$stage/.romaw-publish.XXXXXX")
+  if ! cp -p "$staged_exe" "$pending" || ! mv -fT -- "$pending" "$destination"; then
+    rm -f -- "$pending"
+    return 1
+  fi
+}
+
 python3 "$workspace/tools/build_version.py" >"$stage/build-version.txt"
 cp generated/ROMAW.rsrc "$stage/ROMAW.rsrc"
 mkdir -p "$stage/fonts"
 cp "$workspace"/fonts/*.ttf "$stage/fonts/"
-if ! cmp -s ROMAW.exe "$stage/$executable"; then
-  cp ROMAW.exe "$stage/$executable"
-fi
-if [[ $mode == optimized ]] && ! cmp -s ROMAW.exe "$stage/ROMAW-optimized.exe"; then
-  cp ROMAW.exe "$stage/ROMAW-optimized.exe"
+publish_executable "$stage/$executable"
+if [[ $mode == optimized ]]; then
+  publish_executable "$stage/ROMAW-optimized.exe"
 fi
 python3 "$workspace/tools/generate-folder-icons.py" --windows-output "$stage/image-file-icons"
 cp "$workspace/tools/register-image-file-types.ps1" "$stage/register-image-file-types.ps1"
