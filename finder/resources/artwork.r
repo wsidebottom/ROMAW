@@ -78,7 +78,7 @@ data 'ICN#' (15500, purgeable) {
 };
 
 data 'ICN#' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'ICN#' (19566, purgeable) {
@@ -174,7 +174,7 @@ data 'icl4' (15500, purgeable) {
 };
 
 data 'icl4' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'icl8' (3967) {
@@ -206,7 +206,7 @@ data 'icl8' (15500, purgeable) {
 };
 
 data 'icl8' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'ics#' (3060, purgeable) {
@@ -246,7 +246,7 @@ data 'ics#' (15500, purgeable) {
 };
 
 data 'ics#' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'ics#' (20806, purgeable) {
@@ -294,7 +294,7 @@ data 'ics4' (15500, purgeable) {
 };
 
 data 'ics4' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'ics4' (20806, purgeable) {
@@ -342,7 +342,7 @@ data 'ics8' (15500, purgeable) {
 };
 
 data 'ics8' (15750, purgeable) {
-    $$read("15750.icns")
+    $$read("type_dfil_1.icns")
 };
 
 data 'ics8' (20806, purgeable) {

@@ -11,7 +11,7 @@ tools/generate-folder-icons.py. No external Finder checkout is required.
 Source files retain their original MIT license declarations.
 
 Custom icons and application BNDL/FREF artwork precede the generic fallbacks
-for `dfil`, `FNDR`, `ZSYS`, `APPL`, `TEXT`, `PICT`, `INIT`, `shlb`,
+for `dfil`, `DFIL`, `FNDR`, `ZSYS`, `APPL`, `TEXT`, `PICT`, `INIT`, `shlb`,
 `kfil`, `FFIL`, `ffil`, `sfil` and `tfil`. Type codes are case-sensitive;
 `FFIL` and `ffil` select their respective artwork.
 

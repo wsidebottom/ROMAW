@@ -37,7 +37,8 @@ WINDOWS_IMAGE_ICON_IDS = {"hfs": 101, "dmg": 102, "iso": 103, "img": 104, "toast
 
 # Used only after custom, bundle and Desktop database artwork has failed.
 GENERIC_FILE_TYPES = (
-    ("dfil", "-3991_genericDeskAccessoryIconResource.icns"),
+    ("dfil", "type_dfil_2.icns"),
+    ("DFIL", "type_dfil_1.icns"),
     ("FNDR", "mac.icns"),
     ("ZSYS", "mac.icns"),
     ("APPL", "type_APPL.icns"),

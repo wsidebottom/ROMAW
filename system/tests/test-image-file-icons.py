@@ -89,7 +89,8 @@ def main():
         ".dsk": "file_dsk.icns",
     }
     wanted_types = {
-        "dfil": "-3991_genericDeskAccessoryIconResource.icns",
+        "dfil": "type_dfil_2.icns",
+        "DFIL": "type_dfil_1.icns",
         "FNDR": "mac.icns",
         "ZSYS": "mac.icns",
         "APPL": "type_APPL.icns",
@@ -160,7 +161,7 @@ def main():
             assert type_lookup(code, ctypes.byref(icon)) == 1
             assert icon.present == 63 and bytes(icon.planes) == expected, file_type
             assert type_lookup(code, None) == 0
-        for unknown in (0, 0x4446494C, 0x74657874, 0x42494E41):
+        for unknown in (0, 0x4466696C, 0x74657874, 0x42494E41):
             icon = Icon()
             ctypes.memset(ctypes.byref(icon), 0xA5, ctypes.sizeof(icon))
             before = bytes(icon)

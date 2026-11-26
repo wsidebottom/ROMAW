@@ -79,7 +79,7 @@ data 'ICN#' (-3993, purgeable) {
 };
 
 data 'ICN#' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'ICN#' (-3989, purgeable) {
@@ -188,7 +188,7 @@ data 'icl4' (-3993, purgeable) {
 };
 
 data 'icl4' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'icl4' (-3989, purgeable) {
@@ -276,7 +276,7 @@ data 'icl8' (-3993, purgeable) {
 };
 
 data 'icl8' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'icl8' (-3989, purgeable) {
@@ -368,7 +368,7 @@ data 'ics#' (-3992, purgeable) {
 };
 
 data 'ics#' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'ics#' (-3989, purgeable) {
@@ -456,7 +456,7 @@ data 'ics4' (-3993, purgeable) {
 };
 
 data 'ics4' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'ics4' (-3989, purgeable) {
@@ -544,7 +544,7 @@ data 'ics8' (-3993, purgeable) {
 };
 
 data 'ics8' (-3991, purgeable) {
-    $$read("-3991_genericDeskAccessoryIconResource.icns")
+    $$read("type_dfil_2.icns")
 };
 
 data 'ics8' (-3989, purgeable) {
