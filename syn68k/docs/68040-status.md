@@ -5,30 +5,56 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Source checkpoint: completed FPSP frames (2026-11-26)
+## Latest validated bundle: completed FPSP frames (2026-11-26)
 
-FRESTORE now retires an FPSP-completed E1 frame when no exception remains
-enabled, preserving the completed result and controls. Incomplete S/X markers
-retain the unimplemented-instruction exit; enabled exceptions remain pending.
-The new 55,296-case matrix passes checked/native CPU and memory, both page
-sizes, short/busy frames, postincrement, rounding/precision, exception masks,
-FSIN/FINT/FMOVECR commands and previous FPU states. Its exact fixture rejects
-the preceding archive. Focused cold/warm AOT emits four bodies cold and loads
-all four with zero compilation warm.
+Restoring an FPSP-completed E1 frame with no enabled exception now leaves the
+FPU idle. Its existing result and control state remain live; the following FPU
+instruction no longer dispatches a zero pending vector as vector 1. Frames
+without both S/X completion markers still request unimplemented-instruction
+handling. Enabled signaling-NaN exceptions remain pending. This resolves the
+zero-vector issue recorded at the preceding checkpoint.
 
-Grouped cache, FPU, MMU and flat MOVE16 checks pass, as do basic saved-state
-and Motorola FPSP checks. ROMAW is rebuilt and staged at
-`build/68040-fpsp-completion-stage/bin`; help, Browser and 68K Speedometer startup
-checks pass. CPU build ID is
-`91f756a14e91e721842f5cde6c910df6437778db6294ee75d019ae4c572b1507`.
-The complete grouped AOT rerun and final acceptance audit remain pending.
-This bundle has not been promoted; the validated bundle below remains current.
+The new 55,296-case matrix covers checked/native CPU and memory, both page
+sizes, short/busy frames, postincrement, all defined rounding and precision
+settings, exception masks, FSIN/FINT/FMOVECR commands, all S/X combinations
+and previous null/idle/pending states. It checks all FPRs and controls,
+the next FNOP and a four-byte idle FSAVE with an untouched tail. Its exact
+fixture rejects the preceding CPU archive. Cold AOT emits four bodies; warm
+replay restores all four with zero compilation.
 
-A separate combined E3-writeback/E1-FMOVE-out continuation still retains a
-zero pending vector after writeback. Its isolated candidate and regression
-remain outside this source checkpoint. The broader 68040 goal is paused.
+Grouped cache/reference, FPU, MMU, flat MOVE16 and complete cold/warm AOT
+checks pass. The native FPU runner reports 1,345,782 cases, including the
+137,088 captured-frame cases. Basic saved-state checks and 146 Motorola FPSP
+cases pass in both dispatch modes, with FPSP at two load addresses. MMU
+recovery retains 8,107,168 stream cases; mapped AOT recovery passes 3,618,920
+cases per process, with 1,262,191 hits and zero compilations warm. The closed
+memory image and its runner branch are byte-identical to the prior proof:
+twenty kernel groups and 45 verified roots per Windows/Linux ABI remain
+covered by that exact-source evidence.
 
-## Latest validated bundle: captured FRESTORE frames (2026-11-26)
+ROMAW was rebuilt with the tested archive. Its 74-file bundle at
+`build/68040-fpsp-completion-stage/bin` is promoted to `build/68040-current/bin`;
+the preceding bundle is preserved at
+`build/68040-pre-fpsp-completion-bin-20261126`. The audit at
+`build/68040-fpsp-completion-output/68040-fpsp-completion-source-audit.json`
+matches 179 CPU inputs, 161 fixtures and four identical archives. CPU build ID
+is `91f756a14e91e721842f5cde6c910df6437778db6294ee75d019ae4c572b1507`;
+archive SHA256 is
+`2af39c2582820f4eb13aa458c953c0f8559dc2694871b1c4d77b7bf3362bfa6b`.
+Help returns zero with 7,669 bytes. Browser and 68K Speedometer reach their
+startup loops after 30,953 and
+77,158 native entries, with null checkpoints and no Windows
+exception. Speedometer issues one FPU query. These remain startup checks.
+
+The broader goal remains active: compound descriptor/locked cache-push
+continuations, further active-stack/double-fault variants, physical instruction
+prefetch, snoop integration and remaining FPU busy/FPSP saved-state, encoding
+and special-value audits still require work. A separate combined E3-writeback/
+E1-FMOVE-out probe still reproduces a zero pending vector after writeback;
+that continuation remains open. Full 68040 and ROMAW-wide paged
+Toolbox compatibility are not established.
+
+## Captured FRESTORE frames (2026-11-26)
 
 FRESTORE acquires the header once and decodes resumed operands and the saved
 instruction PC from the captured frame image. It no longer resamples WBTEMP,
