@@ -1874,6 +1874,41 @@ PRIVATE Byte ppc_lm_get_sd_volume(void)
     return SdVolume;
 }
 
+PRIVATE uint32 ppc_lm_get_ticks(void)
+{
+    return CL(Ticks_UL.u);
+}
+
+PRIVATE LONGINT ppc_lm_get_time(void)
+{
+    return CL(Time);
+}
+
+PRIVATE INTEGER ppc_lm_get_time_dbra(void)
+{
+    return CW(TimeDBRA);
+}
+
+PRIVATE INTEGER ppc_lm_get_mbar_height(void)
+{
+    return CW(MBarHeight);
+}
+
+PRIVATE uint32 ppc_lm_get_te_scrap_length(void)
+{
+    return (uint16)CW(TEScrpLength);
+}
+
+PRIVATE void ppc_lm_set_te_scrap_length(uint32 length)
+{
+    TEScrpLength = CW((uint16)length);
+}
+
+PRIVATE void ppc_lm_set_cur_activate(WindowPtr window)
+{
+    HIDDEN_RAW_SET(CurActivate_H, RM(window));
+}
+
 PUBLIC int ROMlib_ppc_gestalt(OSType selector, LONGINT* response)
 {
     if (!ppc_active_context || cfm_architecture(ppc_active_context) == kMotorola68KArch) {
@@ -3646,6 +3681,13 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMGetPaintWhite", ppc_lm_get_paint_white, M0(2)},
     {"LMSetPaintWhite", ppc_lm_set_paint_white, M1(0, 2)},
     {"LMGetSdVolume", ppc_lm_get_sd_volume, M0(1)},
+    {"LMGetTicks", ppc_lm_get_ticks, M0(4)},
+    {"LMGetTime", ppc_lm_get_time, M0(4)},
+    {"LMGetTimeDBRA", ppc_lm_get_time_dbra, M0(2)},
+    {"LMGetMBarHeight", ppc_lm_get_mbar_height, M0(2)},
+    {"LMGetTEScrpLength", ppc_lm_get_te_scrap_length, M0(4)},
+    {"LMSetTEScrpLength", ppc_lm_set_te_scrap_length, M1(0, 4)},
+    {"LMSetCurActivate", ppc_lm_set_cur_activate, M1(0, 5)},
     {"memcpy", memcpy, M3(5, 5, 5, 4)},
     {"ldiv", ppc_long_divide, M3(0, 4, 4, 4)},
     {"memmove", memmove, M3(5, 5, 5, 4)},
@@ -4210,7 +4252,11 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                 "DMDrawDesktopRegion",
                 "EmptyHandle",
                 "GetMaxResourceSize",
+                "GetOutlinePreferred",
                 "LMGetSysResName",
+                "LMGetHiliteMode",
+                "LMGetSysZone",
+                "LMSetHiliteMode",
                 "LMSetHiliteRGB",
                 "MaxBlock",
                 "NewGestaltValue",
@@ -4218,6 +4264,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                 "ReallocateHandle",
                 "ReplaceGestaltValue",
                 "SetGestaltValue",
+                "SetOutlinePreferred",
                 "PtrToXHand",
                 "Enqueue",
                 "Dequeue",

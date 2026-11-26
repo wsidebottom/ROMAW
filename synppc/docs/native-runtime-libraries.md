@@ -118,6 +118,32 @@ restored pixels for simple and color background patterns, pen/text/origin state,
 unchanged font selection, pointer-sized output guards, invalid arguments,
 capacity/release/reuse and disposal/teardown in interpreter and JIT modes.
 
+## Classic low-memory accessors
+
+InterfaceLib exposes MATM 1.5's low-memory imports for the system heap, ticks,
+time, timing calibration, menu-bar height, TextEdit scrap length, current
+activation window and highlight mode. These accessors read or write the actual
+Classic globals, preserving guest byte order, signed short results, unsigned
+scrap lengths and guest window pointers. They do not create replacement heaps
+or Window Manager records. Layouts and scalar types follow the local Universal
+Interfaces `LowMem.h` declarations.
+
+`PPC Native Memory Probe` checks the system-zone accessor against both the live
+low-memory pointer and `SystemZone`, brackets clock reads with live samples,
+checks scalar widths and verifies that setters preserve the supplied live state.
+Its import table occupies a separate area from the heap-check scratch data.
+
+MATM's hierarchy view also requests System icon `-16482`. The
+[embedded resource catalog](../../system/resources/system/README.md) supplies its
+mask and color planes from ROMAW's shared computer artwork. `PPC Icon Probe`
+plots that ID at 16 and 32 pixels and checks that both masks produce nonempty
+regions. A missing family otherwise makes MATM report `noMaskFoundErr` through
+its debugger error path.
+
+InterfaceLib's outline-preference imports use the existing Font Manager Toolbox
+vectors. `PPC Icon Probe` toggles and reads the real preference, then restores it
+before its icon and styled-text checks.
+
 ## Toolbox queues and Help Manager status
 
 InterfaceLib now exposes the existing native register-vector implementations of

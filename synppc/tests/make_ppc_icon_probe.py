@@ -2,7 +2,7 @@
 # +===================================================================
 #   File:      make_ppc_icon_probe.py
 #
-#   Summary:   Original masked color icon fixtures, including sparse indexed palettes.
+#   Summary:   Original masked color icon and font state fixtures, including sparse indexed palettes.
 #
 #   Classes:   None declared.
 #
@@ -72,6 +72,10 @@ def make_probe(destination):
         "GetStylScrap",
         "TEGetStyle",
         "DisposeHandle",
+        "PlotIconID",
+        "EmptyRgn",
+        "SetOutlinePreferred",
+        "GetOutlinePreferred",
     ]
     code, failures = [], []
 
@@ -88,6 +92,15 @@ def make_probe(destination):
 
     emit(0x9421FFC0, 0x7C0802A6, 0x90010044, 0x93C10038, 0x7C5E1378)
     call(0)
+    call(35)
+    emit(0x907E01BC)
+    for preferred in (0, 1):
+        emit(0x38600000 | preferred)
+        call(34)
+        call(35)
+        check(preferred)
+    emit(0x807E01BC)
+    call(34)
     emit(
         0x38600000,
         0x389E0100,
@@ -103,6 +116,21 @@ def make_probe(destination):
     call(2)
     emit(0x387E0118)
     call(3)
+    for bounds in (0x108, 0x1B0):
+        emit(0x387E0000 | bounds)
+        call(4)
+        emit(0x387E0000 | bounds, 0x38800005, 0x38A00000, 0x38C0BF9E)
+        call(32)
+        check(0)
+        call(15)
+        emit(0x907E01B8, 0x389E0000 | bounds, 0x38A00005, 0x38C0BF9E)
+        call(16)
+        check(0)
+        emit(0x807E01B8)
+        call(33)
+        check(0)
+        emit(0x807E01B8)
+        call(19)
     for resource in [128, 129]:
         emit(0x387E0108)
         call(4)
@@ -210,6 +238,7 @@ def make_probe(destination):
     data = bytearray(0x1C0)
     struct.pack_into(">hhhh", data, 0x100, 40, 40, 104, 104)
     struct.pack_into(">hhhh", data, 0x108, 0, 0, 16, 16)
+    struct.pack_into(">hhhh", data, 0x1B0, 0, 0, 32, 32)
     struct.pack_into(">HHH", data, 0x118, 65535, 65535, 65535)
     data[0x120:0x12B] = b"\x0aIcon Probe"
     data[0x130:0x13A] = b"0123456789"

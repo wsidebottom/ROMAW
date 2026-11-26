@@ -1,12 +1,16 @@
 # Embedded System resources
 
-ROMAW compiles 253 System resources, including a native
+ROMAW compiles 259 System resources, including a native
 `dcmp 0` dispatch resource and default drive icons into its
 executable. `catalog.r` includes the authoritative Rez declarations of each resource's
 type, signed ID, attributes, Macintosh name bytes and payload. Dialogs,
 patterns, keyboard maps, international tables, pictures and code are retained.
 These are the installed ROMAW support resources, not a complete bootable
 Apple operating system.
+
+The Macintosh hierarchy/root icon at ID `-16482`, used by MATM 1.5, shares
+ROMAW's `bitmaps/mac.icns` computer artwork. Its large and small monochrome
+masks and four- and eight-bit color planes come from that editable input.
 
 All `*.r` files in this directory are free of literal hex blocks. `interface.r`
 uses typed alerts, dialogs, item lists, strings and pattern references. Help items

@@ -112,7 +112,7 @@ class ResourceCatalogTests(unittest.TestCase):
 
     def test_all_sources_resolve(self):
         total = 0
-        for scope, count in (("system", 253), ("finder", 251)):
+        for scope, count in (("system", 259), ("finder", 251)):
             manifest, directory = catalog.load_scope(
                 catalog.FINDER_DIRECTORY if scope == "finder" else catalog.DIRECTORY, scope
             )
@@ -121,7 +121,7 @@ class ResourceCatalogTests(unittest.TestCase):
             for entry in manifest["resources"]:
                 for name in entry.get("files", [entry.get("file")]):
                     self.assertTrue(catalog.resource_path(directory, name).is_file(), name)
-        self.assertEqual(total, 504)
+        self.assertEqual(total, 510)
         for name, path in {
             "application_manifest": ROOT / "platform/os/cygwin32/ROMAW.manifest",
             "label_menu": ROOT / "finder/resources/label-menu.r",
@@ -174,7 +174,7 @@ class ResourceCatalogTests(unittest.TestCase):
             finder.write_text(finder.read_text() + "\ndata 'TEST' (1) { $\"12AB\" };\n")
             self.assertEqual(len(catalog.load_scope(directory, "finder")[0]["resources"]), 252)
             self.assertEqual((directory / "system/catalog.r").read_bytes(), before)
-            self.assertEqual(len(catalog.load_scope(directory, "system")[0]["resources"]), 253)
+            self.assertEqual(len(catalog.load_scope(directory, "system")[0]["resources"]), 259)
 
     def test_names_comments_empty_and_nested_typed_bodies(self):
         directory = self.fixture(

@@ -29,6 +29,31 @@ data 'CURS' (4) {
     $$read("curs_watch_1.cur")
 };
 
+/* Macintosh hierarchy/root icon, using ROMAW's shared computer artwork. */
+data 'ICN#' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
+data 'ics#' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
+data 'icl4' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
+data 'icl8' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
+data 'ics4' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
+data 'ics8' (-16482, purgeable) {
+    $$read("mac.icns")
+};
+
 data 'ICN#' (-4000, purgeable) {
     $$read("-4000_genericDocumentIconResource.icns")
 };

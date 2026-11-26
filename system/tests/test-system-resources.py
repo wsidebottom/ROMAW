@@ -68,7 +68,7 @@ class SystemResourcesTest(unittest.TestCase):
     def test_all_resources(self):
         records = builder.read_resources(SOURCE)
         fork = ResourceFork(builder.build_fork(records))
-        self.assertEqual(len(records), 253)
+        self.assertEqual(len(records), 259)
         self.assertEqual(len(fork.records), len(records))
         catalog = builder.load_scope(SOURCE)[0]
         self.assertEqual(len(catalog["resources"]), len(records))
@@ -116,6 +116,7 @@ class SystemResourcesTest(unittest.TestCase):
             (-3995, "-3995_genericHardDiskIconResource.icns"),
             (-3972, "-3972_FileServerIconResource.icns"),
             (-16455, "ROMAW_volume.icns"),
+            (-16482, "mac.icns"),
         ):
             artwork = (ROOT / "bitmaps" / filename).read_bytes()
             for kind in (b"ICN#", b"icl4", b"icl8", b"ics#", b"ics4", b"ics8"):

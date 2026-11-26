@@ -1,7 +1,7 @@
 # ROMAW resources
 
 `system/catalog.r` and [`finder/resources/catalog.r`](../../finder/resources/catalog.r) are the authoritative Rez roots for
-253 embedded System resources and 251 editable Finder resources.
+259 embedded System resources and 251 editable Finder resources.
 Each root includes its interface, payload/text and artwork declarations.
 Types, signed IDs, names and attributes come directly from those declarations;
 there is no separate JSON catalog or original-payload checksum requirement.

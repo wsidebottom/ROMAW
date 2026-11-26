@@ -2,7 +2,7 @@
 # +===================================================================
 #   File:      make_ppc_native_memory_probe.py
 #
-#   Summary:   Generate a fat application checking native Memory Manager imports.
+#   Summary:   Generate a fat application checking native Memory Manager and classic low-memory imports.
 #
 #   Classes:   None.
 #
@@ -34,16 +34,28 @@ def make_probe(destination):
         "MMGetFreeSpace",
     ]
     temporaries = ["TempFreeMem", "TempMaxMem", "TempNewHandle", "TempHLock", "TempHUnlock", "TempDisposeHandle"]
+    lowmem = [
+        "LMGetSysZone",
+        "LMGetTicks",
+        "LMGetTime",
+        "LMGetTimeDBRA",
+        "LMGetMBarHeight",
+        "LMGetTEScrpLength",
+        "LMSetTEScrpLength",
+        "LMSetCurActivate",
+        "LMGetHiliteMode",
+        "LMSetHiliteMode",
+    ]
     imports = [("Memory Manager", name, 2) for name in names]
-    imports += [("InterfaceLib", name, 2) for name in [*temporaries, "DebugStr"]]
-    names += [*temporaries, "DebugStr"]
+    imports += [("InterfaceLib", name, 2) for name in [*temporaries, "DebugStr", *lowmem, "SystemZone"]]
+    names += [*temporaries, "DebugStr", *lowmem, "SystemZone"]
     code, failures = [], []
 
     def emit(*words):
         code.extend(words)
 
     def call(name):
-        emit(0x819E0008 + 4 * names.index(name), 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421)
+        emit(0x819E0100 + 4 * names.index(name), 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421)
 
     def check(value, nonzero=False):
         emit(0x2C030000 | (value & 65535))
@@ -56,6 +68,44 @@ def make_probe(destination):
         emit(0x40820000)
 
     emit(0x9421FFC0, 0x7C0802A6, 0x90010044, 0x93C10038, 0x7C5E1378)
+    call("LMGetSysZone")
+    check(0, True)
+    emit(0x907E00E0, 0x808002A6, 0x7C032000)
+    failures.append(len(code))
+    emit(0x40820000)
+    call("SystemZone")
+    equals(0xE0)
+    # Clocks can advance while the guest crosses a native service boundary.
+    for name, load in (("LMGetTicks", 0x8080016A), ("LMGetTime", 0x8080020C)):
+        emit(load - 0x200000, 0x907E00E8)
+        call(name)
+        emit(load, 0x7C032040)
+        failures.append(len(code))
+        emit(0x41810000)
+        emit(0x809E00E8, 0x7C032040)
+        failures.append(len(code))
+        emit(0x41800000)
+    for name, load in (
+        ("LMGetTimeDBRA", 0xA8800D00),
+        ("LMGetMBarHeight", 0xA8800BAA),
+        ("LMGetTEScrpLength", 0xA0800AB0),
+        ("LMGetHiliteMode", 0x88800938),
+    ):
+        call(name)
+        emit(load, 0x7C032000)
+        failures.append(len(code))
+        emit(0x40820000)
+    # Preserve live state when checking the classic setters. These pointers
+    # belong to the actual Window Manager, rather than synthetic UI objects.
+    for name, load in (
+        ("LMSetTEScrpLength", 0xA0600AB0),
+        ("LMSetCurActivate", 0x80600A64),
+        ("LMSetHiliteMode", 0x88600938),
+    ):
+        emit(load, 0x907E00E4)
+        call(name)
+        emit(load)
+        equals(0xE4)
     call("MMGetDefaultHeap")
     check(0, True)
     emit(0x907E0080, 0x38600001, 0x38801000, 0x38A02000, 0x38C00000)
@@ -116,10 +166,11 @@ def make_probe(destination):
     emit(0)
     for branch in failures:
         code[branch] |= (bad - branch) * 4
-    data = bytearray(256)
+    # Keep the enlarged import table separate from heap-check scratch data.
+    data = bytearray(512)
     message = b"PPC_NATIVE_MEMORY_OK"
     data[0xA0 : 0xA1 + len(message)] = bytes([len(message)]) + message
-    image = pef(code, data, imports=imports, main=0, reloc=[0x4600, 0x4A00 | (len(imports) - 1)])
+    image = pef(code, data, imports=imports, main=0, reloc=[0x4600, 0xA000, 0x100, 0x4A00 | (len(imports) - 1)])
     # A valid classic alternative exits directly. A successful PPC completion
     # and marker therefore establish preference over the classic CODE path.
     classic = [
