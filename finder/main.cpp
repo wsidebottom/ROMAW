@@ -2904,6 +2904,7 @@ menu()
         return m;
     };
     HMENU apple = CreatePopupMenu();
+    AppendMenuW(apple, MF_STRING, about_command, L"About Finder...");
     AppendMenuW(apple, MF_STRING, about_system_command, L"About This PC...");
     AppendMenuW(apple, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(apple, MF_STRING, about_romaw_command, L"About ROMAW...");
@@ -3047,7 +3048,6 @@ menu()
     HMENU special = resource_menu(L"&Special", finder_menu_1255);
     AppendMenuW(special, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(special, MF_STRING, operations_command, L"File Operations");
-    section(L"&Help", {{about_command, L"About Finder..."}});
     classic::style_menu(bar);
     return bar;
 }
