@@ -2908,6 +2908,7 @@ menu()
     AppendMenuW(apple, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(apple, MF_STRING, about_romaw_command, L"About ROMAW...");
     AppendMenuW(apple, MF_STRING, romaw_prefs_command, L"" ROMAW_PREFS_MENU_LABEL);
+    AppendMenuW(apple, MF_SEPARATOR, 0, nullptr);
     std::function<void(HMENU, const fs::path&, unsigned)> populate;
     populate = [&](HMENU target, const fs::path& directory, unsigned depth) {
         if (depth > 3 || apple_items.size() >= 128)
