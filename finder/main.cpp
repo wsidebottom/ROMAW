@@ -888,15 +888,21 @@ void describe_item(Item& item, DocumentKinds& kinds)
     }
 }
 
+DWORD native_folder_view(FolderView view)
+{
+    return view == FolderView::icons ? LV_VIEW_ICON : view == FolderView::small_icons ? LV_VIEW_LIST : LV_VIEW_DETAILS;
+}
+
+const std::pair<unsigned, FolderView> folder_view_commands[] = {{icons_command, FolderView::icons},
+                                                                {small_icons_command, FolderView::small_icons},
+                                                                {list_command, FolderView::list}};
+
 // Use classic STR# 3000 names plus the native Type and Creator columns.
 // Large icon positions are saved independently of compact/list arrangements.
 void configure_folder_view(FolderWindow& folder)
 {
     const auto& mode = folder.presentation;
-    DWORD native_view = mode.view == FolderView::icons         ? LV_VIEW_ICON
-                        : mode.view == FolderView::small_icons ? LV_VIEW_LIST
-                                                               : LV_VIEW_DETAILS;
-    ListView_SetView(folder.list, native_view);
+    ListView_SetView(folder.list, native_folder_view(mode.view));
     if (!ListView_GetHeader(folder.list) || Header_GetItemCount(ListView_GetHeader(folder.list)) == 0) {
         const int widths[] = {184, 148, 80, 120, 180, 100, 100, 76, 76};
         static_assert(std::size(widths) == folder_column_count &&
@@ -1666,21 +1672,139 @@ void open_stationery(HWND owner, const Item& item)
     });
 }
 
+constexpr wchar_t suitcase_window_class[] = L"FinderSuitcase";
+
 struct SuitcaseView {
     fs::path path;
-    int16_t volume;
-    uint32_t id;
+    int16_t volume = 0;
+    uint32_t id = 0;
     std::vector<SuitcaseMember> members;
-    std::map<uint32_t, int> artwork;
-    HIMAGELIST images = nullptr;
+    std::vector<classic::IconViewImage> artwork;
+    HWND list = nullptr;
+    HIMAGELIST images = nullptr, small_images = nullptr;
+    FolderView mode = FolderView::list;
     bool owned = false;
 
     ~SuitcaseView()
     {
         if (images)
             ImageList_Destroy(images);
+        if (small_images)
+            ImageList_Destroy(small_images);
     }
 };
+
+SuitcaseView* active_suitcase()
+{
+    HWND window = classic::active_window();
+    wchar_t type[32]{};
+    if (!GetClassNameW(window, type, std::size(type)) || wcscmp(type, suitcase_window_class))
+        return nullptr;
+    return reinterpret_cast<SuitcaseView*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+}
+
+void paint_suitcase_icons(HDC dc, void* context)
+{
+    auto& view = *static_cast<SuitcaseView*>(context);
+    const bool large = view.mode == FolderView::icons;
+    classic::paint_icon_view(view.list, dc, large ? view.images : view.small_images, view.artwork.data(),
+                             view.artwork.size(), false);
+    auto previous = SelectObject(dc, classic::small_font());
+    RECT client{};
+    GetClientRect(view.list, &client);
+    SetBkMode(dc, TRANSPARENT);
+    for (int index = 0; index < int(view.members.size()); ++index) {
+        RECT bounds{};
+        if (!ListView_GetItemRect(view.list, index, &bounds, LVIR_LABEL) || !RectVisible(dc, &bounds))
+            continue;
+        const auto& name = view.members[index].name;
+        if (large)
+            bounds = classic::icon_label_bounds(dc, name.c_str(), bounds, &client);
+        bool selected = ListView_GetItemState(view.list, index, LVIS_SELECTED) != 0;
+        classic::fill_rect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(selected ? BLACK_BRUSH : WHITE_BRUSH)));
+        SetTextColor(dc, selected ? RGB(255, 255, 255) : RGB(0, 0, 0));
+        classic::draw_text(dc, name.c_str(), -1, &bounds,
+                           DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | (large ? DT_CENTER : DT_LEFT));
+    }
+    SelectObject(dc, previous);
+}
+
+LRESULT CALLBACK suitcase_list_proc(HWND list, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR data)
+{
+    auto* view = reinterpret_cast<SuitcaseView*>(data);
+    if (msg == WM_NCDESTROY)
+        RemoveWindowSubclass(list, suitcase_list_proc, id);
+    if (view->mode != FolderView::list && (msg == WM_PAINT || msg == WM_PRINTCLIENT)) {
+        if (classic::redraw_suspended(list))
+            return 0;
+        PAINTSTRUCT paint{};
+        HDC dc = msg == WM_PAINT ? BeginPaint(list, &paint) : reinterpret_cast<HDC>(wp);
+        classic::paint_view(list, dc, paint_suitcase_icons, view);
+        if (msg == WM_PAINT)
+            EndPaint(list, &paint);
+        return 0;
+    }
+    return DefSubclassProc(list, msg, wp, lp);
+}
+
+void set_suitcase_view(SuitcaseView& view, FolderView mode)
+{
+    classic::RedrawBatch redraw(view.list);
+    view.mode = mode;
+    ListView_SetView(view.list, native_folder_view(mode));
+    if (mode == FolderView::icons)
+        ListView_Arrange(view.list, LVA_DEFAULT);
+    InvalidateRect(view.list, nullptr, TRUE);
+}
+
+// A suitcase lists resources, so file commands must never fall through to
+// the previously active folder and act on its selection.
+constexpr unsigned unavailable_suitcase_commands[] = {open_command,
+                                                      new_folder_command,
+                                                      duplicate_command,
+                                                      info_command,
+                                                      rename_command,
+                                                      trash_command,
+                                                      copy_command,
+                                                      cut_command,
+                                                      paste_command,
+                                                      clear_command,
+                                                      alias_command,
+                                                      windows_shortcut_command,
+                                                      put_away_command,
+                                                      parent_command,
+                                                      extract_here_command,
+                                                      extract_to_command,
+                                                      sharing_command,
+                                                      print_command,
+                                                      print_window_command,
+                                                      eject_command,
+                                                      erase_command,
+                                                      arrange_command,
+                                                      arrange_name_command,
+                                                      arrange_selection_command,
+                                                      special_cleanup_command,
+                                                      label_popup_command};
+
+bool command_suitcase(SuitcaseView& view, unsigned id)
+{
+    for (const auto& [command, mode] : folder_view_commands)
+        if (id == command) {
+            set_suitcase_view(view, mode);
+            ViewPreferences presentation;
+            presentation.view = mode;
+            save(L"SuitcaseViews", path_key(view.path), encode_folder_view(presentation));
+            return true;
+        }
+    if (id == select_all_command) {
+        ListView_SetItemState(view.list, -1, LVIS_SELECTED, LVIS_SELECTED);
+        return true;
+    }
+    return std::find(std::begin(unavailable_suitcase_commands), std::end(unavailable_suitcase_commands), id) !=
+               std::end(unavailable_suitcase_commands) ||
+           (id >= label_command && id < label_command + 8) ||
+           (id >= sort_command && id < sort_command + folder_column_count);
+}
 
 // Suitcase records have no filesystem path or BNDL. Use the same embedded
 // classic type artwork and cache ownership as the rest of Finder.
@@ -1743,15 +1867,19 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE: {
         RECT client{};
         GetClientRect(window, &client);
-        HWND list = control(window, WC_LISTVIEWW, L"",
-                            LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_SINGLESEL | LVS_SHAREIMAGELISTS | WS_TABSTOP, 1, 0, 0,
-                            client.right, client.bottom);
+        HWND list = view->list = control(window, WC_LISTVIEWW, L"",
+                                         LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_NOLABELWRAP | LVS_AUTOARRANGE |
+                                             LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS | WS_TABSTOP,
+                                         1, 0, 0, client.right, client.bottom);
         if (!list)
             return -1;
-        view->images = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 6, 2);
-        if (!view->images)
+        view->images = ImageList_Create(32, 32, ILC_COLOR32 | ILC_MASK, 12, 2);
+        view->small_images = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 12, 2);
+        if (!view->images || !view->small_images)
             return -1;
-        ListView_SetImageList(list, view->images, LVSIL_SMALL);
+        ListView_SetImageList(list, view->images, LVSIL_NORMAL);
+        ListView_SetImageList(list, view->small_images, LVSIL_SMALL);
+        ListView_SetIconSpacing(list, icon_cell_width, icon_cell_height);
         ListView_SetBkColor(list, RGB(255, 255, 255));
         LVCOLUMNW column{};
         column.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -1763,17 +1891,24 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
         ListView_InsertColumn(list, 1, &column);
         try {
             classic::style_list(list);
+            if (!SetWindowSubclass(list, suitcase_list_proc, 1, reinterpret_cast<DWORD_PTR>(view)))
+                return -1;
+            std::map<uint32_t, classic::IconViewImage> images;
+            view->artwork.reserve(view->members.size());
             for (const auto& member : view->members) {
-                auto [image, added] = view->artwork.try_emplace(member.icon_type, -1);
-                if (!added)
-                    continue;
-                HICON normal = suitcase_icon(member.icon_type);
-                image->second = ImageList_AddIcon(view->images, normal);
-                auto selected = selected_icon_cache.find(normal);
-                if (image->second < 0 ||
-                    ImageList_AddIcon(view->images, selected == selected_icon_cache.end() ? normal : selected->second) <
-                        0)
-                    return -1;
+                auto [image, added] = images.try_emplace(member.icon_type);
+                if (added) {
+                    HICON normal = suitcase_icon(member.icon_type);
+                    auto selected = selected_icon_cache.find(normal);
+                    HICON alternate = selected == selected_icon_cache.end() ? normal : selected->second;
+                    image->second = {ImageList_AddIcon(view->images, normal),
+                                     ImageList_AddIcon(view->images, alternate)};
+                    if (image->second.normal < 0 || image->second.selected < 0 ||
+                        ImageList_AddIcon(view->small_images, normal) != image->second.normal ||
+                        ImageList_AddIcon(view->small_images, alternate) != image->second.selected)
+                        return -1;
+                }
+                view->artwork.push_back(image->second);
             }
         }
         catch (const std::exception&) {
@@ -1784,11 +1919,12 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
             row.mask = LVIF_TEXT | LVIF_IMAGE;
             row.iItem = int(i);
             row.pszText = view->members[i].name.data();
-            row.iImage = view->artwork.at(view->members[i].icon_type);
+            row.iImage = view->artwork[i].normal;
             if (ListView_InsertItem(list, &row) == -1)
                 return -1;
             ListView_SetItemText(list, int(i), 1, const_cast<wchar_t*>(view->members[i].kind));
         }
+        set_suitcase_view(*view, view->mode);
         return 0;
     }
     case WM_DRAWITEM: {
@@ -1806,10 +1942,9 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
         RECT kind{};
         if (ListView_GetSubItemRect(draw->hwndItem, int(draw->itemID), 1, LVIR_BOUNDS, &kind)) {
             int left = kind.left - ListView_GetColumnWidth(draw->hwndItem, 0) + 4;
-            auto image = view->artwork.find(member.icon_type);
-            if (image != view->artwork.end())
-                classic::draw_image(view->images, image->second + int(selected), draw->hDC, left,
-                                    kind.top + (kind.bottom - kind.top - 16) / 2, 16, 16);
+            const auto image = view->artwork[draw->itemID];
+            classic::draw_image(view->small_images, selected ? image.selected : image.normal, draw->hDC, left,
+                                kind.top + (kind.bottom - kind.top - 16) / 2, 16, 16);
             RECT name{left + 20, kind.top, kind.left - 3, kind.bottom};
             kind.left += 4;
             constexpr UINT text_flags = DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS;
@@ -1824,6 +1959,7 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
             MoveWindow(list, 0, 0, LOWORD(lp), HIWORD(lp), TRUE);
         return 0;
     case WM_SETFOCUS:
+        classic::activate(window);
         SetFocus(GetDlgItem(window, 1));
         return 0;
     case WM_NCDESTROY:
@@ -1838,8 +1974,7 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
 
 void open_suitcase(Item& item)
 {
-    constexpr wchar_t class_name[] = L"FinderSuitcase";
-    for (HWND existing = nullptr; (existing = FindWindowExW(desktop, existing, class_name, nullptr));) {
+    for (HWND existing = nullptr; (existing = FindWindowExW(desktop, existing, suitcase_window_class, nullptr));) {
         auto* view = reinterpret_cast<SuitcaseView*>(GetWindowLongPtrW(existing, GWLP_USERDATA));
         if (view && view->volume == item.image_volume &&
             (item.image_volume ? view->id == item.image_id : _wcsicmp(view->path.c_str(), item.path.c_str()) == 0)) {
@@ -1855,17 +1990,23 @@ void open_suitcase(Item& item)
         if (bytes.empty())
             bytes = read_bytes(item.path);
     }
-    auto view = std::make_unique<SuitcaseView>(
-        SuitcaseView{item.path, item.image_volume, item.image_id, suitcase_members(bytes)});
+    auto view = std::make_unique<SuitcaseView>();
+    view->path = item.path;
+    view->volume = item.image_volume;
+    view->id = item.image_id;
+    view->members = suitcase_members(bytes);
+    auto saved = settings_path_value(preferences, L"SuitcaseViews", view->path);
+    if (!saved.empty())
+        view->mode = decode_folder_view(saved).view;
     std::stable_sort(view->members.begin(), view->members.end(),
                      [](const auto& a, const auto& b) { return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0; });
     WNDCLASSW type{};
     type.hInstance = instance;
-    type.lpszClassName = class_name;
+    type.lpszClassName = suitcase_window_class;
     type.lpfnWndProc = suitcase_proc;
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&type);
-    HWND window = CreateWindowW(class_name, item.name.c_str(),
+    HWND window = CreateWindowW(suitcase_window_class, item.name.c_str(),
                                 WS_CHILD | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_CLIPSIBLINGS, 96, 72, 399, 230,
                                 desktop, nullptr, instance, view.get());
     if (!window)
@@ -3908,9 +4049,9 @@ void command(FolderWindow& f, unsigned id)
     case list_command:
         if (!f.desktop) {
             save_positions(f);
-            f.presentation.view = id == icons_command         ? FolderView::icons
-                                  : id == small_icons_command ? FolderView::small_icons
-                                                              : FolderView::list;
+            for (const auto& [command, mode] : folder_view_commands)
+                if (command == id)
+                    f.presentation.view = mode;
             configure_folder_view(f);
             refresh(f);
             save_folder_view(f);
@@ -4956,6 +5097,21 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                                    MF_BYCOMMAND |
                                        (info->icon_editable && host_clipboard_has_icon() ? MF_ENABLED : MF_GRAYED));
                 }
+                if (auto* suitcase = active_suitcase()) {
+                    for (const auto& [command, mode] : folder_view_commands) {
+                        EnableMenuItem(bar, command, MF_BYCOMMAND | MF_ENABLED);
+                        CheckMenuItem(bar, command,
+                                      MF_BYCOMMAND | (suitcase->mode == mode ? MF_CHECKED : MF_UNCHECKED));
+                    }
+                    for (unsigned id : unavailable_suitcase_commands)
+                        EnableMenuItem(bar, id, MF_BYCOMMAND | MF_GRAYED);
+                    EnableMenuItem(bar, 4, MF_BYPOSITION | MF_GRAYED);
+                    for (unsigned i = 0; i < folder_column_count; ++i) {
+                        EnableMenuItem(bar, sort_command + i, MF_BYCOMMAND | MF_GRAYED);
+                        CheckMenuItem(bar, sort_command + i, MF_BYCOMMAND | MF_UNCHECKED);
+                    }
+                }
+                EnableMenuItem(bar, print_window_command, MF_BYCOMMAND | (active_suitcase() ? MF_GRAYED : MF_ENABLED));
             }
             return 0;
         case WM_PAINT:
@@ -4972,6 +5128,9 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             }
             break;
         case WM_COMMAND:
+            if (f->desktop)
+                if (auto* suitcase = active_suitcase(); suitcase && command_suitcase(*suitcase, LOWORD(wp)))
+                    return 0;
             if (LOWORD(wp) == label_popup_command) {
                 // Leave the native menu loop before starting the custom popup.
                 EndMenu();
@@ -4985,6 +5144,8 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             folder_context_menu(*f, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
             return 0;
         case WM_APP + 1:
+            if (f->desktop && active_suitcase())
+                return 0;
             command(f->desktop ? *command_folder(f) : *f, label_popup_command);
             return 0;
         case WM_APP + 3:

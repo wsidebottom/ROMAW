@@ -1731,7 +1731,22 @@ Bytes mac_resource(const MacFile& file, uint32_t type, int id)
 
 bool is_mac_suitcase(const MacFile& file)
 {
-    return file.creator == 0x4d414353 && (file.type == 0x5a535953 || file.type == 0x7a737973); // MACS / ZSYS / zsys
+    const bool system = file.creator == 0x4d414353; // MACS
+    const bool mover = file.creator == 0x444d4f56;  // DMOV
+    switch (file.type) {
+    case 0x5a535953: // ZSYS
+    case 0x7a737973: // zsys
+        return system;
+    case 0x4646494c: // FFIL
+    case 0x6666696c: // ffil
+        return true;
+    case 0x4446494c: // DFIL
+    case 0x6466696c: // dfil
+        // Standalone accessories with their own creator still launch directly.
+        return mover || system;
+    default:
+        return false;
+    }
 }
 
 // Finder exposes the user-facing resources rather than the map's internal
