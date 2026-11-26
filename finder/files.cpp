@@ -1738,11 +1738,11 @@ bool is_mac_suitcase(const MacFile& file)
     case 0x7a737973: // zsys
         return system;
     case 0x4646494c: // FFIL
-    case 0x6666696c: // ffil
-        return true;
     case 0x4446494c: // DFIL
+        return true;
+    case 0x6666696c: // ffil
     case 0x6466696c: // dfil
-        // Standalone accessories with their own creator still launch directly.
+        // Older Font/DA Mover files also use the standalone file types.
         return mover || system;
     default:
         return false;

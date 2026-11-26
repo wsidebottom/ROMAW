@@ -1734,6 +1734,8 @@ LRESULT CALLBACK suitcase_list_proc(HWND list, UINT msg, WPARAM wp, LPARAM lp, U
     auto* view = reinterpret_cast<SuitcaseView*>(data);
     if (msg == WM_NCDESTROY)
         RemoveWindowSubclass(list, suitcase_list_proc, id);
+    if (view->mode != FolderView::list && msg == WM_ERASEBKGND)
+        return 1;
     if (view->mode != FolderView::list && (msg == WM_PAINT || msg == WM_PRINTCLIENT)) {
         if (classic::redraw_suspended(list))
             return 0;
@@ -1747,13 +1749,35 @@ LRESULT CALLBACK suitcase_list_proc(HWND list, UINT msg, WPARAM wp, LPARAM lp, U
     return DefSubclassProc(list, msg, wp, lp);
 }
 
+void arrange_suitcase_icons(const SuitcaseView& view)
+{
+    RECT client{};
+    GetClientRect(view.list, &client);
+    HDC dc = GetDC(view.list);
+    auto font = dc ? SelectObject(dc, classic::small_font()) : nullptr;
+    std::vector<IconCleanupEntry> entries;
+    entries.reserve(view.members.size());
+    for (const auto& member : view.members) {
+        auto label = dc ? classic::icon_label_bounds(dc, member.name.c_str(), {}) : RECT{};
+        entries.push_back({member.name, {}, false, int(label.right - label.left)});
+    }
+    if (dc) {
+        SelectObject(dc, font);
+        ReleaseDC(view.list, dc);
+    }
+    const auto positions =
+        clean_icon_layout(entries, IconCleanup::name, client.right, icon_cell_width, icon_cell_height);
+    for (int i = 0; i < int(positions.size()); ++i)
+        ListView_SetItemPosition32(view.list, i, positions[i].x, positions[i].y);
+}
+
 void set_suitcase_view(SuitcaseView& view, FolderView mode)
 {
     classic::RedrawBatch redraw(view.list);
     view.mode = mode;
     ListView_SetView(view.list, native_folder_view(mode));
     if (mode == FolderView::icons)
-        ListView_Arrange(view.list, LVA_DEFAULT);
+        arrange_suitcase_icons(view);
     InvalidateRect(view.list, nullptr, TRUE);
 }
 
@@ -1868,8 +1892,8 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
         RECT client{};
         GetClientRect(window, &client);
         HWND list = view->list = control(window, WC_LISTVIEWW, L"",
-                                         LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_NOLABELWRAP | LVS_AUTOARRANGE |
-                                             LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS | WS_TABSTOP,
+                                         LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_NOLABELWRAP | LVS_SHOWSELALWAYS |
+                                             LVS_SHAREIMAGELISTS | WS_TABSTOP,
                                          1, 0, 0, client.right, client.bottom);
         if (!list)
             return -1;
