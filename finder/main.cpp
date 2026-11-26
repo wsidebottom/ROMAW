@@ -1671,8 +1671,30 @@ struct SuitcaseView {
     int16_t volume;
     uint32_t id;
     std::vector<SuitcaseMember> members;
+    std::map<uint32_t, int> artwork;
+    HIMAGELIST images = nullptr;
     bool owned = false;
+
+    ~SuitcaseView()
+    {
+        if (images)
+            ImageList_Destroy(images);
+    }
 };
+
+// Suitcase records have no filesystem path or BNDL. Use the same embedded
+// classic type artwork and cache ownership as the rest of Finder.
+HICON suitcase_icon(uint32_t type)
+{
+    auto key = L"suitcase-member-artwork:" + std::to_wstring(type);
+    auto cached = icon_cache.find(key);
+    if (cached != icon_cache.end())
+        return cached->second;
+    FinderIcon art{};
+    HICON image = finder_type_icon(type, &art) ? icon(art) : asset_icon(0);
+    icon_cache.emplace(std::move(key), image);
+    return image;
+}
 
 // Use the File Manager's read-only fork path for both locked and writable images.
 Bytes read_image_suitcase(const Item& item)
@@ -1721,10 +1743,15 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE: {
         RECT client{};
         GetClientRect(window, &client);
-        HWND list = control(window, WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_SINGLESEL | WS_TABSTOP, 1,
-                            0, 0, client.right, client.bottom);
+        HWND list = control(window, WC_LISTVIEWW, L"",
+                            LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_SINGLESEL | LVS_SHAREIMAGELISTS | WS_TABSTOP, 1, 0, 0,
+                            client.right, client.bottom);
         if (!list)
             return -1;
+        view->images = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 6, 2);
+        if (!view->images)
+            return -1;
+        ListView_SetImageList(list, view->images, LVSIL_SMALL);
         ListView_SetBkColor(list, RGB(255, 255, 255));
         LVCOLUMNW column{};
         column.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -1736,15 +1763,28 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
         ListView_InsertColumn(list, 1, &column);
         try {
             classic::style_list(list);
+            for (const auto& member : view->members) {
+                auto [image, added] = view->artwork.try_emplace(member.icon_type, -1);
+                if (!added)
+                    continue;
+                HICON normal = suitcase_icon(member.icon_type);
+                image->second = ImageList_AddIcon(view->images, normal);
+                auto selected = selected_icon_cache.find(normal);
+                if (image->second < 0 ||
+                    ImageList_AddIcon(view->images, selected == selected_icon_cache.end() ? normal : selected->second) <
+                        0)
+                    return -1;
+            }
         }
         catch (const std::exception&) {
             return -1;
         }
         for (size_t i = 0; i < view->members.size(); ++i) {
             LVITEMW row{};
-            row.mask = LVIF_TEXT;
+            row.mask = LVIF_TEXT | LVIF_IMAGE;
             row.iItem = int(i);
             row.pszText = view->members[i].name.data();
+            row.iImage = view->artwork.at(view->members[i].icon_type);
             if (ListView_InsertItem(list, &row) == -1)
                 return -1;
             ListView_SetItemText(list, int(i), 1, const_cast<wchar_t*>(view->members[i].kind));
@@ -1765,7 +1805,12 @@ LRESULT CALLBACK suitcase_proc(HWND window, UINT msg, WPARAM wp, LPARAM lp)
         SetBkMode(draw->hDC, TRANSPARENT);
         RECT kind{};
         if (ListView_GetSubItemRect(draw->hwndItem, int(draw->itemID), 1, LVIR_BOUNDS, &kind)) {
-            RECT name{kind.left - ListView_GetColumnWidth(draw->hwndItem, 0) + 4, kind.top, kind.left - 3, kind.bottom};
+            int left = kind.left - ListView_GetColumnWidth(draw->hwndItem, 0) + 4;
+            auto image = view->artwork.find(member.icon_type);
+            if (image != view->artwork.end())
+                classic::draw_image(view->images, image->second + int(selected), draw->hDC, left,
+                                    kind.top + (kind.bottom - kind.top - 16) / 2, 16, 16);
+            RECT name{left + 20, kind.top, kind.left - 3, kind.bottom};
             kind.left += 4;
             constexpr UINT text_flags = DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS;
             classic::draw_text(draw->hDC, member.name.c_str(), -1, &name, text_flags);

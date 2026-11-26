@@ -69,6 +69,7 @@ Bytes mac_resource(const MacFile& file, uint32_t type, int id = 65536);
 struct SuitcaseMember {
     std::wstring name;
     const wchar_t* kind;
+    uint32_t icon_type;
 };
 
 bool is_mac_suitcase(const MacFile& file);

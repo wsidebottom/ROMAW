@@ -1749,25 +1749,32 @@ std::vector<SuitcaseMember> suitcase_members(const Bytes& fork)
     for (unsigned i = 0; i < map.count; ++i) {
         const size_t entry = map.offset + map.types + 2 + i * 8;
         const wchar_t* kind;
+        uint32_t icon_type;
         switch (be32(fork, entry)) {
         case 0x464f4e44: // FOND
             kind = L"Font family";
+            icon_type = 0x4646494c; // FFIL
             break;
         case 0x464f4e54: // FONT
         case 0x4e464e54: // NFNT
             kind = L"Bitmap font";
+            icon_type = 0x6666696c; // ffil
             break;
         case 0x73666e74: // sfnt
             kind = L"Outline font";
+            icon_type = 0x7466696c; // tfil
             break;
         case 0x736e6420: // snd
             kind = L"Sound";
+            icon_type = 0x7366696c; // sfil
             break;
         case 0x44525652: // DRVR
             kind = L"Desk accessory";
+            icon_type = 0x6466696c; // dfil
             break;
         case 0x4b434852: // KCHR
             kind = L"Keyboard layout";
+            icon_type = 0x6b66696c; // kfil
             break;
         default:
             continue;
@@ -1798,7 +1805,7 @@ std::vector<SuitcaseMember> suitcase_members(const Bytes& fork)
             }
             if (label.empty())
                 label = std::wstring(kind) + L" #" + std::to_wstring(int16_t(be16(fork, ref)));
-            members.push_back({std::move(label), kind});
+            members.push_back({std::move(label), kind, icon_type});
         }
     }
     return members;
