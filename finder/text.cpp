@@ -553,12 +553,9 @@ BOOL draw_pixels(HDC dc, RECT bounds, const uint32_t* pixels, size_t bytes)
     return draw_surface(dc, bounds, drawing, 0);
 }
 
-BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT frame, HBRUSH background, UINT flags)
+// Read an HICON once, including the legacy AND mask for icons without alpha.
+static bool read_icon(HICON icon, std::vector<uint32_t>& source, int& source_width, int& source_height)
 {
-    if (!shared_graphics())
-        return ::DrawIconEx(dc, x, y, icon, width, height, frame, background, flags);
-    if (!icon || width < 1 || height < 1 || width > 512 || height > 512)
-        return FALSE;
     ICONINFO info{};
     if (!GetIconInfo(icon, &info))
         return FALSE;
@@ -581,7 +578,8 @@ BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT fra
     BITMAP bitmap{};
     if (!owned.dc || !GetObjectW(info.hbmColor ? info.hbmColor : info.hbmMask, sizeof bitmap, &bitmap))
         return FALSE;
-    int source_width = bitmap.bmWidth, source_height = info.hbmColor ? bitmap.bmHeight : bitmap.bmHeight / 2;
+    source_width = bitmap.bmWidth;
+    source_height = info.hbmColor ? bitmap.bmHeight : bitmap.bmHeight / 2;
     if (source_width < 1 || source_height < 1 || source_width > 512 || source_height > 512)
         return FALSE;
     BITMAPINFO color{};
@@ -590,7 +588,7 @@ BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT fra
     color.bmiHeader.biHeight = -source_height;
     color.bmiHeader.biPlanes = 1;
     color.bmiHeader.biBitCount = 32;
-    std::vector<uint32_t> source(size_t(source_width) * source_height);
+    source.resize(size_t(source_width) * source_height);
     if (info.hbmColor &&
         GetDIBits(owned.dc, info.hbmColor, 0, source_height, source.data(), &color, DIB_RGB_COLORS) != source_height)
         return FALSE;
@@ -620,6 +618,67 @@ BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT fra
                 pixel = transparent ? 0 : pixel | 0xff000000;
             }
     }
+    return true;
+}
+
+bool save_icon_file(HICON icon, const wchar_t* path)
+{
+    int width, height;
+    std::vector<uint32_t> source;
+    if (!read_icon(icon, source, width, height) || width > 256 || height > 256)
+        return false;
+
+    // A single ICO directory entry points at a bottom-up 32-bit DIB and AND mask.
+    constexpr size_t image_offset = 22;
+    const size_t mask_stride = (width + 31) / 32 * 4;
+    const size_t pixel_stride = size_t(width) * 4;
+    const DWORD image_size = DWORD(sizeof(BITMAPINFOHEADER) + (pixel_stride + mask_stride) * height);
+    std::vector<unsigned char> bytes(image_offset + image_size);
+    bytes[2] = 1; // Icon file.
+    bytes[4] = 1; // One image.
+    bytes[6] = static_cast<unsigned char>(width);
+    bytes[7] = static_cast<unsigned char>(height);
+    bytes[10] = 1; // One plane.
+    bytes[12] = 32;
+    memcpy(bytes.data() + 14, &image_size, sizeof image_size);
+    bytes[18] = image_offset;
+    BITMAPINFOHEADER dib{};
+    dib.biSize = sizeof dib;
+    dib.biWidth = width;
+    dib.biHeight = height * 2;
+    dib.biPlanes = 1;
+    dib.biBitCount = 32;
+    memcpy(bytes.data() + image_offset, &dib, sizeof dib);
+    auto* pixels = bytes.data() + image_offset + sizeof dib;
+    auto* mask = pixels + pixel_stride * height;
+    for (int row = 0; row < height; ++row) {
+        const auto* from = source.data() + size_t(height - 1 - row) * width;
+        memcpy(pixels + size_t(row) * pixel_stride, from, pixel_stride);
+        for (int col = 0; col < width; ++col)
+            if ((from[col] >> 24) == 0)
+                mask[size_t(row) * mask_stride + col / 8] |= 0x80 >> (col % 8);
+    }
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    DWORD written;
+    bool saved = WriteFile(file, bytes.data(), DWORD(bytes.size()), &written, nullptr) && written == bytes.size();
+    CloseHandle(file);
+    if (!saved)
+        DeleteFileW(path);
+    return saved;
+}
+
+BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT frame, HBRUSH background, UINT flags)
+{
+    if (!shared_graphics())
+        return ::DrawIconEx(dc, x, y, icon, width, height, frame, background, flags);
+    if (!icon || width < 1 || height < 1 || width > 512 || height > 512)
+        return FALSE;
+    int source_width, source_height;
+    std::vector<uint32_t> source;
+    if (!read_icon(icon, source, source_width, source_height))
+        return FALSE;
     std::vector<uint32_t> scaled(size_t(width) * height);
     for (int row = 0; row < height; ++row)
         for (int column = 0; column < width; ++column)

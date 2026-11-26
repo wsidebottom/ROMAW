@@ -245,6 +245,9 @@ fs::path shortcut_target(const fs::path& path)
         HRESULT result = link->QueryInterface(IID_PPV_ARGS(&file));
         if (SUCCEEDED(result))
             result = file->Load(current.c_str(), STGM_READ);
+        wchar_t arguments[32768]{};
+        if (SUCCEEDED(result))
+            result = link->GetArguments(arguments, std::size(arguments));
         wchar_t target[32768]{};
         if (SUCCEEDED(result))
             result = link->GetPath(target, 32768, nullptr, SLGP_RAWPATH);
@@ -252,6 +255,8 @@ fs::path shortcut_target(const fs::path& path)
             file->Release();
         link->Release();
         check(result);
+        if (*arguments)
+            return {};
         if (!*target)
             throw std::runtime_error("The alias has no original item.");
         current = target;
@@ -261,7 +266,8 @@ fs::path shortcut_target(const fs::path& path)
 
 // Save a native shell link to an existing absolute target; never replace an
 // existing alias name.
-void create_shortcut(const fs::path& source, const fs::path& target)
+void create_shortcut(const fs::path& source, const fs::path& target, const std::wstring& arguments,
+                     const fs::path& icon)
 {
     if (fs::exists(target))
         throw std::runtime_error("The alias name is already in use.");
@@ -274,6 +280,10 @@ void create_shortcut(const fs::path& source, const fs::path& target)
     HRESULT result = link->SetPath(absolute.c_str());
     if (SUCCEEDED(result))
         result = link->SetWorkingDirectory(absolute.parent_path().c_str());
+    if (SUCCEEDED(result) && !arguments.empty())
+        result = link->SetArguments(arguments.c_str());
+    if (SUCCEEDED(result) && !icon.empty())
+        result = link->SetIconLocation(icon.c_str(), 0);
     if (SUCCEEDED(result))
         result = link->QueryInterface(IID_PPV_ARGS(&file));
     if (SUCCEEDED(result))

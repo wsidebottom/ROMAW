@@ -164,6 +164,10 @@ int main()
         auto chained = root / L"Chained alias.lnk";
         create_shortcut(alias, chained);
         assert(fs::equivalent(shortcut_target(chained), a));
+        auto command_link = root / L"Application command.lnk";
+        create_shortcut(a, command_link, L"\"Macintosh app with spaces\"", a);
+        assert(fs::is_regular_file(command_link));
+        assert(shortcut_target(command_link).empty());
         history.created(alias, L"Make Alias");
         history.undo();
         assert(!fs::exists(alias));

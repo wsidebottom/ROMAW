@@ -122,6 +122,7 @@ enum Command {
     extract_here_command,
     extract_to_command,
     romaw_prefs_command,
+    windows_shortcut_command,
     label_command = 200,
     sort_command = 300
 };
@@ -643,7 +644,8 @@ item_icon(Item& item)
         if (kind >= 0 && finder_special_folder_icon(unsigned(kind), &data))
             result = icon(data, label);
     }
-    if (!result && item.path.extension() == L".exe") {
+    if (!result &&
+        (!_wcsicmp(item.path.extension().c_str(), L".exe") || !_wcsicmp(item.path.extension().c_str(), L".lnk"))) {
         SHFILEINFOW native{};
         if (SHGetFileInfoW(item.path.c_str(), 0, &native, sizeof native, SHGFI_ICON))
             result = native.hIcon;
@@ -1480,6 +1482,71 @@ std::string image_item_path(const Item& item)
         throw std::runtime_error("Cannot resolve the file in this mounted image");
     std::unique_ptr<char, decltype(&free)> path(raw, free);
     return raw;
+}
+
+const Item* shortcut_application(FolderWindow& folder)
+{
+    if (ListView_GetSelectedCount(folder.list) != 1)
+        return nullptr;
+    int index = selected_item_after(folder.list, folder.items.size(), -1);
+    if (index < 0)
+        return nullptr;
+    const auto& item = folder.items[index];
+    if (item.folder || item.special)
+        return nullptr;
+    bool native = !item.image_volume && !item.mac.kind && !_wcsicmp(item.path.extension().c_str(), L".exe");
+    return item.mac.kind == FINDER_CLASSIC_APPLICATION || native ? &item : nullptr;
+}
+
+// Publish a Windows link on the shell Desktop. Keep the ICO in Finder's profile
+// so moving the link elsewhere in Windows does not break its artwork.
+void make_windows_shortcut(Item item)
+{
+    if (!fs::is_directory(windows_desktop_path))
+        throw std::runtime_error("The Windows Desktop is unavailable.");
+    fs::path target = item.path;
+    std::wstring arguments;
+    auto name = item.name;
+    if (item.mac.kind == FINDER_CLASSIC_APPLICATION) {
+        target = runtime_path();
+        auto operand = item.path.wstring();
+        if (item.image_volume) {
+            auto volumes = image_volumes();
+            auto volume = std::find_if(volumes.begin(), volumes.end(),
+                                       [&](const auto& value) { return value.reference == item.image_volume; });
+            if (volume == volumes.end())
+                throw std::runtime_error("The application's disk image is no longer mounted.");
+            arguments = volume->read_only ? L"-mount-ro " : L"-mount ";
+            arguments += quote_argument(image_text(volume->source, CP_ACP)) + L" ";
+            operand = image_text(image_item_path(item).c_str());
+        }
+        arguments += finder_launch_file_argument(operand.c_str());
+    }
+    else
+        name = item.path.stem().wstring();
+    // Classic volume names may contain characters Windows forbids in filenames.
+    for (auto& character : name)
+        if (character < 32 || wcschr(L"\\/:*?\"<>|", character))
+            character = L'_';
+    auto link = unique_item(windows_desktop_path, name + L".lnk");
+    auto icons = preferences.parent_path() / L"Shortcut Icons";
+    fs::create_directories(icons);
+    auto artwork = unique_item(icons, name + L".ico");
+    if (!classic::save_icon_file(item_icon(item), artwork.c_str()))
+        throw std::runtime_error("The application's Windows shortcut icon could not be saved.");
+    try {
+        create_shortcut(target, link, arguments, artwork);
+    }
+    catch (...) {
+        DeleteFileW(artwork.c_str());
+        throw;
+    }
+    SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, link.c_str(), nullptr);
+    history.created(link, L"Make Windows Shortcut");
+    for (auto* folder : folders)
+        if (!folder->desktop && !folder->image_volume &&
+            _wcsicmp(folder->path.c_str(), windows_desktop_path.c_str()) == 0)
+            refresh(*folder);
 }
 
 void open_item(HWND owner, Item item);
@@ -2893,6 +2960,8 @@ menu()
                                                                : entry.text;
                 AppendMenuW(popup, MF_STRING | (found == commands.end() ? MF_GRAYED : 0),
                             found == commands.end() ? unavailable++ : found->second, text);
+                if (found != commands.end() && found->second == alias_command)
+                    AppendMenuW(popup, MF_STRING | MF_GRAYED, windows_shortcut_command, L"Make Windows Shortcut");
             }
         }
         AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(popup), title);
@@ -3646,6 +3715,12 @@ void command(FolderWindow& f, unsigned id)
         refresh(f);
         break;
     }
+    case windows_shortcut_command:
+        if (const auto* application = shortcut_application(f)) {
+            classic::WaitingCursor waiting;
+            make_windows_shortcut(*application);
+        }
+        break;
     case put_away_command: {
         std::vector<std::pair<fs::path, fs::path>> changes;
         for (const auto& path : paths) {
@@ -3900,6 +3975,11 @@ void folder_context_menu(FolderWindow& folder, POINT screen)
         add(info_command, L"Get Info");
         add(duplicate_command, L"Duplicate");
         add(rename_command, L"Rename");
+        AppendMenuW(popup.get(), MF_SEPARATOR, 0, nullptr);
+        add(alias_command, L"Make Alias");
+        if (shortcut_application(folder))
+            add(windows_shortcut_command, L"Make Windows Shortcut");
+        AppendMenuW(popup.get(), MF_SEPARATOR, 0, nullptr);
         add(copy_command, L"Copy");
         add(trash_command, L"Move to Trash");
         add(arrange_selection_command, L"Clean Up Selection");
@@ -4657,6 +4737,8 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                     image_root |= target->items[index].special == 4;
                 }
                 EnableMenuItem(bar, open_command, MF_BYCOMMAND | (any ? MF_ENABLED : MF_GRAYED));
+                EnableMenuItem(bar, windows_shortcut_command,
+                               MF_BYCOMMAND | (shortcut_application(*target) ? MF_ENABLED : MF_GRAYED));
                 bool archives = any;
                 for (int index = -1; (index = selected_item_after(target->list, target->items.size(), index)) >= 0;)
                     archives &= archive_kind(target->items[index]) != 0;

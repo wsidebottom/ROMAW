@@ -82,6 +82,8 @@ BOOL draw_round_rect(HDC dc, int left, int top, int right, int bottom, int oval_
 BOOL draw_polygon(HDC dc, const POINT* points, int count);
 BOOL draw_icon(HDC dc, int x, int y, HICON icon, int width, int height, UINT frame = 0, HBRUSH background = nullptr,
                UINT flags = DI_NORMAL);
+// Save the same icon shown in Finder as a Windows ICO without replacing a file.
+bool save_icon_file(HICON icon, const wchar_t* path);
 BOOL draw_image(HIMAGELIST images, int index, HDC dc, int x, int y, int width, int height);
 BOOL draw_pixels(HDC dc, RECT bounds, const uint32_t* pixels, size_t bytes);
 BOOL draw_bitmap(HDC dc, RECT bounds, HBITMAP bitmap);

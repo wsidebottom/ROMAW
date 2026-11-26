@@ -147,3 +147,8 @@ uint32_t FinderLaunch(const FinderLaunchRequest* request, FinderLaunchResult* re
 {
     return launch(request, result);
 }
+
+std::wstring finder_launch_file_argument(const wchar_t* path)
+{
+    return quote_file(path);
+}

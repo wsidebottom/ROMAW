@@ -39,10 +39,11 @@ fs::path host_rename_target(const fs::path& source, const std::wstring& name);
 std::array<DWORD, 3> host_item_identity(const fs::path& path);
 // Find an unused data/fork name without modifying the directory.
 fs::path unique_item(const fs::path& directory, const std::wstring& name);
-// Resolve native .lnk files, with cycle/depth checks; other paths yield empty.
+// Resolve plain aliases with cycle/depth checks. Links with arguments must run through the shell.
 fs::path shortcut_target(const fs::path& path);
 // The calling thread must initialize COM before using shell-link services.
-void create_shortcut(const fs::path& source, const fs::path& target);
+void create_shortcut(const fs::path& source, const fs::path& target, const std::wstring& arguments = {},
+                     const fs::path& icon = {});
 
 // Session-local Undo. Moves are guarded by volume/file identity; removal of a
 // created file also checks its size/write time so later edits are not deleted.

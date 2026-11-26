@@ -59,4 +59,9 @@ int FinderIsDiskImage(const wchar_t* path);
 // Mount in the initialized Finder process using the default image access policy.
 // Returns a Macintosh OSErr; -128 is user cancellation. Details are optional.
 int32_t FinderMountImage(const wchar_t* path, wchar_t* details, uint32_t capacity);
+#ifdef __cplusplus
+#include <string>
+// Quote an app operand for the launcher, including classic volume paths.
+std::wstring finder_launch_file_argument(const wchar_t* path);
+#endif
 #endif
