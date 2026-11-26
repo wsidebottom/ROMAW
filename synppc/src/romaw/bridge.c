@@ -1561,6 +1561,14 @@ PRIVATE OSErr ppc_get_fpos(INTEGER reference, LONGINT* value)
     return ppc_get_file_value(reference, value, TRUE);
 }
 
+PRIVATE void ppc_string_to_num(StringPtr text, LONGINT* value)
+{
+    LONGINT number;
+    StringToNum(text, &number);
+    number = CL(number);
+    memcpy(value, &number, sizeof number);
+}
+
 PRIVATE LONGINT ppc_intl_spec(void)
 {
     Ptr globals = ROMlib_script_globals();
@@ -3526,7 +3534,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetIndString", GetIndString, M3(0, 5, 2, 2)},
     {"GetIndPattern", GetIndPattern, M3(0, 5, 2, 2)},
     {"NumToString", NumToString, M2(0, 4, 5)},
-    {"StringToNum", StringToNum, M2(0, 5, 5)},
+    {"StringToNum", ppc_string_to_num, M2(0, 5, 5)},
     {"BlockMove", BlockMove, M3(0, 5, 5, 4)},
     {"BlockMoveData", BlockMove, M3(0, 5, 5, 4)},
     {"HandToHand", ppc_hand_to_hand, M1(2, 4)},

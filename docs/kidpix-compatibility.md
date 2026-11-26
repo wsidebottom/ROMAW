@@ -1,5 +1,26 @@
 # Kid Pix compatibility checks
 
+## Silly-idea number conversion
+
+The PowerPC `StringToNum` import must store its longword result in guest byte
+order. Its existing native helper returns host byte order, so the bridge now
+converts a local result before copying exactly four bytes to guest memory.
+The native helper and 68K calling convention are unchanged.
+
+A live Windows stack and guest-code inspection traced Kid Pix's silly-idea
+freeze to a recent-sound limit of `0x09000000` instead of 9, alongside a
+byte-reversed sound-resource ID. The resulting exclusion loop repeatedly
+called `Random` without returning to the event loop. Correcting those parsed
+values let the current operation finish; subsequent calls required the bridge
+fix rather than further debugger corrections.
+
+The existing `PPC Decimal Probe` now checks eight Classic numeric-string cases,
+including these values, signed limits, guest result bytes, adjacent guards and
+`NumToString` round trips, alongside its existing MathLib checks.
+The expanded probe failed on the old Windows executable and passed on the
+rebuilt executable under both the interpreter and JIT. The 64 pattern-lifetime
+scenarios also passed on that build.
+
 ## Pattern preview lifetime
 
 Kid Pix disposes each temporary `GetPixPat` preview while the pattern is still

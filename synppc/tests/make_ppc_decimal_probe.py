@@ -2,7 +2,7 @@
 # +===================================================================
 #   File:      make_ppc_decimal_probe.py
 #
-#   Summary:   Generate original PPC checks for MathLib decimal formatting and double argument slots.
+#   Summary:   Check MathLib decimal formatting and Classic numeric-string conversions through PPC imports.
 #
 #   Classes:   None.
 #
@@ -12,7 +12,7 @@
 #
 #   Copyright and Legal notices: Applicable repository license: synppc/COPYING.
 # ===================================================================+
-"""Check num2dec/dec2str through real PPC imports and packed guest records."""
+"""Check decimal and numeric-string conversions through real PPC imports and guest records."""
 import struct
 import sys
 from pathlib import Path
@@ -83,23 +83,55 @@ def make_decimal_probe(destination):
     word(100, 0)
     word(156, 0xDEADBEEF)
     word(256, 0xDEADBEEF)
+    # StringToNum's native helper returns a host longword; PPC memory must
+    # contain a big-endian result. Kid Pix uses 9 as a recent-sound limit.
+    strings = [
+        ("9", 9),
+        ("2101", 2101),
+        ("-9", -9),
+        ("+9", 9),
+        ("", 0),
+        ("0", 0),
+        ("2147483647", 2147483647),
+        ("-2147483648", -2147483648),
+    ]
+    for index, (text, number) in enumerate(strings):
+        emit(0x387E0000 | (368 + index * 16), 0x389E0134)
+        call(4)
+        word(308, number & 0xFFFFFFFF)
+        word(304, 0xDEADBEEF)
+        word(312, 0xDEADBEEF)
+        emit(0x807E0134, 0x389E0150)
+        call(5)
+        canonical = str(number).encode()
+        expected = bytes([len(canonical)]) + canonical
+        for offset, byte in enumerate(expected):
+            emit(0x887E0000 | (336 + offset))
+            check(byte)
+        word(332, 0xDEADBEEF)
+        word(348, 0xDEADBEEF)
     emit(0x83C10038, 0x80010044, 0x7C0803A6, 0x38210040, 0x38600000, 0x4E800020)
     bad = len(code)
     emit(0)
     for branch in failures:
         code[branch] |= (bad - branch) * 4
-    data = bytearray(320)
+    data = bytearray(512)
     data[272:280] = b" -12.5x\0"
     struct.pack_into(">BBh", data, 64, 1, 0, 4)
     struct.pack_into(">dd", data, 80, 578.0, 123.45)
-    for offset in (156, 256):
+    for index, (text, _) in enumerate(strings):
+        encoded = text.encode()
+        start = 368 + index * 16
+        data[start : start + len(encoded) + 1] = bytes([len(encoded)]) + encoded
+    for offset in (156, 256, 304, 312, 332, 348):
         struct.pack_into(">I", data, offset, 0xDEADBEEF)
     fragment = pef(
         code,
         data,
-        imports=[("MathLib", name, 2) for name in ["num2dec", "dec2str", "str2dec", "dec2num"]],
+        imports=[("MathLib", name, 2) for name in ["num2dec", "dec2str", "str2dec", "dec2num"]]
+        + [("InterfaceLib", name, 2) for name in ["StringToNum", "NumToString"]],
         main=0,
-        reloc=[0x4600, 0x4A03],
+        reloc=[0x4600, 0x4A05],
     )
     write_fragment(destination, "PPC Decimal Probe", fragment, 1)
 
