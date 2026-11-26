@@ -182,6 +182,19 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing reference re-export origin: Fallback"):
             coverage.audit(reference, {})
 
+    def test_reexport_missing_from_saved_companion_is_reported(self):
+        native = {"NewExport": {"library": "CompanionLib", "offset": 7}}
+        reference = {
+            "exports": [{"name": "NewExport", "symbol_class": 2, "section": -3, "offset": 7}],
+            "imports": [{"name": "NewExport", "symbol_class": 2, "library": "CompanionLib", "index": 7}],
+        }
+        companion = {"exports": [{"name": "OlderExport", "symbol_class": 2, "code_offset": 16}]}
+        result = coverage.audit(reference, native, companions={"CompanionLib": companion})
+        self.assertEqual(result["native_archive_exports"], 1)
+        self.assertEqual(result["libraries"]["CompanionLib"]["native_archive_exports"], 0)
+        self.assertEqual(result["libraries"]["CompanionLib"]["pending_reference_exports"], 1)
+        self.assertEqual(result["unverified_companion_reexports"], [{"library": "CompanionLib", "name": "NewExport"}])
+
     def test_data_reexports_require_data_in_both_libraries(self):
         source = '    CARBON_DATA("Epoch", 0xc9, "CoreFoundationLib", 0x41cd27e4, 0x00000000),'
         native = coverage.native_entries(source)

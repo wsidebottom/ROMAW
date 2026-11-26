@@ -222,19 +222,27 @@ def audit(reference, native, imports=(), observed=(), companions=None):
             "pending_reference_exports": len(pending),
         }
     }
+    unverified_companion_reexports = []
     for library, items in companions.items():
         bindings = {name: item for name, item in definitions if item["library"] == library}
         for name, binding in bindings.items():
             classes = (1,) if binding.get("data") else (0, 2)
-            item = items.get(name, {})
+            item = items.get(name)
+            # CarbonLib's import table proves the re-export's origin. The
+            # separately saved companion may be from another System release.
+            if item is None and name in main_native and exports[name].get("section") == -3:
+                unverified_companion_reexports.append({"library": library, "name": name})
+                continue
+            item = item or {}
             if item.get("symbol_class") not in classes:
                 raise ValueError(f"Native symbol absent from companion reference: {library}:{name}")
             if "data_offset" in binding and (item.get("offset") != binding["data_offset"] or item.get("section") != 1):
                 raise ValueError(f"Native data record offset mismatch: {library}:{name}")
+        verified_bindings = bindings.keys() & items.keys()
         libraries[library] = {
             "reference_exports": len(items),
-            "native_archive_exports": len(bindings),
-            "pending_reference_exports": len(items) - len(bindings),
+            "native_archive_exports": len(verified_bindings),
+            "pending_reference_exports": len(items) - len(verified_bindings),
         }
     return {
         "scope": "CarbonLib main PEF fragment and supplied companion metadata; application counts cover CarbonLib imports",
@@ -249,6 +257,9 @@ def audit(reference, native, imports=(), observed=(), companions=None):
         "native_reexport_exports": sum(exports[name].get("section") == -3 for name in main_native),
         "libraries": libraries,
         "unverified_companion_libraries": sorted(referenced_companions - companions.keys()),
+        "unverified_companion_reexports": sorted(
+            unverified_companion_reexports, key=lambda item: (item["library"], item["name"])
+        ),
         "pending_reference_exports": len(pending),
         "application_imports": len(rows),
         "application_native_imports": sum(row["native_archive"] for row in rows),
