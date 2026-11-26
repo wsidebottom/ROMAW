@@ -4208,6 +4208,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
                 "DeleteGestaltValue",
                 "DMDrawDesktopRect",
                 "DMDrawDesktopRegion",
+                "EmptyHandle",
                 "GetMaxResourceSize",
                 "LMGetSysResName",
                 "LMSetHiliteRGB",

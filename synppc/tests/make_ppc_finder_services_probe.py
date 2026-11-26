@@ -8,7 +8,7 @@
 #
 #   Functions: make_probe, check_object_accessors, check_file_icons, check_picture_controls, check_progress_controls;
 #              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting, check_label_icon, check_desktop_drag, check_resource_overrides;
-#              check_desktop_visibility, check_display_desktop_drawing; script entry point.
+#              check_desktop_visibility, check_display_desktop_drawing, check_handle_emptying; script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
 #
@@ -42,6 +42,12 @@ def make_probe(destination):
         "SetResFileAttrs",
         "TempNewHandle",
         "NewHandle",
+        "NewHandleSys",
+        "EmptyHandle",
+        "ReallocateHandle",
+        "HLock",
+        "HUnlock",
+        "MemError",
         "GetHandleSize",
         "DisposeHandle",
         "NewRoutineDescriptor",
@@ -815,6 +821,7 @@ def make_probe(destination):
     check_device_parameter_blocks(p)
     check_file_icons(p, destination)
     check_display_desktop_drawing(p)
+    check_handle_emptying(p)
     for selector, offset in ((0x72616D20, 0xB50), (0x7272616D, 0xB54)):
         p.emit(0x3C600000 | (selector >> 16), 0x60630000 | (selector & 0xFFFF), 0x389E0000 | offset)
         p.call("Gestalt")
@@ -869,6 +876,43 @@ def make_probe(destination):
         "PPC Finder Services Probe",
         extra_resources=[(b"PICT", 1234, picture), (b"cicn", 1235, bytes(label_icon))],
     )
+
+
+def check_handle_emptying(p):
+    p.emit(0x3860000E)
+    p.call("NewHandleSys")
+    p.nonzero("allocate a system handle like Finder's saved move preferences")
+    p.emit(0x907E0E80, 0x80830000, 0x909E0E84)
+    p.call("HLock")
+    p.emit(0x807E0E80)
+    p.call("EmptyHandle")
+    p.call("MemError")
+    p.expect(-112, "emptying a locked handle reports the actual Memory Manager error")
+    p.emit(0x807E0E80, 0x80630000, 0x809E0E84)
+    p.equal("a failed empty operation preserves the locked handle's data pointer")
+    p.emit(0x807E0E80)
+    p.call("GetHandleSize")
+    p.expect(14, "a failed empty operation preserves the allocated data size")
+    p.emit(0x807E0E80)
+    p.call("HUnlock")
+    for _ in range(2):
+        p.emit(0x807E0E80)
+        p.call("EmptyHandle")
+        p.call("MemError")
+        p.expect(0, "emptying an unlocked or already empty handle succeeds")
+        p.emit(0x807E0E80, 0x80630000)
+        p.expect(0, "EmptyHandle releases the data while keeping the master pointer alive")
+    p.emit(0x807E0E80, 0x3880000E)
+    p.call("ReallocateHandle")
+    p.call("MemError")
+    p.expect(0, "the retained handle can allocate replacement data")
+    p.emit(0x807E0E80)
+    p.call("GetHandleSize")
+    p.expect(14, "reallocation restores storage on the same handle")
+    p.emit(0x807E0E80)
+    p.call("DisposeHandle")
+    p.call("MemError")
+    p.expect(0, "the retained master pointer can be disposed normally")
 
 
 def check_display_desktop_drawing(p):
@@ -1715,6 +1759,18 @@ def check_file_icons(p, destination):
     p.call("WriteResource")
     p.call("ResError")
     p.expect(0, "persist real replacement artwork to the resource fork")
+    p.emit(0x807E0AB8)
+    p.call("EmptyHandle")
+    p.call("MemError")
+    p.expect(0, "release a saved resource's data as Finder does for move preferences")
+    p.emit(0x807E0AB8, 0x80630000)
+    p.expect(0, "emptying a saved resource releases its data")
+    p.emit(0x3C604943, 0x60634E23, 0x3880BFB9)
+    p.call("Get1Resource")
+    p.emit(0x809E0AB8)
+    p.equal("the resource map retains the same master pointer after EmptyHandle")
+    p.emit(0x807E0AB8, 0x80630000, 0x80630000)
+    p.expect(0x2468ACE0, "an emptied resource reloads its actual saved bytes")
     p.emit(0x807E0AB0)
     p.call("CloseResFile")
     p.emit(0x807E0AB4)

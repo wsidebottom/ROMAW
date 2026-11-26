@@ -196,6 +196,12 @@ for the actual desktop callback or pattern, and restores the original clip and
 port. The Finder services fixture checks both calls against the real painted
 background with an empty incoming clip and verifies that the clip stays empty.
 
+InterfaceLib's `EmptyHandle` uses the existing Memory Manager Toolbox operation.
+Finder calls it after writing move preferences; the resource map must retain the
+master pointer while the data is released. The grouped fixture checks locked
+handle errors, repeated emptying and reallocation, then writes, empties and
+reloads a real resource to verify that its saved data and identity survive.
+
 Finder's private `GetOverrideAttributes` import uses the existing Resource
 Manager override query. It reads the four in-memory map bits (`0x1e`), preserves
 `ResErr` on success and reports `nilHandleErr` for a null map. The grouped fixture
