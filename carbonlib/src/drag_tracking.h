@@ -80,7 +80,7 @@ static int drag_window_at(Point point, uint32_t* window, bool* present)
     *window = CL(found);
     if (!*window && (int16_t)part == inDesk) {
         const Point host_point = {CW(point.v), CW(point.h)};
-        WindowPtr desktop = ROMlib_desktop_layer_at(host_point);
+        WindowPtr desktop = ROMlib_desktop_window_at(host_point);
         if (desktop)
             *window = US_TO_SYN68K(desktop);
     }

@@ -6,7 +6,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_desktop_layer_at, ROMlib_dispose_float_layer, ROMlib_get_window_state,
+  Functions: ROMlib_desktop_window_at, ROMlib_dispose_float_layer, ROMlib_get_window_state,
              ROMlib_layer_application, ROMlib_layer_children,
              ROMlib_layer_current, ROMlib_layer_find, ROMlib_layer_front, ROMlib_layer_p, ROMlib_layer_parent,
              ROMlib_layer_root, ROMlib_layer_set, ROMlib_layer_swap, ROMlib_layers_reset,
@@ -218,12 +218,19 @@ PUBLIC OSErr ROMlib_new_desktop_layer_owner(HIDDEN_Ptr* output)
     return noErr;
 }
 
-PUBLIC WindowPtr ROMlib_desktop_layer_at(Point point)
+PUBLIC WindowPtr ROMlib_desktop_window_at(Point point)
 {
     if (!desktop_layer_owned || !application_layer || !application_layer->visible ||
         !PtInRgn(point, MR(HIDDEN_RAW(application_layer->content))))
         return NULL;
-    return (WindowPtr)application_layer;
+    /* Finder's desktop is a real child window with no structure region.
+       The owner layer carries no window reference data for its icon model. */
+    for (WindowPeek window = (WindowPeek)ROMlib_layer_children(application_layer); window;
+         window = WINDOW_NEXT_WINDOW(window))
+        if (WINDOW_VISIBLE_X(window) && EmptyRgn(WINDOW_STRUCT_REGION(window)) &&
+            PtInRgn(point, WINDOW_CONT_REGION(window)))
+            return (WindowPtr)window;
+    return NULL;
 }
 
 PUBLIC OSErr ROMlib_new_float_layer(HIDDEN_Ptr* output)

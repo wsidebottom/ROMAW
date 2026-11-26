@@ -21,7 +21,7 @@ typedef struct drag_image_frame {
     Ptr storage;
     Size capacity;
     PixMap background;
-    RgnHandle clip;
+    RgnHandle clip, saved_clip;
     GrafPtr screen;
     bool visible;
 } drag_image_frame;
@@ -88,9 +88,12 @@ static void drag_image_hide(drag_image_frame* overlay)
     if (US_TO_SYN68K(overlay->screen) == cfp_read(0xd2c)) {
         const GrafPtr previous = thePort;
         C_SetPort(overlay->screen);
+        C_GetClip(overlay->saved_clip);
+        C_SetClip(PORT_VIS_REGION(overlay->screen));
         Rect restore = overlay->background.bounds;
         C_CopyBits((BitMap*)&overlay->background, PORT_BITS_FOR_COPY(overlay->screen), &restore, &restore, srcCopy,
                    overlay->clip);
+        C_SetClip(overlay->saved_clip);
         C_SetPort(previous);
     }
     pixmap_free_copy(&overlay->background);
@@ -104,6 +107,8 @@ static void drag_image_finish(drag_image_frame* overlay)
         DisposPtr(overlay->storage);
     if (overlay->clip)
         C_DisposeRgn(overlay->clip);
+    if (overlay->saved_clip)
+        C_DisposeRgn(overlay->saved_clip);
     *overlay = (drag_image_frame){0};
 }
 
@@ -157,7 +162,9 @@ static bool drag_render_image(const carbon_drag* drag, drag_image_frame* overlay
     }
     if (!overlay->clip)
         overlay->clip = C_NewRgn();
-    if (!overlay->clip)
+    if (!overlay->saved_clip)
+        overlay->saved_clip = C_NewRgn();
+    if (!overlay->clip || !overlay->saved_clip)
         return false;
 
     Rect target = {CW(top), CW(left), CW(bottom), CW(right)}, source = target;
@@ -171,8 +178,6 @@ static bool drag_render_image(const carbon_drag* drag, drag_image_frame* overlay
         C_RectRgn(overlay->clip, &target);
     if (PORT_VIS_REGION(screen))
         C_SectRgn(overlay->clip, PORT_VIS_REGION(screen), overlay->clip);
-    if (PORT_CLIP_REGION(screen))
-        C_SectRgn(overlay->clip, PORT_CLIP_REGION(screen), overlay->clip);
 
     if (C_EmptyRgn(overlay->clip))
         return true;
@@ -202,6 +207,10 @@ static bool drag_render_image(const carbon_drag* drag, drag_image_frame* overlay
 
     const GrafPtr previous = thePort;
     C_SetPort(screen);
+    /* The shared Window Manager port may retain an empty application clip.
+       Drag feedback uses screen visibility and restores that clip afterward. */
+    C_GetClip(overlay->saved_clip);
+    C_SetClip(PORT_VIS_REGION(screen));
     BitMap* screen_bits = PORT_BITS_FOR_COPY(screen);
     C_CopyBits((BitMap*)pixels, (BitMap*)&composite, &source, &target, srcCopy, NULL);
     const unsigned alpha_stride = alpha ? CW(alpha->rowBytes) & ROWBYTES_VALUE_BITS : 0;
@@ -212,6 +221,7 @@ static bool drag_render_image(const carbon_drag* drag, drag_image_frame* overlay
     drag_mix_image((Byte*)overlay->storage + size, backdrop, right - left, bottom - top, opacity[drag->image_flags & 3],
                    alpha_bytes, alpha_stride);
     C_CopyBits((BitMap*)&composite, screen_bits, &target, &target, srcCopy, overlay->clip);
+    C_SetClip(overlay->saved_clip);
     C_SetPort(previous);
     overlay->visible = true;
     return true;

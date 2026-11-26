@@ -596,8 +596,8 @@ static void close_window_in_layer(WindowPtr w)
     SetPort(MR(wmgr_port));
     SetClip(MR(GrayRgn));
     PaintBehind(behind_all, WINDOW_STRUCT_REGION(w));
-    if (behind_all)
-        CalcVisBehind(behind_all, WINDOW_STRUCT_REGION(w));
+    /* A desktop listed before this window still needs its visibility rebuilt. */
+    CalcVisBehind(behind_all, WINDOW_STRUCT_REGION(w));
 
     DisposeRgn(WINDOW_STRUCT_REGION(w));
     DisposeRgn(WINDOW_CONT_REGION(w));

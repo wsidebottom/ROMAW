@@ -35,18 +35,27 @@ static int drag_draw_outline(uint32_t region)
     if (!screen)
         return 0;
 
+    RgnHandle saved_clip = C_NewRgn();
+    if (!saved_clip)
+        return 0;
     _Alignas(4) uint32_t saved_port = 0;
     _Alignas(32) PenState saved_pen;
     const ROMlib_carbon_ppc_frame get_port = {.words = {US_TO_SYN68K(&saved_port)}};
     const ROMlib_carbon_ppc_frame set_screen = {.words = {screen}};
-    if (!drag_trap(0x0fd0, 0xc0, &get_port, NULL) || !drag_trap(0x0fcc, 0xc0, &set_screen, NULL))
+    if (!drag_trap(0x0fd0, 0xc0, &get_port, NULL) || !drag_trap(0x0fcc, 0xc0, &set_screen, NULL)) {
+        C_DisposeRgn(saved_clip);
         return 0;
+    }
+    C_GetClip(saved_clip);
+    C_SetClip(PORT_VIS_REGION((GrafPtr)SYN68K_TO_US(screen)));
     const ROMlib_carbon_ppc_frame pen = {.words = {US_TO_SYN68K(&saved_pen)}};
     const ROMlib_carbon_ppc_frame normal = {0}, xor_mode = {.words = {patXor}}, outline = {.words = {region}};
     const int saved = drag_trap(0x1060, 0xc0, &pen, NULL);
     const int drawn = saved && drag_trap(0x1078, 0, &normal, NULL) && drag_trap(0x1070, 0x80, &xor_mode, NULL) &&
                       drag_trap(0x1148, 0xc0, &outline, NULL);
     const int restored_pen = !saved || drag_trap(0x1064, 0xc0, &pen, NULL);
+    C_SetClip(saved_clip);
+    C_DisposeRgn(saved_clip);
     const ROMlib_carbon_ppc_frame restore_port = {.words = {CL(saved_port)}};
     return drag_trap(0x0fcc, 0xc0, &restore_port, NULL) && drawn && restored_pen;
 }

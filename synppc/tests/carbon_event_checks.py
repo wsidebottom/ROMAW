@@ -763,6 +763,7 @@ def event_sections(probe):
 
     def drag_images():
         _, state = probe.raw(bytes(76))
+        empty_clip_bounds = probe.far_raw(bytes(8))
         bounds = probe.raw(struct.pack(">4h", 0, 0, 8, 8))
         shorter_bounds = probe.raw(struct.pack(">4h", 0, 0, 5, 8))
         black = probe.raw(bytes(6))
@@ -849,6 +850,11 @@ def event_sections(probe):
         probe.call("EraseRect", [screen_patch])
         probe.call("GetCPixel", [70, 50, result])
         check_word(state + 40, 0xFFFFFFFF, "the drag backdrop starts white")
+        probe.call("NewRgn")
+        p.nonzero("allocate the saved Window Manager clip")
+        save_word(state + 72)
+        probe.call("GetClip", [probe.slot(state + 72)])
+        probe.call("ClipRect", [empty_clip_bounds])
         p.emit(0x80600F80)  # Save the live WaitNextEvent vector.
         save_word(state + 48)
         probe.call("NewRoutineDescriptor", [probe.ptr(wait_offset), 0x3F90, 1])
@@ -867,6 +873,11 @@ def event_sections(probe):
             p.nonzero("the image is visible while the drag waits for its next event")
             probe.call("GetCPixel", [70, 50, result])
             check_word(state + 40, 0xFFFFFFFF, "ending the drag restores the original screen pixels")
+            p.emit(0x80600D2C, 0x8063001C)  # Read the live color Window Manager port's clip.
+            probe.call("EmptyRgn")
+            p.expect(1, "image drawing and restoration preserve an initially empty Window Manager clip")
+        probe.call("SetClip", [probe.slot(state + 72)])
+        probe.call("DisposeRgn", [probe.slot(state + 72)])
         p.emit(0x807E0000 | (state + 48), 0x90600F80)
         probe.call("DisposeRoutineDescriptor", [probe.slot(state + 52)])
         probe.call("RGBBackColor", [probe.ptr(state + 64)])

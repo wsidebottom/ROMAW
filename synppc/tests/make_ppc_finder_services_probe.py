@@ -8,7 +8,7 @@
 #
 #   Functions: make_probe, check_object_accessors, check_file_icons, check_picture_controls, check_progress_controls;
 #              check_icon_file_registration, check_device_parameter_blocks, check_date_formatting, check_label_icon, check_desktop_drag, check_resource_overrides;
-#              script entry point.
+#              check_desktop_visibility, check_display_desktop_drawing; script entry point.
 #
 #   Origin:    Original ROMAW Finder startup service regression fixture.
 #
@@ -96,6 +96,21 @@ def make_probe(destination):
         "GetPort",
         "EraseRect",
         "SetPort",
+        "SetEmptyRgn",
+        "GetWRefCon",
+        "CalcVis",
+        "BeginUpdate",
+        "EndUpdate",
+        "BringToFront",
+        "PaintOne",
+        "CheckUpdate",
+        "DMDrawDesktopRect",
+        "DMDrawDesktopRegion",
+        "RGBBackColor",
+        "ClipRect",
+        "SetClip",
+        "GetClip",
+        "EmptyRgn",
         "FrontWindow",
         "DisposeControl",
         "GetControlFeatures",
@@ -799,6 +814,7 @@ def make_probe(destination):
     check_desktop_drag(p)
     check_device_parameter_blocks(p)
     check_file_icons(p, destination)
+    check_display_desktop_drawing(p)
     for selector, offset in ((0x72616D20, 0xB50), (0x7272616D, 0xB54)):
         p.emit(0x3C600000 | (selector >> 16), 0x60630000 | (selector & 0xFFFF), 0x389E0000 | offset)
         p.call("Gestalt")
@@ -855,9 +871,153 @@ def make_probe(destination):
     )
 
 
+def check_display_desktop_drawing(p):
+    p.data[0xE20:0xE28] = struct.pack(">4h", 400, 100, 404, 104)
+    p.data[0xE48:0xE50] = bytes(8)
+    p.data[0xE70:0xE76] = bytes(6)
+    p.data[0xE78:0xE7E] = b"\xff" * 6
+    p.emit(0x387E0E30)
+    p.call("GetPort")
+    p.emit(0x80600D2C)
+    p.call("SetPort")
+    p.emit(0x387E0E3C)
+    p.call("GetBackColor")
+    for offset in (0xE34, 0xE38):
+        p.call("NewRgn")
+        p.nonzero("allocate desktop draw and saved clip regions")
+        p.emit(0x907E0000 | offset)
+    p.emit(0x807E0E34)
+    p.call("GetClip")
+    p.emit(0x807E0E38, 0x389E0E20)
+    p.call("RectRgn")
+    p.emit(0x807E0E38)
+    p.call("SetClip")
+    p.emit(0x387E0E20)
+    p.call("DMDrawDesktopRect")
+    p.emit(0x38600066, 0x38800192, 0x38BE0E60)
+    p.call("GetCPixel")
+    for name, shape in (("DMDrawDesktopRect", 0xE20), ("DMDrawDesktopRegion", 0xE38)):
+        for color in (0xE70, 0xE78):
+            p.emit(0x807E0E38)
+            p.call("SetClip")
+            p.emit(0x387E0000 | color)
+            p.call("RGBBackColor")
+            p.emit(0x387E0E20)
+            p.call("EraseRect")
+            p.emit(0x387E0E3C)
+            p.call("RGBBackColor")
+            p.emit(0x387E0E48)
+            p.call("ClipRect")
+            p.emit((0x387E0000 if name.endswith("Rect") else 0x807E0000) | shape)
+            p.call(name)
+            p.emit(0x38600066, 0x38800192, 0x38BE0E68)
+            p.call("GetCPixel")
+            p.emit(0x807E0E68, 0x809E0E60)
+            p.equal("Display Manager erases old icon pixels despite an empty Window Manager clip")
+            p.emit(0xA07E0E6C, 0xA09E0E64)
+            p.equal("desktop painting restores all three actual background colour components")
+            p.emit(0x80600D2C, 0x8063001C)
+            p.call("EmptyRgn")
+            p.expect(1, "Display Manager preserves the original Window Manager clip")
+    p.emit(0x807E0E34)
+    p.call("SetClip")
+    for offset in (0xE34, 0xE38):
+        p.emit(0x807E0000 | offset)
+        p.call("DisposeRgn")
+    p.emit(0x807E0E30)
+    p.call("SetPort")
+
+
+def check_desktop_visibility(p):
+    # Classic WindowRecord fields are public. Match Finder's desktop alias
+    # while retaining the original content handle for normal window disposal.
+    p.data[0xDBC:0xDC4] = struct.pack(">4h", 180, 400, 190, 410)
+    p.data[0xDC4:0xDCC] = struct.pack(">4h", 280, 430, 340, 500)
+    p.emit(0x387E0DB8)
+    p.call("GetPort")
+    p.emit(0x807E0DA4)
+    p.call("SetPort")
+    for operation in ("BeginUpdate", "EndUpdate"):
+        p.emit(0x807E0DA4)
+        p.call(operation)
+    p.emit(0x807E0DA4, 0x80830076, 0x909E0DB4, 0x80830018, 0x90830076)
+    p.emit(0x807E0DA4, 0x389E0DBC)
+    p.call("InvalWindowRect")
+    p.expect(0, "invalidate a small area in the actual desktop window")
+    for operation in ("BeginUpdate", "CalcVis", "EndUpdate"):
+        p.emit(0x807E0DA4)
+        p.call(operation)
+
+    def check_visible(expected, message):
+        p.emit(0x807E0DA4, 0x80830018, 0x3C60012C, 0x606301C2)
+        p.call("PtInRgn")
+        p.expect(expected, message)
+
+    check_visible(1, "desktop visibility expands beyond an acknowledged update despite aliased content")
+    p.emit(
+        0x38600000,
+        0x389E0DC4,
+        0x38BE0DB0,
+        0x38C00001,
+        0x38E00000,
+        0x3900FFFF,
+        0x39200000,
+        0x39400000,
+    )
+    p.call("NewCWindow")
+    p.nonzero("create a real window covering part of the desktop")
+    p.emit(0x907E0DCC)
+    check_visible(0, "an empty-structure desktop is clipped beneath a covering window")
+    p.emit(0x807E0DA4)
+    p.call("BringToFront")
+    check_visible(0, "desktop visibility excludes folder windows even when its list entry is first")
+    for operation in ("BeginUpdate", "EndUpdate"):
+        p.emit(0x807E0DA4)
+        p.call(operation)
+    p.call("NewRgn")
+    p.nonzero("allocate desktop repaint damage")
+    p.emit(0x907E0DD0, 0x389E0DBC)
+    p.call("RectRgn")
+    p.emit(0x807E0DA4, 0x809E0DD0)
+    p.call("PaintOne")
+    p.emit(0x387E0DD4)
+    p.call("CheckUpdate")
+    p.expect(1, "painting a frameless desktop invalidates its icon model while a folder remains open")
+    p.emit(0x807E0DD6, 0x809E0DA4)
+    p.equal("desktop repaint damage produces an update for the real desktop window")
+    for operation in ("BeginUpdate", "EndUpdate"):
+        p.emit(0x807E0DA4)
+        p.call(operation)
+    p.emit(0x807E0DD0)
+    p.call("DisposeRgn")
+    p.emit(0x807E0DCC)
+    p.call("DisposeWindow")
+    check_visible(1, "uncovering the desktop restores its previously clipped area")
+    p.emit(0x807E0DB8)
+    p.call("SetPort")
+
+
 def check_desktop_drag(p):
     # Finish a desktop drag through the live event vector, without host input.
-    # Callbacks record the real messages, registered desktop owner and drag reference.
+    # Finder's desktop window has content but no structure. Its owner layer is
+    # a separate object and does not carry the desktop model's reference data.
+    p.data[0xDA8:0xDB0] = struct.pack(">4h", 19, 0, 600, 800)
+    p.emit(
+        0x38600000,
+        0x389E0DA8,
+        0x38BE0DB0,
+        0x38C00001,
+        0x38E00000,
+        0x3900FFFF,
+        0x39200000,
+        0x3D404453,
+        0x614A4B54,
+    )
+    p.call("NewCWindow")
+    p.nonzero("create a genuine desktop window separate from its registered owner layer")
+    p.emit(0x907E0DA4, 0x80630072)
+    p.call("SetEmptyRgn")
+    check_desktop_visibility(p)
     # Query attributes in every tracking callback, including enter-handler.
     start = len(p.code)
     p.call("GetDragAttributes")
@@ -936,8 +1096,11 @@ def check_desktop_drag(p):
         p.emit(0x807E0000 | offset)
         p.expect(value, "desktop tracking preserves the complete callback lifecycle")
     for offset in (0xD84, 0xD90):
-        p.emit(0x807E0000 | offset, 0x809E02A0)
-        p.equal("desktop callbacks receive the actual registered desktop layer owner")
+        p.emit(0x807E0000 | offset, 0x809E0DA4)
+        p.equal("desktop callbacks receive the real desktop window rather than its owner layer")
+    p.emit(0x807E0D90)
+    p.call("GetWRefCon")
+    p.expect(0x44534B54, "the drop target retains the desktop model's actual reference data")
     for offset in (0xD88, 0xD94):
         p.emit(0x807E0000 | offset, 0x809E0D20)
         p.equal("desktop callbacks receive the actual drag reference")
@@ -963,6 +1126,8 @@ def check_desktop_drag(p):
     for offset in (0xD44, 0xD48, 0xD4C):
         p.emit(0x807E0000 | offset)
         p.call("DisposeRoutineDescriptor")
+    p.emit(0x807E0DA4, 0x809E0DB4, 0x90830076)
+    p.call("DisposeWindow")
 
 
 def check_resource_overrides(p):

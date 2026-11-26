@@ -6096,8 +6096,17 @@ static OSErr ppc_display_draw_desktop(ppc_context* ctx, uint32 shape, boolean_t 
             return memFullErr;
         C_RectRgn(region, bounds);
     }
+    const RgnHandle saved_clip = C_NewRgn();
+    if (!saved_clip) {
+        if (rectangular)
+            C_DisposeRgn(region);
+        return memFullErr;
+    }
     const GrafPtr previous = thePort;
     C_SetPort(desktop);
+    C_GetClip(saved_clip);
+    /* Finder leaves this shared port's clip empty after its own drawing. */
+    C_SetClip(region);
     OSErr result = noErr;
     if (ctx->desktop_draw.procedure) {
         uint32 arguments[] = {ctx->desktop_draw_refcon, 0, US_TO_SYN68K(region)};
@@ -6109,6 +6118,9 @@ static OSErr ppc_display_draw_desktop(ppc_context* ctx, uint32 shape, boolean_t 
         C_FillCRgn(region, MR(DeskCPat));
     else
         C_FillRgn(region, DeskPattern);
+    C_SetPort(desktop);
+    C_SetClip(saved_clip);
+    C_DisposeRgn(saved_clip);
     C_SetPort(previous);
     if (rectangular)
         C_DisposeRgn(region);
@@ -6162,10 +6174,14 @@ PUBLIC OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4])
         HIDDEN_RAW_SET(*output, RM(device));
         return device ? noErr : dm_display_not_found;
     }
+    if (selector == 2 || selector == 3) {
+        /* InterfaceLib also exports these calls without loading DisplayLib's
+           private initializer. Validate the real screen devices on that path. */
+        const OSErr status = ppc_dm_refresh_devices(ctx);
+        return status ? status : ppc_display_draw_desktop(ctx, args[0], selector == 2);
+    }
     if (!ctx->display_initialized)
         return dm_sw_not_initialized;
-    if (selector == 2 || selector == 3)
-        return ppc_display_draw_desktop(ctx, args[0], selector == 2);
     if (selector != 0x4e2 && selector != 0x8e4)
         return -4;
 

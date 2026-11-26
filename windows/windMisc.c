@@ -260,10 +260,20 @@ P1(PUBLIC pascal trap, void, SaveOld, WindowPeek, w)
     CopyRgn(WINDOW_CONT_REGION(w), MR(OldContent));
 }
 
+static Boolean desktop_window_p(WindowPeek window)
+{
+    return window && WINDOW_VISIBLE_X(window) && WINDOW_CONT_REGION(window) == PORT_VIS_REGION(window) &&
+           EmptyRgn(WINDOW_STRUCT_REGION(window));
+}
+
 P2(PUBLIC pascal trap, void, PaintOne, WindowPeek, w, RgnHandle, clobbered)
 {
     RgnHandle rh;
 
+    /* Finder's frameless desktop uses desktop painting, including clipping
+       against every ordinary window even when its list entry precedes them. */
+    if (desktop_window_p(w))
+        w = NULL;
     THEPORT_SAVE_EXCURSION(MR(wmgr_port), {
         if (w)
             SetClip(WINDOW_STRUCT_REGION(w));
@@ -345,8 +355,17 @@ P1(PUBLIC pascal trap, void, CalcVis, WindowPeek, w)
 
     if (w) {
         if (WINDOW_VISIBLE_X(w)) {
+            /* Finder's desktop shares contRgn with visRgn. Rebuild its content
+               from the port before expanding visibility after an update or
+               uncover; the clipped region cannot serve as its own source. */
+            const Boolean desktop = desktop_window_p(w);
+            if (desktop) {
+                Rect content = PORT_RECT(w);
+                OffsetRect(&content, -CW(PORT_BOUNDS(w).left), -CW(PORT_BOUNDS(w).top));
+                RectRgn(PORT_VIS_REGION(w), &content);
+            }
             SectRgn(MR(GrayRgn), WINDOW_CONT_REGION(w), PORT_VIS_REGION(w));
-            for (wp = ROMlib_window_first_all(); wp != w; wp = ROMlib_window_next_all(wp))
+            for (wp = ROMlib_window_first_all(); wp && (wp != w || desktop); wp = ROMlib_window_next_all(wp))
                 if (WINDOW_VISIBLE_X(wp))
                     DiffRgn(PORT_VIS_REGION(w), WINDOW_STRUCT_REGION(wp), PORT_VIS_REGION(w));
             OffsetRgn(PORT_VIS_REGION(w), CW(PORT_BOUNDS(w).left), CW(PORT_BOUNDS(w).top));
@@ -362,6 +381,11 @@ P2(PUBLIC pascal trap, void, CalcVisBehind, WindowPeek, w, RgnHandle, clobbered)
     RgnHandle rh, testrgn;
     WindowPeek wp;
 
+    /* A desktop's empty structure never intersects clobbered, but windows
+       above it still change the visibility of its content. */
+    for (wp = ROMlib_window_first_all(); wp; wp = ROMlib_window_next_all(wp))
+        if (wp != w && desktop_window_p(wp))
+            CalcVis(wp);
     if (!w)
         return;
     rh = NewRgn();

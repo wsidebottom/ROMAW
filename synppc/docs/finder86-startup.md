@@ -151,12 +151,15 @@ state for both requested settings.
 Drag hit testing invokes the loaded WindowsLib's original `GlobalFindWindow`
 entry, matching DragLib's dependency and including the initialized saved window
 layer tree. Native-only hosts retain the live FindWindow Toolbox vector.
-For a bare `inDesk` result, Drag Manager resolves an existing desktop layer
-registered through `NewDesktopLayerOwner` when its content region contains the
-point. Finder receives that real layer pointer, which it uses to identify its
-desktop model. Unregistered hosts retain the null desktop target. Registration
-clears when the native layer tree resets. The grouped fixture verifies the
-registered owner pointer, complete callback lifecycle, sender attributes and
+For a bare `inDesk` result, Drag Manager searches the layer registered through
+`NewDesktopLayerOwner` for a visible child with an empty structure region and
+content containing the point. Finder's real desktop window carries the icon
+model in its reference data; the owner layer is a separate object. Returning
+the layer can leave drag images behind without moving the model's icons.
+Hosts without a registered desktop window retain the null desktop target.
+Registration clears when the native layer tree resets. The grouped fixture
+creates a real desktop window and verifies its pointer and reference data,
+complete callback lifecycle, sender attributes and
 final mouse coordinates using a temporary event callback; it restores the live
 event vector afterward.
 
@@ -165,6 +168,33 @@ Finder queries them during that callback to distinguish its own drag from an
 external drag; reporting zero can replace its live selection with a shared
 list that later cleanup frees. The fixture queries the attributes in every
 tracking callback, including enter-handler.
+
+Finder's desktop also aliases its content and visible regions. Native `CalcVis`
+rebuilds the empty-structure desktop's content from the port bounds before
+recalculating visibility, so a restricted update or covering window cannot
+permanently shrink it. All ordinary windows clip this desktop regardless of
+where its entry appears in the window list. `CalcVisBehind` includes these
+desktop windows even though their structure cannot intersect the damaged
+region. `PaintOne` on the desktop uses the actual desktop hook or pattern,
+clips out ordinary windows and queues the desktop model's redraw. The fixture
+uses the same public WindowRecord alias, checks update acknowledgement,
+front-of-list ordering and direct desktop repainting, and verifies visibility
+while a real window covers and then uncovers the desktop.
+
+Native drag images and outlines use the screen's visible region while drawing
+and erasing, saving and restoring the Window Manager port's clip each time.
+Finder can leave that shared port with an empty clip; inheriting it would
+silently suppress the image. The drag imagery fixture starts with an empty
+clip and checks indexed images, alpha masks, restored background pixels and
+preservation of the original clip.
+
+Finder erases old desktop icon positions through InterfaceLib's
+`DMDrawDesktopRect` and `DMDrawDesktopRegion`. These public calls validate the
+live screen devices without requiring DisplayLib's private startup selector.
+Desktop painting saves the Window Manager port's clip, uses the requested region
+for the actual desktop callback or pattern, and restores the original clip and
+port. The Finder services fixture checks both calls against the real painted
+background with an empty incoming clip and verifies that the clip stays empty.
 
 Finder's private `GetOverrideAttributes` import uses the existing Resource
 Manager override query. It reads the four in-memory map bits (`0x1e`), preserves
