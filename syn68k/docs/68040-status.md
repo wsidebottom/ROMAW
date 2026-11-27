@@ -41,7 +41,27 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: nonresident exception prefetch (2026-11-27)
+## Latest validated bundle: conditional branch prefetch (2026-11-27)
+
+Commit 835e379f retains the selected Bcc or DBcc word or access fault across
+budget stops. Accepted exception entry flushes it. The 51-case regression
+covers byte, word and long displacements, DBcc, guest format-7/RTE recovery,
+interrupt entry, checked execution and both native memory bindings.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16 and cold/warm AOT checks passed.
+The warm branch fixture reused 16 compiled bodies with zero compilation.
+Help, Browser and 68K Speedometer startup passed. The audited 66-file ROMAW
+bundle is promoted to build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-branch-prefetch-bin-20261127.
+
+CPU build ID: 55b5586b13e5edff0896e0e00e72b446806ed8b0de27ed48cd8f753ba05e465c
+Archive SHA256: bfddb5e61839ea3a10733c91466e30441d1fae5f40bf6aabfb1644c386b4090b
+Audit: build/68040-branch-output/68040-branch-source-audit.json
+
+Sequential and extension-word prefetch, further restart integration, and the
+remaining FPU busy frame and special-value audits are open.
+
+## Previous validated bundle: nonresident exception prefetch (2026-11-27)
 
 Source checkpoint `4cd04dfd` adds the MC68040UMAD item 15 translation
 boundary before literal ILLEGAL, A-line, CHK-family and newly unimplemented FPU
