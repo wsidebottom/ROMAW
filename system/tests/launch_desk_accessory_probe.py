@@ -85,6 +85,35 @@ try:
         else:
             assert actual == b"\xa5" * 24
     print("GET_ACTIVE_TASK_INFO_STACK_AND_BOUNDS_OK")
+    descriptor = int.from_bytes(actual[2:4], "big")
+    process_info = allocate(84)
+    saved_zone = bytes(memory.read_memory(base + 0x118, 4))
+    for pid, output, expected in (
+        (-1, process_info + 2, -600),
+        (descriptor, 0, -50),
+        (descriptor, process_info + 2, 0),
+    ):
+        memory.write_memory(process_info, b"\xa5" * 84)
+        frame = (
+            struct.pack(">IHIHI", 0x1234ABCD, 0x17, output - base if output else 0, pid & 0xFFFF, 0xA55AA55A) + b"guard"
+        )
+        memory.write_memory(stack, frame)
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 12
+        assert int.from_bytes(memory.read_memory(stack + 12, 4), "big", signed=True) == expected
+        assert bytes(memory.read_memory(stack + 16, 5)) == b"guard"
+        assert bytes(memory.read_memory(base + 0x118, 4)) == saved_zone
+        record = bytes(memory.read_memory(process_info, 84))
+        if expected == 0:
+            assert record[:2] == b"\xa5" * 2 and record[82:] == b"\xa5" * 2
+            assert record[4:6] == descriptor.to_bytes(2, "big")
+            assert record[6:14] == b"APPLFwPr", record.hex()
+            assert record[18:22] == bytes(memory.read_memory(base + 0x2AA, 4)), record.hex()
+            assert record[48:54] == b"\x05Probe", record.hex()
+        else:
+            assert record == b"\xa5" * 84
+    print("GET_LEGACY_PROCESS_INFO_STACK_AND_BOUNDS_OK")
     assert value("(int)ROMlib_osdispatch_available(2)")
     switch_info = allocate(16)
     for output in (switch_info + 4, 0):

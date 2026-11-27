@@ -1221,6 +1221,12 @@ STUB(OSDispatch)
 
     retaddr = POPADDR();
     uw = POPUW();
+    if (uw == 0x17) {
+        uint32 result = POPUL();
+        INTEGER descriptor = POPUW();
+        WRITEUL(EM_A7, ROMlib_get_legacy_process_info(descriptor, result ? SYN68K_TO_US(result) : NULL));
+        return retaddr;
+    }
     if (uw == 0x01) {
         INTEGER slots = POPUW();
         uint32 tasks = POPUL();

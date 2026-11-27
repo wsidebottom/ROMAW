@@ -36,6 +36,9 @@ _Static_assert(offsetof(AE_info_t, process_manager_exists) == 0x128, "Process Ma
 _Static_assert(offsetof(AE_info_t, min_system_heap_free) == 0x1ae, "System heap reserve ABI");
 _Static_assert(sizeof(AE_info_t) == 596, "ExpandMem extent ABI");
 _Static_assert(sizeof(ROMlib_task_info) == 10, "legacy TaskInfoRec ABI");
+_Static_assert(sizeof(ROMlib_legacy_process_info) == 80, "legacy procinfo ABI");
+_Static_assert(offsetof(ROMlib_legacy_process_info, parent) == 28, "legacy procinfo Boolean alignment");
+_Static_assert(offsetof(ROMlib_legacy_process_info, name) == 46, "legacy procinfo name offset");
 
 int main(void)
 {

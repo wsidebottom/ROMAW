@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_get_active_task_info, ROMlib_begin_system_mode, ROMlib_end_system_mode, ROMlib_get_system_client_process,
+  Functions: ROMlib_get_legacy_process_info, ROMlib_get_active_task_info, ROMlib_begin_system_mode,
+             ROMlib_end_system_mode, ROMlib_get_system_client_process,
              ROMlib_process_identity, ROMlib_process_enable_scripts, ROMlib_process_take_wakeup, ROMlib_tsm_registration, ROMlib_tsm_use_input_window,
              ROMlib_tsm_new_document, ROMlib_tsm_delete_document, ROMlib_tsm_set_active, ROMlib_tsm_active_document,
              ROMlib_tsm_fix_document, ROMlib_tsm_set_input_window, ROMlib_tsm_document_input_window,
@@ -83,6 +84,7 @@ typedef struct process_info {
     uint32 signature;
     uint32 size;
     uint32 launch_ticks;
+    uint32 stack_size;
 
     ProcessSerialNumber serial_number;
     FSSpec app_spec;
@@ -105,6 +107,42 @@ static const int default_process_mode_flags;
 
 static ProcessSerialNumber no_process = {0, CLC(kNoProcess)};
 static ProcessSerialNumber current_process = {0, CLC(kCurrentProcess)};
+
+LONGINT ROMlib_get_legacy_process_info(INTEGER descriptor, ROMlib_legacy_process_info* result)
+{
+    /* ProcessMgr/OSDispatchPrivate.h and OSDispatch.c: the old process record
+       is 80 bytes with a two-byte ProcessID and alignment after three Booleans. */
+    process_info_t* info;
+    for (info = process_info_list; info; info = info->next)
+        if (CW(info->identity.pid) == descriptor)
+            break;
+    if (!info)
+        return procNotFound;
+    if (!result)
+        return paramErr;
+    ROMlib_legacy_process_info record = {0};
+    record.state = info->identity.state;
+    record.descriptor = info->identity.pid;
+    record.type = CL(info->type);
+    record.signature = info->identity.signature;
+    record.version = info->identity.version;
+    record.zone = info->identity.zone;
+    record.mode = CL(info->mode);
+    record.suspend_resume = (info->mode & modeNeedSuspendResume) != 0;
+    record.background = (info->mode & modeCanBackground) != 0;
+    record.activate = (info->mode & modeDoesActivateOnFGSwitch) != 0;
+    record.size = CL(info->size);
+    record.stack_size = CL(info->stack_size);
+    /* ROMAW does not time-slice applications within a host process. */
+    record.slices = 0;
+    ZONE_SAVE_EXCURSION((THz)(uintptr_t)info->identity.zone, { record.free_memory = CL(FreeMem()); });
+    unsigned length = MIN(info->app_spec.name[0], 31);
+    record.name[0] = length;
+    memcpy(record.name + 1, info->app_spec.name + 1, length);
+    record.volume = info->app_spec.vRefNum;
+    *result = record;
+    return noErr;
+}
 
 INTEGER ROMlib_get_active_task_info(ROMlib_task_info* tasks, INTEGER slots)
 {
@@ -195,6 +233,7 @@ void process_create(boolean_t desk_accessory_p, uint32 type, uint32 signature)
                   /* + A5 world size */
                   /* + stack size */);
     info->launch_ticks = TickCount();
+    info->stack_size = CL(DefltStack);
 
     info->serial_number.highLongOfPSN = CL(-1);
     info->serial_number.lowLongOfPSN = CL(next_free_psn++);
@@ -205,7 +244,7 @@ void process_create(boolean_t desk_accessory_p, uint32 type, uint32 signature)
     info->identity.signature = CL(signature);
     info->identity.version = CL(ROMlib_version_long);
     info->identity.serial = info->serial_number;
-    info->identity.zone = (uint32)ApplZone;
+    info->identity.zone = (uint32)(uintptr_t)ApplZone;
     info->identity.next = process_info_list ? CL(US_TO_SYN68K(process_info_list)) : 0;
     info->next = process_info_list;
     process_info_list = info;

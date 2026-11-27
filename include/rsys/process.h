@@ -30,6 +30,18 @@ typedef struct PACKED {
     uint32 version;
 } ROMlib_task_info;
 
+typedef struct PACKED {
+    INTEGER state, descriptor;
+    uint32 type, signature, version, zone, mode;
+    BOOLEAN suspend_resume, background, activate;
+    uint8 reserved;
+    INTEGER parent;
+    uint32 size, stack_size, slices, free_memory;
+    Str31 name;
+    INTEGER volume;
+} ROMlib_legacy_process_info;
+
+extern LONGINT ROMlib_get_legacy_process_info(INTEGER descriptor, ROMlib_legacy_process_info* result);
 extern INTEGER ROMlib_get_active_task_info(ROMlib_task_info* tasks, INTEGER slots);
 extern void* ROMlib_process_identity(void);
 extern void ROMlib_process_enable_scripts(uint32 mask, BOOLEAN unicode);
