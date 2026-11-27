@@ -56,27 +56,27 @@ static int read_bus(const Syn68kCache040Bus* bus, uint32_t address, unsigned cha
                     const Syn68kCache040Cycle* cycle, unsigned* inhibit)
 {
     if (!bus->read_cycle)
-        return bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+        return !!bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
                          cycle->beat, cycle->way, inhibit);
     int status;
     do {
         *inhibit = 0;
         status = bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit);
     } while (status == CACHE040_CYCLE_RETRY && !(cycle->burst && cycle->beat));
-    return status != CACHE040_CYCLE_RETRY && status != 0;
+    return status == CACHE040_CYCLE_RETRY ? 0 : status;
 }
 
 static int write_bus(const Syn68kCache040Bus* bus, uint32_t address, const unsigned char* bytes, unsigned size,
                      const Syn68kCache040Cycle* cycle)
 {
     if (!bus->write_cycle)
-        return bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+        return !!bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
                           cycle->beat, cycle->way);
     int status;
     do
         status = bus->write_cycle(bus->opaque, address, bytes, size, cycle);
     while (status == CACHE040_CYCLE_RETRY && !(cycle->burst && cycle->beat));
-    return status != CACHE040_CYCLE_RETRY && status != 0;
+    return status == CACHE040_CYCLE_RETRY ? 0 : status;
 }
 
 static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn68kCache040Bus* bus, unsigned way,
@@ -86,7 +86,7 @@ static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn6
     if (!line->valid || !dirty)
         return 1;
     unsigned size = (dirty & (dirty - 1)) ? 16 : 4;
-    unsigned first = 0;
+    unsigned first = 0, burst_inhibited = 0;
     if (size == 4)
         while (!(dirty & (1u << first)))
             ++first;
@@ -94,7 +94,9 @@ static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn6
         unsigned word = first + i;
         uint32_t address = line->address + word * 4;
         Syn68kCache040Cycle cycle = cycle_for(cache, 0, 0, size == 16 ? 16 : 0, i, way, CACHE040_PUSH, 0);
-        if (!write_bus(bus, address, line->bytes + word * 4, 4, &cycle)) {
+        cycle.burst_inhibited = burst_inhibited;
+        int status = write_bus(bus, address, line->bytes + word * 4, 4, &cycle);
+        if (!status) {
             result->fault = CACHE040_PUSH_FAULT;
             result->bus_address = address;
             result->push_address = line->address + first * 4;
@@ -105,6 +107,8 @@ static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn6
                 result->push_data[j] = line->bytes[j];
             return 0;
         }
+        if (!i && size == 16)
+            burst_inhibited = status == CACHE040_CYCLE_INHIBIT_BURST;
     }
     line->dirty = 0;
     return 1;
@@ -126,7 +130,7 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
 {
     Syn68kCache040Line* line = &cache->lines[bank][(address >> 4) & 63][way];
     Syn68kCache040Line old = *line, fresh = {.address = address & ~15u, .valid = 1};
-    unsigned received = 0, inhibit = 0;
+    unsigned received = 0, inhibit = 0, burst_inhibited = 0;
     unsigned needed = ((1u << size) - 1) << (address & 15);
     line->valid = 0;
     for (unsigned i = 0; i < 4; ++i) {
@@ -134,7 +138,9 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
         unsigned beat_inhibit = 0;
         uint32_t physical = fresh.address + word * 4;
         Syn68kCache040Cycle cycle = cycle_for(cache, attributes, fc, 16, i, way, CACHE040_OPERAND, 0);
-        if (!read_bus(bus, physical, fresh.bytes + word * 4, 4, &cycle, &beat_inhibit)) {
+        cycle.burst_inhibited = burst_inhibited;
+        int status = read_bus(bus, physical, fresh.bytes + word * 4, 4, &cycle, &beat_inhibit);
+        if (!status) {
             /* An unrequested trailing fill fault aborts allocation but not an
                already satisfied operand. Dirty victims return from the buffer;
                clean victims stay invalid even when allocation fails. */
@@ -149,8 +155,10 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
                 requested[j] = fresh.bytes[(address & 15) + j];
             return 0;
         }
-        if (!i)
+        if (!i) {
             inhibit = !!beat_inhibit;
+            burst_inhibited = status == CACHE040_CYCLE_INHIBIT_BURST;
+        }
         received |= 15u << (word * 4);
     }
     for (unsigned j = 0; j < size; ++j)
@@ -371,6 +379,7 @@ Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040* cache, const Syn68kC
         result.completed = 16;
         goto publish;
     }
+    unsigned burst_inhibited = 0;
     for (unsigned i = 0; i < 4; ++i) {
         unsigned word = (((address >> 2) & 3) + i) & 3, inhibit = 0;
         uint32_t physical = (address & ~15u) + word * 4;
@@ -379,7 +388,8 @@ Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040* cache, const Syn68kC
                                      .burst = 16,
                                      .beat = i,
                                      .kind = CACHE040_OPERAND,
-                                     .traffic = CACHE040_MOVE16};
+                                     .traffic = CACHE040_MOVE16,
+                                     .burst_inhibited = burst_inhibited};
         result.cycle = cycle;
         if (enabled && !mode && writing)
             cache->replacement[0] = (cache->replacement[0] + 1) & 3;
@@ -397,6 +407,8 @@ Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040* cache, const Syn68kC
             }
             goto done;
         }
+        if (!i)
+            burst_inhibited = ok == CACHE040_CYCLE_INHIBIT_BURST;
         result.completed += 4;
     }
 publish:

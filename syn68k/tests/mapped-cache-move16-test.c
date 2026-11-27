@@ -5,7 +5,7 @@
 #undef main
 
 static unsigned source_count, dest_count, push_count, fail_direction, fail_index, model_calls;
-static unsigned retry_first, retry_fault;
+static unsigned retry_first, retry_fault, retry_split;
 static unsigned observed[2][4], functions[2][4];
 static Syn68kCache040Bus physical;
 
@@ -34,6 +34,7 @@ static int cycle_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
 {
     *inhibit = 0;
     if (c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND) {
+        assert(c->burst_inhibited == (retry_split && c->beat != 0));
         if (!c->beat && (retry_first & 1)) {
             retry_first &= ~1u;
             return CACHE040_CYCLE_RETRY;
@@ -46,7 +47,10 @@ static int cycle_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
             return retry_fault ? CACHE040_CYCLE_RETRY : 0;
         }
     }
-    return physical_read(opaque, address, bytes, size, c->attributes, c->fc);
+    int status = physical_read(opaque, address, bytes, size, c->attributes, c->fc);
+    if (status && retry_split && c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND && !c->beat)
+        return CACHE040_CYCLE_INHIBIT_BURST;
+    return status;
 }
 
 static int cycle_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
@@ -60,6 +64,7 @@ static int cycle_write(void* opaque, uint32_t address, const unsigned char* byte
         }
     }
     if (c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND) {
+        assert(c->burst_inhibited == (retry_split && c->beat != 0));
         if (!c->beat && (retry_first & 2)) {
             retry_first &= ~2u;
             return CACHE040_CYCLE_RETRY;
@@ -72,7 +77,10 @@ static int cycle_write(void* opaque, uint32_t address, const unsigned char* byte
             return retry_fault ? CACHE040_CYCLE_RETRY : 0;
         }
     }
-    return physical_write(opaque, address, bytes, size, c->attributes, c->fc);
+    int status = physical_write(opaque, address, bytes, size, c->attributes, c->fc);
+    if (status && retry_split && c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND && !c->beat)
+        return CACHE040_CYCLE_INHIBIT_BURST;
+    return status;
 }
 
 static int table_read(void* opaque, uint32_t a, uint32_t* v)
@@ -184,6 +192,7 @@ static void exercise(unsigned mode, int signal_retry)
                                     fail_index = (fault - 1) & 3;
                                     retry_first = signal_retry && !fault ? 3 : 0;
                                     retry_fault = signal_retry && fault;
+                                    retry_split = signal_retry;
                                     Syn68kMappedRun run;
                                     unsigned called = model_calls;
                                     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
@@ -266,7 +275,7 @@ static void exercise(unsigned mode, int signal_retry)
                                     }
                                     ++cases;
                                 }
-    retry_first = retry_fault = 0;
+    retry_first = retry_fault = retry_split = 0;
 }
 
 static void protection_and_erratum(unsigned mode)

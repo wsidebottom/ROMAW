@@ -42,6 +42,7 @@ typedef struct {
     enum Syn68kCache040CycleKind kind;
     enum Syn68kCache040Traffic traffic;
     unsigned locked, lock_end;
+    unsigned burst_inhibited; /* A tail beat issued as a separate longword cycle. */
 } Syn68kCache040Cycle;
 
 /* Functional physical L1 storage, MC68040UM chapter 4. Banks are data (0)
@@ -69,15 +70,18 @@ typedef struct Syn68kCache040 {
     void (*arbitrate)(void*, struct Syn68kCache040*);
 } Syn68kCache040;
 
-/* read_cycle/write_cycle may signal TA+TEA instead of completing a beat. */
-enum { CACHE040_CYCLE_RETRY = -1 };
+/* Extended responses from the physical read_cycle and write_cycle callbacks. */
+enum { CACHE040_CYCLE_RETRY = -1, CACHE040_CYCLE_INHIBIT_BURST = -2 };
 /* Whole-beat callbacks. burst is zero for scalar transfers, 16 for a line;
    beat is its transfer index and way identifies the selected data cache line.
    A first-read-beat inhibit response prevents allocation without truncating
    the burst. Later inhibit responses are ignored. Pushes use FC/TM zero.
    CACHE040_CYCLE_RETRY repeats a scalar/first beat with identical metadata
    and aborts a later line beat as a bus error. A retried attempt publishes
-   no bytes or inhibit decision. Legacy callbacks retain boolean results.
+   no bytes or inhibit decision. CACHE040_CYCLE_INHIBIT_BURST completes the
+   first beat and marks the remaining line beats as individual longword cycles.
+   This is independent of read cache allocation. Legacy callbacks retain
+   boolean results.
    Callbacks must not recursively execute this same cache object. */
 typedef struct {
     void* opaque;

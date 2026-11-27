@@ -638,12 +638,13 @@ static void write_callback_order(void)
     }
 }
 
-static unsigned retry_beat, retries, retry_limit;
+static unsigned retry_beat, retries, retry_limit, split_mode;
 static Syn68kCache040Cycle retry_cycle;
 static uint32_t retry_address;
 
 static int retry_pending(uint32_t address, const Syn68kCache040Cycle* cycle)
 {
+    assert(cycle->burst_inhibited == (split_mode == 1 && cycle->burst && cycle->beat != 0));
     if (cycle->beat != retry_beat)
         return 0;
     if (!retries) {
@@ -668,8 +669,9 @@ static int retry_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
         *inhibit = 1; // The retry's inhibit signal must be discarded.
         return CACHE040_CYCLE_RETRY;
     }
-    return physical_read(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
+    int status = physical_read(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
                          cycle->way, inhibit);
+    return status && cycle->burst && cycle->beat + 1 == split_mode ? CACHE040_CYCLE_INHIBIT_BURST : status;
 }
 
 static int retry_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
@@ -677,11 +679,12 @@ static int retry_write(void* opaque, uint32_t address, const unsigned char* byte
 {
     if (retry_pending(address, cycle))
         return CACHE040_CYCLE_RETRY;
-    return physical_write(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
+    int status = physical_write(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
                           cycle->way);
+    return status && cycle->burst && cycle->beat + 1 == split_mode ? CACHE040_CYCLE_INHIBIT_BURST : status;
 }
 
-static void cycle_retries(void)
+static void cycle_retry_matrix(void)
 {
     const unsigned base = 0x10040;
     const Syn68kCache040Bus retry_bus = {.opaque = ram, .read_cycle = retry_read, .write_cycle = retry_write};
@@ -725,8 +728,15 @@ static void cycle_retries(void)
         assert(r.value == value_at(base, 4));
         ++cases;
     }
-    puts("22 cache scalar/first-beat retries and aborted trailing beats passed");
+
 }
+static void cycle_retries(void)
+{
+    for (split_mode = 0; split_mode < 3; ++split_mode)
+        cycle_retry_matrix();
+    puts("66 cache scalar/burst retries and inhibit combinations passed");
+}
+
 int main(void)
 {
     cycle_retries();

@@ -266,25 +266,29 @@ static void invalid(void)
     }
 }
 
-static unsigned retry_index, retry_hits;
+static unsigned retry_index, retry_hits, split_mode;
 
 static int retry_line_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size,
                            const Syn68kCache040Cycle* cycle, unsigned* inhibit)
 {
+    assert(cycle->burst_inhibited == (split_mode == 1 && cycle->beat != 0));
     if (cycle->beat == retry_index && !retry_hits++)
         return CACHE040_CYCLE_RETRY;
-    return read_cycle(opaque, address, bytes, size, cycle, inhibit);
+    int status = read_cycle(opaque, address, bytes, size, cycle, inhibit);
+    return status && cycle->beat + 1 == split_mode ? CACHE040_CYCLE_INHIBIT_BURST : status;
 }
 
 static int retry_line_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
                             const Syn68kCache040Cycle* cycle)
 {
+    assert(cycle->burst_inhibited == (split_mode == 1 && cycle->beat != 0));
     if (cycle->beat == retry_index && !retry_hits++)
         return CACHE040_CYCLE_RETRY;
-    return write_cycle(opaque, address, bytes, size, cycle);
+    int status = write_cycle(opaque, address, bytes, size, cycle);
+    return status && cycle->beat + 1 == split_mode ? CACHE040_CYCLE_INHIBIT_BURST : status;
 }
 
-static void line_cycle_retries(void)
+static void line_cycle_retry_matrix(void)
 {
     for (unsigned writing = 0; writing < 2; ++writing)
         for (unsigned critical = 0; critical < 4; ++critical)
@@ -322,8 +326,15 @@ static void line_cycle_retries(void)
                 assert(!cache.active);
                 ++cases;
             }
-    puts("32 MOVE16 first-beat retries and partial read/write aborts passed");
+
 }
+static void line_cycle_retries(void)
+{
+    for (split_mode = 0; split_mode < 3; ++split_mode)
+        line_cycle_retry_matrix();
+    puts("96 MOVE16 retry, burst-inhibit and partial-abort cases passed");
+}
+
 int main(void)
 {
     line_cycle_retries();
