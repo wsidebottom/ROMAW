@@ -12,6 +12,7 @@
   Copyright and Legal notices: See COPYING.
 ===================================================================+*/
 #include <stdio.h>
+#include <string.h>
 #include "rsys/host_afp.h"
 
 int main(void)
@@ -23,7 +24,17 @@ int main(void)
         return 1;
     }
     uint16_t volume;
-    error = romaw_afp_open_volume(session, "Macintosh", &volume);
+    static romaw_afp_volume_list volumes;
+    error = romaw_afp_list_volumes(session, &volumes);
+    if (!error) {
+        unsigned index = 0;
+        while (index < volumes.count && strcmp(volumes.items[index].name, "Macintosh"))
+            ++index;
+        if (index == volumes.count)
+            error = ROMAW_AFP_TRANSPORT_ERROR;
+        else
+            error = romaw_afp_open_volume(session, volumes.items[index].name, &volume);
+    }
     if (!error)
         error = romaw_afp_close_volume(session, volume);
     romaw_afp_close(session);
@@ -31,6 +42,6 @@ int main(void)
         fprintf(stderr, "AFP volume test returned %ld\n", (long)error);
         return 1;
     }
-    puts("PASS native AFP guest login, open and close Macintosh");
+    puts("PASS native AFP guest login, enumerate, open and close Macintosh");
     return 0;
 }

@@ -23,5 +23,16 @@ int32_t romaw_afp_command(romaw_afp_session* session, const void* request, unsig
                           unsigned capacity, unsigned* received);
 int32_t romaw_afp_open_volume(romaw_afp_session* session, const char* name, uint16_t* volume);
 int32_t romaw_afp_close_volume(romaw_afp_session* session, uint16_t volume);
+
+typedef struct {
+    unsigned count;
+
+    struct {
+        char name[256];
+        uint8_t flags;
+    } items[255];
+} romaw_afp_volume_list;
+
+int32_t romaw_afp_list_volumes(romaw_afp_session* session, romaw_afp_volume_list* volumes);
 void romaw_afp_close(romaw_afp_session* session);
 #endif

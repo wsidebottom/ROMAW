@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: romaw_afp_connect, romaw_afp_close, romaw_afp_command,
-             romaw_afp_open_volume, romaw_afp_close_volume.
+             romaw_afp_open_volume, romaw_afp_close_volume, romaw_afp_list_volumes.
 
   Origin:    ROMAW implementation of AFP and the Data Stream Interface.
 
@@ -220,4 +220,31 @@ int32_t romaw_afp_close_volume(romaw_afp_session* session, uint16_t volume)
     unsigned received;
     put16(request + 2, volume);
     return romaw_afp_command(session, request, sizeof request, NULL, 0, &received);
+}
+
+int32_t romaw_afp_list_volumes(romaw_afp_session* session, romaw_afp_volume_list* volumes)
+{
+    const unsigned char request[] = {16, 0};
+    unsigned char reply[8192];
+    unsigned received;
+    volumes->count = 0;
+    int32_t result = romaw_afp_command(session, request, sizeof request, reply, sizeof reply, &received);
+    if (result)
+        return result;
+    if (received < 5)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned count = reply[4], offset = 5;
+    for (unsigned i = 0; i < count; ++i) {
+        if (received - offset < 2)
+            return ROMAW_AFP_TRANSPORT_ERROR;
+        unsigned flags = reply[offset++], length = reply[offset++];
+        if (!length || length > received - offset || memchr(reply + offset, 0, length))
+            return ROMAW_AFP_TRANSPORT_ERROR;
+        volumes->items[i].flags = flags;
+        memcpy(volumes->items[i].name, reply + offset, length);
+        volumes->items[i].name[length] = 0;
+        offset += length;
+    }
+    volumes->count = count;
+    return 0;
 }
