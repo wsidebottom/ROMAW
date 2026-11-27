@@ -1297,11 +1297,13 @@ static void fpu_emit_save_shape(emitter* out, unsigned failures[], unsigned* cou
     patch(out, done, out->size);
 }
 
+enum { FPU_FRAME_EMIT_RESERVE = 7168 };
+
 static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
 {
     if (!mapped_frame_opcode(opcode))
         return 0;
-    if (out->size + 6144 > sizeof out->bytes)
+    if (out->size + FPU_FRAME_EMIT_RESERVE > sizeof out->bytes)
         return -1;
     unsigned previous_selector = out->decoder_selector;
     out->decoder_selector = 11;
