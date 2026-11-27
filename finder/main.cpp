@@ -2056,7 +2056,44 @@ void configure_application(HWND owner, Item item)
         application = mac_file(item.path);
     char section[CONFIG_PREFS_SECTION_SIZE];
     config_prefs_app_section(item.mac.type ? item.mac.type : 0x4150504c, item.mac.creator, section);
-    classic::configure_app(owner, item.name, prefs, section, is_fat_application(application));
+    classic::AppPreferenceDraft draft;
+    draft.fat = is_fat_application(application);
+    char value[1024];
+    for (size_t i = 0; i < draft.fields.size(); ++i) {
+        const auto count = config_prefs_get(prefs.c_str(), section, classic::app_preference_keys[i], value, sizeof value);
+        draft.fields[i].assign(value, count);
+    }
+    if (draft.fat && config_prefs_get(prefs.c_str(), section, "PreferM68K", value, sizeof value)) {
+        if (strcmp(value, "1") == 0 || strcmp(value, "0") == 0)
+            draft.prefer_m68k = value[0] == '1';
+    }
+    if (std::unique_ptr<FILE, decltype(&fclose)> script{config_prefs_open(prefs.c_str(), section), fclose}) {
+        std::string statement;
+        for (int byte; (byte = fgetc(script.get())) != EOF;) {
+            if (byte != '\n') {
+                statement += char(byte);
+                continue;
+            }
+            if (_strnicmp(statement.c_str(), "Gestalt(", 8) == 0)
+                draft.gestalts.push_back(statement);
+            statement.clear();
+        }
+    }
+    classic::configure_app(owner, item.name, std::move(draft), config_prefs_validate_line,
+                           [&](const classic::AppPreferenceDraft& edited) {
+        std::unique_ptr<FILE, decltype(&fclose)> script(tmpfile(), fclose);
+        if (!script)
+            return false;
+        for (size_t i = 0; i < edited.fields.size(); ++i)
+            if (!edited.fields[i].empty())
+                fprintf(script.get(), "%s=%s\n", classic::app_preference_keys[i], edited.fields[i].c_str());
+        if (edited.prefer_m68k)
+            fprintf(script.get(), "PreferM68K=%d\n", *edited.prefer_m68k);
+        for (const auto& statement : edited.gestalts)
+            fprintf(script.get(), "%s\n", statement.c_str());
+        return !ferror(script.get()) && !fflush(script.get()) &&
+               config_prefs_store_app(prefs.c_str(), section, script.get(), edited.fat);
+    });
 }
 
 bool save_shortcut_artwork(Item& item, const fs::path& path)

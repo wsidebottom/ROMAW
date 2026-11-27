@@ -18,7 +18,10 @@
 #include <windows.h>
 #include <commctrl.h>
 #include "classic-ui/host_graphics.h"
+#include <array>
 #include <cstddef>
+#include <functional>
+#include <optional>
 #include <string>
 
 #include <vector>
@@ -154,7 +157,17 @@ void menu_icon(unsigned command, HICON icon);
 // Movable notices disable/re-enable their owner, restore focus and forward quit.
 int message_box(HWND owner, const wchar_t* text, UINT flags);
 void about_box(HWND owner);
-void configure_app(HWND owner, const std::wstring& name, const std::string& prefs, const char* section, bool fat);
+inline constexpr std::array app_preference_keys{
+    "WindowName", "SystemVersion", "Size", "BitsPerPixel", "SysZone", "ApplZone"
+};
+struct AppPreferenceDraft {
+    std::array<std::string, app_preference_keys.size()> fields;
+    std::vector<std::string> gestalts;
+    bool fat = false;
+    std::optional<bool> prefer_m68k;
+};
+void configure_app(HWND owner, const std::wstring& name, AppPreferenceDraft draft, int (*validate)(const char*),
+                   const std::function<bool(const AppPreferenceDraft&)>& save);
 // IDYES replaces, IDNO skips, IDCANCEL stops this transfer only.
 int conflict_box(HWND owner, const wchar_t* text);
 int yes_no_cancel_box(HWND owner, const wchar_t* text);

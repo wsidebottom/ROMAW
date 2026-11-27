@@ -43,7 +43,6 @@
 #include "finder/classic.h"
 #include "finder/actions.h"
 #include "rsys/icon_color.h"
-#include "rsys/configprefs.h"
 #include "classic-ui/classic_ui.h"
 #include <algorithm>
 #include <array>
@@ -51,7 +50,6 @@
 #include <commctrl.h>
 #include <deque>
 #include <map>
-#include <memory>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -3522,7 +3520,6 @@ void artwork(HICON stop, HICON warning, HICON app, HICON apple, const HICON* lab
 }
 
 namespace {
-constexpr const char* app_keys[] = {"WindowName", "SystemVersion", "Size", "BitsPerPixel", "SysZone", "ApplZone"};
 constexpr const wchar_t* app_labels[] = {
     L"Window name:", L"System version:", L"Window size (W x H):", L"Bits per pixel:", L"System zone:", L"Application zone:"
 };
@@ -3530,13 +3527,10 @@ enum AppControl {
     app_first = 100, app_default_cpu = 110, app_68k, app_ppc, app_gestalt_list, app_gestalt_value,
     app_gestalt_add, app_gestalt_update, app_gestalt_delete
 };
-struct AppPreferences {
+struct AppPreferences : AppPreferenceDraft {
     std::wstring title;
-    std::string path, section;
-    bool fat;
-    std::array<std::wstring, std::size(app_keys)> fields;
-    std::vector<std::string> gestalts;
-    int cpu = app_default_cpu;
+    int (*validate)(const char*);
+    const std::function<bool(const AppPreferenceDraft&)>& save;
 };
 
 std::wstring preference_wide(const std::string& text)
@@ -3602,7 +3596,11 @@ void build_app_controls(HWND window, const AppPreferences& app)
     for (unsigned i = 0; i < app.fields.size(); ++i) {
         int y = 51 + 23 * i;
         label(app_labels[i], 12, y + 3, 125);
-        auto field = make(L"EDIT", app.fields[i].c_str(), WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_first + i,
+        const auto& stored = app.fields[i];
+        auto text = i == 0 && stored.size() >= 2 && stored.front() == '"' && stored.back() == '"'
+                        ? stored.substr(1, stored.size() - 2)
+                        : stored;
+        auto field = make(L"EDIT", preference_wide(text).c_str(), WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_first + i,
                           140, y, app_width - 152, 19);
         SendMessageW(field, EM_SETLIMITTEXT, 240, 0);
         style_text_control(field, true);
@@ -3616,7 +3614,8 @@ void build_app_controls(HWND window, const AppPreferences& app)
                               app_default_cpu + i, 140 + 90 * i, row - 2, 88, 19);
             style_checkbox(radio);
         }
-        CheckRadioButton(window, app_default_cpu, app_ppc, app.cpu);
+        CheckRadioButton(window, app_default_cpu, app_ppc,
+                         app.prefer_m68k ? (*app.prefer_m68k ? app_68k : app_ppc) : app_default_cpu);
         row += app_cpu_height;
     }
     label(L"Gestalt overrides", 12, row, 420);
@@ -3672,7 +3671,7 @@ void update_app_gestalt(HWND window, AppPreferences& app, int command)
         return;
     }
     auto statement = preference_text(edit);
-    if (_strnicmp(statement.c_str(), "Gestalt(", 8) || !config_prefs_validate_line(statement.c_str())) {
+    if (_strnicmp(statement.c_str(), "Gestalt(", 8) || !app.validate(statement.c_str())) {
         message_box(window, L"Enter a Gestalt override such as Gestalt('fs  ')={0,1};", MB_OK | MB_ICONWARNING);
         return;
     }
@@ -3705,37 +3704,35 @@ void update_app_gestalt(HWND window, AppPreferences& app, int command)
 
 bool save_app_controls(HWND window, const AppPreferences& app)
 {
-    std::unique_ptr<FILE, decltype(&fclose)> script(tmpfile(), fclose);
-    if (script) {
-        for (unsigned i = 0; i < app.fields.size(); ++i) {
-            auto field = GetDlgItem(window, app_first + i);
-            auto value = preference_text(field);
-            if (value.empty())
-                continue;
-            if (i == 0) {
-                if (value.find('"') != std::string::npos) {
-                    message_box(window, L"Window names cannot contain double quotes.", MB_OK | MB_ICONWARNING);
-                    SetFocus(field);
-                    return false;
-                }
-                value = '"' + value + '"';
-            }
-            auto line = std::string(app_keys[i]) + '=' + value;
-            if (!config_prefs_validate_line(line.c_str())) {
-                auto prompt = L"Check the value for " + std::wstring(app_labels[i]);
-                message_box(window, prompt.c_str(), MB_OK | MB_ICONWARNING);
+    AppPreferenceDraft draft;
+    draft.fat = app.fat;
+    for (unsigned i = 0; i < draft.fields.size(); ++i) {
+        auto field = GetDlgItem(window, app_first + i);
+        auto value = preference_text(field);
+        if (value.empty())
+            continue;
+        if (i == 0) {
+            if (value.find('"') != std::string::npos) {
+                message_box(window, L"Window names cannot contain double quotes.", MB_OK | MB_ICONWARNING);
                 SetFocus(field);
                 return false;
             }
-            fprintf(script.get(), "%s\n", line.c_str());
+            value = '"' + value + '"';
         }
-        if (app.fat && IsDlgButtonChecked(window, app_default_cpu) != BST_CHECKED)
-            fprintf(script.get(), "PreferM68K=%d\n", IsDlgButtonChecked(window, app_68k) == BST_CHECKED);
-        for (const auto& statement : app.gestalts)
-            fprintf(script.get(), "%s\n", statement.c_str());
-        if (!fflush(script.get()) && config_prefs_store_app(app.path.c_str(), app.section.c_str(), script.get(), app.fat))
-            return true;
+        auto line = std::string(app_preference_keys[i]) + '=' + value;
+        if (!app.validate(line.c_str())) {
+            auto prompt = L"Check the value for " + std::wstring(app_labels[i]);
+            message_box(window, prompt.c_str(), MB_OK | MB_ICONWARNING);
+            SetFocus(field);
+            return false;
+        }
+        draft.fields[i] = std::move(value);
     }
+    if (app.fat && IsDlgButtonChecked(window, app_default_cpu) != BST_CHECKED)
+        draft.prefer_m68k = IsDlgButtonChecked(window, app_68k) == BST_CHECKED;
+    draft.gestalts = app.gestalts;
+    if (app.save(draft))
+        return true;
     message_box(window, L"ROMAW could not save the application's preferences.", MB_OK | MB_ICONERROR);
     return false;
 }
@@ -4323,28 +4320,10 @@ void about_box(HWND owner)
     run_notice(owner, data);
 }
 
-void configure_app(HWND owner, const std::wstring& name, const std::string& prefs, const char* section, bool fat)
+void configure_app(HWND owner, const std::wstring& name, AppPreferenceDraft draft, int (*validate)(const char*),
+                   const std::function<bool(const AppPreferenceDraft&)>& save)
 {
-    AppPreferences app{L"Configure App: " + name, prefs, section, fat, {}, {}};
-    char value[1024];
-    for (size_t i = 0; i < app.fields.size(); ++i) {
-        size_t count = config_prefs_get(prefs.c_str(), section, app_keys[i], value, sizeof value);
-        if (i == 0 && count >= 2 && value[0] == '"' && value[count - 1] == '"')
-            app.fields[i] = preference_wide(std::string(value + 1, count - 2));
-        else
-            app.fields[i] = preference_wide(std::string(value, count));
-    }
-    if (fat && config_prefs_get(prefs.c_str(), section, "PreferM68K", value, sizeof value))
-        app.cpu = strcmp(value, "1") == 0 ? app_68k : app_ppc;
-    if (std::unique_ptr<FILE, decltype(&fclose)> script{config_prefs_open(prefs.c_str(), section), fclose}) {
-        char line[4096];
-        while (fgets(line, sizeof line, script.get())) {
-            if (_strnicmp(line, "Gestalt(", 8) == 0)
-                app.gestalts.emplace_back(line, strcspn(line, "\r\n"));
-            else if (!strchr(line, '\n'))
-                while (fgets(line, sizeof line, script.get()) && !strchr(line, '\n')) {}
-        }
-    }
+    AppPreferences app{std::move(draft), L"Configure App: " + name, validate, save};
     Notice notice{IDCANCEL, L"Configure App", MB_OKCANCEL};
     notice.application = &app;
     run_notice(owner, notice);
