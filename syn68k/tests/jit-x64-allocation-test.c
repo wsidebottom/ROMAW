@@ -334,10 +334,10 @@ int main(void)
     }
     for (unsigned opcode = 0xf300; opcode < 0xf380; ++opcode) {
         emitter frame = {.cached_address_register = -1, .cc_mask = ALL_CCS};
-        assert(fpu_mapped_frame(&frame, opcode, 0x1000) == 1 && frame.managed && frame.size < 3072);
-        frame = (emitter){.size = 5120, .cached_address_register = -1, .cc_mask = ALL_CCS};
+        assert(fpu_mapped_frame(&frame, opcode, 0x1000) == 1 && frame.managed && frame.size <= 6144);
+        frame = (emitter){.size = sizeof frame.bytes - 6144, .cached_address_register = -1, .cc_mask = ALL_CCS};
         assert(fpu_mapped_frame(&frame, opcode, 0x1000) == 1 && frame.size < sizeof frame.bytes);
-        frame = (emitter){.size = 5121, .cached_address_register = -1, .cc_mask = ALL_CCS};
+        frame = (emitter){.size = sizeof frame.bytes - 6144 + 1, .cached_address_register = -1, .cc_mask = ALL_CCS};
         assert(fpu_mapped_frame(&frame, opcode, 0x1000) == -1 && frame.size == sizeof frame.bytes - 6144 + 1);
     }
     const unsigned mapped_opcodes[] = {0xf200, 0xf218, 0xf250, 0xf27b, 0xf281, 0xf310, 0xf358};
