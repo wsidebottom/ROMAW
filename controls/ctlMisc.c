@@ -554,6 +554,9 @@ PUBLIC OSErr ROMlib_set_control_supervisor(ControlHandle control, ControlHandle 
     const OSErr error = ROMlib_get_root_control(CTL_OWNER(control), &root);
     if (error)
         return error;
+    const OSErr storage_error = extend_control_hierarchy_storage(aux);
+    if (storage_error)
+        return storage_error;
     ROMlib_aux_control_extra(aux)->supervisor = supervisor ? US_TO_SYN68K(supervisor) : 0;
     return noErr;
 }

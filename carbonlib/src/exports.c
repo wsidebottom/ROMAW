@@ -332,6 +332,23 @@ static int carbon_TEGetPoint(ROMlib_carbon_ppc_frame* call)
     return carbon_point_result(call, 0x0ef4, 0xebe, 0x08);
 }
 
+static int carbon_SetControlSupervisor(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = call->words[0]
+                                ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof *control, 0)
+                                : NULL;
+    HIDDEN_ControlHandle root;
+    if (!ROMlib_live_control_aux(control) || ROMlib_get_root_control(CTL_OWNER(control), &root))
+        return carbon_vector_SetControlSupervisor(call);
+
+    ControlHandle supervisor = call->words[1]
+                                   ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof *supervisor, 0)
+                                   : NULL;
+    const OSErr status = call->words[1] && !supervisor ? paramErr : ROMlib_set_control_supervisor(control, supervisor);
+    call->words[0] = (int32_t)status;
+    return 1;
+}
+
 static int carbon_text_edit(ROMlib_carbon_ppc_frame* call, const char* name, unsigned handle_argument, uint32_t vector,
                             uint32_t info, uint32_t selector)
 {
@@ -672,7 +689,7 @@ static const ROMlib_carbon_export exports[] = {
     {"GetControl32BitValue", carbon_GetControl32BitValue, ROMLIB_CARBON_PPC_FRAME, 0x377, "ControlsLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"CreateCustomControl", carbon_CreateCustomControl, ROMLIB_CARBON_PPC_FRAME, 0x69598, NULL, ROMLIB_CARBON_PPC_ONLY},
-    {"SetControlSupervisor", carbon_vector_SetControlSupervisor, ROMLIB_CARBON_PPC_FRAME, 0x227, "AppearanceLib",
+    {"SetControlSupervisor", carbon_SetControlSupervisor, ROMLIB_CARBON_PPC_FRAME, 0x227, "AppearanceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"HandleControlClick", carbon_vector_HandleControlClick, ROMLIB_CARBON_PPC_FRAME, 0x264, "AppearanceLib",
      ROMLIB_CARBON_PPC_ONLY},
