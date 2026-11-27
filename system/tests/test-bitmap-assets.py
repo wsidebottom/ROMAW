@@ -50,6 +50,32 @@ EXPECTED = {
 
 
 class BitmapAssetsTest(unittest.TestCase):
+    def test_monochrome_icons_preserve_transparent_pixels_during_mask_paint(self):
+        for size, kind in ((16, b"ics#"), (32, b"ICN#"), (48, b"ich#")):
+            plane = size * size // 8
+            mask = bytes([0x3C]) * plane
+            for reversed_palette in (False, True):
+                palette = [(255, 255, 255), (0, 0, 0)]
+                if reversed_palette:
+                    palette.reverse()
+                frame = dict(
+                    size=size,
+                    height=size,
+                    depth=1,
+                    palette=palette,
+                    image=bytes([0 if reversed_palette else 255]) * plane,
+                    opacity=mask,
+                )
+                artwork = mac_icons.encode([frame])
+                payload = mac_icons.resource(artwork, kind)
+                self.assertEqual(payload[plane:], mask)
+                # Finder 6 uses srcBic(mask), followed by srcOr(image).
+                for background in (0x00, 0x69, 0xFF):
+                    actual = bytes((background & ~m) | image for image, m in zip(payload[:plane], mask))
+                    expected = bytes((background & ~m) | m for m in mask)
+                    self.assertEqual(actual, expected)
+                self.assertEqual(mac_icons.decode(artwork)[0]["opacity"], mask)
+
     def test_menu_scroll_arrows_rotate_arrow_closed_at_native_size(self):
         data = (ROOT / "bitmaps/arrow_closed.icns").read_bytes()
         down = bitmaps.initializer(data, (11, 6, 1), (5, 2, 11, 13), "clockwise")

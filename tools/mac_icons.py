@@ -654,9 +654,10 @@ def resource(data, kind, length=None):
             bits = frame["image"]
             if sum(frame["palette"][0]) < sum(frame["palette"][1]):
                 bits = bytes(x ^ 255 for x in bits)
-            if kind == b"SICN":
-                # SICN has no mask plane: composite transparent source pixels
-                # to white instead of exposing arbitrary ICNS image bits.
+            if kind == b"SICN" or paired:
+                # Classic mask/paint drawing clears with the mask, then ORs
+                # the image. Transparent pixels must therefore be white even
+                # when the ICNS frame stores arbitrary image bits there.
                 bits = bytes(pixel & mask for pixel, mask in zip(bits, frame["opacity"]))
             converted.append(bits)
         result = b"".join(converted)
