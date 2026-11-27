@@ -874,8 +874,7 @@ static void state_frame(FPUContext* context)
         fault(context, 8);
     int writing = !(opcode & 0x40);
     unsigned addressing = (opcode >> 3) & 7;
-    if (!context->captured_frame &&
-        (addressing == 0 || addressing == 1 || (writing && addressing == 3) || (!writing && addressing == 4)))
+    if (!context->captured_frame && !syn68k_fpu_frame_ea_valid(opcode))
         reserved_instruction(context);
     /* FPSP's gen_except synthesizes busy frames to post software E1
      exceptions. Once posted, the conversion pipeline saves the short
@@ -1305,10 +1304,8 @@ int syn68k_fpu_finish_frame(const Syn68kFPUFrame* captured, Syn68kMMU040Memory* 
         ((captured->opcode & ~63u) != 0xf300 && (captured->opcode & ~63u) != 0xf340) ||
         (captured->entry.original_null > 1 || captured->entry.frame_checked > 1))
         return 0;
-    unsigned mode = captured->opcode >> 3 & 7;
     int writing = !(captured->opcode & 0x40);
-    if (mode < 2 || (writing && mode == 3) || (!writing && mode == 4) ||
-        (mode == 7 && ((captured->opcode & 7) > (writing ? 1u : 4u))))
+    if (!syn68k_fpu_frame_ea_valid(captured->opcode))
         return 0;
     if (captured->image) {
         unsigned size = captured->header == 0x41600000 ? 100 : captured->header == 0x41300000 ? 52 : 0;

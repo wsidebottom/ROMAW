@@ -259,6 +259,31 @@ static void busy_save_checks(void)
     require_native_save = frame_pending = software_e1 = mutate_save = crossing = fault_call = 0;
 }
 
+static void reserved_frame_eas(void)
+{
+    const unsigned invalid[] = {0xf33a, 0xf33b, 0xf33c, 0xf37c, 0xf37d};
+    unsigned cases = 0;
+    frame_header = 0x41000000;
+    fault_call = 1;
+    for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; ++i)
+        for (unsigned supervisor = 0; supervisor < 2; ++supervisor)
+            for (unsigned native = 0; native < 2; ++native) {
+                frame_setup(invalid[i], supervisor);
+                CPUState before = cpu_state;
+                Syn68kMMU040 old_mmu = mmu;
+                Syn68kFPUStep result;
+                native_active = native;
+                frame_step(invalid[i], native, &result);
+                native_active = 0;
+                assert(result.vector == (supervisor ? 11 : 8) && !result.format &&
+                       result.next == start && result.exception_pc == start);
+                assert(!transfer_count && !memcmp(&before, &cpu_state, sizeof before) &&
+                       !memcmp(&old_mmu, &mmu, sizeof mmu));
+                ++cases;
+            }
+    fault_call = 0;
+    printf("%u reserved frame EA/privilege cases trapped before operand access\n", cases);
+}
 int main(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -279,8 +304,15 @@ int main(int argc, char** argv)
         assert(atoi(argv[2]) ? !emitted && hits : emitted > 0);
         printf("%u mapped frame AOT cases passed; busy emitted=%llu hits=%llu\n", cases, (unsigned long long)emitted,
                (unsigned long long)hits);
+        before_emitted = syn68k_native_compile_count();
+        before_hits = syn68k_aot_hit_count();
+        reserved_frame_eas();
+        emitted = syn68k_native_compile_count() - before_emitted;
+        hits = syn68k_aot_hit_count() - before_hits;
+        assert(atoi(argv[2]) ? !emitted && hits : emitted > 0);
         return 0;
     }
+    reserved_frame_eas();
     busy_save_checks();
     for (unsigned h = 0; h < sizeof headers / sizeof *headers; ++h) {
         frame_header = headers[h];
@@ -371,7 +403,7 @@ int main(int argc, char** argv)
     before = guard;
     Syn68kFPUFrame valid = {
         .pc = start, .next = start + 2, .ea = 0x6000, .opcode = 0xf350, .header = frame_header, .entry = {0, 0}};
-    for (unsigned bad = 0; bad < 12; ++bad) {
+    for (unsigned bad = 0; bad < 13; ++bad) {
         Syn68kFPUFrame invalid = valid;
         switch (bad) {
         case 0:
@@ -409,6 +441,9 @@ int main(int argc, char** argv)
             break;
         case 11:
             invalid.entry.original_null = 2;
+            break;
+        case 12:
+            invalid.opcode = 0xf37c;
             break;
         }
         assert(!__real_syn68k_fpu_finish_frame(&invalid, &memory, &guard));

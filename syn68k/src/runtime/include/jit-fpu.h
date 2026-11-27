@@ -1316,7 +1316,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
     unsigned supervisor = jump(out, 0x85);
     fpu_predicate_exception(out, pc, 8, pc, 0, failures, &count);
     patch(out, supervisor, out->size);
-    if (mode < 2 || (writing && mode == 3) || (!writing && mode == 4)) {
+    if (!syn68k_fpu_frame_ea_valid(opcode)) {
         fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
         goto finish;
     }

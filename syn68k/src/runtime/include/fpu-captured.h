@@ -23,6 +23,16 @@
 /* Operation selectors implemented by FPSP. Selectors 64 through 127 are absent. */
 #define SYN68K_FPU_FPSP_OPERATIONS UINT64_C(0x00ff0062f277f74e)
 
+/* FSAVE permits control-alterable and predecrement forms. FRESTORE permits
+   control and postincrement forms. Neither instruction takes an immediate. */
+static inline int syn68k_fpu_frame_ea_valid(unsigned opcode)
+{
+    unsigned mode = (opcode >> 3) & 7;
+    int writing = !(opcode & 0x40);
+    if (mode < 2 || mode == (writing ? 3 : 4))
+        return 0;
+    return mode != 7 || (opcode & 7) <= (writing ? 1u : 3u);
+}
 /* Fault metadata only: the caller has finished all FPU/EA work and offers
    its last scalar transfer. WB1 retains the full operand after physical bus
    subcycles; WB2 does so after a first-page ATC prefix. A physical cache push
