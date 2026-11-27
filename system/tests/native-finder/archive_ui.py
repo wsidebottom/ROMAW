@@ -808,7 +808,14 @@ def main():
 
         def configure(name):
             command(check_folder, name, "configure_app_command")
-            dialog = wait(lambda: named(None, "FinderNotice", "Configure App"), f"configure {name}")
+            dialog = wait(
+                lambda: next(
+                    (alert for alert in windows_of(None, "FinderNotice")
+                     if named(alert, "Static", f"Configure App: {name}")),
+                    None,
+                ),
+                f"configure {name}",
+            )
             wait(lambda: not enabled(desktop), "Configure App blocks Finder")
             assert not get_style(dialog, -16) & (0x00C00000 | 0x00080000)
             return dialog
