@@ -3110,7 +3110,10 @@ PUBLIC OSErr spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u 
         ShowWindow((WindowPtr)dp);
         SelectWindow((WindowPtr)dp);
         while (!done) {
-            ModalDialog((ProcPtr)P_ROMlib_stdffilt, &ihit);
+            if (choice)
+                ROMlib_run_internal_modal_dialog((DialogPtr)dp, (ProcPtr)P_ROMlib_stdffilt, &ihit);
+            else
+                ModalDialog((ProcPtr)P_ROMlib_stdffilt, &ihit);
             ihit = CW(ihit);
             if (getorput == put)
                 read_reply_name(&f, HIDDEN_NATIVE(pnhand));

@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask, ROMlib_SetDialogTimeout,
+  Functions: ROMlib_run_internal_modal_dialog, ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask, ROMlib_SetDialogTimeout,
              ROMlib_GetDialogTimeout, BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext,
              dialog_draw_item, get_item_style_info.
 
@@ -252,8 +252,7 @@ static boolean_t dialog_timeout_filter(ROMlib_window_metadata* metadata, const E
     return TRUE;
 }
 
-P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
-   INTEGER*, item)
+static void modal_dialog(DialogPeek dp, ProcPtr fp, INTEGER* item, BOOLEAN internal)
 {
     /*
    * The code used to save thePort and restore it at the end of the
@@ -264,14 +263,12 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
 
     THEGDEVICE_SAVE_EXCURSION(MR(MainDevice), {
         EventRecord evt;
-        DialogPeek dp;
         HIDDEN_DialogPtr ndp;
         TEHandle idle;
         ProcPtr fp2;
         Point whereunswapped;
         boolean_t done;
 
-        dp = (DialogPeek)FrontWindow();
         if (!dp || (dp->window.windowKind != CWC(dialogKind) && CW(dp->window.windowKind) >= 0))
             *item = CWC(-1);
         else {
@@ -290,7 +287,10 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
                 const ROMlib_window_metadata* metadata = ROMlib_window_get_metadata((DialogPtr)dp);
                 const uint16 mask =
                     metadata && metadata->modal_event_mask_set ? metadata->modal_event_mask : dialog_default_events;
-                GetNextEvent(mask, &evt);
+                if (internal)
+                    C_GetNextEvent(mask, &evt);
+                else
+                    GetNextEvent(mask, &evt);
                 whereunswapped.h = CW(evt.where.h);
                 whereunswapped.v = CW(evt.where.v);
 
@@ -321,6 +321,17 @@ P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
             }
         }
     });
+}
+
+void ROMlib_run_internal_modal_dialog(DialogPtr dialog, ProcPtr fp, INTEGER* item)
+{
+    modal_dialog((DialogPeek)dialog, fp, item, TRUE);
+}
+
+P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
+   INTEGER*, item)
+{
+    modal_dialog((DialogPeek)FrontWindow(), fp, item, FALSE);
 }
 
 P1(PUBLIC pascal trap, BOOLEAN, IsDialogEvent, /* IMI-416 */
