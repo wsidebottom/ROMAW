@@ -87,6 +87,7 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
                 Bytes(sizeof dib + 4 * colors + (pixel_stride + mask_stride) * height)};
     memcpy(frame.payload.data(), &dib, sizeof dib);
     auto* output = frame.payload.data() + sizeof dib;
+    unsigned black = colors;
     for (unsigned index = 0; index < colors; ++index) {
         unsigned char rgb[3]{};
         if (!palette)
@@ -96,6 +97,8 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
         output[index * 4] = rgb[2];
         output[index * 4 + 1] = rgb[1];
         output[index * 4 + 2] = rgb[0];
+        if (!(rgb[0] | rgb[1] | rgb[2]))
+            black = index;
     }
     output += 4 * colors;
     auto* and_bits = output + pixel_stride * height;
@@ -114,8 +117,19 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
                     image_row[x * 4 + 3] = opaque ? 255 : 0;
                 opaque = image_row[x * 4 + 3] != 0;
             }
-            if (!opaque)
+            if (!opaque) {
                 and_bits[y * mask_stride + x / 8] |= 0x80 >> (x % 8);
+                // With AND set, Windows still XORs the destination with the
+                // color plane. Black leaves the destination unchanged.
+                if (depth >= 24)
+                    memset(image_row + x * (depth / 8), 0, depth / 8);
+                else if (black < colors) {
+                    unsigned bit = x * depth;
+                    unsigned shift = 8 - depth - bit % 8;
+                    auto& packed = image_row[bit / 8];
+                    packed = (packed & ~((colors - 1) << shift)) | (black << shift);
+                }
+            }
         }
     }
     images.push_back(std::move(frame));

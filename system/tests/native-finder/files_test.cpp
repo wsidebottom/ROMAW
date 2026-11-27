@@ -140,8 +140,11 @@ void check_shortcut_icons(const fs::path& root)
         if (width == 32 && depth == 32)
             assert(ico.at(image + 43) == 0xa0);
         if (width == 16 && depth == 4) {
-            // The first color index and the first two opacity bits survive.
-            assert(ico.at(image + 40 + 64) == 0x80);
+            // Preserve the opaque index and write black under the AND bit.
+            unsigned packed = ico.at(image + 40 + 64);
+            assert((packed >> 4) == 8);
+            size_t clear_color = image + 40 + (packed & 15) * 4;
+            assert(dword(clear_color) == 0);
             assert((ico.at(image + 40 + 64 + 8 * 16) & 0xc0) == 0x40);
         }
     }
