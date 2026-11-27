@@ -160,8 +160,12 @@ struct CopyJob {
     bool stuffit_folders = false; // Explicitly approved on the UI thread.
     bool zip_folders = false;
     std::shared_ptr<void> source_owner; // Retain private extraction data until worker/image import completion.
-    // Top-level source files successfully published. Skipped conflicts are absent.
-    std::vector<fs::path> published_sources;
+    // Indexes into sources and destinations. Skipped conflicts are absent.
+    struct PublishedItem {
+        size_t index;
+        uint32_t image_id = 0;
+    };
+    std::vector<PublishedItem> published_items;
     // Published before terminal state; only the UI consumes completed moves.
     std::vector<std::pair<fs::path, fs::path>> moved;
     // Format-changing archive moves cannot use pathname-only Undo. Close their old

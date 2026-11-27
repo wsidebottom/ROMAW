@@ -211,6 +211,13 @@ class FolderCallback {
     }
 };
 
+struct DropPlacement {
+    POINT origin;
+    size_t columns;
+    bool desktop;
+    size_t first = 0;
+};
+
 struct Operation {
     // The UI registry owns this state even after a completed window is hidden.
     // The shared job survives registry reclamation until its views release it.
@@ -221,6 +228,7 @@ struct Operation {
     bool finished = false;
     DWORD clipboard_sequence = 0; // Consume Cut only after this job succeeds.
     std::function<void(const CopyJob&)> on_complete;
+    std::optional<DropPlacement> drop;
 };
 
 HINSTANCE instance;
@@ -287,6 +295,26 @@ struct SpringTarget {
 SpringTarget spring_target;
 std::vector<HWND> spring_windows;
 constexpr int icon_cell_width = 64, icon_cell_height = 52;
+
+// Capture coordinates in the icon canvas at release, before a conflict
+// dialog, window scroll, or background worker can change the viewport.
+std::optional<DropPlacement> drop_placement(const FolderWindow& folder, POINT screen)
+{
+    if (folder.search || folder.presentation.view != FolderView::icons)
+        return {};
+    POINT view_origin{};
+    RECT client{};
+    ScreenToClient(folder.list, &screen);
+    GetClientRect(folder.list, &client);
+    if (!PtInRect(&client, screen))
+        return {};
+    ListView_GetOrigin(folder.list, &view_origin);
+    LONG left = std::clamp(screen.x - 16, 0L, std::max(0L, client.right - 32));
+    LONG top = std::clamp(screen.y - 16, 0L, std::max(0L, client.bottom - 32));
+    size_t columns = 1 + std::max(0L, client.right - 32 - left) / icon_cell_width;
+    return DropPlacement{{std::max(0L, left - view_origin.x), std::max(0L, top - view_origin.y)}, columns,
+                         folder.desktop};
+}
 
 // Locate assets relative to the real executable, independent of the process
 // working directory.
@@ -379,6 +407,13 @@ fs::path icon_position_path(const FolderWindow& folder, const Item& item)
     if (item.special == 1 && !root.empty())
         name.assign(1, root.front());
     return fs::path(L"Desktop") / name;
+}
+
+std::wstring host_icon_name(const fs::path& path, const MacFile& mac)
+{
+    if (_wcsicmp(path.extension().c_str(), L".lnk") == 0)
+        return path.stem().wstring();
+    return mac_display_name(path, mac);
 }
 
 // Compute the classic label tint and quantize it to the Macintosh color cube
@@ -715,9 +750,20 @@ item_icon(Item& item)
     return result;
 }
 
+bool has_catalog_icon_position(const Item& item)
+{
+    return !item.special && item.mac.positioned && (item.mac.icon_x || item.mac.icon_y);
+}
+
 bool desktop_catalog_position(const FolderWindow& folder, const Item& item)
 {
-    return folder.desktop && !item.special && item.mac.positioned && (item.mac.icon_x || item.mac.icon_y);
+    return folder.desktop && has_catalog_icon_position(item);
+}
+
+void save_desktop_catalog_override(const Item& item, const std::wstring& position)
+{
+    save(L"DesktopCatalogPositionsNative", path_key(item.path),
+         position + L"," + std::to_wstring(item.mac.icon_x) + L"," + std::to_wstring(item.mac.icon_y));
 }
 
 // Persist deliberate native moves against the imported point so a subsequent
@@ -726,9 +772,7 @@ void save_desktop_catalog_position(const FolderWindow& folder, int index, LONG x
 {
     const auto& item = folder.items[index];
     if (desktop_catalog_position(folder, item))
-        save(L"DesktopCatalogPositionsNative", path_key(item.path),
-             std::to_wstring(x) + L"," + std::to_wstring(y) + L"," + std::to_wstring(item.mac.icon_x) + L"," +
-                 std::to_wstring(item.mac.icon_y));
+        save_desktop_catalog_override(item, std::to_wstring(x) + L"," + std::to_wstring(y));
 }
 
 // Persist icon-view client coordinates using stable desktop/volume identities.
@@ -1053,11 +1097,8 @@ void refresh(FolderWindow& f)
             }
             catch (...) {
             }
-        if (!special) {
-            item.name = mac_display_name(item.path, item.mac);
-            if (_wcsicmp(item.path.extension().c_str(), L".lnk") == 0)
-                item.name = item.path.stem().wstring();
-        }
+        if (!special)
+            item.name = host_icon_name(item.path, item.mac);
         add_item(std::move(item));
     };
     if (f.desktop) {
@@ -1388,12 +1429,13 @@ std::vector<fs::path> selected(FolderWindow& f)
 void open_folder(const fs::path&, std::shared_ptr<Search> = nullptr, int16_t image_volume = 0,
                  uint32_t image_directory = 2, const std::wstring& image_title = {});
 void show_operation(std::shared_ptr<CopyJob>, DWORD clipboard_sequence = 0,
-                    std::function<void(const CopyJob&)> on_complete = {});
+                    std::function<void(const CopyJob&)> on_complete = {}, std::optional<DropPlacement> drop = {});
 
 // Start an independent background copy and its operation window, reporting
 // validation errors through the owning folder.
 void copy_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& folder,
-             TransferKind kind = TransferKind::copy, DWORD clipboard_sequence = 0)
+             TransferKind kind = TransferKind::copy, DWORD clipboard_sequence = 0,
+             std::optional<DropPlacement> drop = {})
 {
     try {
         bool archive_folders =
@@ -1404,7 +1446,7 @@ void copy_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& fol
         if (archive_folders && !archive_format)
             return;
         if (auto job = copies.start(paths, folder, kind, archive_folders, archive_format == 2))
-            show_operation(job, clipboard_sequence);
+            show_operation(job, clipboard_sequence, {}, drop);
     }
     catch (const std::exception& e) {
         failure(owner, e);
@@ -1413,15 +1455,18 @@ void copy_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& fol
 
 // Preserve the classic same-volume move / cross-volume copy default. A mixed
 // selection may create two independent jobs, each with its own cancellation.
-void drag_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& folder, bool option, bool shift)
+void drag_to(HWND owner, const std::vector<fs::path>& paths, const fs::path& folder, bool option, bool shift,
+             std::optional<DropPlacement> drop)
 {
     std::vector<fs::path> moving, copying;
     for (const auto& path : paths)
         (drag_copies(same_storage_volume(path, folder), option, shift) ? copying : moving).push_back(path);
     if (!moving.empty())
-        copy_to(owner, moving, folder, TransferKind::move);
+        copy_to(owner, moving, folder, TransferKind::move, 0, drop);
+    if (drop)
+        drop->first += moving.size();
     if (!copying.empty())
-        copy_to(owner, copying, folder, TransferKind::copy);
+        copy_to(owner, copying, folder, TransferKind::copy, 0, drop);
 }
 
 // Launch classic software with this same ROMAW binary; no saved runtime
@@ -1575,7 +1620,7 @@ int offer_windows_shortcuts(HWND owner, const std::vector<Item>& applications)
     return answer;
 }
 
-void drop_host_items(HWND owner, std::vector<fs::path> paths, fs::path target)
+void drop_host_items(HWND owner, std::vector<fs::path> paths, fs::path target, std::optional<DropPlacement> drop = {})
 {
     const bool option = GetKeyState(VK_MENU) < 0 || GetKeyState(VK_CONTROL) < 0;
     const bool shift = GetKeyState(VK_SHIFT) < 0;
@@ -1607,7 +1652,7 @@ void drop_host_items(HWND owner, std::vector<fs::path> paths, fs::path target)
                                        }),
                         paths.end());
     }
-    drag_to(IsWindow(owner) ? owner : desktop, paths, target, option, shift);
+    drag_to(IsWindow(owner) ? owner : desktop, paths, target, option, shift, drop);
 }
 
 void open_item(HWND owner, Item item);
@@ -3853,6 +3898,39 @@ void confirm_image_deletion(HWND owner, int16_t volume, const std::vector<ImageC
         std::rethrow_exception(error);
 }
 
+// Save before refreshing the destination so a newly published icon is
+// drawn at the drop point on its first paint, even if its window was closed.
+void save_drop_positions(const CopyJob& job, const DropPlacement& drop)
+{
+    for (const auto& result : job.published_items) {
+        const auto& path = job.destinations.at(result.index);
+        size_t slot = drop.first + result.index;
+        LONG x = drop.origin.x + LONG(slot % drop.columns) * icon_cell_width;
+        LONG y = drop.origin.y + LONG(slot / drop.columns) * icon_cell_height;
+        auto position = std::to_wstring(x) + L"," + std::to_wstring(y);
+        if (result.image_id) {
+            save(L"ImagePositionsNative", path_key(path.parent_path() / std::to_wstring(result.image_id)), position);
+        }
+        else if (drop.desktop) {
+            Item item;
+            item.path = path;
+            try {
+                item.mac = mac_file(path);
+            }
+            catch (...) {
+                // An unreadable fork still has a place on the desktop.
+            }
+            item.name = host_icon_name(path, item.mac);
+            if (has_catalog_icon_position(item))
+                save_desktop_catalog_override(item, position);
+            else
+                save(L"PositionsNative", path_key(fs::path(L"Desktop") / item.name), position);
+        }
+        else
+            save(L"PositionsNative", path_key(path), position);
+    }
+}
+
 // Publish worker results before command/menu dispatch as well as during idle.
 // An immediate Undo must refer to the completed move, not an older operation.
 void publish_completed_operations()
@@ -3895,6 +3973,8 @@ void publish_completed_operations()
                 follow_moves(archived);
             }
             follow_moves(moved);
+            if (op->drop)
+                save_drop_positions(*op->job, *op->drop);
             op->job->replacements.clear();
             op->job->source_owner.reset();
             if (op->job->state == CopyJob::complete && op->on_complete)
@@ -4737,6 +4817,9 @@ void drop_suitcase_members(HWND owner, const Item& item, const std::vector<Suitc
     auto target = suitcase_drop_at(point);
     if ((!target.window && !target.suitcase) || (target.suitcase && same_suitcase(item, *target.suitcase)))
         return;
+    std::optional<DropPlacement> placement;
+    if (target.window && target.path == (target.window->desktop ? desktop_folder : target.window->path))
+        placement = drop_placement(*target.window, point);
     classic::WaitingCursor waiting;
     const bool copying = copy_suitcase_drop(item, target.volume, target.path);
     auto before = read_suitcase(item);
@@ -4805,23 +4888,26 @@ void drop_suitcase_members(HWND owner, const Item& item, const std::vector<Suitc
         return;
     job->source_owner = scratch;
     if (copying) {
-        show_operation(job);
+        show_operation(job, 0, {}, placement);
         return;
     }
     show_operation(job, 0, [item, before = std::move(before), source = std::move(source), paths = std::move(paths),
                             per_member = std::move(per_member)](const CopyJob& finished) mutable {
         std::set<ResourceKey> moved;
-        for (size_t i = 0; i < paths.size(); ++i)
-            if (std::find(finished.published_sources.begin(), finished.published_sources.end(), paths[i]) !=
-                finished.published_sources.end())
-                moved.insert(per_member[i].begin(), per_member[i].end());
+        for (const auto& result : finished.published_items) {
+            auto path = std::find(paths.begin(), paths.end(), finished.sources.at(result.index));
+            if (path != paths.end()) {
+                const auto& keys = per_member[size_t(path - paths.begin())];
+                moved.insert(keys.begin(), keys.end());
+            }
+        }
         if (moved.empty())
             return;
         remove_suitcase_resources(source, moved);
         auto remaining = encode_suitcase_fork(source);
         replace_suitcase(item, before, remaining);
         refresh_suitcase(item, remaining);
-    });
+    }, placement);
 }
 
 bool standalone_suitcase_member(uint32_t type)
@@ -4969,12 +5055,14 @@ void drop(FolderWindow& destination, POINT screen, const std::vector<fs::path>& 
         }
     }
     if (destination.image_volume) {
+        auto placement = drop_placement(destination, screen);
         if (auto job = copy_into_image(copies, paths, {}, destination.image_volume, destination.image_directory,
                                        destination.path))
-            show_operation(job);
+            show_operation(job, 0, {}, placement);
         return;
     }
-    drop_host_items(destination.window, paths, destination.desktop ? desktop_folder : destination.path);
+    drop_host_items(destination.window, paths, destination.desktop ? desktop_folder : destination.path,
+                    drop_placement(destination, screen));
 }
 
 // Mounted sources are copied, preserving their original image and both forks.
@@ -5069,10 +5157,14 @@ void drop_image(FolderWindow& source, FolderWindow& destination, POINT screen)
     if (selections.empty())
         return;
     classic::WaitingCursor waiting;
+    auto placement = target_volume == destination.image_volume && target_directory == destination.image_directory &&
+                             target == (destination.desktop ? desktop_folder : destination.path)
+                         ? drop_placement(destination, screen)
+                         : std::nullopt;
     auto job = target_volume ? copy_into_image(copies, {}, selections, target_volume, target_directory, target, kind)
                              : copy_image_items(copies, selections, target);
     if (job)
-        show_operation(job);
+        show_operation(job, 0, {}, placement);
 }
 
 // Use the same acceptance rule for hover feedback and the eventual drop.
@@ -6044,7 +6136,7 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         }
                         else if (source == other && !on_target && copy_modifier) {
                             copy_to(other->window, selected(*source), other->desktop ? desktop_folder : other->path,
-                                    TransferKind::duplicate);
+                                    TransferKind::duplicate, 0, drop_placement(*other, point));
                         }
                         else if (source == other && !on_target) {
                             for (int i : drag_indices) {
@@ -6416,12 +6508,13 @@ LRESULT CALLBACK operation_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 // Create a separate copy window for a shared job and retain its state in the
 // UI-owned operation registry.
 void show_operation(std::shared_ptr<CopyJob> job, DWORD clipboard_sequence,
-                    std::function<void(const CopyJob&)> on_complete)
+                    std::function<void(const CopyJob&)> on_complete, std::optional<DropPlacement> drop)
 {
     auto op = std::make_unique<Operation>();
     op->job = std::move(job);
     op->clipboard_sequence = clipboard_sequence;
     op->on_complete = std::move(on_complete);
+    op->drop = drop;
     auto title = std::wstring(moving_transfer(op->job->kind) ? L"Move to \x201c" : L"Copy to \x201c") +
                  op->job->destinations[0].parent_path().filename().wstring() + L"\x201d";
     unsigned slot = 0;

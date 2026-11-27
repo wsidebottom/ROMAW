@@ -39,6 +39,8 @@ VK_RETURN = 13
 LVM_GETITEMCOUNT = 0x1004
 LVM_ENSUREVISIBLE = 0x1013
 LVM_GETITEMRECT = 0x100E
+LVM_GETITEMPOSITION = 0x1010
+LVM_GETORIGIN = 0x1029
 LVM_GETITEMTEXTW = 0x1073
 LVM_SETITEMSTATE = 0x102B
 FINDER_OPEN = 100
@@ -181,6 +183,7 @@ def _check_get_info(
                 table + file_type + b"MACS" + bytes(24) + (b"" if data_fork else contents)
             )
         (fixture / "Suitcase Drop Folder").mkdir()
+        (fixture / "Host Folder" / "Drop Position").write_bytes(b"move this")
         chime_fork = resources.build_fork([(b"snd ", 129, 0, b"Standalone Chime", snd)])
         (fixture / "Standalone Chime").write_bytes(b"")
         (fixture / "._Standalone Chime").write_bytes(
@@ -483,6 +486,26 @@ def _check_get_info(
             command(owner, name, FINDER_OPEN)
             return wait(lambda: named(desktop, kind, name), f"open {name}")
 
+        def check_position(window, name, expected):
+            def at_drop():
+                listing, rows = list_rows(window)
+                if name not in rows:
+                    return False
+                assert send(listing, LVM_GETITEMPOSITION, rows.index(name), remote)
+                actual = w.POINT()
+                assert read(handle, remote, c.byref(actual), c.sizeof(actual), None)
+                return max(abs(actual.x - expected[0]), abs(actual.y - expected[1])) <= 1
+
+            wait(at_drop, f"{name} appears at the saved drop position {expected}")
+
+        def expected_position(window, x, y):
+            listing, _ = list_rows(window)
+            point, origin = w.POINT(x, y), w.POINT()
+            map_point(window, listing, c.byref(point), 1)
+            assert send(listing, LVM_GETORIGIN, 0, remote)
+            assert read(handle, remote, c.byref(origin), c.sizeof(origin), None)
+            return point.x - origin.x - 16, point.y - origin.y - 16
+
         def drag(source, name, target, x, y):
             listing, names = list_rows(source)
             row = names.index(name)
@@ -512,7 +535,7 @@ def _check_get_info(
                 nonlocal current
                 actual = w.POINT()
                 assert get_cursor(c.byref(actual))
-                if (actual.x, actual.y) != (current.x, current.y):
+                if max(abs(actual.x - current.x), abs(actual.y - current.y)) > 1:
                     raise RuntimeError("The pointer moved independently during the suitcase drag")
                 assert set_cursor(point.x, point.y)
                 current = point
@@ -541,6 +564,7 @@ def _check_get_info(
         assert b"owned" in (fixture / "Empty DA Suitcase").read_bytes()
         folder = open_item(desktop, "Suitcase Drop Folder", "FinderFolder")
         assert set_bounds(folder, None, 28, 44, 350, 210, 0x10)
+        accessory_position = expected_position(folder, 155, 94)
         drag(target, "Test Accessory", folder, 155, 94)
         wait(lambda: not list_rows(target)[1], "export accessory and remove source member")
         exported = wait(
@@ -549,6 +573,7 @@ def _check_get_info(
         )
         # The private Applications folder uses AppleDouble.
         assert b"owned" in exported.with_name("._" + exported.name).read_bytes()
+        check_position(folder, exported.name, accessory_position)
         assert set_bounds(source, None, 397, 44, 350, 210, 0x10)
         drag(folder, exported.name, source, 155, 94)
         wait(lambda: list_rows(source)[1] == ["Test Accessory"] and not exported.exists(), "import test accessory")
@@ -561,8 +586,10 @@ def _check_get_info(
         mounted = open_item(desktop, "Desktop Metadata", "FinderFolder")
         assert set_bounds(system, None, 28, 44, 350, 210, 0x10)
         assert set_bounds(mounted, None, 397, 44, 350, 210, 0x10)
+        image_position = expected_position(mounted, 285, 145)
         drag(system, "Caf\u00e9", mounted, 285, 145)
         wait(lambda: "Caf\u00e9" in list_rows(mounted)[1], "copy font family to mounted image")
+        check_position(mounted, "Caf\u00e9", image_position)
         assert "Caf\u00e9" in list_rows(system)[1]
         drag(system, "Chime", mounted, 285, 145)
         wait(lambda: "Chime" in list_rows(mounted)[1], "copy sound to mounted image")
@@ -584,6 +611,15 @@ def _check_get_info(
         print("PASS cross-volume copies and writable image suitcase updates", flush=True)
         for window in (system, fonts, mounted_suitcase, mounted):
             assert post(window, WM_CLOSE, 0, 0)
+        host = open_item(desktop, "Host Folder", "FinderFolder")
+        assert set_bounds(host, None, 397, 44, 350, 210, 0x10)
+        desktop_position = expected_position(desktop, 225, 145)
+        drag(host, "Drop Position", desktop, 225, 145)
+        check_position(desktop, "Drop Position", desktop_position)
+        assert (fixture / "Drop Position").read_bytes() == b"move this"
+        assert not (fixture / "Host Folder" / "Drop Position").exists()
+        assert post(host, WM_CLOSE, 0, 0)
+        print("PASS release coordinates for completed drops onto the desktop, a host folder, and HFS", flush=True)
 
     def check_font_previews():
         get_dc = api(u, "GetDC", w.HDC, w.HWND)

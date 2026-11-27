@@ -1079,7 +1079,7 @@ void run(const std::shared_ptr<CopyJob>& job)
                             job->moved.push_back({replacement->originals[i], replacement->backups[i]});
                 }
                 job->moved.push_back({root.source, root.target});
-                job->published_sources.push_back(root.source);
+                job->published_items.push_back({size_t(&root - roots.data())});
                 --job->items;
                 continue;
             }
@@ -1241,7 +1241,7 @@ void run(const std::shared_ptr<CopyJob>& job)
                             job->moved.push_back({replacement->originals[i], replacement->backups[i]});
                 }
             }
-            job->published_sources.push_back(root.source);
+            job->published_items.push_back({size_t(&root - roots.data())});
             // Only empty format directories remain in this private container.
             std::error_code ignored;
             fs::remove_all(root.temporary, ignored);
