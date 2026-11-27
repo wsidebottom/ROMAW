@@ -106,6 +106,9 @@ static int callback_read(void* opaque, uint32_t address, unsigned char* bytes, u
     return ok;
 }
 
+static int compare_operands;
+static Syn68kFP80 compare_source, compare_target;
+
 static void prepare(unsigned ea, unsigned command, unsigned mode, int normal)
 {
     fixture(command, mode & 1);
@@ -115,6 +118,13 @@ static void prepare(unsigned ea, unsigned command, unsigned mode, int normal)
     if ((command >> 13) == 2) {
         unsigned format = (command >> 10) & 7;
         cpu_state.regs[ea & 7].ul.n = format == 1 ? 0x3fc00000 : 3;
+    }
+    if (compare_operands) {
+        cpu_state.fpu.regs[0] = compare_source;
+        cpu_state.fpu.regs[1] = compare_target;
+        if ((command >> 13) == 2)
+            cpu_state.regs[ea & 7].ul.n = (compare_source.exponent & 0x8000 ? 0x80000000 : 0) |
+                                         0x7f800000 | ((compare_source.significand >> 40) & 0x7fffff);
     }
     if (paging) {
         start = command_pc ? command_pc : 0x1000;
@@ -227,6 +237,29 @@ static void live_commands(void)
     compare_native(0, 0x6400, 0, 1);
 }
 
+static void special_comparisons(void)
+{
+    const Syn68kFP80 values[] = {
+        {0, 0}, {0x8000, 0}, {0x3fff, UINT64_C(0x8000000000000000)},
+        {0x7fff, UINT64_C(0x8000000000000000)}, {0xffff, 0},
+        {0x7fff, UINT64_C(0xc010000000000000)}, {0xffff, UINT64_C(0x4010000000000000)},
+        {0x7fff, UINT64_C(0x8010000000000000)},
+    };
+    compare_operands = 1;
+    for (unsigned mode = 0; mode < 16; ++mode)
+        for (unsigned a = 0; a < sizeof values / sizeof *values; ++a)
+            for (unsigned b = 0; b < sizeof values / sizeof *values; ++b) {
+                compare_source = values[a];
+                compare_target = values[b];
+                compare_native(0, 0x00b8, mode, a != 7 && b != 7); // FCMP FP0,FP1.
+                compare_native(0, 0x003a, mode, a != 7);          // FTST FP0.
+                if (a >= 3) {
+                    compare_native(0, 0x44b8, mode, a != 7 && b != 7);
+                    compare_native(0, 0x443a, mode, a != 7);
+                }
+            }
+    compare_operands = 0;
+}
 #ifndef MAPPED_FPU_TEST_ENTRY
 #define MAPPED_FPU_TEST_ENTRY main
 #endif
@@ -238,12 +271,14 @@ int MAPPED_FPU_TEST_ENTRY(int argc, char** argv)
     memory.read = callback_read;
     if (argc == 3) {
         live_commands();
+        special_comparisons();
         assert(syn68k_aot_hit_count() == (unsigned)atoi(argv[2]));
         assert(syn68k_native_compile_count() == (unsigned)!atoi(argv[2]));
         syn68k_x64_mapped_clear();
-        puts("Mapped AOT register body replayed live arithmetic/control/input/output commands");
+        puts("Mapped AOT register body replayed live arithmetic/control/input/output commands and comparison special values");
         return 0;
     }
+    special_comparisons();
     const unsigned operations[] = {0,    4,    0x18, 0x1a, 0x20, 0x22, 0x23, 0x28, 0x24, 0x27, 0x38, 0x3a, 0x40, 0x44,
                                    0x41, 0x45, 0x58, 0x5c, 0x5a, 0x5e, 0x60, 0x64, 0x62, 0x66, 0x63, 0x67, 0x68, 0x6c};
     const unsigned formats[] = {0, 1, 4, 6};

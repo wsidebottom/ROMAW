@@ -82,13 +82,15 @@ static void fpu_operand(emitter* out, int source)
 }
 
 /* EAX/EDX contain the exponent/significand just copied to the packet. */
-static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count)
+static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count, int comparisons)
 {
     byte(out, 0x25);
     word32(out, 0x7fff);
     byte(out, 0x3d);
     word32(out, 0x7fff);
-    failures[(*count)++] = jump(out, 0x84);
+    unsigned special = jump(out, 0x84);
+    if (!comparisons)
+        failures[(*count)++] = special;
     FP_BYTES(out, 0x48, 0x85, 0xd2);
     unsigned zero = jump(out, 0x84);
     failures[(*count)++] = jump(out, 0x89); // Nonzero unnormal/denormal operand.
@@ -96,6 +98,14 @@ static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count)
     patch(out, zero, out->size);
     FP_BYTES(out, 0x85, 0xc0);
     failures[(*count)++] = jump(out, 0x85);
+    if (comparisons) {
+        unsigned ordinary = fpu_jump(out);
+        patch(out, special, out->size);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, operation), 0);
+        byte(out, NATIVE040_FCMP);
+        failures[(*count)++] = jump(out, 0x82); // Only FCMP and FTST classify non-finite operands here.
+        patch(out, ordinary, out->size);
+    }
     patch(out, normal, out->size);
 }
 
@@ -291,7 +301,7 @@ static unsigned fpu_data_register_destination(emitter* out, unsigned opcode, uin
     byte(out, 0x66);
     fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, arithmetic.source.high), 0);
     fpu_packet(out, 0x89, 2, offsetof(FPUInvocation, arithmetic.source.low), 1);
-    fpu_normal_guard(out, failures, count);
+    fpu_normal_guard(out, failures, count, 0);
     fpu_call_root(out, UINT32_MAX, failures, count);
     fpu_result_guard(out, failures, count);
 
@@ -526,7 +536,7 @@ static unsigned fpu_mapped_destination(emitter* out, unsigned ea, uint32 pc, uns
     byte(out, 0x66);
     fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, arithmetic.source.high), 0);
     fpu_packet(out, 0x89, 2, offsetof(FPUInvocation, arithmetic.source.low), 1);
-    fpu_normal_guard(out, failures, count); // Before EA: the checked command still owns all effects.
+    fpu_normal_guard(out, failures, count, 0); // Before EA: the checked command still owns all effects.
     fpu_rounding(out, 1);
     fpu_constant(out, offsetof(FPUInvocation, ea.code), ea, 0);
     fpu_constant(out, offsetof(FPUInvocation, ea.writing), 1, 0);
@@ -861,7 +871,7 @@ static int fpu_register_mode(emitter* out, unsigned opcode, uint32 pc, int mappe
     patch(out, fp_source, out->size);
     fpu_operand(out, 1);
     patch(out, source_ready, out->size);
-    fpu_normal_guard(out, failures, &count);
+    fpu_normal_guard(out, failures, &count, 1);
     fpu_operand(out, 0);
     fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, operation), 0);
     FP_BYTES(out, 0x83, 0xe8, 4, 0x83, 0xf8, 3);
@@ -872,7 +882,7 @@ static int fpu_register_mode(emitter* out, unsigned opcode, uint32 pc, int mappe
     // Reload the target encoding after classifying the operation.
     fpu_packet(out, 0x0fb7, 0, offsetof(FPUInvocation, arithmetic.target.high), 0);
     fpu_packet(out, 0x8b, 2, offsetof(FPUInvocation, arithmetic.target.low), 1);
-    fpu_normal_guard(out, failures, &count);
+    fpu_normal_guard(out, failures, &count, 1);
     patch(out, unary, out->size);
     patch(out, test_only, out->size);
 
@@ -892,11 +902,27 @@ static int fpu_register_mode(emitter* out, unsigned opcode, uint32 pc, int mappe
     word32(out, 0x8000);
     FP_BYTES(out, 0xc1, 0xe0, 12, 0x81, 0xe2);
     word32(out, 0x7fff);
+    FP_BYTES(out, 0x81, 0xfa);
+    word32(out, 0x7fff);
+    unsigned special_result = jump(out, 0x84);
+    FP_BYTES(out, 0x85, 0xd2);
     unsigned nonzero_high = jump(out, 0x85);
     FP_BYTES(out, 0x49, 0x83, 0x79, 8, 0);
     unsigned nonzero_low = jump(out, 0x85);
     byte(out, 0x0d);
     word32(out, 0x04000000);
+    unsigned zero_done = fpu_jump(out);
+    patch(out, special_result, out->size);
+    FP_BYTES(out, 0x49, 0x8b, 0x51, 8, 0x48, 0xd1, 0xe2); // Shift out the explicit integer bit.
+    unsigned infinity = jump(out, 0x84);
+    byte(out, 0x0d);
+    word32(out, 0x01000000);
+    unsigned nan_done = fpu_jump(out);
+    patch(out, infinity, out->size);
+    byte(out, 0x0d);
+    word32(out, 0x02000000);
+    patch(out, zero_done, out->size);
+    patch(out, nan_done, out->size);
     patch(out, nonzero_high, out->size);
     patch(out, nonzero_low, out->size);
     fpu_cpu(out, 0x8b, 2, offsetof(CPUState, fpu.fpsr));
