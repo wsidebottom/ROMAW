@@ -591,8 +591,10 @@ def _check_get_info(
         wait(lambda: "Caf\u00e9" in list_rows(mounted)[1], "copy font family to mounted image")
         check_position(mounted, "Caf\u00e9", image_position)
         assert "Caf\u00e9" in list_rows(system)[1]
-        drag(system, "Chime", mounted, 285, 145)
+        sound_position = expected_position(mounted, 150, 145)
+        drag(system, "Chime", mounted, 150, 145)
         wait(lambda: "Chime" in list_rows(mounted)[1], "copy sound to mounted image")
+        check_position(mounted, "Chime", sound_position)
         double_click_item(mounted, "Chime")
         time.sleep(0.2)
         assert not windows(None, "FinderNotice"), "Cannot play the sound from the mounted image"
