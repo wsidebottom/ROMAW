@@ -973,8 +973,15 @@ static int carbon_GetIconRefFromFile(ROMlib_carbon_ppc_frame* call)
         return icon_status(call, paramErr);
     icon_write_word(output, 0);
     ROMlib_carbon_reference saved;
-    if (icon_saved_reference("GetIconRefFromFile", &saved))
-        return ROMlib_carbon_invoke_frame(saved.function, call);
+    if (icon_saved_reference("GetIconRefFromFile", &saved)) {
+        ROMlib_carbon_ppc_frame original = *call;
+        if (!ROMlib_carbon_invoke_frame(saved.function, &original))
+            return 0;
+        if ((int16_t)original.words[0] != no_such_icon) {
+            *call = original;
+            return 1;
+        }
+    }
     const FSSpec file = *spec;
     CInfoPBRec info;
     OSErr error = icon_file_catalog(&file, &info);
