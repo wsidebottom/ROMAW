@@ -59,7 +59,7 @@ static int restore_dyadic(const uint8* frame, unsigned size, unsigned operation,
         ((frame[size - 40] & 0x10) && (se & 0x4000)) || ((frame[size - 32] & 0x10) && (te & 0x4000)))
         return 0;
     *result = fpu_calculate_ex(target, source, operation, native_fpu->precision, te, se);
-    return !native_fpu->flags && !result->status;
+    return !(native_fpu->flags & ~float_flag_inexact) && !result->status;
 }
 
 /* The E3 writeback is older than E1. An E1 move-out can retain an
@@ -112,8 +112,16 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         return; // Invalid stages use the checked format exception.
     int replay = arithmetic && !pending && ((stages & 4) || conversion);
     FPUdivision result;
-    if (replay && !restore_dyadic(image, size, command & 127, &result))
-        return;
+    unsigned replay_status = 0;
+    if (replay) {
+        if (!restore_dyadic(image, size, command & 127, &result))
+            return;
+        if (native_fpu->flags & float_flag_inexact) {
+            if (fpu->fpcr & 0x0200)
+                return; // The enabled exception needs a deferred writeback frame.
+            replay_status = 0x0208; // INEX2 status and accrued INEX.
+        }
+    }
     for (unsigned i = 0; i < size; ++i)
         fpu->frame[i] = image[i];
     if (writeback_reg < 8) {
@@ -131,7 +139,7 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         unsigned flags = condition.high & 0x8000 ? 0x08000000 : 0;
         if (!(condition.high & 0x7fff) && !condition.low)
             flags |= 0x04000000;
-        fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags;
+        fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags | replay_status;
     }
     fpu->frame_size = stages && pending ? size : 0;
     fpu->pending_vector = stages ? pending : 0;

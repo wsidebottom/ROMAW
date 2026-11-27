@@ -450,12 +450,12 @@ static void dyadic_replay_operations(void)
 {
     const unsigned operations[] = {0x20, 0x22, 0x23, 0x28, 0x24, 0x27};
     for (unsigned i = 0; i < sizeof operations / sizeof *operations; ++i)
-        for (unsigned variant = 0; variant < 4; ++variant) {
+        for (unsigned variant = 0; variant < 5; ++variant) {
             unsigned frame = 0x20040;
-            int divide_inexact = variant == 2 && (operations[i] == 0x20 || operations[i] == 0x24);
+            int divide_inexact = (variant == 2 || variant == 4) && (operations[i] == 0x20 || operations[i] == 0x24);
             Syn68kFPUState expected;
             for (unsigned config = 0; config < 2; ++config) {
-                Syn68kMappedCPU cpu = setup(config, 0, 6, frame, 1, 0, 0);
+                Syn68kMappedCPU cpu = setup(config, 0, 6, frame, 1, 0, variant == 4 ? 0x0200 : 0);
                 ram[physical(frame + 0x41)] = operations[i] | 0x80; /* FP1 differs from the older E3 FP0. */
                 if (variant == 1)
                     ram[physical(frame + 0x58)] |= 0x80;
@@ -468,16 +468,20 @@ static void dyadic_replay_operations(void)
                 }
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
                 unsigned captures = complete_captures;
-                expect_direct_restore = config && !divide_inexact && variant != 3;
+                expect_direct_restore = config && !(variant == 4 && divide_inexact);
 #endif
                 Syn68kMappedRun run;
                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
                 expect_direct_restore = 0;
-                assert(complete_captures - captures == (unsigned)(config && (divide_inexact || variant == 3)));
+                assert(complete_captures - captures == (unsigned)(config && variant == 4 && divide_inexact));
 #endif
                 assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
                 assert(EM_A0 == frame + 100);
+                if (divide_inexact || variant == 3) {
+                    assert((cpu_state.fpu.fpsr & 0x0208) == 0x0208);
+                    assert(cpu_state.fpu.pending_vector == (variant == 4 ? 49 : 0));
+                }
                 if (!config)
                     expected = cpu_state.fpu;
                 else
