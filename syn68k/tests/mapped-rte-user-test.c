@@ -9,7 +9,7 @@ static unsigned header_faults(void)
 {
     const struct {
         unsigned offset, size, partial;
-    } fields[] = {{0, 2, 0}, {2, 4, 0}, {6, 2, 0}, {8, 4, 0}, {12, 2, 0}, {2, 4, 2}, {8, 4, 2}};
+    } fields[] = {{0, 2, 0}, {2, 4, 0}, {6, 2, 0}, {12, 2, 0}, {2, 4, 2}};
 
     unsigned passed = 0;
     for (unsigned config = 0; config < 4; ++config)

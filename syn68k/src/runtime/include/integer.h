@@ -44,6 +44,8 @@ typedef struct {
      restart at the current privileged SP, retaining completed throwaway frames
      and callback effects. Other component stepping leaves it zero. */
     unsigned restartable_read;
+    /* Physical bus error while RTE restores a validated format-7 continuation. */
+    unsigned rte_internal_fault;
     /* Unretired push cleanup: 1 runner-certified result/EA rollback;
        2 RTE restarts at its live privileged SP, retaining completed frames
        and callback changes. Guest PD0-3 cleanup precedes reexecution. */

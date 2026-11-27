@@ -281,9 +281,14 @@ static uint32 call_store_exception(Syn68kIntegerStep* step, const Syn68kEAContex
 
 /* A failed frame read has not popped the current frame. Resume at the live
    selected SP; earlier throwaway frames and callback effects stay committed. */
-static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step)
+static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step, int restoring)
 {
     uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
+    if (step && context->memory && restoring && context->access.bus_error &&
+        context->access.translation.fault == MMU040_OK) {
+        step->rte_internal_fault = 1;
+        return next;
+    }
     uint16 ssw;
     if (step && context->memory && context->access.fc == (cpu_state.sr & SR_SUPERVISOR_BIT ? 5u : 1u) &&
         !context->access.writing && !context->access.rmw) {
@@ -957,24 +962,30 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
             uint32 saved_pc = syn68k_ea_read_memory(context, EM_A7 + 2, 4);
             unsigned format = syn68k_ea_read_memory(context, EM_A7 + 6, 2) >> 12;
             if (context->error)
-                return rte_read_exception(pc, context, step);
+                return rte_read_exception(pc, context, step, 0);
             unsigned length = format <= 1 ? 8 : format <= 3 ? 12 : format == 7 ? 60 : 0;
             if (!length)
                 return integer_exception(step, context, 14, pc, 0, 0);
             uint32 frame_ea = 0;
             unsigned continuation = 0;
-            /* The access-error writebacks belong to the guest handler.
-               MC68040 UM 8.4.6.7 reads only offsets $0 through $D on RTE. */
-            unsigned read_end = format == 7 ? 14 : length;
-            for (unsigned i = 8; i < read_end && !context->error; i += 4) {
-                uint32 value = syn68k_ea_read_memory(context, EM_A7 + i, format == 7 && i == 12 ? 2 : 4);
-                if (i == 8)
-                    frame_ea = value;
-                else if (i == 12)
-                    continuation = value;
+            /* Format-7 validation reads SSW. Only a continuation restores
+               the internal EA, and the rest of the frame belongs to the handler. */
+            if (format == 7) {
+                continuation = syn68k_ea_read_memory(context, EM_A7 + 12, 2);
+                if (context->error)
+                    return rte_read_exception(pc, context, step, 0);
+                unsigned pending = continuation & 0xf000;
+                if (pending == 0x1000 || pending == 0x2000 || pending == 0x4000 || pending == 0x8000) {
+                    frame_ea = syn68k_ea_read_memory(context, EM_A7 + 8, 4);
+                    if (context->error)
+                        return rte_read_exception(pc, context, step, 1);
+                }
             }
-            if (context->error)
-                return rte_read_exception(pc, context, step);
+            else if (length == 12) {
+                (void)syn68k_ea_read_memory(context, EM_A7 + 8, 4);
+                if (context->error)
+                    return rte_read_exception(pc, context, step, 0);
+            }
             unsigned fpu_vector = 0;
             if (context->memory && format == 7) {
                 if ((continuation & 0xf000) == 0x4000)

@@ -5158,9 +5158,26 @@ static void rte_header_only(void)
                 Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
                 Syn68kMappedRun run;
                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
-                assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 2 &&
-                       run.step.exception_pc == 0x10000 && run.step.access.request == frame + offsets[at] &&
-                       EM_A7 == frame && status() == 0x2000 && !cpu.movem_pending);
+                if (offsets[at] == 8 && !kind)
+                    assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1 && cpu.pc == 0x10080 &&
+                           status() == 0x801f && EM_A7 == 0xdeadbe00);
+                else {
+                    assert(run.step.vector == 2 && run.step.exception_pc == 0x10000 &&
+                           run.step.access.request == frame + offsets[at] && EM_A7 == frame && status() == 0x2000 &&
+                           !cpu.movem_pending);
+                    if (offsets[at] == 8) {
+                        assert(run.reason == SYN68K_MAPPED_HALTED && cpu.halted == SYN68K_HALT_DOUBLE_FAULT &&
+                               run.step.rte_internal_fault && !run.step.restartable_read);
+                        unsigned before_reads = reads, before_writes = writes;
+                        Syn68kMappedDelivery delivery;
+                        assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery) &&
+                               delivery.reason == SYN68K_DELIVERY_HALTED);
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &run) && run.reason == SYN68K_MAPPED_HALTED);
+                        assert(reads == before_reads && writes == before_writes);
+                    }
+                    else
+                        assert(run.reason == SYN68K_MAPPED_EXCEPTION && !cpu.halted && run.step.restartable_read);
+                }
                 assert(!memcmp(&expected, &cpu_state.fpu, sizeof expected));
                 ++cases;
             }
@@ -5170,8 +5187,8 @@ static void rte_header_only(void)
 
 static void guest_rte_header_restarts(void)
 {
-    const unsigned offsets[] = {0, 2, 6, 8, 12};
-    const unsigned sizes[] = {2, 4, 2, 4, 2};
+    const unsigned offsets[] = {0, 2, 6, 12};
+    const unsigned sizes[] = {2, 4, 2, 2};
     for (unsigned page8k = 0; page8k < 2; ++page8k)
         for (unsigned privileged = 0; privileged < 2; ++privileged)
             for (unsigned at = 0; at < sizeof offsets / sizeof *offsets; ++at)
@@ -5231,7 +5248,7 @@ static void guest_rte_header_restarts(void)
 
 static void guest_rte_progress_restarts(void)
 {
-    const unsigned offsets[] = {0, 2, 6, 8, 12};
+    const unsigned offsets[] = {0, 2, 6, 12};
     for (unsigned page8k = 0; page8k < 2; ++page8k)
         for (unsigned master = 0; master < 2; ++master)
             for (unsigned at = 0; at < sizeof offsets / sizeof *offsets; ++at)

@@ -889,6 +889,11 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 result->step.store_state = instruction_traced(before.sr, trace_flow) ? 3 : 2;
                 result->step.next = result->step.exception_pc = result->step.store_next;
             }
+            if (result->step.rte_internal_fault) {
+                halt_cpu(cpu, SYN68K_HALT_DOUBLE_FAULT);
+                result->reason = SYN68K_MAPPED_HALTED;
+                return 1;
+            }
             /* Abort pre-execute reads: restore speculative EA register updates,
              preserving completed physical reads and descriptor history. Callback
              An/null changes must remain live, including descriptor effects.
