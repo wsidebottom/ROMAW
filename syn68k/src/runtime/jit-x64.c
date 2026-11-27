@@ -63,7 +63,7 @@ enum {
     RELOC_COMPLEX,
     RELOC_FPU_FRAME,
     RELOC_FPU_ROOTS,
-    RELOC_FPU_FLAT,
+    RELOC_NATIVE_FLAT,
     RELOC_COUNT
 };
 
@@ -148,7 +148,7 @@ uint32 syn68k_x64_execute_managed(void* code)
     return execute_managed_packet(code, NULL);
 }
 
-static uint32 flat_fpu_run(uint32 pc, unsigned opcode);
+static uint32 flat_native_run(uint32 pc, unsigned opcode);
 
 static uintptr_t relocation_address(unsigned symbol)
 {
@@ -170,7 +170,7 @@ static uintptr_t relocation_address(unsigned symbol)
                                    (uintptr_t)syn68k_x64_complex_run,
                                    (uintptr_t)&fpu_invocation,
                                    (uintptr_t)fpu_roots,
-                                   (uintptr_t)flat_fpu_run};
+                                   (uintptr_t)flat_native_run};
     return symbol < RELOC_COUNT ? addresses[symbol] : 0;
 }
 
@@ -511,7 +511,7 @@ static void decoder_tail(emitter* out, uint32 pc, unsigned selector)
 }
 
 /* Bookkeeping tail only: the inner native body consumes command/EA/data. */
-static void flat_fpu_tail(emitter* out, uint32 pc, unsigned opcode)
+static void flat_native_tail(emitter* out, uint32 pc, unsigned opcode)
 {
     ++out->guards;
     out->managed = out->dynamic = 1;
@@ -521,7 +521,7 @@ static void flat_fpu_tail(emitter* out, uint32 pc, unsigned opcode)
     word32(out, opcode);
     byte(out, 0x48);
     byte(out, 0xb8);
-    pointer_value(out, RELOC_FPU_FLAT);
+    pointer_value(out, RELOC_NATIVE_FLAT);
     byte(out, 0xff);
     byte(out, 0xe0);
 }
@@ -2142,7 +2142,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
     unsigned op = SWAPUW_IFLE(source[0]);
     unsigned cc = (op >> 8) & 15;
     out->variable_ea = 1;
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op)) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73) {
         /* Reserve the guard and the largest following inline FPU body before
            emitting either path, so a full buffer cannot leave a partial guard. */
         if (out->size + 4192 > sizeof out->bytes)
@@ -2152,7 +2152,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         fpu_cpu(out, 0xf7, 0, offsetof(CPUState, sr));
         word32(out, 0xc000);
         unsigned untraced = jump(out, 0x84);
-        flat_fpu_tail(out, pc, op);
+        flat_native_tail(out, pc, op);
         patch(out, untraced, out->size);
     }
     int fpu = fpu_conditional(out, op, pc);
@@ -2160,10 +2160,10 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         fpu = fpu_register(out, op, pc);
     if (fpu)
         return fpu > 0;
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op)) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73) {
         if (out->size + 64 > sizeof out->bytes)
             return 0;
-        flat_fpu_tail(out, pc, op);
+        flat_native_tail(out, pc, op);
         return 1;
     }
     if (syn68k_x64_complex_opcode(op)) {
@@ -2186,7 +2186,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         exception_tail(out, pc + 2, 0, 32 + (op & 15));
         return 1;
     }
-    if (op == 0x4AFC || (op & 0xFFF8) == 0x4848 || op == 0x4E73) {
+    if (op == 0x4AFC || (op & 0xFFF8) == 0x4848) {
         decoder_tail(out, pc, 4);
         return 1;
     }
@@ -3156,6 +3156,17 @@ int syn68k_x64_mapped_fpu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     return run_fpu_packet(pc, opcode, memory, result);
 }
 
+static int flat_native_memory(Syn68kMMU040Memory* memory, Syn68kMMU040Native* native)
+{
+    if (!syn68k_native040_memory(memory, native, (Syn68kNative040RAM){0}))
+        return 0;
+    native->flat = syn68k_native040_flat_state();
+    native->flat_code_pages = syn68k_x64_code_pages;
+    native->flat_page_shift = SYN68K_X64_PAGE_SHIFT;
+    native->flat_write = syn68k_invalidate_checked_write;
+    return 1;
+}
+
 int syn68k_x64_flat_fpu(uint32 pc, unsigned opcode, Syn68kFPUStep* result)
 {
     if ((pc & 1) || ((opcode & ~255u) != 0xf200 && !mapped_frame_opcode(opcode)) || !result ||
@@ -3164,17 +3175,31 @@ int syn68k_x64_flat_fpu(uint32 pc, unsigned opcode, Syn68kFPUStep* result)
     Syn68kMMU040 mmu = {0};
     Syn68kMMU040Memory memory = {.mmu = &mmu};
     Syn68kMMU040Native native = {0};
-    if (!syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}))
+    if (!flat_native_memory(&memory, &native))
         return 0;
-    native.flat = syn68k_native040_flat_state();
-    native.flat_code_pages = syn68k_x64_code_pages;
-    native.flat_page_shift = SYN68K_X64_PAGE_SHIFT;
-    native.flat_write = syn68k_invalidate_checked_write;
     return run_fpu_packet(pc, opcode, &memory, result);
 }
 
-static uint32 flat_fpu_run(uint32 pc, unsigned opcode)
+static uint32 flat_rte_run(uint32 pc)
 {
+    Syn68kMMU040 mmu = {0};
+    Syn68kMMU040Memory memory = {.mmu = &mmu};
+    Syn68kMMU040Native native = {0};
+    Syn68kIntegerStep step;
+    int handled = 0;
+    if (syn68k_memory_span(pc, 2) && flat_native_memory(&memory, &native))
+        handled = syn68k_x64_mapped_mmu(pc, 0x4e73, &memory, &step);
+    if (!handled)
+        return trap_direct(4, pc, 0);
+    if (handled < 0)
+        return trap_exception(4, pc, 0, 0);
+    return step.vector ? trap_exception(step.vector, step.exception_pc, step.fault_address, step.format) : step.next;
+}
+
+static uint32 flat_native_run(uint32 pc, unsigned opcode)
+{
+    if (opcode == 0x4e73)
+        return flat_rte_run(pc);
     uint16 entry_sr = cpu_state.sr;
     Syn68kFPUStep step;
     int handled = syn68k_x64_flat_fpu(pc, opcode, &step);
@@ -3205,8 +3230,11 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         *result = packet.rte.step;
         return 1;
     }
-    if (packet.exit == FPU_EXIT_UNFETCHED)
+    if (packet.exit == FPU_EXIT_UNFETCHED) {
+        if (opcode == 0x4e73 && memory->native && memory->native->flat)
+            return 0;
         return syn68k_integer_step_decoded(pc, opcode, memory, result) ? 1 : -1;
+    }
     if ((opcode & 0xff00) == 0xf400 && packet.memory.access.cache.interrupt_level) {
         *result = (Syn68kIntegerStep){
             .next = pc, .interrupt_level = packet.memory.access.cache.interrupt_level, .access = packet.memory.access};

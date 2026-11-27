@@ -201,7 +201,7 @@ EOF
 
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         syn68k/tests/rte-test.c syn68k/obj/src/runtime/libsyn68k.a \
-        -o syn68k/obj/tests/rte-test.exe
+        -Wl,--wrap=trap_direct -o syn68k/obj/tests/rte-test.exe
       syn68k/obj/tests/rte-test.exe 0
       syn68k/obj/tests/rte-test.exe 1
 
@@ -308,7 +308,10 @@ EOF
       cd "$root"
       output=syn68k/obj/tests/rte
       mkdir -p "$output"
-      for fixture in rte-test mmu040-flow-test mmu040-stream-test; do
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        syn68k/tests/rte-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=trap_direct -o "$output/rte-test.exe"
+      for fixture in mmu040-flow-test mmu040-stream-test; do
         "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
           "syn68k/tests/$fixture.c" syn68k/obj/src/runtime/libsyn68k.a -o "$output/$fixture.exe"
       done
@@ -466,6 +469,13 @@ EOF
       SYN68K_AOT_CACHE=$(wslpath -m "$fixture/execution")
       "$fixture/execution-test.exe" 0
       "$fixture/execution-test.exe" 1
+      mkdir "$fixture/flat-rte"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        syn68k/tests/rte-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=trap_direct -o "$fixture/flat-rte-test.exe"
+      SYN68K_AOT_CACHE=$(wslpath -m "$fixture/flat-rte")
+      "$fixture/flat-rte-test.exe" 1 1
+      "$fixture/flat-rte-test.exe" 1 2
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-native-test.c \
         syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_mmu040_translate \

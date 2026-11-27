@@ -962,7 +962,7 @@ static int fpu_register_mode(emitter* out, unsigned opcode, uint32 pc, int mappe
         fpu_packet(out, 0xf7, 0, offsetof(FPUInvocation, command), 0);
         word32(out, 0xe000);
         unsigned reserved_register = jump(out, 0x84);
-        flat_fpu_tail(out, pc, opcode);
+        flat_native_tail(out, pc, opcode);
         patch(out, reserved_register, out->size);
         decoder_tail(out, pc, 11);
     }

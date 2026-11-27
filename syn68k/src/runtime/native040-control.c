@@ -91,7 +91,8 @@ static int rte_frame_read(RTEBus* bus, CPUState* cpu, uint32 address, unsigned s
 __attribute__((used, noinline)) void native040_rte(Syn68kNative040RTE* packet)
 {
     Syn68kNative040MMU* bus = packet->memory;
-    Syn68kRTEFrameResult frame = rte_frame_execute(packet->cpu, bus, packet->pc, 1);
+    int mapped = !(bus->memory->native && bus->memory->native->flat);
+    Syn68kRTEFrameResult frame = rte_frame_execute(packet->cpu, bus, packet->pc, mapped);
     Syn68kIntegerStep* step = &packet->step;
     step->next = frame.pc;
     if (frame.backing_fault) {
@@ -100,7 +101,8 @@ __attribute__((used, noinline)) void native040_rte(Syn68kNative040RTE* packet)
         step->exception_pc = packet->pc;
         step->fault_address = bus->access.logical;
         step->access = bus->access;
-        rte_mark_read_fault(packet->cpu, step, frame.restoring);
+        if (mapped)
+            rte_mark_read_fault(packet->cpu, step, frame.restoring);
     }
     else if (frame.vector) {
         step->vector = frame.vector;

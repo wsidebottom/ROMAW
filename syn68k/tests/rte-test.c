@@ -23,6 +23,14 @@
 #include <stdlib.h>
 
 static unsigned trapped;
+static int require_native_rte;
+extern syn68k_addr_t __real_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument);
+
+syn68k_addr_t __wrap_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument)
+{
+    assert(!require_native_rte || vector != 4 || pc != 0x1000);
+    return __real_trap_direct(vector, pc, argument);
+}
 
 static syn68k_addr_t handler(syn68k_addr_t pc, void* argument)
 {
@@ -65,9 +73,12 @@ int main(int argc, char** argv)
     ROMlib_offset = (uintptr_t)memory;
     syn68k_set_memory_window(1024 * 1024, 0, 0);
     uint32 vectors[64] = {0};
+    int aot_run = argc > 2 ? atoi(argv[2]) : 0;
     int native = argc > 1 && atoi(argv[1]);
     initialize_68k_emulator(NULL, native, vectors, 0);
     native = syn68k_native_code_enabled();
+    require_native_rte = native;
+    uint64 hits_before = syn68k_aot_hit_count(), emits_before = syn68k_native_compile_count();
     for (unsigned i = 2; i < 64; ++i)
         trap_install_handler(i, handler, (void*)(uintptr_t)i);
     WRITEUW(0x1000, 0x4e73);
@@ -85,6 +96,8 @@ int main(int argc, char** argv)
             continue;
         reset(0x2000, 0x8000);
         frame(0x8000, format, 0x201f);
+        if (format == 7)
+            WRITEUW(0x800c, 0x8000); /* Flat frames do not restore mapped continuations. */
         run();
         unsigned length = format == 0 ? 8 : format == 2 || format == 3 ? 12 : format == 7 ? 60 : 0;
         assert(trapped == (length ? 0 : 14));
@@ -109,7 +122,14 @@ int main(int argc, char** argv)
     run();
     assert(!trapped && EM_A7 == 0x7000 && cpu_state.isp == 0x8008);
     assert(!(cpu_state.sr & 0x2000));
-    printf("68040 RTE privilege, formats and stack banks passed (%s).\n", native ? "native" : "interpreter");
+    uint64 hits = syn68k_aot_hit_count() - hits_before;
+    uint64 emits = syn68k_native_compile_count() - emits_before;
+    if (aot_run == 1)
+        assert(native && hits == 0 && emits >= 2);
+    else if (aot_run == 2)
+        assert(native && hits >= 2 && emits == 0);
+    printf("68040 RTE privilege, formats and stack banks passed (%s; emitted=%llu hits=%llu).\n",
+           native ? "native" : "interpreter", (unsigned long long)emits, (unsigned long long)hits);
     VirtualFree(memory, 0, MEM_RELEASE);
     return 0;
 }
