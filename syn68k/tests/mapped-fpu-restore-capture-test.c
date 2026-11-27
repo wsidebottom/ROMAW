@@ -419,14 +419,16 @@ static void short_frame_command_matrix(void)
 static void pending_arithmetic_frames(void)
 {
     for (unsigned config = 0; config < 4; ++config)
-        for (unsigned shape = 0; shape < 3; ++shape) {
-            unsigned size = shape ? 100 : 52, stages = shape == 2 ? 6 : 4;
+        for (unsigned shape = 0; shape < 5; ++shape) {
+            unsigned size = shape ? 100 : 52, stages = shape == 2 || shape == 4 ? 6 : 4;
             unsigned frame = 0x20040;
             Syn68kMappedCPU cpu = setup(config, 0, shape ? 4 : 2, frame, 1, 1, shape == 1 ? 0 : 0x4000);
             ram[physical(frame + size - 36)] = 0;
-            ram[physical(frame + size - 35)] = 0x22; /* FADD. */
+            ram[physical(frame + size - 35)] = shape >= 3 ? 0x7e : 0x22;
+            if (shape >= 3)
+                ram[physical(frame + 0x3c)] = 0x80; /* Unsupported ETEMP. */
             ram[physical(frame + size - 28)] = stages;
-            cpu_state.fpu.fpsr = shape ? 0x5000 : 0x4000;
+            cpu_state.fpu.fpsr = shape >= 3 ? 0 : shape ? 0x5000 : 0x4000;
             Syn68kFP80 before = cpu_state.fpu.regs[0];
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
             expect_direct_restore = config & 1;
@@ -438,8 +440,10 @@ static void pending_arithmetic_frames(void)
 #endif
             assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
             assert(EM_A0 == frame + size && cpu_state.fpu.frame_size == size);
-            assert(cpu_state.fpu.pending_vector == (shape ? 53 : 54));
-            assert(cpu_state.fpu.frame[size - 28] == stages);
+            assert(cpu_state.fpu.pending_vector == (shape >= 3 ? 55 : shape ? 53 : 54));
+            assert(cpu_state.fpu.frame[size - 28] == (shape == 4 ? 4 : stages));
+            if (shape == 4)
+                before = (Syn68kFP80){0x3fff, UINT64_C(0x8000000000000000)};
             assert(cpu_state.fpu.regs[0].exponent == before.exponent &&
                    cpu_state.fpu.regs[0].significand == before.significand);
             ++cases;

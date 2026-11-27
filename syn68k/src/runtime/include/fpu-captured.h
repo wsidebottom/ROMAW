@@ -23,6 +23,25 @@
 /* Operation selectors implemented by FPSP. Selectors 64 through 127 are absent. */
 #define SYN68K_FPU_FPSP_OPERATIONS UINT64_C(0x00ff0062f277f74e)
 
+static inline int syn68k_fpu_fpsp_operation(unsigned operation)
+{
+    return operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1);
+}
+
+static inline int syn68k_fpu_fpsp_command(unsigned command)
+{
+    return (command >> 13 == 0 || command >> 13 == 2) &&
+           ((command & 0xfc00) == 0x5c00 || syn68k_fpu_fpsp_operation(command & 127));
+}
+
+static inline int syn68k_fpu_restore_unsupported(const uint8_t* image, unsigned size, unsigned stages, unsigned command)
+{
+    unsigned format = command >> 10 & 7;
+    return size == 100 && (stages & 4) &&
+           ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
+            (command >> 13 == 3 && (format == 3 || format == 7)));
+}
+
 /* FSAVE permits control-alterable and predecrement forms. FRESTORE permits
    control and postincrement forms. Neither instruction takes an immediate. */
 static inline int syn68k_fpu_frame_ea_valid(unsigned opcode)

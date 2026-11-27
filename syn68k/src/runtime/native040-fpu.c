@@ -147,13 +147,11 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     unsigned stages = image[size - 28] & 6;
     int moveout = command >> 13 == 3;
     int arithmetic = fpu_restore_arithmetic(command);
-    unsigned operation = command & 127;
-    int software = (command >> 13 == 0 || command >> 13 == 2) &&
-                   ((command & 0xfc00) == 0x5c00 ||
-                    (operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1)));
+    int software = syn68k_fpu_fpsp_command(command);
+    int unsupported = syn68k_fpu_restore_unsupported(image, size, stages, command);
     int software_completed = software && (image[size - 28] & 1) && (image[size - 27] & 0x80);
     int conversion = size == 100 && image[8] == 0xfe;
-    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic && !software) ||
+    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic && !software && !unsupported) ||
         ((stages & 2) && size != 100))
         return;
     unsigned format = command >> 10 & 7;
@@ -162,9 +160,7 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         nonmaskable |= 0x6000; // Integer move-outs also retain SNAN and OPERR.
     Syn68kFPUState* fpu = &packet->cpu->fpu;
     unsigned pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | nonmaskable));
-    int unsupported = (stages & 4) && size == 100 &&
-                      ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
-                       (moveout && (format == 3 || format == 7)));
+
     if (unsupported)
         pending = 55;
     else if (software && !software_completed && stages == 4)

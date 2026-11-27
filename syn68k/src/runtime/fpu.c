@@ -457,7 +457,7 @@ static void unsupported_operand(FPUContext* context, unsigned command, floatx80 
 
 static int unimplemented_operation(unsigned operation)
 {
-    return operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1);
+    return syn68k_fpu_fpsp_operation(operation);
 }
 
 static void destination_value(FPUContext* context, unsigned extension, unsigned ea_code, floatx80 value)
@@ -944,8 +944,7 @@ static void state_frame(FPUContext* context)
             unsigned nonmaskable = FP_UNFL | FP_OVFL;
             if (move_out && (format == 0 || format == 4 || format == 6))
                 nonmaskable |= FP_SNAN | FP_OPERR;
-            int recognized = (command >> 13 == 0 || command >> 13 == 2) &&
-                             (unimplemented_operation(command & 127) || (command & 0xfc00) == 0x5c00);
+            int recognized = syn68k_fpu_fpsp_command(command);
             /* gen_except can synthesize an E1/E3 busy frame after
              completing an FPSP instruction. S/X mark the software
              exception; its command need not be a hardware operation. */
@@ -954,10 +953,7 @@ static void state_frame(FPUContext* context)
             unsigned pending = fpu_exception_vector(cpu_state.fpu.fpsr & (cpu_state.fpu.fpcr | nonmaskable));
             if (move_out && stages == 4 && pending != 50)
                 recognized = 1;
-            int unsupported = size == 100 && (stages & 4) &&
-                              ((restored[0x3c] & 0x80) || (restored[0x44] & 0x80) ||
-                               (command >> 13 == 2 && ((command >> 10) & 7) == 3) ||
-                               (command >> 13 == 3 && (((command >> 10) & 7) == 3 || ((command >> 10) & 7) == 7)));
+            int unsupported = syn68k_fpu_restore_unsupported(restored, size, stages, command);
             if (unsupported)
                 pending = 55, recognized = 1;
             unsigned operation = command & 127;
