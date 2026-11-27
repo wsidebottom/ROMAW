@@ -1157,6 +1157,7 @@ PRIVATE void reset_low_globals(void)
            ((char*)&lastlowglobal - (char*)&nilhandle_H - 64 * sizeof(ULONGINT)));
 
     HIDDEN_RAW_SET(AE_info_H, saveAE_info);
+    HIDDEN_RAW_SET(GetNextEventFilter_H, NULL);
 
     HIDDEN_RAW_SET(JCrsrTask_H, saveJCrsrTask);
 

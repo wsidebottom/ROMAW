@@ -3347,6 +3347,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"CRMRemove", CRMRemove, M1(2, 5)},
     {"CRMSearch", CRMSearch, M1(5, 5)},
     {"GetVCBQHdr", GetVCBQHdr, M0(5)},
+    {"LMGetVCBQHdr", GetVCBQHdr, M0(5)},
     {"GetDrvQHdr", GetDrvQHdr, M0(5)},
     {"NGetTrapAddress", ppc_n_get_trap, M2(4, 2, 2)},
     {"NSetTrapAddress", ppc_n_set_trap, M3(0, 4, 2, 2)},
@@ -7420,6 +7421,41 @@ PUBLIC void ROMlib_carbon_dispose_descriptor(uint32_t address)
         ppc_dispose_routine_descriptor(ctx, address);
 }
 
+/* EventsLib's GetNextEvent filter passes its record in A1 and the
+   Boolean result in the high byte of a stack word. CarbonLib's saved
+   INIT hook can clear both that word and D0 when it consumes an event. */
+static int ppc_next_event_filter(ppc_context* ctx, uint32 target, ROMlib_ppc_registers* r,
+                                 const ROMlib_carbon_ppc_frame* argument_frame)
+{
+    uint32 args[2];
+    for (unsigned i = 0; i < NELEM(args); ++i)
+        if (!ppc_pascal_argument(ctx, r, argument_frame, 5, i, &args[i]))
+            return -1;
+
+    uint8* result = args[1] ? ppc_memory(ctx, args[1], sizeof *result, TRUE) : NULL;
+    if (!args[0] || !ppc_memory(ctx, args[0], sizeof(EventRecord), TRUE) || !result)
+        return -1;
+
+    const uint32 vector = target ? ppc_callback_vector(ctx, target) : 0;
+    if (vector)
+        return ppc_invoke_callback_stack(ctx, vector, args, NELEM(args), NULL, r) ? 1 : -1;
+
+    const uint16* instruction = target && !(target & 1) ? ppc_memory(ctx, target, 2, FALSE) : NULL;
+    if (!instruction || *instruction == (uint16)CWC(MIXED_MODE_TRAP))
+        return -1;
+
+    M68kReg saved[16];
+    memcpy(saved, cpu_state.regs, sizeof saved);
+    const uint16 flag = *result ? 0x0100 : 0;
+    EM_A1 = args[0];
+    EM_D0 = flag;
+    PUSHUW(flag);
+    CALL_EMULATOR(target);
+    *result = READUB(EM_A7);
+    memcpy(cpu_state.regs, saved, sizeof saved);
+    return ctx->error[0] ? -1 : 1;
+}
+
 /* TextEdit's special ProcInfo values describe fixed register layouts, including
    output registers that the PowerPC interface exposes as pointer arguments. */
 PRIVATE int ppc_textedit_hook(ppc_context* ctx, uint32 target, uint32 info, ROMlib_ppc_registers* r,
@@ -7720,6 +7756,8 @@ PRIVATE int ppc_mixed_service(ppc_context* ctx, const char* name, ROMlib_ppc_reg
         return 1;
     }
     convention = info & 15;
+    if (info == 0xbf)
+        return ppc_next_event_filter(ctx, target, r, argument_frame);
     if (convention == kSpecialCase)
         return ppc_textedit_hook(ctx, target, info, r, argument_frame);
     {

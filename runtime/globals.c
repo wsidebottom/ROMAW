@@ -114,6 +114,7 @@ DATA(LONGINT, mathones, , 0x282, TRUE - b, rsys / misc, WHOKNOWS);
 DATA(INTEGER, ROM85, , 0x28E, TRUE - b, MacTypes, IMV - 328);
 DATA(Byte, PortBUse, , 0x291, TRUE - b, AppleTalk, IMII - 305);
 DATA(Byte, ScreenVars, [8], 0x292, FALSE, QuickDraw, MPW);
+DATA(HIDDEN_ProcPtr, GetNextEventFilter_H, , 0x29A, FALSE, EventMgr, CarbonLib INIT);
 /*
  * NOTE: Key1Trans in the keyboard translator procedure, and Key2Trans in the
  * numeric keypad translator procedure (MPW).

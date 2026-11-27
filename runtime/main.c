@@ -1401,6 +1401,7 @@ A2(PUBLIC, int, main, int, argc, char**, argv)
     HIDDEN_RAW_SET(nilhandle_H, 0); /* so nil dereferences "work" */
 
     memset(&EventQueue, 0, sizeof(EventQueue));
+    HIDDEN_RAW_SET(GetNextEventFilter_H, NULL);
     memset(&VBLQueue, 0, sizeof(VBLQueue));
     memset(&DrvQHdr, 0, sizeof(DrvQHdr));
     memset(&VCBQHdr, 0, sizeof(VCBQHdr));

@@ -87,6 +87,7 @@
 #define ROM85 (*(INTEGER*)(0x28E + ROMlib_offset))
 #define PortBUse (*(Byte*)(0x291 + ROMlib_offset))
 #define ScreenVars (*(Byte(*)[8])(0x292 + ROMlib_offset))
+#define GetNextEventFilter_H (*(HIDDEN_ProcPtr*)(0x29A + ROMlib_offset))
 #define Key1Trans_H (*(HIDDEN_Ptr*)(0x29E + ROMlib_offset))
 #define Key2Trans_H (*(HIDDEN_Ptr*)(0x2A2 + ROMlib_offset))
 #define SysZone_H (*(HIDDEN_THz*)(0x2A6 + ROMlib_offset))
