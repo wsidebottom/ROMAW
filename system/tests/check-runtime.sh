@@ -65,21 +65,8 @@ case "$check" in
       out="$root/build/mactcp/ppc-probe"
       cd "$root"
       python3 system/tests/make_mactcp_ppc_probe.py "$out"
-      for mode in no-ppc-jit ppc-jit; do
-        mkdir -p "$out/$mode"
-        (
-          cd "$out/$mode"
-          rm -f -- stdout.txt stderr.txt
-          "$romaw" "-$mode" -syszone 8m -applzone 64m -sdlaudio test -debug trace "$(wslpath -w "$out/PPC MacTCP Probe")" >launch.log 2>&1
-          for ((attempt = 0; attempt < 450; ++attempt)); do
-            if grep -qs 'PPC MacTCP Probe passed' stdout.txt stderr.txt; then break; fi
-            sleep 0.1
-          done
-          grep -s 'PPC MacTCP Probe passed' stdout.txt stderr.txt
-          if grep -sE 'win_exception|PPC MacTCP Probe failed' stdout.txt stderr.txt launch.log; then exit 1; fi
-          echo "PASS PowerPC MacTCP $mode"
-        )
-      done
+      powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$root/system/tests/run-mactcp-ppc.ps1")" \
+        -ROMAW "$(wslpath -w "$romaw")" -Probe "$(wslpath -w "$out/PPC MacTCP Probe")"
     )
     ;;
   mactcp)

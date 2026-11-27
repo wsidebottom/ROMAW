@@ -84,9 +84,9 @@ def make_probe(destination):
     emit(0x41820000)
 
     # Both callback entry points are PPC transition vectors.
-    for vector, slot in [(0x100, 0x140), (0x110, 0x144)]:
+    for vector, slot in [(0x100, 0x140), (0x110, 0x144), (0x120, 0x148)]:
         addr(3, vector)
-        li(4, 0xC1)  # C void callback(void*).
+        li(4, 0x3EC0 if vector == 0x120 else 0xC1)  # Pascal UDP notify or C completion.
         li(5, 1)
         call("NewRoutineDescriptor")
         store(3, slot)
@@ -141,7 +141,77 @@ def make_probe(destination):
     load(3, 0xD0)
     check()
 
-    for slot in (0x140, 0x144):
+    # Exercise Pascal UDP notification arguments and opaque high-bit user data.
+    emit(0xA07E0090)
+    for offset in (0x418, 0x518, 0x618):
+        store(3, offset, half=True)
+    addr(3, 0x1000)
+    store(3, 0x420)
+    load(3, 0x148)
+    store(3, 0x428)
+    li(3, 0x9234)
+    store(3, 0x42E, half=True)
+    li(3, 0x5678)
+    store(3, 0x430, half=True)
+    addr(3, 0x400)
+    call("PBControlSync")
+    check()
+    load(3, 0x41C)
+    store(3, 0x51C)
+    store(3, 0x61C)
+    emit(0xA07E042C)
+    store(3, 0x526, half=True)
+    addr(3, 0x850)
+    store(3, 0x528)
+    addr(3, 0x800)
+    emit(0x5464843E)
+    store(4, 0x852, half=True)
+    store(3, 0x854, half=True)
+    load(3, 0x140)
+    store(3, 0x50C)
+    addr(3, 0x500)
+    call("PBControlAsync")
+    check()
+    call("TickCount")
+    emit(0x3BA3012C)
+    udp_loop = len(code)
+    call("SystemTask")
+    load(3, 0xC0)
+    emit(0x2C030001)
+    udp_done = len(code)
+    emit(0x41820000)
+    call("TickCount")
+    emit(0x7C63E850, 0x2C030000)
+    failures.append(len(code))
+    emit(0x40810000)
+    emit(0x48000000 | (((udp_loop - len(code)) * 4) & 0x3FFFFFF))
+    code[udp_done] |= (len(code) - udp_done) * 4
+    load(3, 0xD0)
+    check()
+    load(3, 0xA0)
+    check(2)
+    addr(3, 0x600)
+    call("PBControlSync")
+    check()
+    emit(0xA07E062C)
+    check(16)
+    load(4, 0x628)
+    load(3, 0, 4)
+    emit(0x3C801122, 0x60843344, 0x7C032000)
+    failures.append(len(code))
+    emit(0x40820000)
+    li(3, 22)
+    store(3, 0x61A, half=True)
+    addr(3, 0x600)
+    call("PBControlSync")
+    check()
+    li(3, 24)
+    store(3, 0x41A, half=True)
+    addr(3, 0x400)
+    call("PBControlSync")
+    check()
+
+    for slot in (0x140, 0x144, 0x148):
         load(3, slot)
         call("DisposeRoutineDescriptor")
     emit(0xA87E0090)
@@ -182,15 +252,36 @@ def make_probe(destination):
     callback_failures.append(len(code))
     emit(0x40820000)
     emit(0x80E200B0, 0x38E70001, 0x90E200B0, 0x4E800020)
+    udp_callback = len(code) * 4
+    emit(0x7C872378)  # mr r7,r4: event.
+    callback_check(1)
+    emit(0x3CE09234, 0x60E75678, 0x7C053800)
+    callback_failures.append(len(code))
+    emit(0x40820000)
+    emit(0x80E2041C, 0x7C033800)
+    callback_failures.append(len(code))
+    emit(0x40820000)
+    emit(0x7CC73378)  # mr r7,r6: ICMP report.
+    callback_check(0)
+    emit(0x80E200C0, 0x38E70001, 0x90E200C0, 0x4E800020)
     cb_bad = len(code)
     emit(0x38E00001, 0x90E200D0, 0x4E800020)
     for branch in callback_failures:
         code[branch] |= ((cb_bad - branch) * 4) & 65535
 
-    data = bytearray(0xA00)
+    data = bytearray(0x3000)
     data[0x80:0x85] = b"\x04.IPP"
     struct.pack_into(">II", data, 0x100, io_callback, 0)
     struct.pack_into(">II", data, 0x110, echo_callback, 0)
+    struct.pack_into(">II", data, 0x120, udp_callback, 0)
+    struct.pack_into(">H", data, 0x41A, 20)
+    struct.pack_into(">I", data, 0x424, 4096)
+    struct.pack_into(">H", data, 0x51A, 23)
+    struct.pack_into(">I", data, 0x522, 0x7F000001)
+    data[0x52C] = 1
+    struct.pack_into(">H", data, 0x61A, 21)
+    struct.pack_into(">H", data, 0x620, 2)
+    struct.pack_into(">H", data, 0x850, 16)
     struct.pack_into(">H", data, 0x21A, 15)
     struct.pack_into(">HIH", data, 0x29A, 17, 0x7F000001, 16)
     struct.pack_into(">H", data, 0x2A6, 2)
@@ -203,7 +294,7 @@ def make_probe(destination):
         data,
         imports=[("InterfaceLib", name, 2) for name in names],
         main=0,
-        reloc=[0x4600, 0x4A00 | (len(names) - 1), 0xA000, 0x100, 0x4600, 0xA000, 0x110, 0x4600],
+        reloc=[0x4600, 0x4A00 | (len(names) - 1), 0xA000, 0x100, 0x4600, 0xA000, 0x110, 0x4600, 0xA000, 0x120, 0x4600],
     )
     write_fragment(destination, "PPC MacTCP Probe", app, 1)
 
