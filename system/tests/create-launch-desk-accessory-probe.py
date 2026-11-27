@@ -123,7 +123,7 @@ end
 printf "LAUNCH_DESK_ACCESSORY_SELECTED_DRIVER_OK\\n"
 quit 0
 end
-run -desk-resource 18 "{root}/.romaw/Apps/Accessory"
+run -32bit -syszone 2m -applzone 7m -system 7.1.1 -desk-resource 18 "{root}/.romaw/Apps/Accessory"
 quit 2
 """
     )
