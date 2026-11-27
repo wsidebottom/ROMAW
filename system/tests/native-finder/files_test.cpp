@@ -211,6 +211,44 @@ int main()
             auto packed = read_bytes(osx / L"._Document");
             assert(Bytes(packed.begin() + 50, packed.begin() + 82) == info);
             assert(!fs::exists(osx / L".finf") && !fs::exists(osx / L".rsrc"));
+
+            // A SUBST drive's root is the storage boundary even when Win32
+            // cannot return a volume mount point for the source pathname.
+            wchar_t alias[] = L"X:";
+            const auto backing = L"\\??\\" + split.wstring();
+            wchar_t mapped[32768]{};
+            bool mapped_drive = false;
+            for (const wchar_t letter : std::wstring(L"XVPQUTKR")) {
+                alias[0] = letter;
+                if (!QueryDosDeviceW(alias, mapped, std::size(mapped))) {
+                    mapped_drive = DefineDosDeviceW(DDD_RAW_TARGET_PATH | DDD_NO_BROADCAST_SYSTEM, alias,
+                                                     backing.c_str()) != 0;
+                    if (mapped_drive)
+                        break;
+                }
+            }
+            assert(mapped_drive);
+            auto alias_root = fs::path(std::wstring(alias) + L"\\");
+            auto alias_destination = root / L"Desktop";
+            fs::create_directory(alias_destination);
+            write(alias_destination / L".DS_Store", {});
+            bool copied_from_alias = false;
+            try {
+                auto job = conversions.start({alias_root / L"Document"}, alias_destination);
+                wait(job);
+                copied_from_alias = job->state == CopyJob::complete;
+            }
+            catch (const std::exception& e) {
+                std::cerr << "SUBST source copy: " << e.what() << "\n";
+            }
+            assert(DefineDosDeviceW(DDD_REMOVE_DEFINITION | DDD_EXACT_MATCH_ON_REMOVE | DDD_RAW_TARGET_PATH |
+                                        DDD_NO_BROADCAST_SYSTEM,
+                                    alias, backing.c_str()));
+            assert(copied_from_alias);
+            assert(read_bytes(alias_destination / L"Document") == (Bytes{1, 2, 3}));
+            assert(mac_file(alias_destination / L"Document").fork == resource);
+            assert(read_bytes(split / L".finf/Document") == info && read_bytes(split / L".rsrc/Document") == resource);
+
             auto tree = conversions.start({split}, osx);
             wait(tree);
             assert(tree->state == CopyJob::complete);

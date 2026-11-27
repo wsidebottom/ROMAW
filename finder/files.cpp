@@ -583,9 +583,16 @@ StorageFormat destination_format(fs::path directory)
     if (fs::is_regular_file(directory))
         directory = directory.parent_path();
     wchar_t volume[32768]{};
-    if (!GetVolumePathNameW(directory.c_str(), volume, std::size(volume)))
+    const auto drive = directory.root_name().wstring();
+    // SUBST drive letters expose a directory as a volume. Windows can reject
+    // GetVolumePathNameW for their roots or return a path below the alias.
+    // Inherit metadata only from directories visible on the substituted drive.
+    const bool substituted = drive.size() == 2 && drive.back() == L':' &&
+                             QueryDosDeviceW(drive.c_str(), volume, std::size(volume)) &&
+                             wcsncmp(volume, L"\\??\\", 4) == 0 && volume[5] == L':';
+    if (!substituted && !GetVolumePathNameW(directory.c_str(), volume, std::size(volume)))
         win_error(GetLastError());
-    const auto boundary = fs::path(volume).lexically_normal();
+    const auto boundary = substituted ? directory.root_path() : fs::path(volume).lexically_normal();
     for (;;) {
         if (fs::exists(directory / L".DS_Store"))
             return StorageFormat::osx;
