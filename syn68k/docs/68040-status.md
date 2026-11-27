@@ -41,7 +41,25 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: nonfinite FPU arithmetic (2026-11-27)
+## Latest validated bundle: FPU frame EA legality and cache burst inhibit (2026-11-27)
+
+Commit bfc1477e shares FSAVE/FRESTORE effective-address legality between
+checked execution and generated code. The mapped suite passed 56,191 frame
+cases, and cold and warm AOT each trapped 20 reserved EA and privilege cases
+before operand access. The bundle includes 339c7934, which handles per-beat
+cache burst inhibit independently of allocation inhibit. Both x64 ABIs
+passed 66 cache cycle tests and 96 MOVE16 retry and partial-abort tests.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT and saved-state checks passed.
+The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
+startup. It is current at build/68040-current/bin. The previous bundle is
+retained at build/68040-pre-frameea1-bin-20261127.
+
+CPU build ID 7be28ea0624fae3dabc6e64a3415e2e22e9036f64945123a3e77ed09bb1aad39
+Archive SHA256 27a0c37e776d5d9318f4aa86641d89a9e5dde2621a70d4eee86eee9436434178
+Audit build/68040-frameea1-output/68040-frameea1-source-audit.json
+
+## Previous validated bundle: nonfinite FPU arithmetic (2026-11-27)
 
 Commit f0aa0751 generates ordinary nonfinite arithmetic results with
 the 68040's NaN payload and operand selection rules. The register and
