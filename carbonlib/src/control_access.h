@@ -281,6 +281,13 @@ static int carbon_control_range(ROMlib_carbon_ppc_frame* call, enum ROMlib_contr
     AuxCtlHandle aux = ROMlib_live_control_aux(control);
     if (!aux)
         return carbon_saved_control_range(call, control, field, set, name, entry);
+    /* The saved Control Manager links classic AuxCtlRec handles into the
+       same list. Only ROMAW-created controls have the appended range data. */
+    const INTEGER saved_error = MemErr;
+    const Size aux_size = GetHandleSize((Handle)aux);
+    MemErr = saved_error;
+    if (aux_size < (Size)(sizeof(AuxCtlRec) + sizeof(ROMlib_aux_control_data)))
+        return carbon_saved_control_range(call, control, field, set, name, entry);
 
     int32 range[4];
     ROMlib_control_read_range(control, aux, range);
