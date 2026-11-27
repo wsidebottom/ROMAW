@@ -63,6 +63,7 @@ extern OSErr C_unixmount(CInfoPBRec* cbp);
 #if defined(CYGWIN32)
 extern uint32 ROMlib_macdrives;
 extern uint32 ROMlib_dosdrives;
+extern uint32 ROMlib_skipdrives;
 #endif
 
 enum { STANDARD_HEIGHT = 200, STANDARD_WIDTH = 348 };

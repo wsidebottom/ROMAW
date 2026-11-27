@@ -19,6 +19,7 @@
 static int fail;
 static jmp_buf allocation_error;
 char ROMlib_startdir[1024] = "D:\\ROMAW";
+uint32 ROMlib_skipdrives;
 
 static void* path_malloc(size_t size)
 {
@@ -43,6 +44,18 @@ int main(void)
     char *path, *large = malloc(1000001);
     assert(large);
     assert(!copystr(NULL));
+    assert(!host_drive_skipped("C:/Apps"));
+    ROMlib_skipdrives = (1U << ('C' - 'A')) | (1U << ('Z' - 'A'));
+    assert(host_drive_skipped("C:/Apps"));
+    assert(host_drive_skipped("c:\\Apps"));
+    assert(host_drive_skipped("z:/"));
+    assert(!host_drive_skipped("D:/Apps"));
+    assert(!host_drive_skipped("/Apps"));
+    assert(!host_drive_skipped("ROMAW:Apps"));
+    assert(!host_drive_skipped(NULL));
+    assert(!host_drive_skipped(""));
+    assert(!host_drive_skipped("[ :/"));
+    ROMlib_skipdrives = 0;
     strcpy(ROMlib_userdir, "C:/Users/Test/.romaw");
     path = copystr("@/Apps");
     assert(!strcmp(path, "C:\\Users\\Test\\.romaw\\Apps"));

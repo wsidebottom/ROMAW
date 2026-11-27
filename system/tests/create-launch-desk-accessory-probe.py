@@ -52,7 +52,10 @@ def main():
     apps = folder / ".romaw/Apps"
     apps.mkdir(parents=True, exist_ok=True)
     (apps / "System Folder").mkdir(exist_ok=True)
-    (folder / ".romaw/ROMAW.prefs").write_text("[HostDrives]\nSidecarDrives=none\n")
+    runtime = Path(sys.argv[2]).resolve()
+    (folder / ".romaw/ROMAW.prefs").write_text(
+        f"[HostDrives]\nSidecarDrives=none\nMacDirectoryCount=1\nMacDirectory1={runtime.as_posix()}\n"
+    )
     original = ROOT / "system/obj/tests/startup-display"
     data = (original / "StartupDisplayProbe.ad").read_bytes()
     double = AppleDouble((original / "%StartupDisplayProbe.ad").read_bytes())
@@ -90,7 +93,7 @@ end
     parent = (
         common
         + f"""break C_ExitToShell
-run -32bit -syszone 2m -applzone 7m -system 7.1.1 "{root}/.romaw/Apps/Probe"
+run -skipdrives A-Z -32bit -syszone 2m -applzone 7m -system 7.1.1 "{root}/.romaw/Apps/Probe"
 delete breakpoints
 set $fixture_path="{root}/.romaw/Apps/Accessory"
 source {script.as_posix()}
@@ -123,7 +126,7 @@ end
 printf "LAUNCH_DESK_ACCESSORY_SELECTED_DRIVER_OK\\n"
 quit 0
 end
-run -32bit -syszone 2m -applzone 7m -system 7.1.1 -desk-resource 18 "{root}/.romaw/Apps/Accessory"
+run -skipdrives A-Z -32bit -syszone 2m -applzone 7m -system 7.1.1 -desk-resource 18 "{root}/.romaw/Apps/Accessory"
 quit 2
 """
     )

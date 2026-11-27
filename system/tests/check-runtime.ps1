@@ -685,7 +685,7 @@ function Invoke-Check-launch-desk-accessory {
     $ROMAW = (Resolve-Path -LiteralPath $ROMAW).Path
     # Build system/tests/startup-display first, using its README instructions.
     $fixture = Join-Path $root ('build/launch-desk-accessory.' + [guid]::NewGuid().ToString('N'))
-    & python (Join-Path $PSScriptRoot 'create-launch-desk-accessory-probe.py') $fixture
+    & python (Join-Path $PSScriptRoot 'create-launch-desk-accessory-probe.py') $fixture (Split-Path $ROMAW -Parent)
     if ($LASTEXITCODE -ne 0) { throw 'Accessory fixture generation failed' }
     foreach ($test in @('parent', 'child')) {
         $log = Join-Path $fixture "$test.log"
@@ -698,7 +698,7 @@ function Invoke-Check-launch-desk-accessory {
         if ($process.ExitCode -ne 0) { throw "Accessory $test test failed; see $fixture" }
         $output = Get-Content -LiteralPath $log -Raw
         $markers = if ($test -eq 'parent') {
-            @('GET_ACTIVE_TASK_INFO_STACK_AND_BOUNDS_OK', 'GET_LEGACY_PROCESS_INFO_STACK_AND_BOUNDS_OK', 'GET_SWITCH_INFO_STACK_AND_BOUNDS_OK', 'LCLIP_ABOVE_STACK_AND_LAYER_OK', 'LAUNCH_DESK_ACCESSORY_STACK_AND_RESOURCE_OK', 'LAUNCH_DESK_ACCESSORY_NAMED_CHILD_OK')
+            @('SKIP_DRIVES_PRESERVES_PROFILE_VOLUME_OK', 'GET_ACTIVE_TASK_INFO_STACK_AND_BOUNDS_OK', 'GET_LEGACY_PROCESS_INFO_STACK_AND_BOUNDS_OK', 'GET_SWITCH_INFO_STACK_AND_BOUNDS_OK', 'LCLIP_ABOVE_STACK_AND_LAYER_OK', 'LAUNCH_DESK_ACCESSORY_STACK_AND_RESOURCE_OK', 'LAUNCH_DESK_ACCESSORY_NAMED_CHILD_OK')
         }
         else {
             @('LAUNCH_DESK_ACCESSORY_SELECTED_DRIVER_OK')

@@ -345,6 +345,15 @@ storage convention. See
 layouts and command-line settings. Drive selection concerns host volumes;
 it does not make ISO or compressed images writable.
 
+For older classic Finders that require Desktop files on every host drive,
+`-skipdrives A-Z` omits the host drive roots, including the drives containing
+the executable and profile. The mapped `ROMAW:` Apps volume and explicitly
+mapped compatible folders remain available. Applications on an omitted host
+root must be inside one of those mapped folders to launch. The executable's
+runtime resources must also be in a mapped folder; for a fully filtered launch,
+place the staged runtime under the profile's Apps folder or explicitly map its
+installation directory as compatible.
+
 Host drive and mapped-folder volume names can be changed in Finder. Names are
 saved in [HostVolumeNames], keyed by the normalized host root (for example,
 C:/=Macintosh HD). Special key characters are percent-escaped. The displayed

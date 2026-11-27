@@ -280,6 +280,18 @@ PRIVATE boolean_t root_directory_p(char* path, dev_t our_dev)
 
 PUBLIC char* ROMlib_volumename;
 
+static BOOLEAN host_drive_skipped(const char* path)
+{
+#if defined(CYGWIN32)
+    unsigned char letter = path ? path[0] : 0;
+    if (letter >= 'a' && letter <= 'z')
+        letter -= 'a' - 'A';
+    if (letter >= 'A' && letter <= 'Z' && path[1] == ':')
+        return (ROMlib_skipdrives & (1U << (letter - 'A'))) != 0;
+#endif
+    return FALSE;
+}
+
 PRIVATE void ROMlib_automount_helper(char* path, char* aliasp)
 {
     struct stat sbuf;
@@ -342,7 +354,7 @@ PRIVATE void ROMlib_automount_helper(char* path, char* aliasp)
             do {
                 if (sret == 0 && S_ISDIR(sbuf.st_mode)) {
                     if (root_directory_p(path, sbuf.st_dev) || aliasp) {
-                        if (i == 0) {
+                        if (i == 0 && (aliasp || !host_drive_skipped(path))) {
                             ROMlib_volumename = path;
                             dqp = ROMlib_addtodq(2048L * 50, ROMlib_volumename, 0, OURUFSDREF, DRIVE_FLAGS_FIXED, 0);
                             if (!dqp) {
@@ -384,12 +396,14 @@ PRIVATE void ROMlib_automount_helper(char* path, char* aliasp)
                     else {
                         if (i == 1) {
                             vcbp = ROMlib_vcbbybiggestunixname(path);
-                            if (!vcbp) {
+                            if (!vcbp && !host_drive_skipped(path)) {
                                 retval = nsvErr;
                                 goto mount_failed;
                             }
-                            dirid = ST_INO(sbuf);
-                            ROMlib_dbm_store((VCBExtra*)vcbp, path, &dirid, FALSE);
+                            if (vcbp) {
+                                dirid = ST_INO(sbuf);
+                                ROMlib_dbm_store((VCBExtra*)vcbp, path, &dirid, FALSE);
+                            }
                         }
                     }
                 }

@@ -654,7 +654,7 @@ static void illegal_mode(void)
 #if defined(CYGWIN32)
 PUBLIC uint32 ROMlib_macdrives; /* default computed at runtime */
 PUBLIC uint32 ROMlib_dosdrives = ~0;
-PRIVATE uint32 skipdrives = 0;
+PUBLIC uint32 ROMlib_skipdrives = 0;
 
 PRIVATE boolean_t drive_number_from_letter(char c, int* nump)
 {
@@ -1108,9 +1108,9 @@ A2(PUBLIC, int, main, int, argc, char**, argv)
         ROMlib_dosdrives = parse_drive_opt("dosdrives", arg);
 
     if (opt_val(common_db, "skipdrives", &arg)) {
-        skipdrives = parse_drive_opt("skipdrives", arg);
-        ROMlib_macdrives &= ~skipdrives;
-        ROMlib_dosdrives &= ~skipdrives;
+        ROMlib_skipdrives = parse_drive_opt("skipdrives", arg);
+        ROMlib_macdrives &= ~ROMlib_skipdrives;
+        ROMlib_dosdrives &= ~ROMlib_skipdrives;
     }
 
 #endif

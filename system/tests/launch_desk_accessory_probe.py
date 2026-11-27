@@ -67,6 +67,16 @@ def dispatch(file, name, expected):
 
 
 try:
+    queue = value("(void *)GetVCBQHdr()")
+    volume = int.from_bytes(memory.read_memory(queue + 2, 4), "big")
+    volumes = []
+    while volume:
+        record = bytes(memory.read_memory(base + volume, 80))
+        volumes.append(record[45 : 45 + record[44]])
+        assert len(volumes) < 32, "volume queue cycle"
+        volume = int.from_bytes(record[:4], "big")
+    assert len(volumes) == 2 and b"ROMAW" in volumes, volumes
+    print("SKIP_DRIVES_PRESERVES_PROFILE_VOLUME_OK")
     assert value("(int)ROMlib_osdispatch_available(1)")
     task_info = allocate(24)
     for slots, output in ((0, 0), (-1, task_info + 2), (1, task_info + 2)):
