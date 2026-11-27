@@ -382,6 +382,8 @@ def main():
         get_item = api(user, "GetDlgItem", w.HWND, w.HWND, c.c_int)
         get_parent = api(user, "GetParent", w.HWND, w.HWND)
         get_client = api(user, "GetClientRect", w.BOOL, w.HWND, c.POINTER(w.RECT))
+        get_bounds = api(user, "GetWindowRect", w.BOOL, w.HWND, c.POINTER(w.RECT))
+        get_style = api(user, "GetWindowLongW", w.LONG, w.HWND, c.c_int)
         enabled = api(user, "IsWindowEnabled", w.BOOL, w.HWND)
         is_window = api(user, "IsWindow", w.BOOL, w.HWND)
         allocate = api(kernel, "VirtualAllocEx", pointer, w.HANDLE, pointer, word, w.DWORD, w.DWORD)
@@ -744,9 +746,17 @@ def main():
         verify_file(folder / "PickerPayload/Test")
         command(win_folder, "Blocked.zip", "extract_here_command")
         notice = wait(lambda: next(iter(windows_of(None, "FinderNotice")), None), "Windows extraction refusal")
-        assert post(notice, 0x111, 1, 0)
+        wait(lambda: not enabled(desktop), "modal alert blocks Finder")
+        assert not get_style(notice, -16) & (0x00C00000 | 0x00080000)  # WS_CAPTION | WS_SYSMENU
+        outer, inner = w.RECT(), w.RECT()
+        assert get_bounds(notice, c.byref(outer)) and get_client(notice, c.byref(inner))
+        assert outer.right - outer.left - inner.right == outer.bottom - outer.top - inner.bottom == 16
+        border_point = ((outer.top + 2) & 0xFFFF) << 16 | ((outer.left + 12) & 0xFFFF)
+        assert send(notice, 0x84, 0, border_point) == 18  # WM_NCHITTEST, HTBORDER
+        assert post(notice, 0x100, 13, 0)  # Return activates OK.
+        wait(lambda: not is_window(notice) and enabled(desktop), "dismiss alert and re-enable Finder")
         assert not (windows / "ForbiddenPayload").exists()
-        print("PASS classic picker acceptance/cancellation and Windows destination refusal", flush=True)
+        print("PASS classic picker and titleless modal alert frame, focus and Return dismissal", flush=True)
         command(win_folder, "OrdinaryWindows", "copy_command")
         time.sleep(0.15)
         assert post(win_copy_folder, 0x111, commands["paste_command"], 0)

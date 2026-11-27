@@ -3533,7 +3533,33 @@ struct Notice {
     std::wstring simple_name{};
     bool changing_find = false;
     bool about = false;
+
+    bool is_alert() const { return !about && !find && !input; }
 };
+
+// Match the dBoxProc frame used by the classic Window Manager.
+constexpr int alert_frame = 8;
+
+void paint_alert_frame(HWND window, HDC dc)
+{
+    RECT bounds{};
+    GetWindowRect(window, &bounds);
+    OffsetRect(&bounds, -bounds.left, -bounds.top);
+    RECT content = bounds;
+    InflateRect(&content, -alert_frame, -alert_frame);
+    int saved = SaveDC(dc);
+    if (!saved)
+        return;
+    ExcludeClipRect(dc, content.left, content.top, content.right, content.bottom);
+    fill(dc, bounds, RGB(255, 255, 255));
+    for (auto [inset, shade] : {std::pair{0, 0}, std::pair{1, 221}, std::pair{2, 187},
+                                std::pair{3, 221}, std::pair{4, 0}}) {
+        RECT rule = bounds;
+        InflateRect(&rule, -inset, -inset);
+        frame(dc, rule, RGB(shade, shade, shade));
+    }
+    RestoreDC(dc, saved);
+}
 
 enum FindControl { find_toggle = 11057, find_field = 11052, find_relation, find_value, find_batch, find_scope };
 
@@ -3723,13 +3749,55 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     auto* data = reinterpret_cast<Notice*>(GetWindowLongPtrW(w, GWLP_USERDATA));
     if (msg == WM_NCCREATE) {
         data = static_cast<Notice*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
-        if (!data->about)
+        if (!data->about && !data->is_alert())
             decorate(w);
         SetPropW(w, L"FinderWhite", reinterpret_cast<HANDLE>(1));
         SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
     }
     if (!data)
         return DefWindowProcW(w, msg, wp, lp);
+    if (data->is_alert()) {
+        LRESULT result{};
+        if (owner_draw(msg, lp, result))
+            return result;
+        switch (msg) {
+        case WM_NCCALCSIZE: {
+            auto* bounds = wp ? &reinterpret_cast<NCCALCSIZE_PARAMS*>(lp)->rgrc[0] : reinterpret_cast<RECT*>(lp);
+            InflateRect(bounds, -alert_frame, -alert_frame);
+            return 0;
+        }
+        case WM_NCPAINT: {
+            HDC dc = GetWindowDC(w);
+            if (dc) {
+                paint_alert_frame(w, dc);
+                ReleaseDC(w, dc);
+            }
+            return 0;
+        }
+        case WM_NCACTIVATE:
+            return TRUE;
+        case WM_NCHITTEST: {
+            POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ScreenToClient(w, &point);
+            RECT client{};
+            GetClientRect(w, &client);
+            return PtInRect(&client, point) ? HTCLIENT : HTBORDER;
+        }
+        case WM_PARENTNOTIFY:
+            if (LOWORD(wp) == WM_CREATE)
+                style_text_control(reinterpret_cast<HWND>(lp));
+            break;
+        case WM_CTLCOLORSTATIC:
+            SetBkColor(reinterpret_cast<HDC>(wp), RGB(255, 255, 255));
+            return reinterpret_cast<LRESULT>(GetStockObject(WHITE_BRUSH));
+        case WM_ERASEBKGND: {
+            RECT client{};
+            GetClientRect(w, &client);
+            fill(reinterpret_cast<HDC>(wp), client, RGB(255, 255, 255));
+            return TRUE;
+        }
+        }
+    }
     if (msg == WM_CREATE) {
         RECT r;
         GetClientRect(w, &r);
@@ -3939,8 +4007,9 @@ static int run_notice(HWND owner, Notice data)
     draw_text(dc, data.text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, old);
     ReleaseDC(nullptr, dc);
-    int width = alert_width + 4;
-    int height = std::clamp(int(measured.bottom) + (data.input ? 88 : 52), alert_height, 600) + 21;
+    int width = alert_width + (data.is_alert() ? 2 * alert_frame : 4);
+    int height = std::clamp(int(measured.bottom) + (data.input ? 88 : 52), alert_height, 600) +
+                 (data.is_alert() ? 2 * alert_frame : 21);
     RECT area;
     GetWindowRect(root ? root : GetDesktopWindow(), &area);
     if (data.find) {
@@ -3954,9 +4023,10 @@ static int run_notice(HWND owner, Notice data)
     if (data.find && data.find->query.field == FindField::name)
         data.simple_name = data.find->query.text;
     HWND focus = GetFocus(), previous = front;
-    DWORD style = WS_POPUP | (data.about ? WS_CLIPCHILDREN : WS_CAPTION | WS_SYSMENU);
+    bool document_frame = !data.about && !data.is_alert();
+    DWORD style = WS_POPUP | (document_frame ? WS_CAPTION | WS_SYSMENU : WS_CLIPCHILDREN);
     const wchar_t* title = data.about ? L"About ROMAW" : data.find ? L"Find" : L"Finder";
-    HWND dialog = CreateWindowExW(data.about ? 0 : WS_EX_DLGMODALFRAME, L"FinderNotice", title, style,
+    HWND dialog = CreateWindowExW(document_frame ? WS_EX_DLGMODALFRAME : 0, L"FinderNotice", title, style,
                                   area.left + (area.right - area.left - width) / 2,
                                   area.top + (area.bottom - area.top - height) / 2, width, height, root, nullptr,
                                   c.hInstance, &data);
