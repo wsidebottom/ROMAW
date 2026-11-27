@@ -252,6 +252,18 @@ P2(PUBLIC pascal trap, void, SetCtlColor, ControlHandle, ctl, CCTabHandle, ctab)
     }
 }
 
+static void unlink_control_hierarchy(ControlHandle control)
+{
+    ROMlib_detach_control(control);
+    const uint32 supervisor = US_TO_SYN68K(control);
+    for (ControlHandle candidate = WINDOW_CONTROL_LIST(CTL_OWNER(control)); candidate;
+         candidate = CTL_NEXT_CONTROL(candidate)) {
+        ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(candidate);
+        if (extra && extra->supervisor == supervisor)
+            extra->supervisor = 0;
+    }
+}
+
 static void dispose_single_control(ControlHandle c, boolean_t notify)
 {
     MAKE_HIDDEN(ControlHandle);
@@ -263,14 +275,6 @@ static void dispose_single_control(ControlHandle c, boolean_t notify)
     if (notify)
         HideControl(c);
     ROMlib_forget_control_font_style(c);
-    ROMlib_detach_control(c);
-    const uint32 supervisor = US_TO_SYN68K(c);
-    for (ControlHandle candidate = WINDOW_CONTROL_LIST(CTL_OWNER(c)); candidate;
-         candidate = CTL_NEXT_CONTROL(candidate)) {
-        AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(candidate));
-        if (aux && ROMlib_aux_control_extra(aux)->supervisor == supervisor)
-            ROMlib_aux_control_extra(aux)->supervisor = 0;
-    }
     if (notify)
         CTL_CALL_EXCURSION(c, { CTLCALL(c, dispCntl, 0); });
 
@@ -293,35 +297,48 @@ static void dispose_single_control(ControlHandle c, boolean_t notify)
     DisposHandle((Handle)c);
 }
 
-static void dispose_control(ControlHandle c, boolean_t notify)
+static int dispose_control(ControlHandle control, boolean_t notify,
+                           int (*dispose_saved)(ControlHandle, void*), void* opaque)
 {
-    if (!c || !STARH(c))
-        return;
-    ControlHandle current = c;
+    if (!control || !STARH(control))
+        return 1;
+    ControlHandle current = control;
     for (;;) {
-        AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(current));
-        uint32 child = aux ? ROMlib_aux_control_extra(aux)->first_child : 0;
-        if (child) {
-            current = MR(child);
+        ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(current);
+        if (extra && extra->first_child) {
+            current = MR(extra->first_child);
             continue;
         }
-        const int finished = current == c;
-        uint32 parent = aux ? ROMlib_aux_control_extra(aux)->parent : 0;
-        dispose_single_control(current, !finished || notify);
+        const int finished = current == control;
+        const uint32 parent = extra ? extra->parent : 0;
+        const boolean_t saved = extra && extra->saved_range;
+        unlink_control_hierarchy(current);
+        if (saved && dispose_saved) {
+            if (!dispose_saved(current, opaque))
+                return 0;
+        }
+        else
+            dispose_single_control(current, !finished || notify);
         if (finished || !parent)
-            break;
+            return 1;
         current = MR(parent);
     }
 }
 
+PUBLIC int ROMlib_dispose_control_hierarchy(ControlHandle control, int (*dispose_saved)(ControlHandle, void*),
+                                           void* opaque)
+{
+    return dispose_control(control, TRUE, dispose_saved, opaque);
+}
+
 PUBLIC void ROMlib_abort_custom_control(ControlHandle control)
 {
-    dispose_control(control, FALSE);
+    dispose_control(control, FALSE, NULL, NULL);
 }
 
 P1(PUBLIC pascal trap, void, DisposeControl, ControlHandle, c) /* IMI-321 */
 {
-    dispose_control(c, TRUE);
+    dispose_control(c, TRUE, NULL, NULL);
 }
 
 P1(PUBLIC pascal trap, void, KillControls, WindowPtr, w) /* IMI-321 */

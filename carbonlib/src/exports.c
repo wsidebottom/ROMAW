@@ -332,6 +332,27 @@ static int carbon_TEGetPoint(ROMlib_carbon_ppc_frame* call)
     return carbon_point_result(call, 0x0ef4, 0xebe, 0x08);
 }
 
+static int carbon_dispose_saved_control(ControlHandle control, void* opaque)
+{
+    ROMlib_carbon_ppc_frame saved_call = *(const ROMlib_carbon_ppc_frame*)opaque;
+    saved_call.words[0] = US_TO_SYN68K(control);
+    return carbon_vector_DisposeControl(&saved_call);
+}
+
+static int carbon_DisposeControl(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = call->words[0]
+                                ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof *control, 0)
+                                : NULL;
+    if (ROMlib_live_control_aux(control)) {
+        const ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(control);
+        if (extra && (extra->saved_range || extra->parent || extra->first_child ||
+                      ROMlib_native_control_kind(control) == ROMlib_root_control_proc))
+            return ROMlib_dispose_control_hierarchy(control, carbon_dispose_saved_control, call);
+    }
+    return carbon_vector_DisposeControl(call);
+}
+
 static int carbon_SetControlSupervisor(ROMlib_carbon_ppc_frame* call)
 {
     ControlHandle control = call->words[0]
@@ -4312,7 +4333,7 @@ static const ROMlib_carbon_export exports[] = {
     {"CopyPalette", carbon_vector_CopyPalette, ROMLIB_CARBON_PPC_FRAME, 0x78f, "InterfaceLib", ROMLIB_CARBON_PPC_ONLY},
     {"DisposeCIcon", carbon_vector_DisposeCIcon, ROMLIB_CARBON_PPC_FRAME, 0x5a0, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
-    {"DisposeControl", carbon_vector_DisposeControl, ROMLIB_CARBON_PPC_FRAME, 0x77e, "InterfaceLib",
+    {"DisposeControl", carbon_DisposeControl, ROMLIB_CARBON_PPC_FRAME, 0x77e, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"DisposeDialog", carbon_vector_DisposeDialog, ROMLIB_CARBON_PPC_FRAME, 0x6ca, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},

@@ -101,6 +101,9 @@ extern ControlHandle ROMlib_control_hit_target(ControlHandle control);
 extern INTEGER ROMlib_handle_control_click(ControlHandle control, Point where, INTEGER modifiers, ProcPtr action);
 extern INTEGER ROMlib_handle_control_key(ControlHandle control, INTEGER key, INTEGER character, INTEGER modifiers);
 extern void ROMlib_detach_control(ControlHandle control);
+extern ROMlib_aux_control_data* ROMlib_control_hierarchy_storage(ControlHandle control);
+extern int ROMlib_dispose_control_hierarchy(ControlHandle control, int (*dispose_saved)(ControlHandle, void*),
+                                           void* opaque);
 extern OSErr ROMlib_auto_embed_control(ControlHandle control, WindowPtr window);
 extern OSErr ROMlib_set_user_pane_callback(ControlHandle control, ResType tag, const Byte* data);
 extern OSErr ROMlib_set_control_text(ControlHandle control, Size size, const Byte* data);

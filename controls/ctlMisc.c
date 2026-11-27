@@ -296,10 +296,22 @@ PUBLIC OSErr ROMlib_set_user_pane_callback(ControlHandle control, ResType tag, c
     return noErr;
 }
 
+PUBLIC ROMlib_aux_control_data* ROMlib_control_hierarchy_storage(ControlHandle control)
+{
+    AuxCtlHandle aux = control ? HIDDEN_NATIVE(*lookup_aux_ctl(control)) : NULL;
+    if (!aux)
+        return NULL;
+    const INTEGER saved_error = MemErr;
+    const Size size = GetHandleSize((Handle)aux);
+    MemErr = saved_error;
+    return size >= (Size)(sizeof(AuxCtlRec) + sizeof(ROMlib_aux_control_data))
+               ? ROMlib_aux_control_extra(aux)
+               : NULL;
+}
+
 static ROMlib_aux_control_data* control_hierarchy(uint32 address)
 {
-    AuxCtlHandle aux = address ? HIDDEN_NATIVE(*lookup_aux_ctl(MR(address))) : NULL;
-    return aux ? ROMlib_aux_control_extra(aux) : NULL;
+    return address ? ROMlib_control_hierarchy_storage(MR(address)) : NULL;
 }
 
 PUBLIC void ROMlib_detach_control(ControlHandle control)
