@@ -731,7 +731,8 @@ PUBLIC OSErr ROMlib_control_focus(WindowPtr window, ControlHandle control, INTEG
     }
     INTEGER chosen = 0;
     if (control && part && !edit_item) {
-        if (!CTL_VIS(control) || CTL_HILITE(control) == INACTIVE || !control_has_feature(control, 1U << 2))
+        if (!CTL_VIS(control) || CTL_HILITE(control) == INACTIVE ||
+            (!system_user_pane_upp(CTL_DEFPROC(control), TICK("foci")) && !control_has_feature(control, 1U << 2)))
             return -30582;
         chosen = send_focus(control, part);
         target = ROMlib_live_control_aux(control);
