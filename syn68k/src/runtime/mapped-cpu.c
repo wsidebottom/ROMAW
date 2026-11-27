@@ -699,7 +699,8 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                                                    .fault_address = fp.fault_address,
                                                    .vector = fp.vector,
                                                    .format = fp.format,
-                                                   .access = fp.access};
+                                                   .access = fp.access,
+                                                   .prefetch_address = fp.prefetch_address};
                 if (fp.store_state == 1 && fp.store_frame_clear <= 1 &&
                     (!fp.store_frame_clear || ((opcode & ~63u) == 0xf300 && !fp.post_vector))) {
                     result->step.store_state = 2;
@@ -925,8 +926,12 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
            decoded target so extension words are never read a second time. */
         unsigned branch_class = (opcode >> 8) & 15, displacement = opcode & 255;
         int dbcc = (opcode & 0xf0f8) == 0x50c8;
-        if (dbcc || ((opcode & 0xf000) == 0x6000 && branch_class >= 2)) {
+        int fbcc = (opcode & 0xff80) == 0xf280 && (opcode & 31);
+        int fdbcc = (opcode & 0xfff8) == 0xf248;
+        if (dbcc || fbcc || fdbcc || ((opcode & 0xf000) == 0x6000 && branch_class >= 2)) {
             unsigned extra = dbcc || displacement == 0 ? 2 : displacement == 255 ? 4 : 0;
+            if (fbcc || fdbcc)
+                extra = fdbcc || (opcode & 0x40) ? 4 : 2;
             uint32_t fallthrough = cpu->pc + 2 + extra;
             uint32_t target = result->step.prefetch_address;
             uint32_t paths[] = {fallthrough, target};

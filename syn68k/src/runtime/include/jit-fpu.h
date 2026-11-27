@@ -1162,10 +1162,7 @@ static int fpu_mapped_conditional(emitter* out, unsigned opcode, uint32 pc)
         if (branch || (ea >= 8 && ea < 16)) {
             byte(out, 0x05);
             word32(out, pc + (branch ? 2 : 4));
-            FP_BYTES(out, 0xf6, 0xc0, 1); // TEST AL,1: retain only an odd target.
-            unsigned even = jump(out, 0x84);
             fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, exception.prefetch_address), 0);
-            patch(out, even, out->size);
         }
     }
     fpu_constant(out, offsetof(FPUInvocation, next), pc + next, 0);
