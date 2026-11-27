@@ -17,6 +17,7 @@
 /* SPDX-License-Identifier: MIT */
 /* Real integer instruction stepping over disjoint code/data physical pages. */
 #include "syn68k_public.h"
+#include "ea.h"
 #include "integer.h"
 #include "jit-x64.h"
 #include <assert.h>
@@ -162,9 +163,10 @@ static Syn68kIntegerStep step(uint32_t pc, unsigned vector)
     Syn68kIntegerStep result;
 #ifdef GENERATE_X64_CODE
     if (run_native) {
-        unsigned opcode = (ram[physical(pc)] << 8) | ram[physical(pc + 1)];
+        Syn68kEAContext fetch = {.pc = pc, .memory = &memory};
+        unsigned opcode = syn68k_ea_fetch_memory(&fetch, pc, 2);
+        assert(!fetch.error);
         assert(syn68k_x64_mapped_mmu(pc, opcode, &memory, &result) == 1);
-        ++reads; /* The mapped dispatcher receives the already fetched opcode. */
     }
     else
 #endif
@@ -296,8 +298,11 @@ static void registers_and_faults(void)
                     assert(result.access.request == 0x20FFF && result.fault_address == 0x21000);
                     assert(!!result.access.bus_error == !!bus && result.access.writing == writing);
                     assert(EM_A0 == 0x21003 && EM_D0 == 0xAABBCCDD && EM_A7 == 0x76543210);
-                    if (writing)
+                    assert(!!result.store_state == writing);
+                    if (writing) {
+                        assert(result.store_next == 0x10004);
                         assert(ram[data_physical(0x20FFF, fc)] == 0xAA);
+                    }
                 }
 
     fixture(0, 0);
