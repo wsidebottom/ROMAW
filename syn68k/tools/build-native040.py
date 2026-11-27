@@ -75,7 +75,7 @@ ROOTS = (
     "cache_snoop",
     "bus_snoop",
     "rte",
-    "restore_moveout",
+    "restore_writeback",
 )
 
 

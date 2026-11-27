@@ -1501,7 +1501,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         patch(out, full_stage, out->size);
         patch(out, short_stage, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
-        fpu_call_packet(out, NATIVE040_RESTORE_MOVEOUT, offsetof(FPUInvocation, restore), failures, &count);
+        fpu_call_packet(out, NATIVE040_RESTORE_WRITEBACK, offsetof(FPUInvocation, restore), failures, &count);
         fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, restore.applied), 0);
         byte(out, 0);
         failures[count++] = jump(out, 0x84);
@@ -1509,7 +1509,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, restore.size), 0);
             fpu_cpu(out, 0x01, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
         }
-        unsigned moveout_done = fpu_jump(out);
+        unsigned writeback_done = fpu_jump(out);
         patch(out, conversion, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         failures[count++] = fpu_jump(out);
@@ -1543,7 +1543,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             byte(out, 4);
         }
         patch(out, quiescent_done, out->size);
-        patch(out, moveout_done, out->size);
+        patch(out, writeback_done, out->size);
     }
     completed = fpu_jump(out);
 finish:

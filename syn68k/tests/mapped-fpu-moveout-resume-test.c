@@ -29,7 +29,8 @@ static void resume_case(unsigned config, unsigned page, unsigned post, unsigned 
     put32(base, size == 52 ? 0x41300000 : 0x41600000);
     if (stages & 2) {
         put32(base + 0x18, 0x3fff0000);
-        put32(base + 0x1c, 0x80000000); /* Exact WBTEMP = 1. */
+        put32(base + 0x1c, old_null ? 0x80000040 : 0x80000000);
+        ram[base + 0x3c] = old_null ? 2 : 0; /* A half extended ULP beyond 1 + 2^-25. */
         put32(base + 0x34, (0x12u | destination << 7) << 16); /* Older FADD. */
     }
     put32(base + size - 36, (0x6000u | format << 10) << 16);
@@ -58,7 +59,7 @@ static void resume_case(unsigned config, unsigned page, unsigned post, unsigned 
         assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
     Syn68kMappedCPU cpu = {.pc=0x10000, .memory=&memory, .native=config & 1};
     Syn68kMappedRun run;
-    require_direct_restore = (config & 1) && stages == 4;
+    require_direct_restore = config & 1;
     uint64 executions = syn68k_native_execution_count();
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
     if (require_direct_restore)
@@ -79,8 +80,16 @@ static void resume_case(unsigned config, unsigned page, unsigned post, unsigned 
                 cpu_state.fpu.frame_size,cpu_state.fpu.pending_vector);
         abort();
     }
-    if ((stages & 2) && !older_pending)
-        before.regs[destination] = (Syn68kFP80){0x3fff, UINT64_C(0x8000000000000000)};
+    if ((stages & 2) && !older_pending) {
+        uint64_t significand = UINT64_C(0x8000000000000000);
+        if (old_null) {
+            if (precision != 1)
+                significand |= UINT64_C(1) << 38;
+            if (rounding == 3)
+                significand += UINT64_C(1) << (precision == 1 ? 40 : precision == 2 ? 11 : 0);
+        }
+        before.regs[destination] = (Syn68kFP80){0x3fff, significand};
+    }
     assert(!memcmp(before.regs, cpu_state.fpu.regs, sizeof before.regs));
     assert(cpu_state.fpu.fpcr == before.fpcr && cpu_state.fpu.fpsr == before.fpsr &&
            cpu_state.fpu.fpiar == before.fpiar && !cpu_state.fpu.null_state);

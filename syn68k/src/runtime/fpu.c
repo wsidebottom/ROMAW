@@ -989,14 +989,9 @@ static void state_frame(FPUContext* context)
             unsigned command3 = 0, writeback_operation = 0;
             if (writeback) {
                 command3 = restored[0x34] * 256 + restored[0x35];
-                writeback_operation = (command3 & 0x43) | ((command3 & 0x20) >> 3) | ((command3 & 0x1c) << 1);
-                unsigned simple_writeback = writeback_operation & ~4u;
-                int valid_writeback =
-                    writeback_operation == 5 || writeback_operation == 0x20 || writeback_operation == 0x22 ||
-                    writeback_operation == 0x23 || writeback_operation == 0x24 || writeback_operation == 0x27 ||
-                    writeback_operation == 0x28 || simple_writeback == 0x41 || simple_writeback == 0x60 ||
-                    simple_writeback == 0x62 || simple_writeback == 0x63 || simple_writeback == 0x68;
-                recognized = valid_writeback && (!(stages & 4) || recognized || valid_arithmetic || move_out);
+                writeback_operation = fpu_writeback_operation(command3);
+                recognized = fpu_writeback_supported(writeback_operation) &&
+                             (!(stages & 4) || recognized || valid_arithmetic || move_out);
                 /* The writeback pipeline is older than the conversion
                  pipeline; E3 wins even over an E1 signaling NaN. */
                 pending = fpu_exception_vector(cpu_state.fpu.fpsr & (cpu_state.fpu.fpcr | FP_OVFL | FP_UNFL) &
@@ -1014,14 +1009,8 @@ static void state_frame(FPUContext* context)
                          : 0;
             cpu_state.fpu.null_state = 0;
             if (writeback && !pending) {
-                floatx80 wb = frame_read_extended(restored + 0x18);
-                uint64 low = (uint64)(restored[0x3c] & 3) << 62;
-                low |= !!(restored[0x3d] & 0x80);
-                unsigned precision = writeback_operation == 0x24 || writeback_operation == 0x27 ? 96
-                                     : writeback_operation & 0x40 ? writeback_operation & 4 ? 64 : 32
-                                                                  : floatx80_rounding_precision;
-                FPUdivision completed = fpu_intermediate(wb.high & 0x8000, wb.high & 0x7fff, wb.low, low, precision);
-                set_fp((command3 >> 7) & 7, completed.result);
+                set_fp((command3 >> 7) & 7,
+                       fpu_frame_writeback(restored, writeback_operation, floatx80_rounding_precision));
                 stages &= ~2u;
                 cpu_state.fpu.frame[0x48] &= ~2u;
                 pending = unsupported ? 55

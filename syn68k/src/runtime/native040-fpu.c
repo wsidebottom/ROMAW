@@ -30,9 +30,9 @@ register Syn68kNative040FPU* native_fpu __asm__("r12");
 #include "fpu_arithmetic.h"
 #include "fpu_convert.h"
 
-/* An E1 move-out has already performed its arithmetic and destination writes.
-   Restore its frame and deferred exception without replaying either. */
-__attribute__((used, noinline)) void native040_restore_moveout(Syn68kNative040Restore* packet)
+/* The E3 writeback is older than E1. An E1 move-out can retain an
+   exception, but its arithmetic and destination writes have completed. */
+static void restore_writeback(Syn68kNative040Restore* packet)
 {
     packet->applied = 0;
     unsigned size = packet->size;
@@ -40,7 +40,10 @@ __attribute__((used, noinline)) void native040_restore_moveout(Syn68kNative040Re
         return;
     const uint8* image = packet->image;
     unsigned command = image[size - 36] * 256u + image[size - 35];
-    if ((image[size - 28] & 6) != 4 || command >> 13 != 3)
+    unsigned stages = image[size - 28] & 6;
+    int moveout = command >> 13 == 3;
+    if (!stages || ((stages & 4) && !moveout) || ((stages & 2) && size != 100) ||
+        (size == 100 && image[8] == 0xfe && !moveout))
         return;
     unsigned format = command >> 10 & 7;
     unsigned nonmaskable = 0x1800; // Overflow and underflow.
@@ -48,14 +51,38 @@ __attribute__((used, noinline)) void native040_restore_moveout(Syn68kNative040Re
         nonmaskable |= 0x6000; // Integer move-outs also retain SNAN and OPERR.
     Syn68kFPUState* fpu = &packet->cpu->fpu;
     unsigned pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | nonmaskable));
-    if (size == 100 && ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || format == 3 || format == 7))
+    if ((stages & 4) && size == 100 &&
+        ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || format == 3 || format == 7))
         pending = 55; // Unsupported data takes priority over conversion status.
-    if (pending == 50)
+    int wrote_back = 0;
+    if (stages & 2) {
+        unsigned command3 = image[0x34] * 256u + image[0x35];
+        unsigned operation = fpu_writeback_operation(command3);
+        if (!fpu_writeback_supported(operation))
+            return;
+        unsigned older_pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | 0x1800) & 0x1a00);
+        if (older_pending)
+            pending = older_pending;
+        else {
+            unsigned precision = packet->entry_fpcr >> 6 & 3;
+            native_fpu->precision = precision == 1 ? 32 : precision == 2 ? 64 : 80;
+            native_fpu->rounding = packet->entry_fpcr >> 4 & 3;
+            floatx80 result = fpu_frame_writeback(image, operation, native_fpu->precision);
+            unsigned reg = command3 >> 7 & 7;
+            fpu->regs[reg].exponent = result.high;
+            fpu->regs[reg].significand = result.low;
+            stages &= ~2u;
+            wrote_back = 1;
+        }
+    }
+    else if (pending == 50)
         return; // The checked decoder delivers the invalid-stage format fault.
     for (unsigned i = 0; i < size; ++i)
         fpu->frame[i] = image[i];
-    fpu->frame_size = pending ? size : 0;
-    fpu->pending_vector = pending;
+    if (wrote_back)
+        fpu->frame[0x48] &= ~2u;
+    fpu->frame_size = stages && pending ? size : 0;
+    fpu->pending_vector = stages ? pending : 0;
     fpu->null_state = 0;
     packet->applied = 1;
 }
@@ -135,6 +162,7 @@ static void calculate(unsigned operation)
     __asm__(".text\n.p2align 4\n.globl native040_" #name "\nnative040_" #name ":\n" \
             "endbr64\n" ROOT_ENTER "call native040_" #name "_body\n" ROOT_LEAVE);
 
+ENTRY(restore_writeback, restore_writeback((Syn68kNative040Restore*)native_fpu))
 #define ROOT(name, operation) ENTRY(name, calculate(operation))
 
 ROOT(fadd, 0x22)

@@ -34,8 +34,9 @@ typedef struct {
 } Syn68kNative040RTE;
 
 typedef struct {
+    Syn68kNative040FPU arithmetic;
     CPUState* cpu;
-    unsigned size, applied;
+    unsigned size, applied, entry_fpcr;
     uint8 image[100];
 } Syn68kNative040Restore;
 #endif

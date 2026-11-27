@@ -63,6 +63,32 @@ static FPUdivision fpu_intermediate(unsigned sign, int exponent, uint64 high, ui
     return value;
 }
 
+static inline unsigned fpu_writeback_operation(unsigned command)
+{
+    return (command & 0x43) | ((command & 0x20) >> 3) | ((command & 0x1c) << 1);
+}
+
+static inline int fpu_writeback_supported(unsigned operation)
+{
+    unsigned simple = operation & ~4u;
+    return operation == 5 || operation == 0x20 || operation == 0x22 || operation == 0x23 || operation == 0x24 ||
+           operation == 0x27 || operation == 0x28 || simple == 0x41 || simple == 0x60 || simple == 0x62 ||
+           simple == 0x63 || simple == 0x68;
+}
+
+static inline floatx80 fpu_frame_writeback(const uint8* frame, unsigned operation, unsigned entry_precision)
+{
+    unsigned exponent = frame[0x18] * 256u + frame[0x19];
+    uint64 high = 0;
+    for (unsigned i = 0x1c; i < 0x24; ++i)
+        high = high << 8 | frame[i];
+    uint64 low = (uint64)(frame[0x3c] & 3) << 62 | !!(frame[0x3d] & 0x80);
+    unsigned precision = operation == 0x24 || operation == 0x27 ? 96
+                         : operation & 0x40 ? operation & 4 ? 64 : 32
+                                            : entry_precision;
+    return fpu_intermediate(exponent & 0x8000, exponent & 0x7fff, high, low, precision).result;
+}
+
 static FPUdivision fpu_calculate_ex(floatx80 destination, floatx80 source, unsigned operation, unsigned precision,
                                     int destination_exponent, int source_exponent)
 {

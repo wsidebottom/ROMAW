@@ -2967,7 +2967,7 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
                             .ea = {.cpu = &cpu_state, .context = {.pc = pc + 4, .memory = memory}},
                             .next = pc + 4,
                             .original_null = cpu_state.fpu.null_state,
-                            .restore = {.cpu = &cpu_state},
+                            .restore = {.cpu = &cpu_state, .entry_fpcr = cpu_state.fpu.fpcr},
                             .entry = {cpu_state.fpu.fpcr, cpu_state.fpu.null_state, cpu_state.fpu.frame_size == 0}};
     if (memory->native)
         packet.registers.ram = packet.ea.ram = packet.memory.ram = memory->native->ram;
