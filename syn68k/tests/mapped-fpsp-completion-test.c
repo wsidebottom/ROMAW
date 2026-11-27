@@ -30,12 +30,19 @@ static void completion_case(unsigned config, unsigned page, unsigned busy, unsig
     ram[base + size - 40] = 0x60;
     static const unsigned commands[] = {0x040e, 0x0401, 0x5c00}; /* FSIN, FINT, FMOVECR. */
     put32(base + size - 36, commands[command_kind] << 16);
-    ram[base + size - 28] = 4 | (flags_kind & 1); /* E1, optionally S. */
+    ram[base + size - 28] = (busy == 2 ? 6 : 4) | (flags_kind & 1); /* E1, optional E3 and S. */
     ram[base + size - 27] = flags_kind & 2 ? 0x80 : 0; /* Optionally X. */
     put32(base + size - 12, 0x7fff0000);
     put32(base + size - 8, 0xc0000000);
     cpu_state.fpu.fpcr = precision * 0x40 + rounding * 0x10 + (mask & 1 ? 0x4000 : 0);
     cpu_state.fpu.fpsr = 0x08000088 | (mask & 2 ? 0x4000 : 0);
+    if (busy == 2) {
+        put32(base + 0x18, 0x3fff0000);
+        put32(base + 0x1c, 0x80000000); /* Older E3 value = 1. */
+        put32(base + 0x34, 0x00120000); /* Older FADD writeback to FP0. */
+        if (mask == 3)
+            cpu_state.fpu.fpsr |= 0x1000;
+    }
     cpu_state.fpu.fpiar = 0x12345678;
     for (unsigned r = 0; r < 8; ++r)
         cpu_state.fpu.regs[r] = (Syn68kFP80){0x4000 + r, UINT64_C(0x8000000000000000) + r};
@@ -58,15 +65,17 @@ static void completion_case(unsigned config, unsigned page, unsigned busy, unsig
         assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
     Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = config & 1};
     Syn68kMappedRun run;
-    require_direct_restore = (config & 1) && flags_kind == 3;
+    require_direct_restore = config & 1;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
     require_direct_restore = 0;
     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
     assert(EM_A0 == 0x20040 + post * size && EM_A1 == 0x20100);
+    if (busy == 2 && mask != 3)
+        before.regs[0] = (Syn68kFP80){0x3fff, UINT64_C(0x8000000000000000)};
     assert(!memcmp(before.regs, cpu_state.fpu.regs, sizeof before.regs));
     assert(before.fpcr == cpu_state.fpu.fpcr && before.fpsr == cpu_state.fpu.fpsr &&
            before.fpiar == cpu_state.fpu.fpiar && !cpu_state.fpu.null_state);
-    unsigned expected_vector = flags_kind == 3 ? mask == 3 ? 54 : 0 : 11;
+    unsigned expected_vector = busy == 2 ? mask == 3 ? 53 : 11 : flags_kind == 3 ? mask == 3 ? 54 : 0 : 11;
     if (cpu_state.fpu.pending_vector != expected_vector || cpu_state.fpu.frame_size != (expected_vector ? size : 0)) {
         fprintf(stderr, "FPSP completion config=%u page=%u busy=%u post=%u precision=%u rounding=%u mask=%u "
                         "command=%u flags=%u old=%u frame=%u pending=%u\n",
@@ -100,7 +109,7 @@ int main(int argc, char** argv)
     unsigned count = 0;
     for (unsigned config = 0; config < 4; ++config)
         for (unsigned page = 0; page < 2; ++page)
-            for (unsigned busy = 0; busy < 2; ++busy)
+            for (unsigned busy = 0; busy < 3; ++busy)
                 for (unsigned post = 0; post < 2; ++post)
                     for (unsigned precision = 0; precision < 3; ++precision)
                         for (unsigned rounding = 0; rounding < 4; ++rounding)

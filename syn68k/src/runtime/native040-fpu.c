@@ -148,12 +148,12 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     int moveout = command >> 13 == 3;
     int arithmetic = fpu_restore_arithmetic(command);
     unsigned operation = command & 127;
-    int software_completed = stages == 4 && (command >> 13 == 0 || command >> 13 == 2) &&
-                             ((command & 0xfc00) == 0x5c00 ||
-                              (operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1))) &&
-                             (image[size - 28] & 1) && (image[size - 27] & 0x80);
+    int software = (command >> 13 == 0 || command >> 13 == 2) &&
+                   ((command & 0xfc00) == 0x5c00 ||
+                    (operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1)));
+    int software_completed = software && (image[size - 28] & 1) && (image[size - 27] & 0x80);
     int conversion = size == 100 && image[8] == 0xfe;
-    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic && !software_completed) ||
+    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic && !software) ||
         ((stages & 2) && size != 100))
         return;
     unsigned format = command >> 10 & 7;
@@ -162,10 +162,13 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         nonmaskable |= 0x6000; // Integer move-outs also retain SNAN and OPERR.
     Syn68kFPUState* fpu = &packet->cpu->fpu;
     unsigned pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | nonmaskable));
-    if ((stages & 4) && size == 100 &&
-        ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
-         (moveout && (format == 3 || format == 7))))
-        pending = 55; // Unsupported data takes priority over conversion status.
+    int unsupported = (stages & 4) && size == 100 &&
+                      ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
+                       (moveout && (format == 3 || format == 7)));
+    if (unsupported)
+        pending = 55;
+    else if (software && !software_completed && stages == 4)
+        pending = 11;
     unsigned precision = packet->entry_fpcr >> 6 & 3;
     native_fpu->precision = precision == 1 ? 32 : precision == 2 ? 64 : 80;
     native_fpu->rounding = packet->entry_fpcr >> 4 & 3;
@@ -183,6 +186,8 @@ static void restore_writeback(Syn68kNative040Restore* packet)
             writeback = fpu_frame_writeback(image, operation, native_fpu->precision);
             writeback_reg = command3 >> 7 & 7;
             stages &= ~2u;
+            if ((stages & 4) && software && !unsupported)
+                pending = 11;
         }
     }
     else if ((moveout && pending == 50) || ((stages & 4) && arithmetic && pending && (pending < 49 || pending > 55)))
