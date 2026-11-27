@@ -32,15 +32,62 @@ first sample without retouching the source. Two persistent instruction-view
 bodies are emitted cold and both load warm with zero compilation. The matrix is
 registered in the MMU and AOT groups.
 
-This is a regression/documentation follow-up. The 179 CPU inputs, four archives
-and all 66 staged/current binary hashes remain identical to the accepted
-buffered-victim bundle. The new audit is
+That regression/documentation follow-up left the 179 CPU inputs, four archives
+and all 66 staged/current binary hashes identical to the accepted
+buffered-victim bundle; the later prefetch implementation below changes four CPU
+files. The new audit is
 `build/68040-wt-descriptor-output/source-audit.json`. Dirty-descriptor injected
 states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: buffered-victim arbitration (2026-11-27)
+## Latest validated bundle: nonresident exception prefetch (2026-11-27)
+
+Source checkpoint `4cd04dfd` adds the MC68040UMAD item 15 translation
+boundary before literal ILLEGAL, A-line, CHK-family and newly unimplemented FPU
+exceptions at the end of a page. A nonresident following page produces format-7
+access error at the original opcode, with FA at that next page. New FPU pending
+frames are not posted before this check; existing pending frames retain their
+preinstruction priority. CHK-owned flags are deferred until its exception wins.
+
+The 8,187-case matrix passes optimized, grouped MMU and cold/warm AOT checks.
+It covers missing root/pointer/leaf entries, 4K/8K pages, all CPU/native-memory
+combinations, privilege/trace, cache absent/disabled/enabled, guest physical table
+repair/PFLUSHA/RTE, callback changes and already-pending FPU frames. Resident,
+middle-of-page and paging-disabled controls retain their original behavior.
+The exact fixture rejects the preceding accepted archive. Wrapped translation
+helpers prove checked execution remains checked and native execution uses the
+closed translation root. Cold AOT emits 19 bodies with 1,544 intra-process
+hits; warm execution emits none and records 1,563 hits.
+
+All 22 native groups pass on both x64 ABIs, each verifying 47 closed roots and
+no imports. The independently generated Windows image matches the CPU archive.
+Full cache, FPU, MMU, flat MOVE16, saved-state/FPSP and cold/warm AOT groups pass.
+FPU validation retains 1,714,422 reported cases. Mapped stream recovery retains
+8,107,168 cases and AOT recovery retains 3,618,920 per process, with zero warm
+compilation and 1,262,191 warm hits. The WT descriptor matrix retains 201,603
+cases per process; earlier injected dirty-descriptor cases remain stress tests.
+
+The rebuilt 66-file bundle at `build/68040-prefetch2-stage/bin` is promoted
+to `build/68040-current/bin`. Its predecessor is retained at
+`build/68040-pre-prefetch2-bin-20261127`. The audit at
+`build/68040-prefetch2-output/68040-prefetch2-source-audit.json` verifies
+179 CPU inputs, 169 fixtures and four identical archives. Four CPU files changed.
+Application base is `4cd04dfdeadaf26af3e6cd227ebd6ce82625a46b`.
+CPU build ID is `4aa1e942069540daaaba0a69f5cc6930abff95bcd0ccc4fca01108107be7fdaf`;
+archive SHA256 is `4db0b44d424666314182b97b119254ade54daaf3fef8aaacc91048b893e9fdc0`.
+Help, Browser and 68K Speedometer startup pass with
+30,954/77,160 native entries and null checkpoints; Speedometer makes one
+FPU query. These are startup smokes, not broad application compatibility tests.
+
+The goal remains active. This checks the nonresident translation part of the
+exception boundary; it does not fetch the physical next instruction word or
+implement a general pending-prefetch queue. Other instruction-access priorities,
+further locked/active-stack/double-fault continuations and remaining FPU
+busy/FPSP, encoding and special-value audits remain open. Full 68040 and
+ROMAW-wide paged Toolbox compatibility remain unproven.
+
+## Previous validated bundle: buffered-victim arbitration (2026-11-27)
 
 Source checkpoints `2a0ed97f` and `db140772` expose a dirty replacement
 buffer during a board-controlled grant after data fill and before writeback.

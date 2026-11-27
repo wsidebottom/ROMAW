@@ -122,3 +122,19 @@ groups. This follow-up changes regression coverage and descriptor-placement
 claims; CPU sources, build identity, archives and staged binaries are unchanged.
 See [the placement audit](68040-status.md) before using the older dirty-descriptor
 injection as architectural evidence.
+
+## Nonresident exception-boundary validation (2026-11-27)
+
+The 8,187-case mapped prefetch matrix passes cold/warm AOT runs. Cold execution
+emits 19 bodies and records 1,544 intra-process hits; warm execution emits none
+and records 1,563 hits. Runtime-owned prefetch callbacks and memory bindings are
+supplied live in each process. The matrix covers forced-exception/FPU priority,
+missing table levels, guest repair/PFLUSHA/RTE, cache/privilege/trace variants,
+callback effects and already-pending FPU frames, with wrapped helpers rejecting
+checked translation fallback on native paths.
+
+The full grouped validation and rebuilt/promoted bundle are audited at
+`build/68040-prefetch2-output/68040-prefetch2-source-audit.json`. The new
+memory layout and CPU sources produce a new build identity. Physical speculative
+instruction fills and a general pending-prefetch queue remain open work; see
+[the latest 68040 checkpoint](68040-status.md).
