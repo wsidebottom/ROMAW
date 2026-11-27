@@ -6,7 +6,8 @@
   Classes:   None.
 
   Functions: romaw_afp_connect, romaw_afp_close, romaw_afp_command,
-             romaw_afp_open_volume, romaw_afp_close_volume, romaw_afp_list_volumes.
+             romaw_afp_open_volume, romaw_afp_close_volume, romaw_afp_list_volumes,
+             romaw_afp_enumerate, romaw_afp_open_read_fork, romaw_afp_read_fork, romaw_afp_close_fork.
 
   Origin:    ROMAW implementation of AFP and the Data Stream Interface.
 
@@ -247,4 +248,94 @@ int32_t romaw_afp_list_volumes(romaw_afp_session* session, romaw_afp_volume_list
     }
     volumes->count = count;
     return 0;
+}
+
+static void put32(unsigned char* p, uint32_t value)
+{
+    put16(p, value >> 16);
+    put16(p + 2, value);
+}
+
+int32_t romaw_afp_enumerate(romaw_afp_session* session, uint16_t volume, uint32_t directory, uint32_t index,
+                            romaw_afp_entry* entry)
+{
+    /* One entry per call matches the classic indexed catalog API.
+       Request node ID and UTF-8 name from both files and directories. */
+    const uint16_t bitmap = 0x2100;
+    unsigned char request[24] = {68};
+    put16(request + 2, volume);
+    put32(request + 4, directory);
+    put16(request + 8, bitmap);
+    put16(request + 10, bitmap);
+    put16(request + 12, 1);
+    put32(request + 14, index);
+    put32(request + 18, 4096);
+    request[22] = 2;
+    unsigned char reply[4096];
+    unsigned size;
+    int32_t result = romaw_afp_command(session, request, sizeof request, reply, sizeof reply, &size);
+    if (result)
+        return result;
+    if (size < 22 || get16(reply) != bitmap || get16(reply + 2) != bitmap || get16(reply + 4) != 1)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned record_size = get16(reply + 6);
+    if (record_size < 20 || record_size > size - 6)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    const unsigned char* parameters = reply + 10;
+    unsigned param_size = record_size - 4;
+    unsigned name_offset = get16(parameters + 4);
+    if (name_offset < 10 || name_offset > param_size - 6)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned length = get16(parameters + name_offset + 4);
+    const unsigned char* name = parameters + name_offset + 6;
+    if (!length || length >= sizeof entry->name || length > param_size - name_offset - 6 || memchr(name, 0, length))
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    entry->node_id = get32(parameters);
+    entry->directory = !!(reply[8] & 0x80);
+    memcpy(entry->name, name, length);
+    entry->name[length] = 0;
+    return 0;
+}
+
+int32_t romaw_afp_open_read_fork(romaw_afp_session* session, uint16_t volume, uint32_t directory, const char* name,
+                                 int resource, uint16_t* fork)
+{
+    size_t length = strlen(name);
+    if (!length || length > 255)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned char request[274] = {26, resource ? 0x80 : 0};
+    put16(request + 2, volume);
+    put32(request + 4, directory);
+    put16(request + 10, 1);
+    request[12] = 3;
+    put32(request + 13, 0x08000103);
+    put16(request + 17, length);
+    memcpy(request + 19, name, length);
+    unsigned char reply[4];
+    unsigned size;
+    int32_t result = romaw_afp_command(session, request, 19 + length, reply, sizeof reply, &size);
+    if (result)
+        return result;
+    if (size != 4 || get16(reply) || !get16(reply + 2))
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    *fork = get16(reply + 2);
+    return 0;
+}
+
+int32_t romaw_afp_read_fork(romaw_afp_session* session, uint16_t fork, uint32_t offset, void* data, unsigned length,
+                            unsigned* received)
+{
+    unsigned char request[14] = {27};
+    put16(request + 2, fork);
+    put32(request + 4, offset);
+    put32(request + 8, length);
+    return romaw_afp_command(session, request, sizeof request, data, length, received);
+}
+
+int32_t romaw_afp_close_fork(romaw_afp_session* session, uint16_t fork)
+{
+    unsigned char request[4] = {4};
+    unsigned received;
+    put16(request + 2, fork);
+    return romaw_afp_command(session, request, sizeof request, NULL, 0, &received);
 }

@@ -35,8 +35,30 @@ int main(void)
         else
             error = romaw_afp_open_volume(session, volumes.items[index].name, &volume);
     }
-    if (!error)
-        error = romaw_afp_close_volume(session, volume);
+    if (!error) {
+        romaw_afp_entry entry;
+        for (uint32_t index = 1; index <= 64; ++index) {
+            error = romaw_afp_enumerate(session, volume, 2, index, &entry);
+            if (error || entry.directory)
+                continue;
+            uint16_t fork;
+            error = romaw_afp_open_read_fork(session, volume, 2, entry.name, 0, &fork);
+            if (error)
+                break;
+            unsigned char data;
+            unsigned received;
+            error = romaw_afp_read_fork(session, fork, 0, &data, 1, &received);
+            if (error == -5009)
+                error = 0;
+            int32_t closed = romaw_afp_close_fork(session, fork);
+            if (!error)
+                error = closed;
+            break;
+        }
+        int32_t closed = romaw_afp_close_volume(session, volume);
+        if (!error)
+            error = closed;
+    }
     romaw_afp_close(session);
     if (error) {
         fprintf(stderr, "AFP volume test returned %ld\n", (long)error);
