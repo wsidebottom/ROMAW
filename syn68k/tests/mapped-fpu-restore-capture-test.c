@@ -192,7 +192,13 @@ static void capture_matrix(void)
                                         cpu = setup(config, page, kind, frame, post, old, fpcr);
                                         before = cpu_state;
                                         callback_mode = variation == 3 ? 0 : variation + 1;
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                                        expect_direct_restore = config & 1;
+#endif
                                         assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                                        expect_direct_restore = 0;
+#endif
                                         if (run.reason != SYN68K_MAPPED_BUDGET ||
                                             memcmp(&cpu_state.fpu, &expected, sizeof expected))
                                             fprintf(
@@ -440,6 +446,47 @@ static void pending_arithmetic_frames(void)
         }
 }
 
+static void dyadic_replay_operations(void)
+{
+    const unsigned operations[] = {0x20, 0x22, 0x23, 0x28, 0x24, 0x27};
+    for (unsigned i = 0; i < sizeof operations / sizeof *operations; ++i)
+        for (unsigned variant = 0; variant < 4; ++variant) {
+            unsigned frame = 0x20040;
+            int divide_inexact = variant == 2 && (operations[i] == 0x20 || operations[i] == 0x24);
+            Syn68kFPUState expected;
+            for (unsigned config = 0; config < 2; ++config) {
+                Syn68kMappedCPU cpu = setup(config, 0, 6, frame, 1, 0, 0);
+                ram[physical(frame + 0x41)] = operations[i] | 0x80; /* FP1 differs from the older E3 FP0. */
+                if (variant == 1)
+                    ram[physical(frame + 0x58)] |= 0x80;
+                if (variant == 3)
+                    ram[physical(frame + 0x3d)] = 0x80; /* Older E3 rounding sets INEX. */
+                if (divide_inexact) {
+                    ram[physical(frame + 0x58)] = 0x40;
+                    ram[physical(frame + 0x59)] = 0;
+                    ram[physical(frame + 0x5c)] = 0xc0; /* ETEMP = 3. */
+                }
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                unsigned captures = complete_captures;
+                expect_direct_restore = config && !divide_inexact && variant != 3;
+#endif
+                Syn68kMappedRun run;
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                expect_direct_restore = 0;
+                assert(complete_captures - captures == (unsigned)(config && (divide_inexact || variant == 3)));
+#endif
+                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
+                assert(EM_A0 == frame + 100);
+                if (!config)
+                    expected = cpu_state.fpu;
+                else
+                    assert(!memcmp(&cpu_state.fpu, &expected, sizeof expected));
+                ++cases;
+            }
+        }
+}
+
 int CAPTURE_TEST_ENTRY(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -454,13 +501,13 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     quiescent_frame_matrix();
     short_frame_command_matrix();
     pending_arithmetic_frames();
+    dyadic_replay_operations();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
     printf("%u FRESTORE captured-frame/volatile-read/body-fault/ATC/state cases passed; emitted=%llu hits=%llu\n",
            cases, (unsigned long long)emitted, (unsigned long long)loaded);
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
-    assert(complete_captures);
     printf("%u complete native FRESTORE images handed off\n", complete_captures);
 #endif
     return 0;

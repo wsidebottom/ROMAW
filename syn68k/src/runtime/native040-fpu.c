@@ -30,6 +30,38 @@ register Syn68kNative040FPU* native_fpu __asm__("r12");
 #include "fpu_arithmetic.h"
 #include "fpu_convert.h"
 
+static uint32 restore_long(const uint8* bytes)
+{
+    return (uint32)bytes[0] << 24 | (uint32)bytes[1] << 16 | (uint32)bytes[2] << 8 | bytes[3];
+}
+
+static floatx80 restore_operand(const uint8* bytes)
+{
+    return (floatx80){restore_long(bytes) >> 16, (uint64)restore_long(bytes + 4) << 32 | restore_long(bytes + 8)};
+}
+
+static int restore_dyadic(const uint8* frame, unsigned size, unsigned operation, FPUdivision* result)
+{
+    switch (operation) {
+    case 0x20:
+    case 0x22:
+    case 0x23:
+    case 0x28:
+    case 0x24:
+    case 0x27:
+        break;
+    default:
+        return 0;
+    }
+    floatx80 source = restore_operand(frame + size - 12), target = restore_operand(frame + size - 24);
+    unsigned se = source.high & 0x7fff, te = target.high & 0x7fff;
+    if (!se || !te || se == 0x7fff || te == 0x7fff || !(source.low >> 63) || !(target.low >> 63) ||
+        ((frame[size - 40] & 0x10) && (se & 0x4000)) || ((frame[size - 32] & 0x10) && (te & 0x4000)))
+        return 0;
+    *result = fpu_calculate_ex(target, source, operation, native_fpu->precision, te, se);
+    return !native_fpu->flags && !result->status;
+}
+
 /* The E3 writeback is older than E1. An E1 move-out can retain an
    exception, but its arithmetic and destination writes have completed. */
 static void restore_writeback(Syn68kNative040Restore* packet)
@@ -43,8 +75,9 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     unsigned stages = image[size - 28] & 6;
     int moveout = command >> 13 == 3;
     int arithmetic = fpu_restore_arithmetic(command);
-    if (!stages || ((stages & 4) && !moveout && !arithmetic) || ((stages & 2) && size != 100) ||
-        (size == 100 && image[8] == 0xfe && !moveout))
+    int conversion = size == 100 && image[8] == 0xfe;
+    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic) ||
+        ((stages & 2) && size != 100))
         return;
     unsigned format = command >> 10 & 7;
     unsigned nonmaskable = 0x1800; // Overflow and underflow.
@@ -56,7 +89,11 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
          (moveout && (format == 3 || format == 7))))
         pending = 55; // Unsupported data takes priority over conversion status.
-    int wrote_back = 0;
+    unsigned precision = packet->entry_fpcr >> 6 & 3;
+    native_fpu->precision = precision == 1 ? 32 : precision == 2 ? 64 : 80;
+    native_fpu->rounding = packet->entry_fpcr >> 4 & 3;
+    floatx80 writeback = {0};
+    unsigned writeback_reg = 8;
     if (stages & 2) {
         unsigned command3 = image[0x34] * 256u + image[0x35];
         unsigned operation = fpu_writeback_operation(command3);
@@ -66,26 +103,36 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         if (older_pending)
             pending = older_pending;
         else {
-            if ((stages & 4) && arithmetic && !pending)
-                return; // E1 arithmetic must resume after the older writeback.
-            unsigned precision = packet->entry_fpcr >> 6 & 3;
-            native_fpu->precision = precision == 1 ? 32 : precision == 2 ? 64 : 80;
-            native_fpu->rounding = packet->entry_fpcr >> 4 & 3;
-            floatx80 result = fpu_frame_writeback(image, operation, native_fpu->precision);
-            unsigned reg = command3 >> 7 & 7;
-            fpu->regs[reg].exponent = result.high;
-            fpu->regs[reg].significand = result.low;
+            writeback = fpu_frame_writeback(image, operation, native_fpu->precision);
+            writeback_reg = command3 >> 7 & 7;
             stages &= ~2u;
-            wrote_back = 1;
         }
     }
-    else if ((moveout && pending == 50) ||
-             (arithmetic && (pending < 49 || pending > 55)))
-        return; // Arithmetic replay and invalid stages retain checked continuations.
+    else if ((moveout && pending == 50) || ((stages & 4) && arithmetic && pending && (pending < 49 || pending > 55)))
+        return; // Invalid stages use the checked format exception.
+    int replay = arithmetic && !pending && ((stages & 4) || conversion);
+    FPUdivision result;
+    if (replay && !restore_dyadic(image, size, command & 127, &result))
+        return;
     for (unsigned i = 0; i < size; ++i)
         fpu->frame[i] = image[i];
-    if (wrote_back)
+    if (writeback_reg < 8) {
+        fpu->regs[writeback_reg].exponent = writeback.high;
+        fpu->regs[writeback_reg].significand = writeback.low;
         fpu->frame[0x48] &= ~2u;
+    }
+    if (replay) {
+        unsigned reg = command >> 7 & 7;
+        fpu->regs[reg].exponent = result.result.high;
+        fpu->regs[reg].significand = result.result.low;
+        if (size == 100)
+            fpu->fpiar = restore_long(image + 0x28);
+        floatx80 condition = result.finite ? result.condition : result.result;
+        unsigned flags = condition.high & 0x8000 ? 0x08000000 : 0;
+        if (!(condition.high & 0x7fff) && !condition.low)
+            flags |= 0x04000000;
+        fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags;
+    }
     fpu->frame_size = stages && pending ? size : 0;
     fpu->pending_vector = stages ? pending : 0;
     fpu->null_state = 0;

@@ -1499,6 +1499,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         }
         unsigned quiescent_done = fpu_jump(out);
         patch(out, full_stage, out->size);
+        patch(out, conversion, out->size);
         patch(out, short_stage, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         fpu_call_packet(out, NATIVE040_RESTORE_WRITEBACK, offsetof(FPUInvocation, restore), failures, &count);
@@ -1510,9 +1511,6 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_cpu(out, 0x01, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
         }
         unsigned writeback_done = fpu_jump(out);
-        patch(out, conversion, out->size);
-        fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
-        failures[count++] = fpu_jump(out);
         patch(out, null_frame, out->size);
         // Exact architectural null reset, including padding and saved frame bytes.
         FP_BYTES(out, 0x57, 0x51, 0x48, 0x8d, 0xb9);
