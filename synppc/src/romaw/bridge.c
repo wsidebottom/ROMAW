@@ -1771,6 +1771,13 @@ PRIVATE BOOLEAN ppc_wait_next_event(INTEGER mask, EventRecord* event, LONGINT sl
     return result;
 }
 
+/* The saved EventsLib polls the same high-level queue as the native
+   Event Manager and separately selects borrowing or removing the event. */
+static BOOLEAN ppc_get_next_high_level_event(INTEGER mask, EventRecord* event, BOOLEAN remove)
+{
+    return event && (mask & highLevelEventMask) && hle_get_event(event, remove != 0);
+}
+
 PRIVATE BOOLEAN ppc_get_next_event(INTEGER mask, EventRecord* event)
 {
     return GetNextEvent(mask, event);
@@ -3803,6 +3810,7 @@ PRIVATE uint32 ppc_set_emulator_register(uint32 selector, uint32 value)
 }
 
 PRIVATE const ppc_native_import private_imports[] = {
+    {"GetNextHighLevelEvent", ppc_get_next_high_level_event, M3(1, 2, 5, 1)},
     {"SetEmulatorRegister", ppc_set_emulator_register, M2(4, 4, 4)},
     {"PBXGetVolInfoSync", ppc_PBXGetVolInfoSync, M1(2, 4)},
     {"HasDepth", C_HasDepth, PTOC_HasDepth},
