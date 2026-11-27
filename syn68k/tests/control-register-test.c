@@ -24,6 +24,14 @@
 #include <string.h>
 
 static int trapped;
+static int require_native_movec;
+extern syn68k_addr_t __real_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument);
+
+syn68k_addr_t __wrap_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument)
+{
+    assert(!require_native_movec || vector != 4 || (pc != 0x1000 && pc != 0x1004));
+    return __real_trap_direct(vector, pc, argument);
+}
 
 static syn68k_addr_t unexpected_trap(syn68k_addr_t address, void* argument)
 {
@@ -79,7 +87,7 @@ static void control_masks_and_privilege(void)
             assert(trapped == 8 && EM_D0 == 0x2468ace0);
             assert(cpu_state.sfc == sfc && cpu_state.dfc == dfc && cpu_state.cacr == cacr && cpu_state.vbr == vbr);
         }
-    const unsigned invalid[] = {0x802, 0xfff}; /* CAAR does not exist on 040. */
+    const unsigned invalid[] = {3, 4, 5, 6, 7, 0x802, 0x805, 0x806, 0x807, 0xfff}; /* No flat MMU or CAAR. */
     for (unsigned writing = 0; writing < 2; ++writing)
         for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; ++i) {
             destroy_blocks(0x1000, 32);
@@ -102,9 +110,12 @@ int main(int argc, char** argv)
     ROMlib_offset = (uintptr_t)memory;
     syn68k_set_memory_window(size, 0, 0);
     uint32 vectors[64] = {0};
-    int native = argc == 2 ? atoi(argv[1]) : 0;
+    int native = argc > 1 ? atoi(argv[1]) : 0;
+    int aot_run = argc > 2 ? atoi(argv[2]) : 0;
     initialize_68k_emulator(NULL, native, vectors, 0);
     native = syn68k_native_code_enabled();
+    require_native_movec = native;
+    uint64 hits_before = syn68k_aot_hit_count(), emits_before = syn68k_native_compile_count();
     uint32 initial_vbr = cpu_state.vbr;
     trap_install_handler(4, unexpected_trap, (void*)(uintptr_t)4);
     trap_install_handler(8, unexpected_trap, (void*)(uintptr_t)8);
@@ -136,8 +147,14 @@ int main(int argc, char** argv)
         }
     cpu_state.vbr = initial_vbr;
     control_masks_and_privilege();
-    printf("MOVEC directions, masks, privilege and illegal selectors passed (%s).\n",
-           native ? "native" : "interpreter");
+    uint64 hits = syn68k_aot_hit_count() - hits_before;
+    uint64 emits = syn68k_native_compile_count() - emits_before;
+    if (aot_run == 1)
+        assert(native && emits >= 4);
+    else if (aot_run == 2)
+        assert(native && hits >= 4 && emits == 0);
+    printf("MOVEC directions, masks, privilege and illegal selectors passed (%s; emitted=%llu hits=%llu).\n",
+           native ? "native" : "interpreter", (unsigned long long)emits, (unsigned long long)hits);
     VirtualFree(memory, 0, MEM_RELEASE);
     return 0;
 }

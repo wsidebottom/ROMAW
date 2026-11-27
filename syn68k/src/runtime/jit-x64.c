@@ -2142,7 +2142,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
     unsigned op = SWAPUW_IFLE(source[0]);
     unsigned cc = (op >> 8) & 15;
     out->variable_ea = 1;
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A) {
         /* Reserve the guard and the largest following inline FPU body before
            emitting either path, so a full buffer cannot leave a partial guard. */
         if (out->size + 4192 > sizeof out->bytes)
@@ -2160,7 +2160,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         fpu = fpu_register(out, op, pc);
     if (fpu)
         return fpu > 0;
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A) {
         if (out->size + 64 > sizeof out->bytes)
             return 0;
         flat_native_tail(out, pc, op);
@@ -2778,7 +2778,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
                   (op & 0xFFF8) == 0x4E50 || (op & 0xFFF8) == 0x4808 || (op & 0xFFF8) == 0x4E58 || op == 0x4E70 ||
                   ((op & 0xFF00) == 0x0E00 && (op & 0xC0) != 0xC0) || (op & 0xFFF0) == 0x4E60 ||
                   (op & 0xFFC0) == 0x40C0 || (op & 0xFFC0) == 0x42C0 || (op & 0xFFC0) == 0x44C0 ||
-                  (op & 0xFFC0) == 0x46C0 || op == 0x007C || op == 0x027C || op == 0x0A7C || (op & 0xFFFE) == 0x4E7A;
+                  (op & 0xFFC0) == 0x46C0 || op == 0x007C || op == 0x027C || op == 0x0A7C;
     if ((op & 0xF000) != 0x6000 && (op & 0xF0F8) != 0x50C8 && (op & 0xFF80) != 0x4E80 && op != 0x4E75 && op != 0x4E74 &&
         op != 0x4E77 && !syn68k_x64_memory_opcode(op) && !checked)
         return 0;
@@ -3180,7 +3180,7 @@ int syn68k_x64_flat_fpu(uint32 pc, unsigned opcode, Syn68kFPUStep* result)
     return run_fpu_packet(pc, opcode, &memory, result);
 }
 
-static uint32 flat_rte_run(uint32 pc)
+static uint32 flat_control_run(uint32 pc, unsigned opcode)
 {
     Syn68kMMU040 mmu = {0};
     Syn68kMMU040Memory memory = {.mmu = &mmu};
@@ -3188,7 +3188,7 @@ static uint32 flat_rte_run(uint32 pc)
     Syn68kIntegerStep step;
     int handled = 0;
     if (syn68k_memory_span(pc, 2) && flat_native_memory(&memory, &native))
-        handled = syn68k_x64_mapped_mmu(pc, 0x4e73, &memory, &step);
+        handled = syn68k_x64_mapped_mmu(pc, opcode, &memory, &step);
     if (!handled)
         return trap_direct(4, pc, 0);
     if (handled < 0)
@@ -3198,8 +3198,8 @@ static uint32 flat_rte_run(uint32 pc)
 
 static uint32 flat_native_run(uint32 pc, unsigned opcode)
 {
-    if (opcode == 0x4e73)
-        return flat_rte_run(pc);
+    if (opcode == 0x4e73 || (opcode & 0xfffe) == 0x4e7a)
+        return flat_control_run(pc, opcode);
     uint16 entry_sr = cpu_state.sr;
     Syn68kFPUStep step;
     int handled = syn68k_x64_flat_fpu(pc, opcode, &step);
@@ -3220,7 +3220,9 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     void* code = mapped_code(pc, opcode);
     if (!code)
         return 0;
-    FPUInvocation packet = {.memory = {.memory = memory}, .control = {.cpu = &cpu_state, .memory = memory}};
+    int flat = memory->native && memory->native->flat;
+    // Flat contexts can fetch commands but have no connected guest MMU registers.
+    FPUInvocation packet = {.memory = {.memory = memory}, .control = {.cpu = &cpu_state, .memory = flat ? NULL : memory}};
     if (memory->native)
         packet.memory.ram = memory->native->ram;
     packet.rte = (Syn68kNative040RTE){.cpu = &cpu_state, .memory = &packet.memory, .pc = pc};
@@ -3231,7 +3233,7 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         return 1;
     }
     if (packet.exit == FPU_EXIT_UNFETCHED) {
-        if (opcode == 0x4e73 && memory->native && memory->native->flat)
+        if (flat)
             return 0;
         return syn68k_integer_step_decoded(pc, opcode, memory, result) ? 1 : -1;
     }
