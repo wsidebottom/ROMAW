@@ -23,6 +23,14 @@
 #include <stdlib.h>
 
 static unsigned trapped;
+static int require_native_cache;
+extern syn68k_addr_t __real_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument);
+
+syn68k_addr_t __wrap_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument)
+{
+    assert(!require_native_cache || vector != 11 || pc != 0x1000);
+    return __real_trap_direct(vector, pc, argument);
+}
 
 static syn68k_addr_t cache_trap(syn68k_addr_t pc, void* argument)
 {
@@ -82,9 +90,12 @@ int main(int argc, char** argv)
     ROMlib_offset = (uintptr_t)memory;
     syn68k_set_memory_window(1024 * 1024, 0, 0);
     uint32 vectors[64] = {0};
-    int native = argc == 2 ? atoi(argv[1]) : 0;
+    int native = argc > 1 ? atoi(argv[1]) : 0;
+    int aot_run = argc > 2 ? atoi(argv[2]) : 0;
     initialize_68k_emulator(NULL, native, vectors, 0);
     native = syn68k_native_code_enabled();
+    require_native_cache = native;
+    uint64 hits_before = syn68k_aot_hit_count(), emits_before = syn68k_native_compile_count();
     trap_install_handler(4, cache_trap, (void*)(uintptr_t)4);
     trap_install_handler(8, cache_trap, (void*)(uintptr_t)8);
     trap_install_handler(11, cache_trap, (void*)(uintptr_t)11);
@@ -99,7 +110,14 @@ int main(int argc, char** argv)
                     if (scope && (cache & 2) && !reg)
                         coherency(opcode);
                 }
-    printf("68040 cache decoding, privilege, CCR and code coherency passed (%s).\n", native ? "native" : "interpreter");
+    uint64 hits = syn68k_aot_hit_count() - hits_before;
+    uint64 emits = syn68k_native_compile_count() - emits_before;
+    if (aot_run == 1)
+        assert(native && emits);
+    else if (aot_run == 2)
+        assert(native && hits && !emits);
+    printf("68040 cache decoding, privilege, CCR and code coherency passed (%s; emitted=%llu hits=%llu).\n",
+           native ? "native" : "interpreter", (unsigned long long)emits, (unsigned long long)hits);
     VirtualFree(memory, 0, MEM_RELEASE);
     return 0;
 }

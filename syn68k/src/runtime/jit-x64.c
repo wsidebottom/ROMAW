@@ -2150,17 +2150,29 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
     unsigned op = SWAPUW_IFLE(source[0]);
     unsigned cc = (op >> 8) & 15;
     out->variable_ea = 1;
-    if (mmu_translation_opcode(op)) {
+    int cache_control = (op & 0xff00) == 0xf400;
+    if (cache_control || mmu_translation_opcode(op)) {
         if (out->size + 96 > sizeof out->bytes)
             return 0;
         byte(out, 0x45); // XOR R9D,R9D. Exception frame format zero.
         byte(out, 0x31);
         byte(out, 0xc9);
+        if (cache_control && !(op & 0x18)) {
+            trap_tail(out, pc, 0, 4, RELOC_TRAP_EXCEPTION);
+            return 1;
+        }
         fpu_cpu(out, 0xf7, 0, offsetof(CPUState, sr));
         word32(out, SR_SUPERVISOR_BIT);
         unsigned user = jump(out, 0x84);
-        // The flat bus has no guest MMU or ATC. Both exceptions use format zero.
-        trap_tail(out, pc, 0, 11, RELOC_TRAP_EXCEPTION);
+        if (!cache_control)
+            trap_tail(out, pc, 0, 11, RELOC_TRAP_EXCEPTION);
+        else if (op & 0x80)
+            flat_native_tail(out, pc, op);
+        else {
+            // The flat data bus has no physical guest cache to maintain.
+            instruction_end(out, pc, 2);
+            byte(out, 0xc3);
+        }
         patch(out, user, out->size);
         trap_tail(out, pc, 0, 8, RELOC_TRAP_EXCEPTION);
         return 1;
@@ -3222,6 +3234,10 @@ static uint32 flat_control_run(uint32 pc, unsigned opcode)
 
 static uint32 flat_native_run(uint32 pc, unsigned opcode)
 {
+    if ((opcode & 0xff00) == 0xf400) {
+        destroy_blocks(0, -1);
+        return pc + 2;
+    }
     if (opcode == 0x4e73 || (opcode & 0xfffe) == 0x4e7a)
         return flat_control_run(pc, opcode);
     uint16 entry_sr = cpu_state.sr;

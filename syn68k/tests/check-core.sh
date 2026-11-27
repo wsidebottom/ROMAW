@@ -189,7 +189,7 @@ EOF
       syn68k/obj/tests/control-register-test.exe 1
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         syn68k/tests/cache-test.c syn68k/obj/src/runtime/libsyn68k.a \
-        -o syn68k/obj/tests/cache-test.exe
+        -Wl,--wrap=trap_direct -o syn68k/obj/tests/cache-test.exe
       syn68k/obj/tests/cache-test.exe 0
       syn68k/obj/tests/cache-test.exe 1
 
@@ -483,6 +483,13 @@ EOF
       SYN68K_AOT_CACHE=$(wslpath -m "$fixture/flat-movec")
       "$fixture/flat-movec-test.exe" 1 1
       "$fixture/flat-movec-test.exe" 1 2
+      mkdir "$fixture/flat-cache"
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        syn68k/tests/cache-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=trap_direct -o "$fixture/flat-cache-test.exe"
+      SYN68K_AOT_CACHE=$(wslpath -m "$fixture/flat-cache")
+      "$fixture/flat-cache-test.exe" 1 1
+      "$fixture/flat-cache-test.exe" 1 2
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-native-test.c \
         syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_mmu040_translate \
