@@ -629,6 +629,63 @@ static int is_cancel_key_event(const ROMlib_carbon_reference* ref, ROMlib_carbon
                                  ((CL(values[0]) & cmdKey) && (first == '.' || second == '.')));
 }
 
+// Discard input already queued before the cancel. Other event classes and
+// input posted after the cancel are still needed by the application.
+static int discard_input_through_cancel(const ROMlib_carbon_reference* ref, uint32_t queue, uint32_t cancel)
+{
+    uint32_t iterator, event = 0;
+    if (!cfp_private(ref, 0x43bf0, &queue, 1, &iterator))
+        return 0;
+    int ok = cfp_private(ref, 0x43cfc, &iterator, 1, &event);
+    while (ok && event) {
+        uint32_t event_class;
+        ok = cfp_private(ref, 0xb3360, &event, 1, &event_class);
+        if (ok && (event == cancel || event_class == TICK("mous") || event_class == TICK("keyb"))) {
+            const uint32_t remove[] = {queue, event};
+            ok = cfp_private(ref, 0xb33c0, remove, NELEM(remove), NULL);
+        }
+        if (event == cancel) {
+            const uint32_t monitor[] = {0x10, event};
+            ok = ok && cfp_private(ref, 0xb4c80, monitor, NELEM(monitor), NULL);
+            break;
+        }
+        if (ok)
+            ok = cfp_private(ref, 0x43d8c, &iterator, 1, &event);
+    }
+    return cfp_private(ref, 0x43ed0, &iterator, 1, NULL) && ok;
+}
+
+static int check_event_queue_for_cancel(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t queue, iterator, event = 0;
+    if (!cfp_private(ref, 0xb34b0, NULL, 0, &queue) || !cfp_private(ref, 0x43bf0, &queue, 1, &iterator))
+        return 0;
+    int ok = cfp_private(ref, 0x43cfc, &iterator, 1, &event);
+    bool cancelled = false;
+    while (ok && event) {
+        ROMlib_carbon_ppc_frame check = {.words = {event}};
+        ok = is_cancel_key_event(ref, &check);
+        if (ok && check.words[0]) {
+            // Keep the outer iterator open while the inner pass removes the
+            // cancel. The outer iterator still owns a reference to that event.
+            ok = discard_input_through_cancel(ref, queue, event);
+            cancelled = true;
+            break;
+        }
+        if (ok)
+            ok = cfp_private(ref, 0x43d8c, &iterator, 1, &event);
+    }
+    if (!cfp_private(ref, 0x43ed0, &iterator, 1, NULL) || !ok)
+        return 0;
+    if (cancelled)
+        return result_word(call, 1);
+
+    _Alignas(8) EventRecord classic = {0};
+    const uint32_t output = US_TO_SYN68K(&classic);
+    uint32_t status;
+    return cfp_private(ref, 0xb4cf8, &output, 1, &status) && result_word(call, status != 0);
+}
+
 static int is_context_menu_event(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
 {
     uint32_t address, key;
@@ -2278,6 +2335,8 @@ int ROMlib_carbon_event_access(const char* name, uint32_t offset, enum carbon_ev
         return classic_os_event(&ref, operation, field, call);
     case event_is_cancel_key:
         return is_cancel_key_event(&ref, call);
+    case event_check_queue_for_cancel:
+        return check_event_queue_for_cancel(&ref, call);
     case event_is_context_menu:
         return is_context_menu_event(&ref, call);
     case event_could_be_menu_key:

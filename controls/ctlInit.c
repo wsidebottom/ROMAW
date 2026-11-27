@@ -118,6 +118,7 @@ static ControlHandle new_control(WindowPtr wst, const Rect* r, StringPtr title, 
         return NULL;
     }
     HIDDEN_RAW_SET(AuxCtlHead_H, RM(auxctlhead));
+    ROMlib_ppc_sync_control_auxiliary_list();
 
     HASSIGN_6(auxctlhead, acNext, RM(tmp), acOwner, RM(retval), acCTable, (CCTabHandle)RM(GetResource(TICK("cctb"), 0)),
               acFlags, CW(procid & 0x0F), acReserved,
@@ -184,7 +185,8 @@ PUBLIC OSErr ROMlib_create_root_control(WindowPtr window, HIDDEN_ControlHandle* 
     OSErr error = ROMlib_get_root_control(window, root);
     if (error != errNoRootControl)
         return error == noErr ? errRootAlreadyExists : error;
-    ControlHandle control = NewControl(window, &PORT_RECT(window), NULL, FALSE, 0, 0, 0, ROMlib_root_control_proc, 0);
+    /* The private root proc ID requires the native auxiliary layout. */
+    ControlHandle control = C_NewControl(window, &PORT_RECT(window), NULL, FALSE, 0, 0, 0, ROMlib_root_control_proc, 0);
     if (!control)
         return memFullErr;
     HIDDEN_RAW_SET(*root, RM(control));
@@ -229,6 +231,7 @@ P2(PUBLIC pascal trap, void, SetCtlColor, ControlHandle, ctl, CCTabHandle, ctab)
             if (!aux_c)
                 return;
             HIDDEN_RAW_SET(AuxCtlHead_H, RM(aux_c));
+            ROMlib_ppc_sync_control_auxiliary_list();
             FIELD_ASSIGN_RAW(PP_RAW(HxX(aux_c, acNext)), RM(t_aux_c));
             FIELD_ASSIGN_RAW(PP_RAW(HxX(aux_c, acOwner)), RM(ctl));
 
@@ -283,6 +286,7 @@ static void dispose_single_control(ControlHandle c, boolean_t notify)
     if (HIDDEN_RAW((*auxhp))) {
         saveauxh = STARH(auxhp);
         FIELD_ASSIGN_RAW(*auxhp, STARH(STARH(auxhp))->acNext);
+        ROMlib_ppc_sync_control_auxiliary_list();
         DisposHandle((Handle)saveauxh);
     }
 

@@ -1245,4 +1245,100 @@ static int carbon_CreateListBoxControl(ROMlib_carbon_ppc_frame* call)
     return ok && released;
 }
 
+enum toolbox_definition_operation {
+    toolbox_definition_install_direct,
+    toolbox_definition_install,
+    toolbox_definition_find,
+    toolbox_definition_remove,
+};
+
+static int carbon_toolbox_definition(const char* name, uint32_t offset, enum toolbox_definition_operation operation,
+                                     ROMlib_carbon_ppc_frame* call)
+{
+    ROMlib_carbon_reference reference;
+    if (!ROMlib_carbon_load_reference("CarbonLib", name, &reference))
+        return 0;
+    if (reference.code_offset != offset || reference.code_size != 0xb8fb4 || reference.toc_offset != 0x2f78 ||
+        reference.toc_size != 0x10f0c)
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+
+    const uint32_t instance = call->words[0], second = call->words[1], third = call->words[2];
+    const uint32_t list_slot = cfp_toc(&reference, (unsigned)-0xa68);
+    uint32_t list = list_slot ? cfp_read(list_slot) : 0;
+    const bool installing = operation <= toolbox_definition_install;
+    if (installing) {
+        uint32_t definition = second;
+        if (operation == toolbox_definition_install) {
+            const uint32_t definition_slot = cfp_toc(&reference, (unsigned)-0xa64);
+            if (!second || !cfp_get(definition_slot, &definition) || !cfp_write(second, definition))
+                return 0;
+            if (third) {
+                void* style = ROMlib_carbon_try_guest_memory(third, 2, 1);
+                const uint32_t style_slot = cfp_toc(&reference, (unsigned)-0xa60);
+                uint32_t value;
+                if (!style || !cfp_get(style_slot, &value))
+                    return 0;
+                const uint16_t encoded = CW((uint16_t)value);
+                memcpy(style, &encoded, sizeof encoded);
+            }
+        }
+        _Alignas(8) uint32_t record[] = {CL(instance), CL(definition)};
+        const uint32_t push[] = {list, US_TO_SYN68K(record)};
+        uint32_t status;
+        if (!cfp_private(&reference, 0xb5610, push, NELEM(push), &status))
+            return 0;
+        call->words[0] = status == noErr;
+        return 1;
+    }
+
+    const bool finding = operation == toolbox_definition_find;
+    if (finding && (!second || !cfp_write(second, 0)))
+        return 0;
+    _Alignas(4) uint32_t index = 0;
+    uint32_t found = 0;
+    const uint32_t find[] = {list, instance, US_TO_SYN68K(&index)};
+    if (list && !cfp_private(&reference, 0xb5628, find, NELEM(find), &found))
+        return 0;
+    if (found) {
+        // Reload the list just as the CFM routines do after a Toolbox callback.
+        if (!cfp_get(list_slot, &list))
+            return 0;
+        if (!finding) {
+            const uint32_t remove[] = {list, CL(index)};
+            return cfp_private(&reference, 0xb5658, remove, NELEM(remove), NULL);
+        }
+        _Alignas(8) uint32_t record[2] = {0};
+        const uint32_t read[] = {list, CL(index), US_TO_SYN68K(record)};
+        uint32_t status;
+        if (!cfp_private(&reference, 0xb5640, read, NELEM(read), &status))
+            return 0;
+        found = status == noErr;
+        if (found && !cfp_write(second, CL(record[1])))
+            return 0;
+    }
+    call->words[0] = found != 0;
+    return 1;
+}
+
+static int carbon_InstallTBInstanceDefinitionDirect(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_toolbox_definition("InstallTBInstanceDefinitionDirect", 0x55cd0, toolbox_definition_install_direct,
+                                     call);
+}
+
+static int carbon_InstallTBInstanceDefinition(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_toolbox_definition("InstallTBInstanceDefinition", 0x55d10, toolbox_definition_install, call);
+}
+
+static int carbon_FindDefinitionFromTBInstance(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_toolbox_definition("FindDefinitionFromTBInstance", 0x55d74, toolbox_definition_find, call);
+}
+
+static int carbon_RemoveTBInstanceDefinition(ROMlib_carbon_ppc_frame* call)
+{
+    return carbon_toolbox_definition("RemoveTBInstanceDefinition", 0x55e40, toolbox_definition_remove, call);
+}
+
 #endif

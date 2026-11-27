@@ -3972,6 +3972,14 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     ppc_import binding;
     unsigned i;
     int carbon_classic_reference = 1;
+    if (ctx->requester && !strcmp(ctx->requester->name, "ControlsLib") &&
+        !strcmp(library, "AppearanceLib") && !strcmp(name, "GetRootControl")) {
+        /* The saved auto-embedding worker expects root metadata allocated
+           by its own Control Manager. */
+        const int found = ppc_external_symbol(ctx, "ControlsLib", "__GetRootControl", symbol_class, address);
+        if (found)
+            return found > 0;
+    }
     memset(&binding, 0, sizeof binding);
     if (!strcmp(library, "WindowsLib") && !strcmp(name, "TransitionWindow")) {
         int found = ppc_external_symbol(ctx, library, name, symbol_class, address);
@@ -6447,6 +6455,23 @@ static uint32 ppc_next_control(ppc_context* ctx, uint32 address)
 {
     const ControlRecord* record = ppc_read_control(ctx, address);
     return record ? CL((uint32)(uintptr_t)PP_RAW(record->nextControl)) : 0;
+}
+
+PUBLIC void ROMlib_ppc_sync_control_auxiliary_list(void)
+{
+    ppc_context* ctx = ppc_active_context;
+    ROMlib_carbon_reference reference;
+    if (!ctx || !ROMlib_carbon_probe_reference("WindowsLib", "IsValidWindowPtr", &reference))
+        return;
+    const uint32* active = ppc_memory(ctx, 0xa90, sizeof *active, FALSE);
+    const uint32 layer = active ? CL(*active) : 0;
+    uint32* head = layer && layer != UINT32_MAX && layer <= UINT32_MAX - 0x8c
+                       ? ppc_memory(ctx, layer + 0x8c, sizeof *head, TRUE)
+                       : NULL;
+    /* Saved ControlsLib copies the active layer's auxiliary control head
+       to low memory after linking a control into that layer. */
+    if (head)
+        *head = (uint32)AuxCtlHead;
 }
 
 PUBLIC BOOLEAN ROMlib_ppc_control_in_saved_window(ControlHandle control)

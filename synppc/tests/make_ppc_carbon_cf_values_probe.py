@@ -130,12 +130,13 @@ class ValuesProbe:
                     self.ptr(0x2108),
                 ],
             )
-            p.expect(0, "resolve original " + name)
+            export = f"{oracle}:{name}"
+            p.expect(0, f"resolve saved export {export}")
             p.emit(0x887E2108)
-            p.expect(2, "original export is a PPC descriptor")
+            p.expect(2, f"saved export {export} is a PPC descriptor")
             self.load_oracle_vector(index, 3)
             p.emit(0x80630000, 0x80630000, 0x5463000A, 0x6C631800)
-            p.nonzero("original opcode is not the native service instruction")
+            p.nonzero(f"saved export {export} starts with a PPC instruction")
             offset += len(encoded) + 1
 
     def section(self, name, action):
@@ -204,12 +205,7 @@ class ValuesProbe:
                         | (offset & 0xFFFF)
                     )
                 else:
-                    self.p.emit(
-                        (0x38000000 if address_only else 0x80000000)
-                        | register << 21
-                        | 30 << 16
-                        | offset
-                    )
+                    self.p.emit((0x38000000 if address_only else 0x80000000) | register << 21 | 30 << 16 | offset)
                 if kind == "global":
                     self.p.emit(0x80000000 | register << 21 | register << 16)
             else:

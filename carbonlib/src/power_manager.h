@@ -83,6 +83,48 @@ static int carbon_GetBatteryTimes(ROMlib_carbon_ppc_frame* call)
     return power_dispatch((call->words[0] << 16) | 0x1c, 0x2671802, output, &result);
 }
 
+static int carbon_MinimumProcessorSpeed(ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t result;
+    if (!power_dispatch(0x36, 0x71822, 0, &result))
+        return 0;
+    call->words[0] = (int16_t)result;
+    return 1;
+}
+
+static int power_timer_dispatch(ROMlib_carbon_ppc_frame* call, uint32_t selector, int setting, int returns_status)
+{
+    const uint32_t record = call->words[0];
+    uint32_t result = paramErr;
+    const uint32_t info = returns_status ? 0x2671822 : 0x2671802;
+    if (record && ROMlib_carbon_try_guest_memory(record, 6, !setting) &&
+        !power_dispatch(selector, info, record, &result))
+        return 0;
+    if (returns_status)
+        call->words[0] = (int16_t)result;
+    return 1;
+}
+
+static int carbon_GetWakeupTimer(ROMlib_carbon_ppc_frame* call)
+{
+    return power_timer_dispatch(call, 0x16, 0, 0);
+}
+
+static int carbon_SetWakeupTimer(ROMlib_carbon_ppc_frame* call)
+{
+    return power_timer_dispatch(call, 0x17, 1, 0);
+}
+
+static int carbon_GetStartupTimer(ROMlib_carbon_ppc_frame* call)
+{
+    return power_timer_dispatch(call, 0x26, 0, 1);
+}
+
+static int carbon_SetStartupTimer(ROMlib_carbon_ppc_frame* call)
+{
+    return power_timer_dispatch(call, 0x27, 1, 1);
+}
+
 static int carbon_IdleUpdate(ROMlib_carbon_ppc_frame* call)
 {
     const ROMlib_carbon_ppc_frame arguments = {0};

@@ -19,6 +19,7 @@
 
 #include "cf_batch.h"
 #include "FileMgr.h"
+#include "internal.h"
 #include "MemoryMgr.h"
 #include <stdio.h>
 
@@ -950,9 +951,31 @@ enum print_value_kind {
     read_print_plist,
     write_print_plist,
     get_ticket_typed_item,
+    find_ticket_type,
+    create_subticket_key,
+    find_subticket,
+    find_all_subtickets,
+    search_ticket_leaf,
+    search_ticket_node,
+    validate_ticket_item,
+    build_ticket_item_dictionary,
+    add_ticket_item,
+    update_ticket_item,
+    get_ticket_item_array,
+    get_ticket_item_lock,
+    set_ticket_item_lock,
+    replace_ticket_item_lock,
     set_ticket_retain_count,
     lock_print_ticket,
     unlock_print_ticket,
+    remove_ticket_metadata,
+    set_print_profile,
+    create_print_mutex,
+    retain_print_mutex,
+    release_print_mutex,
+    lock_print_mutex,
+    try_print_mutex,
+    unlock_print_mutex,
 };
 
 struct print_value_operation {
@@ -1348,6 +1371,755 @@ static int print_ticket_lock_flag(const ROMlib_carbon_reference* ref, ROMlib_car
     return cfp_call("CFDictionarySetValue", arguments, 3, NULL) && print_result(call, noErr);
 }
 
+static int print_item_key(const ROMlib_carbon_reference* ref, uint32_t offset, uint32_t* key)
+{
+    uint32_t strings;
+    if (!cfp_get(US_TO_SYN68K(ref->toc) - 0x104, &strings) || !strings)
+        return 0;
+    const uint32_t address = strings + offset;
+    return cfp_call("__CFStringMakeConstantString", &address, 1, key) && *key;
+}
+
+static int print_find_ticket_type(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t type = call->words[0];
+    void* output = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], 2, 1) : NULL;
+    if (!output)
+        return print_result(call, paramErr);
+    static const uint16_t names[] = {0x1e7, 0x201, 0x220, 0x23b, 0x25c, 0x280, 0x2a2, 0x2c4, 0x2e9, 0x30a, 0x325};
+    int16_t result = -1;
+    if (type) {
+        for (unsigned i = 0; i < NELEM(names); ++i) {
+            uint32_t name, order;
+            if (!print_item_key(ref, names[i], &name))
+                return 0;
+            const uint32_t compare[] = {type, name, 0};
+            if (!cfp_call("CFStringCompare", compare, 3, &order))
+                return 0;
+            if (!order) {
+                result = i + 1;
+                break;
+            }
+        }
+    }
+    const uint16_t encoded = CW(result);
+    memcpy(output, &encoded, sizeof encoded);
+    return print_result(call, type ? noErr : paramErr);
+}
+
+static int print_item_valid(uint32_t item, uint32_t* valid)
+{
+    *valid = 0;
+    if (!item)
+        return 1;
+    uint32_t type;
+    if (!cfp_call("CFGetTypeID", &item, 1, &type))
+        return 0;
+    static const char* const allowed[] = {
+        "CFStringGetTypeID", "CFNumberGetTypeID", "CFDataGetTypeID",       "CFBooleanGetTypeID",
+        "CFDateGetTypeID",   "CFArrayGetTypeID",  "CFDictionaryGetTypeID",
+    };
+    for (unsigned i = 0; i < NELEM(allowed); ++i) {
+        uint32_t candidate;
+        if (!cfp_call(allowed[i], NULL, 0, &candidate))
+            return 0;
+        if (type == candidate) {
+            *valid = 1;
+            break;
+        }
+    }
+    return 1;
+}
+
+static int print_item_add(uint32_t dictionary, uint32_t key, uint32_t value)
+{
+    const uint32_t args[] = {dictionary, key, value};
+    return cfp_call("CFDictionaryAddValue", args, 3, NULL);
+}
+
+static int print_build_item(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t allocator = call->words[0], client = call->words[1], key = call->words[2], value = call->words[3];
+    const uint32_t output = call->words[6];
+    if (!client || !key || !value || !output || !ROMlib_carbon_try_guest_memory(output, 4, 1))
+        return print_result(call, paramErr);
+
+    const uint32_t toc = US_TO_SYN68K(ref->toc);
+    uint32_t callbacks[2];
+    if (!cfp_get(toc - 0x2dec, callbacks) || !cfp_get(toc - 0x2e34, callbacks + 1))
+        return 0;
+    const uint32_t create[] = {allocator, 0, callbacks[0], callbacks[1]};
+    uint32_t item;
+    if (!cfp_call("CFDictionaryCreateMutable", create, 4, &item))
+        return 0;
+    if (!item)
+        return print_result(call, memFullErr);
+
+    ROMlib_carbon_ppc_frame stamp = {.words = {allocator}, .stack = call->stack};
+    const double now = ROMlib_carbon_cf_absolute_time();
+    memcpy(stamp.floating, &now, sizeof now);
+    ROMlib_carbon_reference date_function;
+    uint32_t date = 0, state = 0, date_key, client_key, state_key;
+    int ok = ROMlib_carbon_reference_function("CoreFoundationLib", "CFDateCreate", &date_function) &&
+             ROMlib_carbon_invoke_frame(date_function.function, &stamp);
+    if (ok)
+        date = stamp.words[0];
+    const unsigned flags = ((uint8_t)call->words[4] ? 1 : 0) | ((uint8_t)call->words[5] ? 2 : 0);
+    _Alignas(16) uint32_t word = CL(flags);
+    if (ok && date)
+        state = ROMlib_cfnumber_create(allocator, 3, US_TO_SYN68K(&word));
+    if (ok && date && state)
+        ok = print_item_key(ref, 0, &date_key) && print_item_key(ref, 0x1f, &client_key) &&
+             print_item_key(ref, 0x3d, &state_key) && print_item_add(item, date_key, date) &&
+             print_item_add(item, client_key, client) && print_item_add(item, key, value) &&
+             print_item_add(item, state_key, state);
+    if (date)
+        ok = cfp_call("CFRelease", &date, 1, NULL) && ok;
+    if (state)
+        ok = cfp_call("CFRelease", &state, 1, NULL) && ok;
+    if (ok && date && state && cfp_write(output, item))
+        return print_result(call, noErr);
+    const int released = cfp_call("CFRelease", &item, 1, NULL);
+    return ok && (!date || !state) && released && print_result(call, memFullErr);
+}
+
+static int print_add_ticket_item(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t ticket = call->words[0], client = call->words[1], key = call->words[2], value = call->words[3];
+    if (!ticket || !client || !key)
+        return print_result(call, paramErr);
+    const uint32_t lookup[] = {ticket, key};
+    uint32_t present, valid;
+    if (!cfp_call("CFDictionaryContainsKey", lookup, 2, &present))
+        return 0;
+    if (present)
+        return print_result(call, -9590);
+    if (!print_item_valid(value, &valid))
+        return 0;
+    if (!valid)
+        return print_result(call, -30892);
+
+    _Alignas(16) uint32_t allocator_word = 0, item_word = 0;
+    const uint32_t get_allocator[] = {ticket, US_TO_SYN68K(&allocator_word)};
+    uint32_t status;
+    if (!print_worker(ref, 0x7ffc8, get_allocator, 2, &status))
+        return 0;
+    if (status)
+        return print_result(call, status);
+    const uint32_t allocator = CL(allocator_word);
+    ROMlib_carbon_ppc_frame builder = {
+        .words = {allocator, client, key, value, call->words[4], 0, US_TO_SYN68K(&item_word)}, .stack = call->stack};
+    if (!print_build_item(ref, &builder))
+        return 0;
+    if (builder.words[0])
+        return print_result(call, builder.words[0]);
+
+    const uint32_t item = CL(item_word);
+    const uint32_t toc = US_TO_SYN68K(ref->toc);
+    uint32_t array_callbacks, key_callbacks, value_callbacks;
+    uint32_t versions = 0, entry = 0, client_key, versions_key;
+    int ok = cfp_get(toc - 0x2e68, &array_callbacks) && cfp_get(toc - 0x2dec, &key_callbacks) &&
+             cfp_get(toc - 0x2e34, &value_callbacks) && print_item_key(ref, 0x7f, &client_key) &&
+             print_item_key(ref, 0x5e, &versions_key);
+    if (ok) {
+        const uint32_t create_array[] = {allocator, 0, array_callbacks};
+        ok = cfp_call("CFArrayCreateMutable", create_array, 3, &versions);
+    }
+    if (ok && versions) {
+        const uint32_t append[] = {versions, item};
+        const uint32_t create_dict[] = {allocator, 0, key_callbacks, value_callbacks};
+        ok = cfp_call("CFArrayAppendValue", append, 2, NULL) &&
+             cfp_call("CFDictionaryCreateMutable", create_dict, 4, &entry);
+    }
+    if (ok && entry)
+        ok = print_item_add(entry, client_key, client) && print_item_add(entry, versions_key, versions) &&
+             print_item_add(ticket, key, entry);
+    if (entry)
+        ok = cfp_call("CFRelease", &entry, 1, NULL) && ok;
+    if (versions)
+        ok = cfp_call("CFRelease", &versions, 1, NULL) && ok;
+    return cfp_call("CFRelease", &item, 1, NULL) && ok && print_result(call, entry ? noErr : memFullErr);
+}
+
+static int print_item_array(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t array_out = call->words[2], item_out = call->words[3];
+    if (!call->words[0] || !call->words[1] || !array_out || !item_out ||
+        !ROMlib_carbon_try_guest_memory(array_out, 4, 1) || !ROMlib_carbon_try_guest_memory(item_out, 4, 1))
+        return print_result(call, paramErr);
+
+    uint32_t entry, array = 0, item = 0, count;
+    if (!cfp_call("CFDictionaryGetValue", call->words, 2, &entry))
+        return 0;
+    if (entry) {
+        uint32_t key;
+        if (!print_item_key(ref, 0x5e, &key))
+            return 0;
+        const uint32_t lookup[] = {entry, key};
+        if (!cfp_call("CFDictionaryGetValue", lookup, 2, &array))
+            return 0;
+        if (array) {
+            if (!cfp_call("CFArrayGetCount", &array, 1, &count))
+                return 0;
+            if (count) {
+                const uint32_t last[] = {array, count - 1};
+                if (!cfp_call("CFArrayGetValueAtIndex", last, 2, &item))
+                    return 0;
+            }
+        }
+    }
+    return cfp_write(array_out, item ? array : 0) && cfp_write(item_out, item) &&
+           print_result(call, item    ? noErr
+                              : entry ? -30889
+                                      : -9589);
+}
+
+static int print_item_lock(const ROMlib_carbon_reference* ref, uint32_t item, uint8_t* output, unsigned setting,
+                           int32_t* status)
+{
+    *status = noErr;
+    uint32_t key, number;
+    if (!print_item_key(ref, 0x3d, &key))
+        return 0;
+    const uint32_t lookup[] = {item, key};
+    if (!cfp_call("CFDictionaryGetValue", lookup, 2, &number))
+        return 0;
+    if (!number) {
+        if (output)
+            *output = 0;
+        *status = -30889;
+        return 1;
+    }
+
+    _Alignas(16) uint32_t word = 0;
+    const uint32_t read[] = {number, 3, US_TO_SYN68K(&word)};
+    if (!cfp_call("CFNumberGetValue", read, 3, NULL))
+        return 0;
+    uint32_t flags = CL(word);
+    if (output) {
+        *output = flags & 1;
+        return 1;
+    }
+
+    word = CL((flags & ~UINT32_C(1)) | (setting == 1));
+    uint32_t allocator;
+    if (!cfp_call("CFGetAllocator", &item, 1, &allocator))
+        return 0;
+    number = ROMlib_cfnumber_create(allocator, 3, US_TO_SYN68K(&word));
+    if (!number) {
+        *status = memFullErr;
+        return 1;
+    }
+    const uint32_t write[] = {item, key, number};
+    const int ok = cfp_call("CFDictionarySetValue", write, 3, NULL);
+    const int released = cfp_call("CFRelease", &number, 1, NULL);
+    return ok && released;
+}
+
+static int print_item_lock_state(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call, int reading)
+{
+    const uint32_t item = call->words[0];
+    uint8_t* output = NULL;
+    if (reading && call->words[1])
+        output = ROMlib_carbon_try_guest_memory(call->words[1], 1, 1);
+    if (!item || (reading && !output))
+        return print_result(call, paramErr);
+    int32_t status;
+    return print_item_lock(ref, item, output, (uint8_t)call->words[1], &status) && print_result(call, status);
+}
+
+static int print_replace_item_lock(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t item = call->words[0], array = call->words[1], client = call->words[3];
+    if (!item || !array || !client)
+        return print_result(call, paramErr);
+    const uint32_t copy_args[] = {0, 0, item};
+    uint32_t copy;
+    if (!cfp_call("CFDictionaryCreateMutableCopy", copy_args, 3, &copy))
+        return 0;
+    if (!copy)
+        return print_result(call, memFullErr);
+
+    int32_t status;
+    int ok = print_item_lock(ref, copy, NULL, (uint8_t)call->words[4], &status);
+    if (ok && !status) {
+        uint32_t key;
+        if (!print_item_key(ref, 0x1f, &key))
+            ok = 0;
+        else {
+            const uint32_t insert[] = {copy, key, client};
+            const uint32_t replace[] = {array, 0, copy};
+            ok = cfp_call("CFDictionaryAddValue", insert, 3, NULL) &&
+                 cfp_call("CFArraySetValueAtIndex", replace, 3, NULL);
+        }
+    }
+    const int released = cfp_call("CFRelease", &copy, 1, NULL);
+    return released && ok && print_result(call, status);
+}
+
+static int print_update_ticket_item(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t ticket = call->words[0], client = call->words[1], key = call->words[2], value = call->words[3];
+    if (!ticket || !client || !key || !value)
+        return print_result(call, paramErr);
+
+    _Alignas(16) uint32_t allocator = 0, array = 0, previous = 0, replacement = 0;
+    const uint32_t get_allocator[] = {ticket, US_TO_SYN68K(&allocator)};
+    uint32_t status;
+    if (!print_worker(ref, 0x7ffc8, get_allocator, 2, &status))
+        return 0;
+    if (status)
+        return print_result(call, status);
+
+    ROMlib_carbon_ppc_frame lookup = {.words = {ticket, key, US_TO_SYN68K(&array), US_TO_SYN68K(&previous)}};
+    if (!print_item_array(ref, &lookup))
+        return 0;
+    if (lookup.words[0])
+        return print_result(call, lookup.words[0]);
+
+    uint8_t locked;
+    int32_t lock_status;
+    if (!print_item_lock(ref, CL(previous), &locked, 0, &lock_status))
+        return 0;
+    if (lock_status)
+        return print_result(call, lock_status);
+    if (locked)
+        return print_result(call, -9586);
+
+    ROMlib_carbon_ppc_frame builder = {
+        .words = {CL(allocator), client, key, value, call->words[4], call->words[5], US_TO_SYN68K(&replacement)},
+        .stack = call->stack};
+    if (!print_build_item(ref, &builder))
+        return 0;
+    if (builder.words[0])
+        return print_result(call, builder.words[0]);
+
+    const uint32_t replace[] = {CL(array), 0, CL(replacement)};
+    const int ok = cfp_call("CFArraySetValueAtIndex", replace, 3, NULL);
+    return cfp_call("CFRelease", replace + 2, 1, NULL) && ok && print_result(call, noErr);
+}
+
+/* The key names are indexed by the saved ticket type enumeration (1–11). */
+static int print_create_subticket_key(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    static const uint16_t names[] = {0x11a, 0x125, 0x135, 0x141, 0x154, 0x16a, 0x17e, 0x191, 0x1a8, 0x1bb, 0x1d1};
+    const uint32_t allocator = call->words[0], output = call->words[2];
+    const int16_t type = call->words[1];
+    const int32_t index = call->words[3];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1))
+        return print_result(call, paramErr);
+    if (!cfp_write(output, 0))
+        return 0;
+    if (type < 1 || (unsigned)type > NELEM(names))
+        return print_result(call, type == -1 ? paramErr : memFullErr);
+
+    uint32_t prefix, name, text;
+    if (!print_item_key(ref, 0x9e, &prefix) || !print_item_key(ref, names[type - 1], &name))
+        return 0;
+    const uint32_t create[] = {allocator, 0};
+    if (!cfp_call("CFStringCreateMutable", create, 2, &text))
+        return 0;
+    if (!text)
+        return print_result(call, memFullErr);
+    const uint32_t append_prefix[] = {text, prefix}, append_name[] = {text, name};
+    int ok = cfp_call("CFStringAppend", append_prefix, 2, NULL) && cfp_call("CFStringAppend", append_name, 2, NULL);
+    if (ok && index) {
+        _Alignas(16) char suffix[16];
+        snprintf(suffix, sizeof suffix, " %d", index);
+        const uint32_t append_number[] = {text, US_TO_SYN68K(suffix), 0x08000100};
+        ok = cfp_call("CFStringAppendCString", append_number, 3, NULL);
+    }
+    if (ok && cfp_write(output, text))
+        return print_result(call, noErr);
+    cfp_call("CFRelease", &text, 1, NULL);
+    return 0;
+}
+
+static int print_find_subticket(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t ticket = call->words[0], output = call->words[4];
+    if (!ticket || !output || !ROMlib_carbon_try_guest_memory(output, 4, 1))
+        return print_result(call, paramErr);
+    _Alignas(16) uint32_t key_word = 0;
+    ROMlib_carbon_ppc_frame key_call = {
+        .words = {call->words[1], call->words[2], US_TO_SYN68K(&key_word), call->words[3]}};
+    if (!print_create_subticket_key(ref, &key_call))
+        return 0;
+    if (key_call.words[0])
+        return print_result(call, key_call.words[0]);
+    const uint32_t lookup[] = {ticket, CL(key_word)};
+    uint32_t result;
+    const int ok = cfp_call("CFDictionaryGetValue", lookup, 2, &result);
+    return cfp_call("CFRelease", lookup + 1, 1, NULL) && ok && cfp_write(output, result) &&
+           print_result(call, result ? noErr : -9583);
+}
+
+static int print_search_leaf(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t ticket = call->words[0], key = call->words[1], output = call->words[2];
+    if (!ticket || !key || (output && !ROMlib_carbon_try_guest_memory(output, 4, 1)))
+        return print_result(call, paramErr);
+
+    _Alignas(16) uint32_t array_word = 0, item_word = 0, flags = 0;
+    ROMlib_carbon_ppc_frame lookup = {.words = {ticket, key, US_TO_SYN68K(&array_word), US_TO_SYN68K(&item_word)}};
+    if (!print_item_array(ref, &lookup))
+        return 0;
+    uint32_t status = lookup.words[0], value = 0;
+    const uint32_t item = CL(item_word);
+    if (!status) {
+        uint32_t state_key, state;
+        if (!print_item_key(ref, 0x3d, &state_key))
+            return 0;
+        const uint32_t get_state[] = {item, state_key};
+        if (!cfp_call("CFDictionaryGetValue", get_state, 2, &state))
+            return 0;
+        if (!state)
+            status = -30889;
+        else {
+            const uint32_t read[] = {state, 3, US_TO_SYN68K(&flags)};
+            if (!cfp_call("CFNumberGetValue", read, 3, NULL))
+                return 0;
+            if (CL(flags) & 2)
+                status = -9589;
+            else if (output) {
+                const uint32_t read_item[] = {item, key};
+                if (!cfp_call("CFDictionaryGetValue", read_item, 2, &value))
+                    return 0;
+            }
+        }
+    }
+    return (!output || cfp_write(output, value)) && print_result(call, status);
+}
+
+static int print_search_node(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    enum { item_missing = -9589, subticket_missing = -9583 };
+
+    ROMlib_carbon_ppc_frame leaf = {.words = {call->words[0], call->words[2], call->words[3]}};
+    if (!print_search_leaf(ref, &leaf))
+        return 0;
+    if (leaf.words[0] != (uint32_t)item_missing)
+        return print_result(call, leaf.words[0]);
+
+    static const uint16_t branches[] = {4, 5}; /* Page format, then print settings. */
+    _Alignas(16) uint32_t child = 0, paper = 0;
+    for (unsigned i = 0; i < NELEM(branches); ++i) {
+        ROMlib_carbon_ppc_frame sub = {.words = {call->words[0], call->words[1], branches[i], 0, US_TO_SYN68K(&child)}};
+        if (!print_find_subticket(ref, &sub))
+            return 0;
+        if (sub.words[0] == (uint32_t)subticket_missing)
+            continue;
+        if (sub.words[0])
+            return print_result(call, sub.words[0]);
+
+        leaf.words[0] = CL(child);
+        if (!print_search_leaf(ref, &leaf))
+            return 0;
+        if (leaf.words[0] != (uint32_t)item_missing)
+            return print_result(call, leaf.words[0]);
+
+        sub.words[0] = CL(child);
+        sub.words[2] = 11; /* Paper information. */
+        sub.words[4] = US_TO_SYN68K(&paper);
+        if (!print_find_subticket(ref, &sub))
+            return 0;
+        if (sub.words[0] == (uint32_t)subticket_missing)
+            continue;
+        if (sub.words[0])
+            return print_result(call, sub.words[0]);
+
+        leaf.words[0] = CL(paper);
+        if (!print_search_leaf(ref, &leaf))
+            return 0;
+        if (leaf.words[0] != (uint32_t)item_missing)
+            return print_result(call, leaf.words[0]);
+    }
+    return print_result(call, item_missing);
+}
+
+struct print_ticket_ancestor {
+    const struct print_ticket_ancestor* parent;
+    uint32_t ticket;
+};
+
+static int print_append_subtickets(const ROMlib_carbon_reference* ref, uint32_t ticket, uint32_t tail_out,
+                                   uint32_t prefix, const struct print_ticket_ancestor* parent, int32_t* status)
+{
+    for (const struct print_ticket_ancestor* item = parent; item; item = item->parent) {
+        if (item->ticket == ticket) {
+            *status = paramErr;
+            return 1;
+        }
+    }
+    uint32_t count;
+    if (!cfp_call("CFDictionaryGetCount", &ticket, 1, &count))
+        return 0;
+    if (!count) {
+        if (!parent)
+            *status = -30889;
+        return 1;
+    }
+    if (count > INT32_MAX / 4) {
+        *status = memFullErr;
+        return 1;
+    }
+
+    const uint32_t size = count * 4;
+    uint32_t keys;
+    if (!print_worker(ref, 0xb6fd8, &size, 1, &keys))
+        return 0;
+    if (!keys) {
+        *status = memFullErr;
+        return 1;
+    }
+
+    const struct print_ticket_ancestor ancestor = {parent, ticket};
+    const uint32_t collect[] = {ticket, keys, 0};
+    int ok = cfp_call("CFDictionaryGetKeysAndValues", collect, 3, NULL);
+    for (uint32_t i = 0; ok && !*status && i < count; ++i) {
+        uint32_t key, matches;
+        if (!cfp_get(keys + 4 * i, &key)) {
+            ok = 0;
+            break;
+        }
+        const uint32_t compare[] = {key, prefix};
+        if (!cfp_call("CFStringHasPrefix", compare, 2, &matches)) {
+            ok = 0;
+            break;
+        }
+        if (!matches)
+            continue;
+
+        uint32_t child, node, tail;
+        const uint32_t lookup[] = {ticket, key}, node_size = 8;
+        if (!cfp_call("CFDictionaryGetValue", lookup, 2, &child) || !cfp_get(tail_out, &tail) ||
+            !print_worker(ref, 0xb6fd8, &node_size, 1, &node)) {
+            ok = 0;
+            break;
+        }
+        if (!node) {
+            *status = memFullErr;
+            break;
+        }
+        void* record = ROMlib_carbon_guest_memory(node, 8, 1);
+        char* tail_record = ROMlib_carbon_guest_memory(tail, 8, 1);
+        void* out = ROMlib_carbon_guest_memory(tail_out, 4, 1);
+        if (!record || !tail_record || !out) {
+            print_worker(ref, 0xb7008, &node, 1, NULL);
+            ok = 0;
+            break;
+        }
+        const uint32_t entry[] = {CL(child), 0};
+        const uint32_t address = CL(node);
+        memcpy(record, entry, sizeof entry);
+        memcpy(tail_record + 4, &address, sizeof address);
+        memcpy(out, &address, sizeof address);
+        ok = print_append_subtickets(ref, child, tail_out, prefix, &ancestor, status);
+    }
+    return print_worker(ref, 0xb7008, &keys, 1, NULL) && ok;
+}
+
+static int print_find_all_subtickets(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t ticket = call->words[0], tail_out = call->words[1];
+    if (!ticket || !tail_out || !ROMlib_carbon_try_guest_memory(tail_out, 4, 1))
+        return print_result(call, paramErr);
+    uint32_t tail, prefix;
+    if (!cfp_get(tail_out, &tail))
+        return 0;
+    if (!tail || !ROMlib_carbon_try_guest_memory(tail, 8, 1))
+        return print_result(call, paramErr);
+    int32_t status = noErr;
+    return print_item_key(ref, 0x9e, &prefix) &&
+           print_append_subtickets(ref, ticket, tail_out, prefix, NULL, &status) && print_result(call, status);
+}
+
+static int print_remove_item_metadata(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t key = call->words[0], value = call->words[1], metadata = call->words[2];
+    if (!key || !metadata)
+        return 1;
+    uint32_t protected;
+    if (!print_worker(ref, 0xb4848, &key, 1, &protected))
+        return 0;
+    if (protected)
+        return 1;
+
+    if (value) {
+        uint32_t type, dictionary;
+        if (!cfp_call("CFGetTypeID", &value, 1, &type) || !cfp_call("CFDictionaryGetTypeID", NULL, 0, &dictionary))
+            return 0;
+        if (type == dictionary) {
+            const uint32_t keys[] = {0xb9, 0x7f};
+            for (unsigned i = 0; i < NELEM(keys); ++i) {
+                uint32_t marker, contains;
+                if (!print_item_key(ref, keys[i], &marker))
+                    return 0;
+                const uint32_t lookup[] = {value, marker};
+                if (!cfp_call("CFDictionaryContainsKey", lookup, NELEM(lookup), &contains))
+                    return 0;
+                if (contains)
+                    return 1;
+            }
+        }
+    }
+    const uint32_t remove[] = {metadata, key};
+    return cfp_call("CFDictionaryRemoveValue", remove, NELEM(remove), NULL);
+}
+
+static int print_mutex_free(const ROMlib_carbon_reference* ref, uint32_t mutex, uint32_t data)
+{
+    const int released = !data || print_worker(ref, 0x9b768, &data, 1, NULL);
+    return (!mutex || print_worker(ref, 0x9b768, &mutex, 1, NULL)) && released;
+}
+
+static int print_mutex_create(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t output = call->words[0];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1))
+        return print_result(call, paramErr);
+    if (!cfp_write(output, 0))
+        return 0;
+    const uint32_t table = cfp_toc(ref, (unsigned)-0x38c);
+    if (!table)
+        return ROMlib_carbon_invoke_frame(ref->function, call);
+
+    const uint32_t size = 8;
+    uint32_t mutex = 0, data = 0;
+    if (!print_worker(ref, 0x9b6dc, &size, 1, &mutex))
+        return 0;
+    if (!mutex)
+        return print_result(call, memFullErr);
+    const int allocated = print_worker(ref, 0x9b6dc, &size, 1, &data);
+    if (allocated && data && cfp_write(mutex, table + 4) && cfp_write(mutex + 4, data) && cfp_write(data, 1) &&
+        cfp_write(data + 4, 0) && cfp_write(output, mutex))
+        return print_result(call, noErr);
+    return print_mutex_free(ref, mutex, data) && allocated && !data && print_result(call, memFullErr);
+}
+
+static int print_mutex_lifetime(const ROMlib_carbon_reference* ref, uint32_t mutex, uint32_t table, uint32_t holder,
+                                ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t data, references;
+    if (!cfp_get(mutex + 4, &data) || !data || !cfp_get(data, &references))
+        return print_result(call, paramErr);
+    const uint32_t lock = cfp_read(table + 12), unlock = cfp_read(table + 20);
+    if (!lock || !unlock || !cfp_callback(lock, &mutex, 1, NULL))
+        return 0;
+    if (!cfp_get(data, &references)) {
+        cfp_callback(unlock, &mutex, 1, NULL);
+        return 0;
+    }
+
+    int32_t status = noErr;
+    bool changed = false;
+    if (holder) {
+        const uint32_t busy = references == 1 ? cfp_read(data + 4) : 0;
+        if (!references || (int32_t)busy > 0)
+            status = -909;
+        else
+            changed = cfp_write(data, --references);
+    }
+    else if (references >= INT32_MAX)
+        status = -909;
+    else
+        changed = cfp_write(data, ++references);
+
+    if (!cfp_callback(unlock, &mutex, 1, NULL))
+        return 0;
+    if (status)
+        return print_result(call, status);
+    if (!changed || (holder && !cfp_write(holder, 0)))
+        return 0;
+    return (references || print_mutex_free(ref, mutex, data)) && print_result(call, noErr);
+}
+
+static int print_mutex_operation(const ROMlib_carbon_reference* ref, enum print_value_kind operation,
+                                 ROMlib_carbon_ppc_frame* call)
+{
+    if (operation == create_print_mutex)
+        return print_mutex_create(ref, call);
+
+    const uint32_t argument = call->words[0], output = call->words[1];
+    const bool releasing = operation == release_print_mutex;
+    unsigned char* locked = NULL;
+    if (operation == try_print_mutex)
+        locked = output ? ROMlib_carbon_try_guest_memory(output, 1, 1) : NULL;
+    if (!argument || (operation == try_print_mutex && !locked)) {
+        if (locked)
+            *locked = 0;
+        return print_result(call, paramErr);
+    }
+
+    const uint32_t mutex = releasing ? cfp_read(argument) : argument;
+    const uint32_t table = mutex ? cfp_read(mutex) : 0;
+    if (!table || (releasing && !ROMlib_carbon_try_guest_memory(argument, 4, 1))) {
+        if (locked)
+            *locked = 0;
+        return print_result(call, paramErr);
+    }
+    const uint32_t standard = cfp_toc(ref, (unsigned)-0x38c);
+    if (standard && table == standard + 4 && (operation == retain_print_mutex || releasing))
+        return print_mutex_lifetime(ref, mutex, table, releasing ? argument : 0, call);
+
+    const uint32_t method_offsets[] = {4, 8, 12, 16, 20};
+    const uint32_t method = cfp_read(table + method_offsets[operation - retain_print_mutex]);
+    const uint32_t arguments[] = {mutex, argument};
+    uint32_t result;
+    if (!method || !cfp_callback(method, arguments, releasing ? 2 : 1, &result))
+        return 0;
+    if (locked)
+        *locked = (uint8_t)result;
+    return print_result(call, noErr);
+}
+
+static int print_set_profile(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t settings = call->words[0], source = call->words[1], location = call->words[2];
+    uint32_t session, valid;
+    if (!print_worker(ref, 0x81614, NULL, 0, NULL) || !default_print_session(ref, &session) ||
+        !print_worker(ref, 0x85768, &session, 1, &valid))
+        return 0;
+    if (!valid)
+        return finish_print_operation(ref, -30871, call);
+    if (!print_worker(ref, 0x8716c, &settings, 1, &valid))
+        return 0;
+    if (!valid)
+        return finish_print_operation(ref, invalid_settings, call);
+    if (!location)
+        return finish_print_operation(ref, paramErr, call);
+
+    uint32_t context;
+    if (!print_worker(ref, 0x8448c, &session, 1, &context))
+        return 0;
+    const unsigned char* step = context ? ROMlib_carbon_try_guest_memory(context + 0x58, 2, 0) : NULL;
+    if (!step || step[0] || step[1] != 3)
+        return finish_print_operation(ref, -30871, call);
+    if (source != TICK("srcp"))
+        return finish_print_operation(ref, paramErr, call);
+
+    _Alignas(4) uint32_t encoded = 0;
+    const uint32_t open[] = {US_TO_SYN68K(&encoded), location};
+    uint32_t status;
+    if (!print_worker(ref, 0xb7a58, open, NELEM(open), &status))
+        return 0;
+    if (status)
+        return finish_print_operation(ref, status, call);
+    const uint32_t profile = CL(encoded);
+    _Alignas(128) uint32_t header[32];
+    const uint32_t get[] = {profile, US_TO_SYN68K(header)};
+    int ok = print_worker(ref, 0xb7a70, get, NELEM(get), &status);
+    if (ok && !status) {
+        if (CL(header[2]) <= 0x100)
+            status = -30873;
+        else {
+            const uint32_t comment[] = {profile, 0};
+            ok = print_worker(ref, 0xb7a88, comment, NELEM(comment), &status);
+        }
+    }
+    return print_worker(ref, 0xb7aa0, &profile, 1, NULL) && ok && finish_print_operation(ref, status, call);
+}
+
 static int print_value(const struct print_value_operation* op, ROMlib_carbon_ppc_frame* call)
 {
     ROMlib_carbon_reference ref;
@@ -1412,6 +2184,46 @@ static int print_value(const struct print_value_operation* op, ROMlib_carbon_ppc
         return print_file_value(call, 0, op->kind == write_print_plist);
     case get_ticket_typed_item:
         return print_typed_ticket_item(&ref, call);
+    case find_ticket_type:
+        return print_find_ticket_type(&ref, call);
+    case create_subticket_key:
+        return print_create_subticket_key(&ref, call);
+    case find_subticket:
+        return print_find_subticket(&ref, call);
+    case find_all_subtickets:
+        return print_find_all_subtickets(&ref, call);
+    case search_ticket_leaf:
+        return print_search_leaf(&ref, call);
+    case search_ticket_node:
+        return print_search_node(&ref, call);
+    case validate_ticket_item: {
+        uint32_t valid;
+        return print_item_valid(call->words[0], &valid) && print_result(call, valid);
+    }
+    case build_ticket_item_dictionary:
+        return print_build_item(&ref, call);
+    case add_ticket_item:
+        return print_add_ticket_item(&ref, call);
+    case update_ticket_item:
+        return print_update_ticket_item(&ref, call);
+    case get_ticket_item_array:
+        return print_item_array(&ref, call);
+    case get_ticket_item_lock:
+    case set_ticket_item_lock:
+        return print_item_lock_state(&ref, call, op->kind == get_ticket_item_lock);
+    case replace_ticket_item_lock:
+        return print_replace_item_lock(&ref, call);
+    case set_print_profile:
+        return print_set_profile(&ref, call);
+    case remove_ticket_metadata:
+        return print_remove_item_metadata(&ref, call);
+    case create_print_mutex:
+    case retain_print_mutex:
+    case release_print_mutex:
+    case lock_print_mutex:
+    case try_print_mutex:
+    case unlock_print_mutex:
+        return print_mutex_operation(&ref, op->kind, call);
     case set_ticket_retain_count:
         return print_ticket_retain_count(&ref, call);
     case lock_print_ticket:

@@ -422,6 +422,33 @@ static int carbon_component_ICStop(ROMlib_carbon_ppc_frame* call)
 
 #undef CARBON_COMPONENT_MESSAGE
 
+static int carbon_component_CallComponentDispatch(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t address = call->words[0];
+    const Byte* parameters = address ? ROMlib_carbon_try_guest_memory(address, 4, 0) : NULL;
+    if (!parameters) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+    const unsigned size = parameters[1];
+    if (size & 1 || !ROMlib_carbon_try_guest_memory(address, 8 + size, 0)) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+
+    // The dispatch glue stores the instance after the packed Pascal arguments.
+    uint32_t encoded_instance;
+    memcpy(&encoded_instance, parameters + 4 + size, sizeof encoded_instance);
+    const uint32_t instance = CL(encoded_instance);
+    if (!ROMlib_component_can_dispatch(instance)) {
+        ROMlib_carbon_reference saved;
+        if (ROMlib_carbon_load_reference("CarbonLib", "CallComponentDispatch", &saved))
+            return ROMlib_carbon_invoke_frame(saved.function, call);
+    }
+    call->words[0] = ROMlib_component_call(instance, parameters);
+    return 1;
+}
+
 static int carbon_component_DelegateComponentCall(ROMlib_carbon_ppc_frame* call)
 {
     const uint32_t address = call->words[0];

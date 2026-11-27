@@ -242,14 +242,13 @@ static int appearance_dispatch(unsigned proc_info, unsigned selector, ROMlib_car
 
 /* Appearance's classic Window Manager selectors use the same WDEF metadata
    and collapse operations as the corresponding WindowsLib entries. */
-#define APPEARANCE_WINDOW(name, proc_info, selector, native)                   \
-    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                   \
-    {                                                                        \
-        bool patched;                                                        \
-        if (!appearance_dispatch_patch(&patched))                            \
-            return 0;                                                        \
-        return patched ? appearance_dispatch(proc_info, selector, call, call) \
-                       : carbon_window_##native(call);                       \
+#define APPEARANCE_WINDOW(name, proc_info, selector, native)                                                  \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                                                   \
+    {                                                                                                         \
+        bool patched;                                                                                         \
+        if (!appearance_dispatch_patch(&patched))                                                             \
+            return 0;                                                                                         \
+        return patched ? appearance_dispatch(proc_info, selector, call, call) : carbon_window_##native(call); \
     }
 
 APPEARANCE_WINDOW(IsWindowCollapsable, 0x398, 0x0f, WMIsWindowCollapsable)
@@ -387,7 +386,8 @@ static int carbon_SetThemeWindowBackground(ROMlib_carbon_ppc_frame* call)
         return 0;
     if (patched)
         return appearance_dispatch(0x1bb8, 4, call, call);
-    return appearance_client_result(call, ROMlib_carbon_set_theme_window_background(window, brush, (uint8_t)call->words[2]));
+    return appearance_client_result(call,
+                                    ROMlib_carbon_set_theme_window_background(window, brush, (uint8_t)call->words[2]));
 }
 
 static int appearance_classic_service(ROMlib_carbon_ppc_frame* call, unsigned proc_info, unsigned selector,
@@ -796,8 +796,8 @@ static int carbon_DrawThemeFocusRegion(ROMlib_carbon_ppc_frame* call)
     if (patched)
         return appearance_dispatch(0x7b8, 0x23, call, call);
     uint32_t extent;
-    if (!cfp_handle_data(call->words[0], &extent, 0) || extent < sizeof(Region) ||
-        !thePort || !ROMlib_valid_qd_port(thePort))
+    if (!cfp_handle_data(call->words[0], &extent, 0) || extent < sizeof(Region) || !thePort ||
+        !ROMlib_valid_qd_port(thePort))
         return appearance_client_result(call, paramErr);
     ROMlib_carbon_reference ref = {0};
     if (appearance_custom_engine("DrawThemeFocusRegion", 0x39350, &ref))
@@ -932,8 +932,8 @@ static int appearance_DrawThemeScrollBarDelimiters(ROMlib_carbon_ppc_frame* call
 {
     const uint32_t state = call->words[2];
     const void* input = call->words[1] ? ROMlib_carbon_try_guest_memory(call->words[1], sizeof(Rect), 0) : NULL;
-    if (!(uint16_t)call->words[0] || !input || state > 1 || (call->words[3] & ~0x3fdU) ||
-        !thePort || !ROMlib_valid_qd_port(thePort))
+    if (!(uint16_t)call->words[0] || !input || state > 1 || (call->words[3] & ~0x3fdU) || !thePort ||
+        !ROMlib_valid_qd_port(thePort))
         return appearance_client_result(call, paramErr);
     ROMlib_carbon_reference ref;
     if (appearance_custom_engine("DrawThemeScrollBarDelimiters", 0xa538, &ref))
@@ -1093,8 +1093,8 @@ static int carbon_DrawThemeTabPane(ROMlib_carbon_ppc_frame* call)
 
 enum appearance_tab_direction { appearance_tab_north, appearance_tab_south, appearance_tab_east, appearance_tab_west };
 
-/* AppearanceLib 0x2211c combines a rectangular center with two independent
-   end masks. The masks include the pane overlap even when the center does not. */
+/* AppearanceLib 0x2211c combines a rectangular center with two end masks.
+   Only front tab styles extend by three pixels into the adjoining pane. */
 static OSErr appearance_tab_end_region(RgnHandle region, Rect bounds, enum appearance_tab_direction direction,
                                        bool small, int depth, bool trailing)
 {
@@ -1107,9 +1107,9 @@ static OSErr appearance_tab_end_region(RgnHandle region, Rect bounds, enum appea
         {4, 6, 8, 10, 12, 14, 16, 17, 18, 18, 19, 19},
     };
     const bool horizontal = direction <= appearance_tab_south;
-    const int mask_depth = small ? 19 : 24, end_extent = 12;
-    const int width = horizontal ? end_extent : mask_depth;
-    const int height = horizontal ? mask_depth : end_extent;
+    const int end_extent = 12;
+    const int width = horizontal ? end_extent : depth;
+    const int height = horizontal ? depth : end_extent;
     _Alignas(128) Byte pixels[24][4] = {0};
     for (int y = 0; y < height; ++y) {
         int left = 0, right = width;
@@ -1121,7 +1121,7 @@ static OSErr appearance_tab_end_region(RgnHandle region, Rect bounds, enum appea
                 left = horizontal_inset[small][row];
         }
         else {
-            const int filled = vertical_width[small][trailing ? height - y - 1 : y];
+            const int filled = MIN(width, vertical_width[small][trailing ? height - y - 1 : y]);
             if (direction == appearance_tab_west)
                 left = width - filled;
             else
@@ -1514,7 +1514,7 @@ static int appearance_window_query(ROMlib_carbon_ppc_frame* call, bool hit)
     if (!flavor)
         appearance_document_geometry(&layout, metrics);
     if (hit) {
-        const Point point = {.v = CW((int16_t)(call->words[5] >> 16)), .h = CW((int16_t)call->words[5])};
+        const Point point = {.v = (int16_t)(call->words[5] >> 16), .h = (int16_t)call->words[5]};
         const uint16_t region_code = appearance_window_hit(&layout, point);
         const uint16_t encoded = CW(region_code);
         memcpy(code, &encoded, sizeof encoded);
@@ -1707,8 +1707,8 @@ static appearance_slider_geometry appearance_slider(const appearance_track_info*
             offset = appearance_pixel_round((float)delta * travel / (float)range + 0.5);
         }
     }
-    const int16_t thumb_start = CW(track->attributes) & 2 ? end - 5 - (int64_t)offset - thumb_length
-                                                         : start + 5 + (int64_t)offset;
+    const int16_t thumb_start =
+        CW(track->attributes) & 2 ? end - 5 - (int64_t)offset - thumb_length : start + 5 + (int64_t)offset;
     return (appearance_slider_geometry){
         .groove = {CW(groove_cross_start), CW(start + 2), CW(groove_cross_start + 7), CW(end - 2)},
         .thumb = {CW(thumb_cross_start), CW(thumb_start), CW(thumb_cross_start + 16), CW(thumb_start + thumb_length)},
@@ -1766,6 +1766,7 @@ typedef struct {
 } appearance_scroll_thumb;
 
 enum { appearance_arrow_style_field = -0x75b0 };
+
 static uint16_t appearance_arrow_style;
 
 static uint16_t appearance_platinum_preference(const ROMlib_carbon_reference* ref, int32_t offset)
@@ -1846,7 +1847,7 @@ static OSErr appearance_slider_thumb_region(RgnHandle region, const appearance_s
        vertical thumb is the transpose of the same shape. */
     _Alignas(32) uint16_t pixels[16] = {0};
     const bool pointed = direction == 1 || direction == 2;
-    const unsigned width = pointed ? 15 : 13;
+    const unsigned width = pointed ? 16 : 13;
     for (unsigned y = 0; y < NELEM(pixels); ++y) {
         const unsigned row = direction == 1 ? 15 - y : y;
         const unsigned inset = pointed ? (row >= 10 ? row - 9 : row == 0) : (y == 0 || y == 15);
@@ -1964,7 +1965,12 @@ static int carbon_HitTestThemeTrack(ROMlib_carbon_ppc_frame* call)
     return appearance_client_result(call, part != 0);
 }
 
-enum appearance_track_query { appearance_drag_rect, appearance_offset_position, appearance_region_position, appearance_live_value };
+enum appearance_track_query {
+    appearance_drag_rect,
+    appearance_offset_position,
+    appearance_region_position,
+    appearance_live_value
+};
 
 static bool appearance_region_bounds(uint32_t address, Rect* bounds)
 {
@@ -2036,8 +2042,7 @@ static int appearance_query_track(ROMlib_carbon_ppc_frame* call, enum appearance
         if (kind == 2) {
             int32_t delta = 0;
             if (relative > 0 && extent) {
-                delta = relative >= extent ? range
-                                           : appearance_pixel_round((float)relative / extent * range + 0.5);
+                delta = relative >= extent ? range : appearance_pixel_round((float)relative / extent * range + 0.5);
             }
             result = CW(track.attributes) & 2 ? (uint32_t)max - (uint32_t)delta : (uint32_t)min + (uint32_t)delta;
         }
@@ -2089,7 +2094,12 @@ static int carbon_GetThemeTrackLiveValue(ROMlib_carbon_ppc_frame* call)
     return appearance_query_track(call, appearance_live_value, "GetThemeTrackLiveValue", 0x3dd4);
 }
 
-enum appearance_scroll_arrow { appearance_start_outer, appearance_start_inner, appearance_end_inner, appearance_end_outer };
+enum appearance_scroll_arrow {
+    appearance_start_outer,
+    appearance_start_inner,
+    appearance_end_inner,
+    appearance_end_outer
+};
 
 typedef struct {
     Rect track;
@@ -2143,15 +2153,16 @@ static int appearance_scroll_arrows_entry(ROMlib_carbon_ppc_frame* call, bool hi
         return ROMlib_carbon_invoke_frame(ref.function, call);
     Rect bounds;
     memcpy(&bounds, source, sizeof bounds);
-    appearance_scroll_geometry layout = appearance_scroll_arrows(bounds, (uint8_t)call->words[3], (uint8_t)call->words[1],
-                                                                 appearance_platinum_preference(&ref, appearance_arrow_style_field));
+    appearance_scroll_geometry layout =
+        appearance_scroll_arrows(bounds, (uint8_t)call->words[3], (uint8_t)call->words[1],
+                                 appearance_platinum_preference(&ref, appearance_arrow_style_field));
     memcpy(output, &layout.track, sizeof layout.track);
     if (!hit_test)
         return appearance_client_result(call, noErr);
 
     const Point point = {(int16_t)(call->words[4] >> 16), (int16_t)call->words[4]};
     static const unsigned hit_order[] = {appearance_start_outer, appearance_end_inner, appearance_end_outer,
-                                        appearance_start_inner};
+                                         appearance_start_inner};
     INTEGER code = 0;
     for (unsigned i = 0; i < NELEM(hit_order); ++i) {
         const unsigned button = hit_order[i];

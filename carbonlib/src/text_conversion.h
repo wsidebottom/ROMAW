@@ -66,6 +66,7 @@ enum {
 };
 
 int ROMlib_carbon_text_conversion(const char* name, uint32_t offset, int operation, ROMlib_carbon_ppc_frame* call);
+int ROMlib_carbon_compare_text_no_locale(ROMlib_carbon_ppc_frame* call);
 int ROMlib_carbon_compare_collation_keys(ROMlib_carbon_ppc_frame* call);
 
 #ifdef CARBON_TEXT_CONVERSION_EXPORTS

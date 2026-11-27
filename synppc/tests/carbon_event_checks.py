@@ -1652,6 +1652,8 @@ def event_sections(probe):
         make_event(b"keyb", 3)
         for side in (0, 1):
             require("CouldBeMenuKeyEvent", [0, event], 0, side)
+            require("IsMenuKeyEvent", [0, event, 0, 0, 0], 0, side)
+            require("IsWindowPathSelectEvent", [0, event], 0, side)
         probe.call("ReleaseEvent", [event])
 
         make_event(b"ctst", 1)
@@ -1677,6 +1679,26 @@ def event_sections(probe):
             probe.call("__FlushEvents", [8, 0], side)
             require("IsEventInQueue", [queue, event], 0)
             probe.call("ReleaseEvent", [event])
+
+        sequence = ((b"keyb", 0), (b"mous", 0), (b"ctst", 1), (b"keyb", 0), (b"keyb", 1))
+        for side in (0, 1):
+            for index, (group, _) in enumerate(sequence):
+                item_slot = scratch + 16 + 4 * index
+                item = probe.slot(item_slot)
+                make_event(group, 1, item_slot)
+                if index == 3:
+                    require("SetEventParameter", [item, 0x6B707276, 0x626F6F6C, 1, probe.ptr(key_parameters[1] + 20)])
+                    require("SetEventParameter", [item, 0x6B636F64, 0x6D61676E, 4, probe.ptr(key_parameters[1] + 12)])
+                    require("SetEventParameter", [item, 0x6B636872, 0x54455854, 1, probe.ptr(key_parameters[1] + 21)])
+                    require("SetEventParameter", [item, 0x6B6D6F64, 0x6D61676E, 4, key_parameters])
+                require("PostEventToQueue", [queue, item, 2])
+            require("CheckEventQueueForUserCancel", [], 1, side)
+            for index, (_, remains) in enumerate(sequence):
+                item = probe.slot(scratch + 16 + 4 * index)
+                require("IsEventInQueue", [queue, item], remains)
+                if remains:
+                    require("RemoveEventFromQueue", [queue, item])
+                probe.call("ReleaseEvent", [item])
 
         delegate = probe.raw(bytes(8))
         p.routines.append((delegate[1], [0x38600102, 0x4E800020]))

@@ -213,10 +213,10 @@ static int menu_clock(const char* name, uint32 offset, enum menu_clock_action ac
     return carbon_vector_DrawMenuBar(call) && menu_result(call, (int16)status);
 }
 
-#define CARBON_MENU_CLOCK(name, offset, action)                                                       \
-    static int carbon_##name(ROMlib_carbon_ppc_frame* call)                                            \
-    {                                                                                                 \
-        return menu_clock(#name, offset, action, call);                                                \
+#define CARBON_MENU_CLOCK(name, offset, action)             \
+    static int carbon_##name(ROMlib_carbon_ppc_frame* call) \
+    {                                                       \
+        return menu_clock(#name, offset, action, call);     \
     }
 CARBON_MENU_CLOCK(IsMenuBarClockEnabled, 0xa000, clock_is_enabled)
 CARBON_MENU_CLOCK(EnableMenuBarClock, 0xa01c, clock_enable)
@@ -253,8 +253,7 @@ static int menu_forget_saved_pixels(const ROMlib_carbon_reference* reference, ui
     _Alignas(16) uint32 owner = CL(cache);
     const uint32 output = US_TO_SYN68K(&owner);
     return cfp_get(cache, &snapshot) && cfp_write(menu_record + 0x10, 0) &&
-           cfp_private(reference, 0x13824, &snapshot, 1, NULL) &&
-           cfp_private(reference, 0x1383c, &output, 1, NULL);
+           cfp_private(reference, 0x13824, &snapshot, 1, NULL) && cfp_private(reference, 0x1383c, &output, 1, NULL);
 }
 
 static int carbon_InvalidateCachedMenuPixels(ROMlib_carbon_ppc_frame* call)
@@ -1537,6 +1536,102 @@ static int carbon_IsMenuBarInvalid(ROMlib_carbon_ppc_frame* call)
     return menu_result(call, flags && ((flags[0] | flags[1]) & 0x40));
 }
 
+static int carbon_IsMenuKeyEvent(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t start = call->words[0], event = call->words[1], options = call->words[2];
+    const uint32_t menu_output = call->words[3], item_output = call->words[4];
+    if (!event)
+        return menu_result(call, 0);
+    ROMlib_carbon_reference ref;
+    const int ready = menu_get_reference("IsMenuKeyEvent", 0x1b880, call, &ref, -4);
+    if (ready != 1)
+        return ready != 0;
+
+    uint32_t type, kind;
+    if (!cfp_private(&ref, 0xb3360, &event, 1, &type))
+        return 0;
+    if (type != TICK("keyb"))
+        return menu_result(call, 0);
+    if (!cfp_private(&ref, 0xb33d8, &event, 1, &kind))
+        return 0;
+    if (kind != 1 && kind != 2)
+        return menu_result(call, 0);
+
+    _Alignas(4) uint32_t bytes = 0;
+    const uint32_t char_size[] = {event, TICK("kchr"), TICK("TEXT"), 0, 0, US_TO_SYN68K(&bytes), 0};
+    uint32_t status;
+    if (!cfp_private(&ref, 0xb3240, char_size, NELEM(char_size), &status))
+        return 0;
+    if (status || CL(bytes) > 1)
+        return menu_result(call, 0);
+
+    _Alignas(64) uint32_t search[10] = {0};
+    unsigned char* flags = (unsigned char*)search;
+    flags[0] = 1;
+    flags[1] = kind == 2;
+    search[3] = CL(event);
+    search[7] = CL(options);
+    if (CL(bytes) == 1) {
+        const uint32_t read[] = {event, TICK("kchr"), TICK("TEXT"), 0, 1, 0, US_TO_SYN68K(flags + 27)};
+        if (!cfp_private(&ref, 0xb3240, read, NELEM(read), NULL))
+            return 0;
+    }
+    else {
+        const uint32_t unicode_size[] = {event, TICK("kuni"), TICK("utxt"), 0, 0, US_TO_SYN68K(&bytes), 0};
+        if (!cfp_private(&ref, 0xb3240, unicode_size, NELEM(unicode_size), &status))
+            return 0;
+        if (status || CL(bytes) != 2)
+            return menu_result(call, 0);
+        _Alignas(2) uint16_t character = 0;
+        const uint32_t read[] = {event, TICK("kuni"), TICK("utxt"), 0, 2, 0, US_TO_SYN68K(&character)};
+        if (!cfp_private(&ref, 0xb3240, read, NELEM(read), NULL))
+            return 0;
+        const uint32_t string = ROMlib_cfstring_characters(0, read[6], 1);
+        if (!string)
+            return menu_result(call, 0);
+        uint32_t encoding, converted = 0;
+        _Alignas(16) unsigned char key_text[16] = {0};
+        int ok = cfp_private(&ref, 0xb4368, NULL, 0, &encoding);
+        if (ok) {
+            const uint32_t translate[] = {string, US_TO_SYN68K(key_text), sizeof key_text, encoding};
+            ok = cfp_call("CFStringGetPascalString", translate, NELEM(translate), &converted);
+        }
+        const int released = cfp_call("CFRelease", &string, 1, NULL);
+        if (!ok || !released)
+            return 0;
+        if (!converted || key_text[0] != 1)
+            return menu_result(call, 0);
+        search[6] = CL((uint8_t)key_text[1]);
+    }
+
+    const uint32_t modifiers[] = {event, TICK("kmod"), TICK("magn"), 0, 4, 0, US_TO_SYN68K(&search[4])};
+    const uint32_t key_code[] = {event, TICK("kcod"), TICK("magn"), 0, 4, 0, US_TO_SYN68K(&search[5])};
+    if (!cfp_private(&ref, 0xb3240, modifiers, NELEM(modifiers), NULL) ||
+        !cfp_private(&ref, 0xb3240, key_code, NELEM(key_code), &status))
+        return 0;
+    if (status)
+        flags[0] = 0;
+    const uint32_t query[] = {start, US_TO_SYN68K(search)};
+    uint32_t found;
+    if (!cfp_private(&ref, 0x1ab44, query, NELEM(query), &found))
+        return 0;
+    if (!found)
+        return menu_result(call, 0);
+
+    const uint32_t menu = CL(search[8]), item = CL(search[9]) >> 16;
+    const uint32_t select[] = {menu, item, options};
+    if (!cfp_private(&ref, 0x1aeac, select, NELEM(select), NULL) || (menu_output && !cfp_write(menu_output, menu)))
+        return 0;
+    if (item_output) {
+        void* item_buffer = ROMlib_carbon_try_guest_memory(item_output, 2, 1);
+        if (!item_buffer)
+            return 0;
+        const uint16_t encoded = CW((uint16_t)item);
+        memcpy(item_buffer, &encoded, sizeof encoded);
+    }
+    return menu_result(call, 1);
+}
+
 static int carbon_InvalidateMenuKeyCache(ROMlib_carbon_ppc_frame* call)
 {
     const uint32 menu = call->words[0], flags = call->words[3];
@@ -1866,9 +1961,8 @@ static int carbon_GetSubmenuParentChoosable(ROMlib_carbon_ppc_frame* call)
     const uint32_t menu_address = call->words[0];
     const uint32_t* master = menu_address ? ROMlib_carbon_try_guest_memory(menu_address, sizeof *master, 0) : NULL;
     const uint32_t data = master ? CL(*master) : 0;
-    const MenuHandle menu = data && ROMlib_carbon_try_guest_memory(data, offsetof(MenuInfo, menuData) + 2, 0)
-                                ? (MenuHandle)master
-                                : NULL;
+    const MenuHandle menu =
+        data && ROMlib_carbon_try_guest_memory(data, offsetof(MenuInfo, menuData) + 2, 0) ? (MenuHandle)master : NULL;
     return menu_result(call, ROMlib_get_submenu_parent_choosable(menu, (INTEGER)call->words[1], output));
 }
 
@@ -2196,6 +2290,64 @@ static int32_t carbon_menu_property(enum carbon_menu_property_operation operatio
     return noErr;
 }
 
+static int carbon_GetFontFamilyFromMenuSelection(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t menu = call->words[0], item = (uint16_t)call->words[1];
+    if (!call->words[2] || !call->words[3])
+        return menu_result(call, paramErr);
+    void* family_out = ROMlib_carbon_try_guest_memory(call->words[2], 2, 1);
+    void* style_out = ROMlib_carbon_try_guest_memory(call->words[3], 2, 1);
+    if (!family_out || !style_out)
+        return menu_result(call, paramErr);
+
+    ROMlib_carbon_reference original;
+    const int reference = menu_get_reference("GetFontFamilyFromMenuSelection", 0x18780, call, &original, -4);
+    if (reference != 1)
+        return reference != 0;
+
+    _Alignas(4) uint32_t selection = CL(cfp_toc(&original, 0x7200));
+    const uint32_t property[] = {menu, item, TICK("font"), TICK("ffam"), 4, 0, US_TO_SYN68K(&selection)};
+    const int32_t status = carbon_menu_property(menu_get_property, property, 0);
+    const uint32_t packed = CL(selection);
+    uint16_t family = packed >> 16;
+    if (status) {
+        _Alignas(256) Str255 name = {0};
+        const uint32_t name_address = US_TO_SYN68K(name);
+        const uint32_t title[] = {menu, (uint32_t)(int16_t)item, name_address};
+        if (!cfp_private(&original, 0xb6198, title, NELEM(title), NULL))
+            return 0;
+        if (cfp_toc(&original, (unsigned)-0x2bf8)) {
+            uint32_t match;
+            if (!cfp_private(&original, 0xb61b0, &name_address, 1, &match))
+                return 0;
+            family = match;
+        }
+        else {
+            _Alignas(2) uint16_t encoded = 0;
+            const uint32_t resolve[] = {name_address, US_TO_SYN68K(&encoded)};
+            if (!cfp_private(&original, 0xb1c08, resolve, NELEM(resolve), NULL))
+                return 0;
+            family = CW(encoded);
+            if (!family) {
+                _Alignas(256) Str255 system_name = {0};
+                const uint32_t get_system[] = {0, US_TO_SYN68K(system_name)};
+                const uint32_t compare[] = {name_address, get_system[1], 1, 1};
+                uint32_t matches;
+                if (!cfp_private(&original, 0xb1bd8, get_system, NELEM(get_system), NULL) ||
+                    !cfp_private(&original, 0xb1950, compare, NELEM(compare), &matches))
+                    return 0;
+                if (!matches)
+                    family = UINT16_MAX;
+            }
+        }
+    }
+
+    const uint16_t encoded_family = CW(family), encoded_style = CW((uint16_t)packed);
+    memcpy(family_out, &encoded_family, 2);
+    memcpy(style_out, &encoded_style, 2);
+    return menu_result(call, status);
+}
+
 enum carbon_menu_command_operation {
     command_set_id,
     command_count,
@@ -2215,6 +2367,7 @@ static int menu_item_command(uint32_t menu_address, MenuHandle menu, int16_t ite
                              uint32_t* status)
 {
     enum { menu_dispatch_vector = 0x0e94, menu_dispatch_slot = 0x25 };
+
     uint32_t* output = !write && value ? ROMlib_carbon_guest_memory(value, sizeof *output, 1) : NULL;
     if (!menu || item < 1 || item > ROMlib_menu_item_count(menu) || (!write && !output)) {
         *status = paramErr;
@@ -2230,14 +2383,13 @@ static int menu_item_command(uint32_t menu_address, MenuHandle menu, int16_t ite
     if (vector && vector != (uint32_t)(uintptr_t)toolstuff[menu_dispatch_slot].orig) {
         const ROMlib_carbon_ppc_frame args = {.words = {menu_address, item, value}};
         uint32_t result;
-        if (!ROMlib_carbon_call_toolbox_vector(menu_dispatch_vector, 0x3ba8, write ? 0x0502 : 0x0503, &args,
-                                              &result))
+        if (!ROMlib_carbon_call_toolbox_vector(menu_dispatch_vector, 0x3ba8, write ? 0x0502 : 0x0503, &args, &result))
             return 0;
         *status = (int16_t)result;
     }
     else {
-        *status = write ? ROMlib_set_menu_item_command(menu, item, value)
-                        : ROMlib_get_menu_item_command(menu, item, output);
+        *status =
+            write ? ROMlib_set_menu_item_command(menu, item, value) : ROMlib_get_menu_item_command(menu, item, output);
     }
     return 1;
 }

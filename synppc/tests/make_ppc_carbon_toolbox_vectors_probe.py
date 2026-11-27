@@ -121,9 +121,51 @@ COLOR_PROFILE_APIS = (
     "CMSearchGetIndProfile",
     "CMValidateProfile",
     "CMGetPreferredCMMGlobal",
+    "CMGetPreferredCMM",
+    "CMSetPreferredCMMGlobal",
+    "CMCreateProfileIdentifier",
+    "CMProfileIdentifierListSearch",
+    "CMProfileIdentifierFolderSearch",
+    "CMGetCWInfo",
+    "CMGetPS2ColorSpace",
+    "CMGetPS2ColorRenderingIntent",
+    "CMGetPS2ColorRendering",
+    "CMGetPS2ColorRenderingVMSize",
+    "CMIterateCMMInfo",
+    "CMIterateColorSyncFolder",
+    "NCMBeginMatching",
+    "NCMDrawMatchedPicture",
+    "CMEndMatching",
+    "NCMUseProfileComment",
+    "CMEnableMatchingComment",
+    "NCWNewColorWorld",
+    "CWDisposeColorWorld",
+    "CWConcatColorWorld",
+    "NCWConcatColorWorld",
+    "CWNewLinkProfile",
+    "NCWNewLinkProfile",
+    "CWMatchColors",
+    "CWCheckColors",
+    "CWMatchBitmap",
+    "CWCheckBitmap",
+    "CWMatchPixMap",
+    "CWCheckPixMap",
+    "CMDeleteWorkflow",
+    "CMGetWorkflowEntry",
+    "CMSetWorkflowEntry",
+    "CMCopyWorkflow",
+    "CMExportWorkflow",
+    "CMImportWorkflow",
     "CMGetDefaultProfileBySpace",
     "CMGetDefaultProfileByUse",
     "CMGetProfileByAVID",
+    "CMSetProfileByAVID",
+    "CMGetSystemProfileAVID",
+    "CMSetSystemProfileAVID",
+    "CMNewDisplayProfile",
+    "CMLaunchControlPanel",
+    "CMGetGammaByAVID",
+    "CMSetGammaByAVID",
     "CMGetSystemProfile",
     "CMGetSystemProfilePriv",
     "CMSetDefaultProfileBySpace",
@@ -3999,6 +4041,7 @@ FONT_FAMILY_APIS = (
     "FMGetNextFontFamily",
     "FMGetFontFamilyFromName",
     "FMGetFontFamilyName",
+    "FMGetFontFamilyTextEncoding",
 )
 
 
@@ -4050,6 +4093,14 @@ def font_family_operations(probe):
     expected("FMCreateFontFamilyIterator", [0, 0, 0, 0], -50)
     expected("FMGetFontFamilyFromName", [0], -1)
     expected("FMGetFontFamilyName", [32002, 0], -50)
+    expected("FMGetFontFamilyTextEncoding", [16009, ptr(92)], 0)
+    p.emit(0x807E0000 | (base + 92), 0x5463043E)
+    p.expect(0, "a neutral bitmap font uses the Mac Roman encoding base")
+    expected("FMGetFontFamilyTextEncoding", [16010, ptr(92)], 0)
+    p.emit(0x807E0000 | (base + 92), 0x5463043E)
+    p.expect(0, "the TrueType Macintosh family record identifies Mac Roman")
+    expected("FMGetFontFamilyTextEncoding", [16009, 0], -50)
+    expected("FMGetFontFamilyTextEncoding", [-1, ptr(92)], -981)
     probe.call("RemoveResource", [slot(64)])
     probe.call("DisposeHandle", [slot(64)])
 
@@ -4304,6 +4355,34 @@ def theme_font_operations(probe):
         arguments[1] = 0
         probe.call(getter, arguments)
         p.expect(-50, getter + " requires a name output")
+    unknown_font = probe.far_raw(b"\x16ROMAW No Such Font 935")
+    for setter in ("SetSystemFont", "SetSmallSystemFont"):
+        probe.call(setter, [unknown_font, -1, 0])
+        p.expect(-30574, setter + " rejects an unavailable family")
+        probe.call(setter, [0, -1, 0])
+        p.expect(-30574, setter + " requires a name")
+
+    old_views_name = probe.far_raw(bytes(256))
+    new_views_name = probe.far_raw(bytes(256))
+    probe.call("SetViewsFont", [0, 14, -1, 0])
+    p.expect(0x6E6F456D, "SetViewsFont requires a font name")
+    probe.call("GetViewsFont", [-1, old_views_name, ptr(16)])
+    p.expect(0, "read the system script's views font before updating it")
+    probe.call("SetViewsFont", [old_views_name, 8, -1, 0])
+    p.expect(0x6E6F456D, "SetViewsFont rejects sizes below nine points")
+    probe.call("SetViewsFont", [old_views_name, 14, -1, 0])
+    p.expect(0, "set the views font size for the default script")
+    probe.call("GetViewsFont", [-1, new_views_name, ptr(18)])
+    p.expect(0, "read back the updated views font")
+    p.emit(0xA07E0000 | (base + 18))
+    p.expect(14, "the views collection has the updated point size")
+    probe.arguments([old_views_name, new_views_name], 0)
+    p.emit(0x80630000, 0x80840000)
+    p.equal("the views collection retains the selected font name")
+    p.emit(0xA07E0000 | (base + 16), 0x907E0000 | (base + 20))
+    probe.call("SetViewsFont", [old_views_name, probe.slot(base + 20), -1, 0])
+    p.expect(0, "restore the original views font")
+
     probe.call("GetThemeFont", [103, 0, name, 0, 0])
     p.expect(0, "resolve the command-key font with optional scalar outputs omitted")
     probe.arguments([name], 0)
@@ -6256,6 +6335,7 @@ def power_activity_operations(probe):
     for name, arguments, expected in (
         ("PMFeatures", [], 0),
         ("MaximumProcessorSpeed", [], 250),
+        ("MinimumProcessorSpeed", [], 250),
         ("CurrentProcessorSpeed", [], 250),
         ("FullProcessorSpeed", [], 1),
         ("SetProcessorSpeed", [0], 0),
@@ -6267,6 +6347,32 @@ def power_activity_operations(probe):
     ):
         probe.call(name, arguments)
         p.expect(expected, name + " reports the fixed-clock desktop hardware")
+
+    wakeup = probe.far_raw(struct.pack(">IBBH", 0xE3456789, 2, 0xCC, 0xFACE))
+    startup = probe.far_raw(struct.pack(">IBBH", 0xF1234567, 0, 0xDD, 0xFACE))
+    timer_out = probe.far_raw(struct.pack(">IBBH", 0xA5A5A5A5, 0xA5, 0xA5, 0xBEEF))
+
+    probe.call("SetWakeupTimer", [wakeup])
+    check_status("SetStartupTimer", [startup])
+    for getter, expected_time, expected_flags in (
+        ("GetStartupTimer", 0xF1234567, 0x00A5),
+        ("GetWakeupTimer", 0xE3456789, 0x01A5),
+    ):
+        probe.call(getter, [timer_out])
+        if getter == "GetStartupTimer":
+            p.expect(0, "GetStartupTimer returns noErr")
+        probe.arguments([timer_out], 0)
+        p.emit(0x80630000)
+        p.expect(expected_time, getter + " loads its own 32-bit Macintosh timestamp")
+        probe.arguments([timer_out], 0)
+        p.emit(0xA0630004)
+        p.expect(expected_flags, getter + " preserves the reserved byte beside the enable flag")
+        probe.arguments([timer_out], 0)
+        p.emit(0xA0630006)
+        p.expect(0xBEEF, getter + " preserves the output guard")
+
+    check_status("SetStartupTimer", [0], -50)
+    check_status("GetStartupTimer", [0], -50)
 
     timeouts = (
         ("SetSleepTimeout", "GetSleepTimeout", 0xC1),
@@ -8971,6 +9077,32 @@ def desktop_pattern_fixture():
 
 def desktop_window_operations(probe, base):
     p = probe.p
+    start = probe.far_raw(struct.pack(">2h", 40, 40))
+    bounds = probe.far_raw(struct.pack(">4h", 20, 20, 60, 60))
+    constraints = probe.far_raw(struct.pack(">8hIH", 10, 10, 80, 80, 0, 0, 100, 100, 0, 0))
+    output = probe.far_raw(bytes(4))
+    callback = probe.far_raw(bytes(8))
+    p.routines.append((callback[1], [0x38600000, 0x4E800020]))
+    probe.call("NewRoutineDescriptor", [callback, 0x3FD0, 1])
+    p.nonzero("create a constrained-drag cancellation callback")
+    p.emit(0x907E0000 | (base + 76))
+    probe.call("NewRgn", [])
+    p.nonzero("allocate the constrained-drag outline")
+    p.emit(0x907E0000 | (base + 80))
+    region, upp = probe.slot(base + 80), probe.slot(base + 76)
+    probe.call("RectRgn", [region, bounds])
+    for side in (0, 1):
+        probe.arguments([output, 0x5A5A5A5A], 0)
+        p.emit(0x90830000)
+        probe.call("ConstrainedDragRgn", [start, region, constraints, upp, output], side=side)
+        p.expect(0, "a released mouse does not start a constrained drag")
+        probe.arguments([output], 0)
+        p.emit(0x80630000)
+        p.expect(0, "the released mouse leaves a zero drag displacement")
+    probe.call("DisposeRgn", [region])
+    probe.call("DisposeRoutineDescriptor", [upp])
+
+    p = probe.p
     original, custom, output, data, saved_port, final_port = (base + offset for offset in range(0, 24, 4))
     original_name = probe.far_raw(bytes(256))
     read_name = probe.far_raw(bytes(256))
@@ -9019,6 +9151,52 @@ def desktop_window_operations(probe, base):
     p.expect(0, "restore the original desktop preference")
     probe.call("DisposeHandle", [probe.slot(original)])
     probe.call("DisposeHandle", [probe.slot(custom)])
+
+
+def monitor_background_operation(probe, base, desktop, side):
+    p = probe.p
+    previous, device, world, pixmap, region, pattern, restored, pixel = range(base, base + 32, 4)
+    bounds = probe.far_raw(struct.pack(">4h", 0, 0, 24, 24))
+    white = probe.far_raw(bytes.fromhex("ffffffffffff"))
+    black = probe.far_raw(bytes(6))
+    probe.call("GetGWorld", [probe.ptr(previous), probe.ptr(device)])
+    probe.call("NewGWorld", [probe.ptr(world), 32, bounds, 0, 0, 0])
+    p.expect(0, "create the desktop background drawing surface")
+    probe.call("GetGWorldPixMap", [probe.slot(world)])
+    p.emit(0x907E0000 | pixmap)
+    probe.call("LockPixels", [probe.slot(pixmap)])
+    p.expect(1, "lock the desktop drawing pixels")
+    probe.call("SetGWorld", [probe.slot(world), 0])
+    probe.call("RGBBackColor", [white])
+    probe.call("EraseRect", [bounds])
+    probe.call("NewRgn", [])
+    p.emit(0x907E0000 | region)
+    probe.call("SetRectRgn", [probe.slot(region), 4, 4, 12, 12])
+    probe.call("NewPixPat", [])
+    p.emit(0x907E0000 | pattern)
+    probe.call("MakeRGBPat", [probe.slot(pattern), black])
+    probe.call("SetGWorld", [probe.slot(previous), probe.slot(device)])
+
+    arguments = [desktop, 1, probe.slot(world), bounds, probe.slot(region), probe.slot(pattern), 0, 1]
+    probe.call("DrawMonitorDesktopFromList", arguments, side=side)
+    p.expect(0, "fill the desktop region without a picture")
+    probe.call("GetPort", [probe.ptr(restored)])
+    p.emit(0x807E0000 | restored, 0x809E0000 | previous)
+    p.equal("desktop drawing restores the calling port")
+
+    probe.call("SetGWorld", [probe.slot(world), 0])
+    for point, color in ((8, 0), (2, 0xFFFFFFFF)):
+        probe.call("GetCPixel", [point, point, probe.ptr(pixel)])
+        p.emit(0x807E0000 | pixel)
+        p.expect(color, "desktop pattern respects the supplied region")
+    probe.call("GetClip", [probe.slot(region)])
+    probe.call("PtInRgn", [0x00020002, probe.slot(region)])
+    p.expect(1, "the target's clip region is restored after desktop drawing")
+    probe.call("SetGWorld", [probe.slot(previous), probe.slot(device)])
+    probe.call("DisposePixPat", [probe.slot(pattern)])
+    probe.call("DisposeRgn", [probe.slot(region)])
+    probe.call("UnlockPixels", [probe.slot(pixmap)])
+    probe.call("DisposeGWorld", [probe.slot(world)])
 
 
 def monitor_desktop_operations(probe, base):
@@ -9131,6 +9309,7 @@ def monitor_desktop_operations(probe, base):
         p.expect(0, "query draw timing without a desktop picture")
         p.emit(0x887E0000 | value)
         p.expect(0, "a background without a picture needs no picture load")
+        monitor_background_operation(probe, base + 24, copy, side)
         probe.call("FileContainsPossibleDesktopPicture", [picture_file, probe.ptr(value)], side=side)
         p.expect(0, "read the PICT file's Finder metadata")
         p.emit(0x887E0000 | value)
@@ -9423,6 +9602,33 @@ def window_metadata_operations(probe, window, base):
 
 
 def control_manager_operations(probe):
+    state = probe.far_raw(bytes(12))
+    p = probe.p
+    for side in (0, 1):
+        instance, definition = 0x0ACA1100 + side * 4, 0x0ACA2200 + side * 4
+        probe.call("FindDefinitionFromTBInstance", [instance, state], side=side)
+        p.expect(0, "an unknown Toolbox instance has no definition")
+        probe.arguments([state], 0)
+        p.emit(0x80630000)
+        p.expect(0, "a missing definition clears the output")
+        probe.call("InstallTBInstanceDefinitionDirect", [instance, definition], side=side)
+        p.emit(0x2C030000)
+        uninstalled = len(p.code)
+        p.emit(0)
+        probe.call("FindDefinitionFromTBInstance", [instance, state], side=1 - side)
+        p.expect(1, "both implementations see the same Toolbox definition")
+        probe.arguments([state], 0)
+        p.emit(0x80630000)
+        p.expect(definition, "the registry returns the supplied descriptor")
+        probe.call("RemoveTBInstanceDefinition", [instance], side=1 - side)
+        probe.call("FindDefinitionFromTBInstance", [instance, state], side=side)
+        p.expect(0, "removing the definition makes the instance unknown")
+        p.code[uninstalled] = 0x41820000 | (len(p.code) - uninstalled) * 4
+        probe.call("InstallTBInstanceDefinition", [instance, state, 0], side=side)
+        probe.call("RemoveTBInstanceDefinition", [instance], side=side)
+        probe.call("CreateWindowFromResource", [32760, state], side=side)
+        p.expect(-192, "a missing wind resource reports resNotFound")
+
     p = probe.p
     ptr, slot = probe.ptr, probe.slot
     _, base = probe.raw(bytes(396))
@@ -9727,6 +9933,24 @@ def control_manager_operations(probe):
     p.nonzero("create a classic dialog with two edit fields")
     save(0)
     call("CountDITL", [window], 2)
+    call("IsTSMTEDialog", [window], 0)
+    call("GetTSMTEDialogDocumentID", [0], 0)
+    tsm_record = bytearray(0xBE)
+    struct.pack_into(">II", tsm_record, 0xAA, 0x11223344, 0x55667788)
+    struct.pack_into(">4s", tsm_record, 0xBA, b"tmTE")
+    tsm_dialog = probe.far_raw(tsm_record)
+    call("IsTSMTEDialog", [tsm_dialog], 1)
+    call("GetTSMTEDialogDocumentID", [tsm_dialog], 0x11223344)
+    call("GetTSMTEDialogTSMTERecHandle", [tsm_dialog], 0x55667788)
+    probe.call("SetTSMTEDialogTSMTERecHandle", [tsm_dialog, 0xAABBCCDD])
+    call("GetTSMTEDialogTSMTERecHandle", [tsm_dialog], 0xAABBCCDD)
+    probe.call("SetTSMTEDialogDocumentID", [tsm_dialog, 0x22334455])
+    call("GetTSMTEDialogDocumentID", [tsm_dialog], 0x22334455)
+    probe.call("SetTSMTEDialogDocumentID", [tsm_dialog, 0])
+    probe.call("SetTSMTEDialogDocumentID", [tsm_dialog, 0x33445566])
+    call("IsTSMTEDialog", [tsm_dialog], 0)
+    call("GetTSMTEDialogDocumentID", [tsm_dialog], 0)
+    call("GetTSMTEDialogTSMTERecHandle", [tsm_dialog], 0)
     call("GetDialogItemAsControl", [window, 2, ptr(base + 4)])
     button = struct.pack(">I4hBB2s", 0, 45, 8, 62, 70, 4, 2, b"OK")
     appended = struct.pack(">H", 1) + edit + button
@@ -11918,6 +12142,14 @@ def menu_text_operations(probe):
     p.emit(0xA07E0000 | (base + 16))
     p.expect(1, "append returns the one-based item")
     call("CountMenuItems", [menu], 1)
+    family, style = probe.ptr(base + 28), probe.ptr(base + 30)
+    prop = probe.far_raw(struct.pack(">HH", 32001, 3))
+    call("SetMenuItemProperty", [menu, 1, 0x666F6E74, 0x6666616D, 4, prop])
+    call("GetFontFamilyFromMenuSelection", [menu, 1, 0, style], -50)
+    call("GetFontFamilyFromMenuSelection", [menu, 1, family, style])
+    p.emit(0x807E0000 | (base + 28))
+    p.expect(0x7D010003, "the menu font item returns its explicit family and style")
+    call("RemoveMenuItemProperty", [menu, 1, 0x666F6E74, 0x6666616D])
     call("CountMenuItemsWithCommandID", [menu, command], 1)
     check_copy("CopyMenuItemTextAsCFString", [menu, 1], text, 0)
     call("InsertMenuItemTextWithCFString", [menu, title, 0, 0, 0])
@@ -12408,6 +12640,18 @@ def component_operations(probe):
     probe.call("SetComponentInstanceStorage", [instance, count])
     probe.call("GetComponentInstanceStorage", [instance])
     p.pointer(base + 36, "instance storage preserves the guest pointer")
+    dispatch_parameters = probe.far_raw(struct.pack(">BBhHI", 0, 2, 0x1234, 0x4567, 0))
+    odd_parameters = probe.far_raw(struct.pack(">BBhBI", 0, 1, 0x1234, 0, 0))
+    probe.arguments([dispatch_parameters, instance], 0)
+    p.emit(0x5485843E, 0xB0A30006, 0xB0830008)  # append the instance after the two argument bytes
+    expect("CallComponentDispatch", [dispatch_parameters], 0)
+    p.emit(0x807E0000 | (base + 48))
+    p.expect(0x00021234, "the dispatcher forwards the caller's selector and byte count")
+    p.emit(0xA07E0000 | (base + 52))
+    p.expect(0x4567, "the dispatcher leaves the packed argument intact")
+    expect("CallComponentDispatch", [odd_parameters], -50)
+    expect("CallComponentDispatch", [0], -50)
+
     for name, selector, arguments, size in (
         ("CallComponentOpen", -1, [0x10203040], 4),
         ("CallComponentClose", -2, [0x50607080], 4),
@@ -12769,7 +13013,7 @@ def color_profile_operations(probe):
     probe.call("GetSharedLibrary", [library, 0x70777063, 1, connection, 0, 0])
     p.expect(0, "load the saved ColorSync extension")
     vectors = {}
-    for index, name in enumerate(COLOR_PROFILE_APIS):
+    for index, name in enumerate((*COLOR_PROFILE_APIS, "CWNewColorWorld")):
         symbol = probe.far_raw(bytes([len(name)]) + name.encode("ascii"))
         at = base + 208 + index * 4
         vectors[name] = at
@@ -12777,6 +13021,47 @@ def color_profile_operations(probe):
         p.expect(0, "resolve the saved ColorSync " + name)
         p.emit(0x807E0000 | at, 0x80630000, 0x80630000, 0x5463000A, 0x6C631800)
         p.nonzero("ColorSync original export is a guest descriptor")
+
+    callback = probe.far_raw(bytes(8))
+    p.routines.append(
+        (callback[1], [0x80A40000, 0x38A50001, 0x90A40000, 0x80C30000, 0x90C40004, 0x3860FF80, 0x4E800020])
+    )
+    probe.call("NewRoutineDescriptor", [callback, 0x3E0, 1])
+    p.nonzero("create a ColorSync iteration callback")
+    p.emit(0x907E0000 | (base + 144))
+    callback_upp = probe.slot(base + 144)
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        result = probe.ptr(base + scratch)
+        seed = probe.ptr(base + scratch + 12)
+        checked("CMIterateCMMInfo", [0, 0, 0], -50, original)
+        for offset in (0, 4, 8, 12):
+            store(scratch + offset, 0)
+        checked("CMIterateCMMInfo", [callback_upp, seed, result], None, original)
+        p.emit(0x907E0000 | (base + scratch + 8))
+    for offset in (0, 4, 8, 12):
+        p.emit(0x807E0000 | (base + 16 + offset), 0x809E0000 | (base + 32 + offset))
+        p.equal("CMM iteration matches the saved callback and count")
+
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        result = probe.ptr(base + scratch)
+        seed = probe.ptr(base + scratch + 12)
+        for offset in (0, 4, 8, 12):
+            store(scratch + offset, 0)
+        checked("CMIterateColorSyncFolder", [0, seed, size, 0], None, original)
+        p.emit(0x2C030000)
+        folder_unavailable = len(p.code)
+        p.emit(0)
+        checked("CMIterateColorSyncFolder", [callback_upp, seed, size, result], 0, original)
+        check(scratch, 0, "an unchanged folder seed skips the callback")
+        p.code[folder_unavailable] = 0x40820000 | (len(p.code) - folder_unavailable) * 4
+        checked("CMIterateColorSyncFolder", [callback_upp, 0, size, result], None, original)
+        p.emit(0x907E0000 | (base + scratch + 8), 0x807E0000 | (base + 8), 0x907E0000 | (base + scratch + 12))
+    for offset in (0, 4, 8, 12):
+        p.emit(0x807E0000 | (base + 16 + offset), 0x809E0000 | (base + 32 + offset))
+        p.equal("profile folder iteration matches the saved callback and count")
+    probe.call("DisposeRoutineDescriptor", [callback_upp])
 
     profile_bytes = bytearray(192)
     struct.pack_into(
@@ -12798,6 +13083,198 @@ def color_profile_operations(probe):
     def compare(first, second, message):
         p.emit(0x807E0000 | (base + first), 0x809E0000 | (base + second))
         p.equal(message)
+
+    for original in (False, True):
+        checked("CWDisposeColorWorld", [0], None, original)
+        for name, arguments in (
+            ("CWMatchColors", [0, output, 1]),
+            ("CWCheckColors", [0, output, 1, size]),
+            ("CWMatchBitmap", [0, output, 0, 0, 0]),
+            ("CWCheckBitmap", [0, output, 0, 0, output]),
+            ("CWMatchPixMap", [0, output, 0, 0]),
+            ("CWCheckPixMap", [0, output, 0, 0, output]),
+        ):
+            checked(name, arguments, -50, original)
+
+    basic_display = probe.far_raw(struct.pack(">I", 0x4E) + bytes(0x4A))
+    gamma_samples = probe.far_raw(bytes(24))
+    extended_display = probe.far_raw(struct.pack(">I", 0x58) + bytes(0x54))
+    probe.arguments([extended_display, 3, 4, 2, gamma_samples], 0)
+    p.emit(0xB083004E, 0xB0A30050, 0xB0C30052, 0x90E30054)
+    for original in (False, True):
+        checked("CMLaunchControlPanel", [1], -50, original)
+        checked("CMNewDisplayProfile", [0, 0, 0, basic_display], -50, original)
+        store(8, 0x5A5A5A5A)
+        checked("CMNewDisplayProfile", [0, 0, size, 0], -50, original)
+        check(8, 0, "an invalid display profile reports a zero size")
+        checked("CMNewDisplayProfile", [0, 0, size, basic_display], 0, original)
+        check(8, 688, "the basic display profile includes padding for its serialized tags")
+        checked("CMNewDisplayProfile", [0, 0, size, extended_display], 0, original)
+        check(8, 732, "variable gamma curves change the display profile size")
+
+    picture_rect = probe.far_raw(struct.pack(">4H", 0, 0, 16, 16))
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        checked("CMEndMatching", [0], None, original)
+        checked("NCMUseProfileComment", [0, 0], -50, original)
+        probe.call("OpenPicture", [picture_rect])
+        p.nonzero("open a picture for ColorSync comments")
+        p.emit(0x907E0000 | (base + 136))
+        checked("CMEnableMatchingComment", [1], None, original)
+        checked("NCMUseProfileComment", [profile_ref, 0], None, original)
+        p.emit(0x907E0000 | (base + scratch))
+        checked("NCMBeginMatching", [profile_ref, profile_ref, probe.ptr(base + 140)], None, original)
+        p.emit(0x907E0000 | (base + scratch + 4))
+        checked("CMEndMatching", [probe.slot(base + 140)], None, original)
+        checked("CMEnableMatchingComment", [0], None, original)
+        probe.call("ClosePicture", [])
+        probe.call("GetHandleSize", [probe.slot(base + 136)])
+        p.emit(0x907E0000 | (base + scratch + 8))
+        probe.call("KillPicture", [probe.slot(base + 136)])
+    for offset in (0, 4, 8):
+        compare(16 + offset, 32 + offset, "picture matching comment status and recorded length match")
+
+    probe.call("OpenPicture", [picture_rect])
+    p.nonzero("open a picture for matched playback")
+    p.emit(0x907E0000 | (base + 136))
+    probe.call("PaintRect", [picture_rect])
+    probe.call("ClosePicture", [])
+    probe.call("GetQDGlobalsThePort", [])
+    p.emit(0x907E0000 | (base + 140))
+    port = probe.slot(base + 140)
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        probe.call("GetPortGrafProcs", [port])
+        p.emit(0x907E0000 | (base + scratch + 4))
+        checked("NCMDrawMatchedPicture", [probe.slot(base + 136), profile_ref, picture_rect], None, original)
+        probe.call("QDError", [])
+        p.emit(0x907E0000 | (base + scratch))
+        probe.call("GetPortGrafProcs", [port])
+        p.emit(0x907E0000 | (base + scratch + 8))
+        compare(scratch + 4, scratch + 8, "matched playback restores the original QuickDraw procedures")
+    compare(16, 32, "native and saved matched playback report the same QuickDraw status")
+    probe.call("KillPicture", [probe.slot(base + 136)])
+
+    flatten = probe.far_raw(bytes(8))
+    p.routines.append((flatten[1], [0x80E60000, 0x38E70001, 0x90E60000, 0x90660004, 0x3860FF80, 0x4E800020]))
+    probe.call("NewRoutineDescriptor", [flatten, 0x3FE0, 1])
+    p.nonzero("create a ColorSync PostScript stream callback")
+    p.emit(0x907E0000 | (base + 144))
+    stream = probe.slot(base + 144)
+    for name in (
+        "CMGetPS2ColorSpace",
+        "CMGetPS2ColorRenderingIntent",
+        "CMGetPS2ColorRendering",
+        "CMGetPS2ColorRenderingVMSize",
+    ):
+        for side, original in enumerate((False, True)):
+            scratch = 16 + side * 16
+            context, missing = probe.ptr(base + scratch), probe.ptr(base + scratch + 12)
+            for offset in (0, 4, 8, 12):
+                store(scratch + offset, 0x5A5A5A5A)
+            if name == "CMGetPS2ColorRenderingVMSize":
+                checked(name, [0, 0, context, missing], -50, original)
+                check(scratch, 0, "an invalid profile leaves a zero VM size")
+            elif name == "CMGetPS2ColorRendering":
+                checked(name, [0, 0, 0, 0, context, missing], -50, original)
+            else:
+                checked(name, [0, 0, 0, context, missing], -50, original)
+            check(scratch + 12, 0x005A5A5A, "the optional CMM flag is cleared without writing adjacent bytes")
+            store(scratch, 0)
+            store(scratch + 4, 0)
+            if name == "CMGetPS2ColorRenderingVMSize":
+                args = [profile_ref, profile_ref, context, missing]
+            elif name == "CMGetPS2ColorRendering":
+                args = [profile_ref, profile_ref, 0, stream, context, missing]
+            else:
+                args = [profile_ref, 0, stream, context, missing]
+            checked(name, args, None, original)
+            p.emit(0x907E0000 | (base + scratch + 8))
+        for offset in (0, 4, 8, 12):
+            compare(16 + offset, 32 + offset, "PostScript status, output and callback match the saved fragment")
+    probe.call("DisposeRoutineDescriptor", [stream])
+
+    world_out = probe.ptr(base + 136)
+    world = probe.slot(base + 136)
+    for original in (False, True):
+        store(136, 0x5A5A5A5A)
+        checked("NCWNewColorWorld", [world_out, 0, 0], -50, original)
+        check(136, 0, "both color world profiles cannot be omitted")
+        checked("NCWNewColorWorld", [0, profile_ref, profile_ref], -50, original)
+    for source, destination in ((profile_ref, profile_ref), (0, profile_ref), (profile_ref, 0)):
+        for side, original in enumerate((False, True)):
+            scratch = 16 + side * 16
+            store(scratch + 4, 0)
+            store(scratch + 8, 0)
+            store(scratch + 12, 0)
+            store(136, 0x5A5A5A5A)
+            checked("NCWNewColorWorld", [world_out, source, destination], None, original)
+            p.emit(0x907E0000 | (base + scratch), 0x2C030000)
+            success = len(p.code)
+            p.emit(0)
+            check(136, 0, "a failed color world leaves the result empty")
+            skip = len(p.code)
+            p.emit(0)
+            p.code[success] = 0x41820000 | (len(p.code) - success) * 4
+            p.emit(0x807E0000 | (base + 136))
+            p.nonzero("a successful color world returns a live handle")
+            p.emit(0x80C30000, 0x80A60000)
+            p.emit(0x90BE0000 | (base + scratch + 4))
+            p.emit(0x80A6001C, 0x90BE0000 | (base + scratch + 8))
+            p.emit(0x80A60020, 0x90BE0000 | (base + scratch + 12))
+            checked("CWDisposeColorWorld", [world], None, original)
+            p.code[skip] = 0x48000000 | (len(p.code) - skip) * 4
+        for offset in (0, 4, 8, 12):
+            compare(16 + offset, 32 + offset, "new world status, component count and color spaces match")
+    empty_chain = probe.far_raw(bytes(16))
+    for original in (False, True):
+        for name, arguments in (
+            ("CWConcatColorWorld", [world_out, empty_chain]),
+            ("NCWConcatColorWorld", [world_out, empty_chain, 0, 0]),
+            ("CWNewLinkProfile", [world_out, location, empty_chain]),
+            ("NCWNewLinkProfile", [world_out, 0, empty_chain, 0, 0]),
+        ):
+            store(136, 0x5A5A5A5A)
+            checked(name, arguments, -50, original)
+            check(136, 0, "a rejected chain leaves no world or device-link profile")
+    store(136, 0)
+    checked("CWNewColorWorld", [world_out, profile_ref, profile_ref], None, True)
+    p.emit(0x2C030000)
+    no_world = len(p.code)
+    p.emit(0)
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        store(64, 0x12345678)
+        store(68, 0x9ABC0000)
+        checked("CWMatchColors", [world, output, 1], None, original)
+        p.emit(0x907E0000 | (base + scratch))
+        p.emit(0x807E0000 | (base + 64), 0x907E0000 | (base + scratch + 4))
+        checked("CWMatchBitmap", [world, 0, 0, 0, 0], -4210, original)
+        checked("CWCheckBitmap", [world, output, 0, 0, 0], -4211, original)
+        checked("CWMatchPixMap", [world, 0, 0, 0], -4210, original)
+        checked("CWCheckPixMap", [world, output, 0, 0, 0], -4211, original)
+    compare(16, 32, "the live CMM returns the same color-array status")
+    compare(20, 36, "the live CMM returns the same packed color")
+    checked("CWDisposeColorWorld", [world], None)
+    legacy_chain = probe.far_raw(struct.pack(">HHII", 0, 2, 0, 0))
+    extended_chain = probe.far_raw(struct.pack(">10I", 0, 0, 0, 2, 0, 1, 0, 0, 2, 0))
+    probe.arguments([legacy_chain, profile_ref], 0)
+    p.emit(0x90830004, 0x90830008)
+    probe.arguments([extended_chain, profile_ref], 0)
+    p.emit(0x90830018, 0x90830024)
+    for name, params in (
+        ("CWConcatColorWorld", [world_out, legacy_chain]),
+        ("NCWConcatColorWorld", [world_out, extended_chain, 0, 0]),
+    ):
+        for side, original in enumerate((False, True)):
+            scratch = 16 + side * 16
+            checked(name, params, None, original)
+            p.emit(0x907E0000 | (base + scratch))
+            p.emit(0x807E0000 | (base + 136), 0x7C630034, 0x5463D97E, 0x907E0000 | (base + scratch + 4))
+            checked("CWDisposeColorWorld", [world], None, not original)
+        compare(16, 32, name + " returns the saved CMM status")
+        compare(20, 36, name + " produces the same world-presence result")
+    p.code[no_world] = 0x40820000 | (len(p.code) - no_world) * 4
 
     store(20, 0x5A5A5A5A)
     checked("CMValidateProfile", [profile_ref, probe.ptr(base + 20), probe.ptr(base + 21)], None)
@@ -12830,6 +13307,18 @@ def color_profile_operations(probe):
         p.expect(0, "an omitted CMM signature clears availability")
     for offset in (4, 8, 12):
         compare(16 + offset, 32 + offset, "CMM preference matches the saved library")
+
+    for side, original in enumerate((False, True)):
+        result = 16 + side * 16
+        store(result, 0x5A5A5A5A)
+        checked("CMGetPreferredCMM", [probe.ptr(base + result + 4), probe.ptr(base + result)], 0, original)
+        checked("CMGetCWInfo", [0, output], -50, original)
+        checked(
+            "CMSetPreferredCMMGlobal", [probe.slot(base + result + 4), probe.ptr(base + result + 1)], None, original
+        )
+        p.emit(0x907E0000 | (base + result + 8))
+    for offset in (0, 4, 8):
+        compare(16 + offset, 32 + offset, "legacy ColorSync preference read and write agree with the saved library")
 
     search = probe.slot(base + 16)
     spec = probe.far_raw(bytes(44))
@@ -12891,6 +13380,33 @@ def color_profile_operations(probe):
             checked("CMCloseProfile", [probe.slot(base + 8)], None)
         compare(16, 32, name + " returns the saved status")
         compare(20, 36, name + " yields the saved handle-presence result")
+
+    for side, original in enumerate((False, True)):
+        scratch = 16 + 16 * side
+        store(scratch + 4, 0xA5A5A5A5)
+        avid = probe.ptr(base + scratch + 4)
+        checked("CMGetSystemProfileAVID", [avid], None, original)
+        p.emit(0x907E0000 | (base + scratch))
+        checked("CMGetSystemProfileAVID", [0], -50, original)
+        checked("CMSetProfileByAVID", [0, profile_ref], -50, original)
+        checked("CMSetProfileByAVID", [0xFFFFFFFF, 0], -50, original)
+        checked("CMGetGammaByAVID", [0, 0, size], -50, original)
+        checked("CMGetGammaByAVID", [0xFFFFFFFF, 0, 0], -50, original)
+        checked("CMSetGammaByAVID", [0xFFFFFFFF, 0], -50, original)
+        store(8, 0xA5A5A5A5)
+        checked("CMGetGammaByAVID", [0xFFFFFFFF, 0, size], None, original)
+        p.emit(0x907E0000 | (base + scratch + 8), 0x807E0000 | (base + 8), 0x907E0000 | (base + scratch + 12))
+    for offset in (0, 4, 8, 12):
+        compare(16 + offset, 32 + offset, "display AVID and gamma queries match the saved result")
+
+    p.emit(0x807E0000 | (base + 16), 0x2C030000)
+    no_system_avid = len(p.code)
+    p.emit(0)
+    for side, original in enumerate((False, True)):
+        checked("CMSetSystemProfileAVID", [probe.slot(base + 20)], None, original)
+        p.emit(0x907E0000 | (base + 24 + side * 16))
+    compare(24, 40, "setting the current system AVID matches the saved status")
+    p.code[no_system_avid] = 0x40820000 | (len(p.code) - no_system_avid) * 4
 
     missing_file = probe.far_raw(struct.pack(">hI64s", -32768, 1, b"\x14ROMAW missing ICC QA"))
     for original in (False, True):
@@ -13170,6 +13686,68 @@ def color_profile_operations(probe):
         check(20, 0xFFFFFFFF, "ASCII fallback reports the system script code")
         checked("CMSetProfileDescriptions", [profile_ref, 0, 8, 0, 0, 0, 0], -50, original)
         checked("CMGetScriptProfileDescription", [profile_ref, 0, script_code], -50, original)
+    identifier = probe.far_raw(bytes(160))
+    for original in (False, True):
+        checked("CMCreateProfileIdentifier", [0, identifier, size], -50, original)
+        checked("CMCreateProfileIdentifier", [profile_ref, 0, size], original=original)
+        check(8, 0x98, "profile identifier size includes the ASCII name")
+        store(8, 0x97)
+        checked("CMCreateProfileIdentifier", [profile_ref, identifier, size], -116, original)
+        store(8, 0x98)
+        checked("CMCreateProfileIdentifier", [profile_ref, identifier, size], original=original)
+        for offset, expected in (
+            (0x24, 0x61637370),
+            (0x80, 0),
+            (0x84, 0),
+            (0x88, 0),
+            (0x8C, 8),
+            (0x90, 0x5072696E),
+            (0x94, 0x74657200),
+        ):
+            probe.arguments([identifier], 0)
+            p.emit(0x80630000 | offset)
+            p.expect(expected, "profile identifier preserves header, date and ASCII fields")
+    profile_list = probe.far_raw(bytes(8))
+    matches = probe.far_raw(bytes(8))
+    probe.arguments([profile_list, profile_ref], 0)
+    p.emit(0x90830000, 0x90830004)
+    for side, original in enumerate((False, True)):
+        checked("CMProfileIdentifierListSearch", [0, profile_list, 2, size, matches], -50, original)
+        checked("CMProfileIdentifierListSearch", [identifier, profile_list, 2, size, 0], original=original)
+        check(8, 2, "a count-only identifier search includes duplicate references")
+        store(8, 1)
+        probe.arguments([matches, 0xA5A5A5A5], 0)
+        p.emit(0x90830004)
+        checked("CMProfileIdentifierListSearch", [identifier, profile_list, 2, size, matches], original=original)
+        check(8, 1, "identifier search respects the caller's match capacity")
+        probe.arguments([matches, profile_ref], 0)
+        p.emit(0x80630000)
+        p.equal("identifier search returns the matching profile reference")
+        probe.arguments([matches], 0)
+        p.emit(0x80630004)
+        p.expect(0xA5A5A5A5, "identifier search preserves the rest of the output array")
+        probe.arguments([identifier, 0x41626344], 0)
+        p.emit(0x90830090)
+        checked("CMProfileIdentifierListSearch", [identifier, profile_list, 2, size, 0], original=original)
+        check(8, 0, "a different ASCII description excludes a profile")
+        probe.arguments([identifier, 0x5072696E], 0)
+        p.emit(0x90830090)
+
+        scratch = 16 + 16 * side
+        store(scratch + 4, 0)
+        checked("CMProfileIdentifierFolderSearch", [0, 0, probe.ptr(base + scratch + 4)], -50, original)
+        check(scratch + 4, 0, "a missing folder search identifier leaves no result")
+        store(scratch + 8, 0)
+        checked(
+            "CMProfileIdentifierFolderSearch",
+            [identifier, probe.ptr(base + scratch + 8), probe.ptr(base + scratch + 4)],
+            None,
+            original,
+        )
+        p.emit(0x907E0000 | (base + scratch))
+        checked("CMDisposeProfileSearch", [probe.slot(base + scratch + 4)], None, not original)
+    compare(16, 32, "folder searches return the same status")
+    compare(24, 40, "folder searches return the same number of matching profiles")
     checked("CMRemoveProfileElement", [profile_ref, desc], original=True)
     for original in (True, False):
         store(8, 4)
@@ -13494,6 +14072,12 @@ def color_profile_operations(probe):
             ("CMGetWorkflowDesc", [0, 0, output, size]),
             ("CMSetWorkflowName", [0, 0, output]),
             ("CMSetWorkflowDesc", [0, 0, output]),
+            ("CMDeleteWorkflow", [0, 0]),
+            ("CMGetWorkflowEntry", [0, 0, 0, size, output]),
+            ("CMSetWorkflowEntry", [0, 0, 0, 4, output]),
+            ("CMCopyWorkflow", [0, 0, output, size]),
+            ("CMExportWorkflow", [0, 0, 0]),
+            ("CMImportWorkflow", [0, size, 0, 0, 0, 0]),
             ("CMGetWorkflowDates", [0, 0, output, 0]),
             ("CMActivateWorkflow", [0, 0]),
             ("CMActivateCurrentWorkflow", [0, size, 0, 0, 0]),
@@ -13553,6 +14137,75 @@ def color_profile_operations(probe):
         compare(16, 32, name + " matches the saved workflow status")
         if name in ("CMGetWorkflowName", "CMGetWorkflowDesc"):
             compare(24, 40, name + " publishes the same text size")
+
+    p.emit(0x807E0000 | (base + 52), 0x2C030000)
+    no_workflow = len(p.code)
+    p.emit(0)
+    for side, original in enumerate((False, True)):
+        scratch = 16 + side * 16
+        exported = probe.far_raw(bytes(258))
+        probe.arguments([exported, 1], 0)
+        p.emit(0xB0830000)
+        file = probe.far_raw(bytes(70))
+        name = b"ROMAW Workflow A" if not original else b"ROMAW Workflow B"
+        file_name = probe.far_raw(bytes([len(name)]) + name)
+        probe.call("FSMakeFSSpec", [probe.slot(0x1FC0), probe.slot(0x1F42), file_name, file])
+        p.expect(-43, "prepare a new workflow export file")
+        probe.arguments([exported, file], 0)
+        p.emit(0x38630002)
+        for offset in range(0, 68, 4):
+            p.emit(0x80A40000 | offset, 0x90A30000 | offset)
+        p.emit(0xA0A40044, 0xB0A30044)
+        checked("CMExportWorkflow", [context, workflow, 0], -50, original)
+        checked("CMExportWorkflow", [context, workflow, exported], None, original)
+        p.emit(0x907E0000 | (base + scratch))
+        imported_out, imported = probe.ptr(base + 104), probe.slot(base + 104)
+        store(104, 0x5A5A5A5A)
+        checked("CMImportWorkflow", [context, imported_out, 0, 0, 0, 0], -50, not original)
+        check(104, 0x5A5A5A5A, "invalid import arguments leave the output alone")
+        checked("CMImportWorkflow", [context, imported_out, 0, 0, exported, 0], None, not original)
+        p.emit(0x907E0000 | (base + scratch + 8), 0x2C030000)
+        imported_ok = len(p.code)
+        p.emit(0)
+        check(104, 0, "an import failure leaves the output empty")
+        import_end = len(p.code)
+        p.emit(0)
+        p.code[imported_ok] = 0x41820000 | (len(p.code) - imported_ok) * 4
+        p.emit(0x807E0000 | (base + 104))
+        p.nonzero("a successful import publishes a live workflow")
+        checked("CMWorkflowIsActive", [context, imported], 0, original)
+        checked("CMImportWorkflow", [context, size, 0, 0, exported, 0], -48, original)
+        checked("CMDeleteWorkflow", [context, imported], original=original)
+        p.code[import_end] = 0x48000000 | (len(p.code) - import_end) * 4
+        probe.call("FSpDelete", [file])
+        p.emit(0x907E0000 | (base + scratch + 4))
+    compare(16, 32, "workflow export status matches the saved library")
+    compare(20, 36, "native and saved workflow export leave equivalent files")
+    compare(24, 40, "native and saved workflow imports report the same status")
+
+    copy_slot = probe.slot(base + 104)
+    changed_description = probe.far_raw(struct.pack(">I6s", 3, "Ink".encode("utf-16be")))
+    copied_text = probe.far_raw(bytes(64))
+    for original in (False, True):
+        suffix = "B" if original else "A"
+        name = "ROMAW Entry " + suffix
+        name_record = probe.far_raw(struct.pack(">I", len(name)) + name.encode("utf-16be"))
+        store(104, 0)
+        checked("CMCopyWorkflow", [context, workflow, probe.ptr(base + 104), name_record], original=original)
+        p.emit(0x807E0000 | (base + 104))
+        p.nonzero("copy a workflow under an independent name")
+        checked("CMSetWorkflowEntry", [context, copy_slot, 0x44657363, 10, changed_description], original=original)
+        store(8, 64)
+        checked("CMGetWorkflowEntry", [context, copy_slot, 0x44657363, size, copied_text], original=not original)
+        check(8, 6, "the copied workflow returns the UTF-16 payload size")
+        probe.arguments([copied_text], 0)
+        p.emit(0x80630000)
+        p.expect(0x0049006E, "workflow entry edits are visible to both implementations")
+        checked("CMGetWorkflowEntry", [context, copy_slot, 0xDEADBEEF, size, copied_text], -50, original)
+        checked("CMSetWorkflowEntry", [context, copy_slot, 0x44657363, 3, changed_description], -50, original)
+        checked("CMWorkflowIsActive", [context, copy_slot], 0, original)
+        checked("CMDeleteWorkflow", [context, copy_slot], original=not original)
+    p.code[no_workflow] = 0x41820000 | (len(p.code) - no_workflow) * 4
 
     checked("CMTermWorkflows", [probe.slot(base + 20)], None, False)
     checked("CMTermWorkflows", [context], None, True)
@@ -13866,6 +14519,248 @@ def locale_operations(probe):
         probe.arguments([probe.slot(collation + 4)], 0)
         p.expect(order, "return the signed collation order and weight")
 
+    for left, right, options, status, equal, order in (
+        ("A", "a", 0x01000000, 0, 1, -1),
+        ("B", "a", 0x01000000, 0, 0, 2),
+        ("a\u200c", "a", 0x01000000, 0, 1, 1),
+        ("b", "", 0x01000000, 0, 0, 2),
+        ("same", "same", 0x01000000, 0, 1, 0),
+        ("a", "b", 0, -50, 1, 0),
+    ):
+        probe.call(
+            "UCCompareTextNoLocale",
+            [
+                options,
+                probe.far_raw(left.encode("utf-16-be") or bytes(2)),
+                len(left),
+                probe.far_raw(right.encode("utf-16-be") or bytes(2)),
+                len(right),
+                probe.ptr(collation),
+                probe.ptr(collation + 4),
+            ],
+        )
+        p.expect(status, "compare UTF-16 using the classic HFS collation mode")
+        probe.arguments([probe.ptr(collation)], 0)
+        p.emit(0x88630000)
+        p.expect(equal, "compare primary HFS weights for equivalence")
+        probe.arguments([probe.slot(collation + 4)], 0)
+        p.expect(order, "report primary order or break a tie using the original text")
+
+
+def unicode_collator_lifecycle_operations(probe):
+    p = probe.p
+    _, base = probe.far_raw(bytes(288))
+    locale, handle, equivalent, order, size, key = (probe.ptr(base + offset) for offset in (0, 4, 8, 12, 16, 20))
+
+    def invoke(symbol, args, expected=0):
+        probe.call(symbol, args)
+        p.expect(expected, symbol + " reports the expected collation status")
+
+    invoke("LocaleRefFromLocaleString", [probe.far_raw(b"en_US\0"), locale])
+    invoke("UCCreateCollator", [probe.slot(base), 0, 0x0E, handle])
+    probe.arguments([probe.slot(base + 4)], 0)
+    p.nonzero("collator creation returns an owned guest handle")
+    p.emit(0x80630000, 0x80630000)
+    p.expect(int.from_bytes(b"ucol", "big"), "the native collator uses the saved handle signature")
+
+    ref_equivalent, ref_order = probe.ptr(base + 280), probe.ptr(base + 284)
+    for left, right in (("abc", "def"), ("abc", "abcd"), ("abc", "abc"), ("cafe", "caf\u00e9"), ("A", "a"), ("", "x")):
+        left_ptr = probe.far_raw(left.encode("utf-16-be") or bytes(2))
+        right_ptr = probe.far_raw(right.encode("utf-16-be") or bytes(2))
+        for side, equal_out, order_out in ((1, ref_equivalent, ref_order), (0, equivalent, order)):
+            probe.call(
+                "UCCompareText",
+                [probe.slot(base + 4), left_ptr, len(left), right_ptr, len(right), equal_out, order_out],
+                side=side,
+            )
+            p.expect(0, "compare the same inputs with the native and saved workers")
+        probe.arguments([equivalent, ref_equivalent], 0)
+        p.emit(0x88630000, 0x88840000)
+        p.equal("native comparison agrees with the saved equivalence result")
+        probe.arguments([probe.slot(base + 12), probe.slot(base + 284)], 0)
+        p.equal("native comparison agrees with the saved signed order")
+    other_size, other_key = probe.ptr(base + 148), probe.ptr(base + 152)
+    for text, capacity, expected in (
+        ("abc", 32, 0),
+        ("e\u0301 + \u00e9", 32, 0),
+        ("", 32, 0),
+        ("ab", 2, -25340),
+    ):
+        data = probe.far_raw(text.encode("utf-16-be") or bytes(2))
+        for side, size_out, key_out in ((1, other_size, other_key), (0, size, key)):
+            probe.call(
+                "UCGetCollationKey",
+                [probe.slot(base + 4), data, len(text), capacity, size_out, key_out],
+                side=side,
+            )
+            p.expect(expected, "generate a sort key using native and saved weights")
+        probe.arguments([probe.slot(base + 16), probe.slot(base + 148)], 0)
+        p.equal("the sort key reports the same number of weights as the saved routine")
+        for offset in range(capacity):
+            probe.arguments([probe.slot(base + 20 + 4 * offset), probe.slot(base + 152 + 4 * offset)], 0)
+            p.equal("the primary and secondary key words match the saved routine")
+    lower = probe.far_raw("a".encode("utf-16-be"))
+    upper = probe.far_raw("A".encode("utf-16-be"))
+    for options, expected in ((0x0E, 1), (0x06, 0), (0x0E, 1)):
+        invoke("UCCompareTextDefault", [options, lower, 1, upper, 1, equivalent, order])
+        probe.arguments([equivalent], 0)
+        p.emit(0x88630000)
+        p.expect(expected, "default collation applies the supplied case option on every call")
+    invoke("UCDisposeCollator", [handle])
+    probe.arguments([probe.slot(base + 4)], 0)
+    p.expect(0, "disposing the collator clears its guest handle")
+    invoke("UCDisposeCollator", [handle], -50)
+    invoke("UCCreateCollator", [probe.slot(base), 0, 0x0E, 0], -50)
+
+
+def unicode_text_break_operations(probe):
+    p = probe.p
+    _, base = probe.far_raw(bytes(20))
+    locale, handle, boundary, flags = (probe.ptr(base + offset) for offset in (0, 4, 8, 12))
+    text = probe.far_raw("A\U0001f642B".encode("utf-16-be"))
+
+    def invoke(symbol, args, expected=0):
+        probe.call(symbol, args)
+        p.expect(expected, symbol + " reports the expected text break status")
+
+    def read(address, expected, label):
+        probe.arguments([address], 0)
+        p.emit(0x80630000)
+        p.expect(expected, label)
+
+    invoke("UCCreateTextBreakLocator", [0, 0, 1, handle])
+    read(handle, 0, "the character-only locator requires no guest allocation")
+    for offset, options, result, status in (
+        (0, 1, 1, 0),
+        (1, 1, 3, 0),
+        (2, 0, 3, 0),
+        (3, 2, 1, 0),
+        (2, 3, 1, 0),
+        (4, 2, 3, 0),
+        (0, 0, 0, -50),
+        (4, 1, 4, -50),
+    ):
+        invoke("UCFindTextBreak", [0, 1, options, text, 4, offset, boundary], status)
+        read(boundary, result, "character breaks preserve surrogate pairs and report UTF-16 offsets")
+    invoke("UCDisposeTextBreakLocator", [handle])
+    read(handle, 0, "disposing the empty character locator succeeds")
+
+    invoke("LocaleRefFromLocaleString", [probe.far_raw(bytes(1)), locale])
+    invoke("UCCreateTextBreakLocator", [probe.slot(base), 0, 0x55, handle])
+    probe.arguments([probe.slot(base + 4)], 0)
+    p.nonzero("the locator owns the root cluster and word rule tables")
+    invoke("UCGetTextBreakLocatorBreakTypes", [probe.slot(base + 4), flags])
+    read(flags, 0x55, "the companion query sees the same live handle layout and break types")
+    plain = probe.far_raw("abc def".encode("utf-16-be"))
+    for kind, options, start, expected in (
+        (4, 1, 0, 1),
+        (4, 2, 7, 6),
+        (16, 1, 0, 3),
+        (16, 1, 3, 4),
+        (16, 2, 7, 4),
+        (64, 1, 0, 3),
+        (64, 3, 5, 4),
+    ):
+        invoke("UCFindTextBreak", [probe.slot(base + 4), kind, options, plain, 7, start, boundary])
+        read(boundary, expected, "follow the selected locale rule table in the requested direction")
+    invoke("UCFindTextBreak", [probe.slot(base + 4), 8, 1, plain, 7, 0, boundary], -25341)
+    read(boundary, 0, "a missing rule type reports the starting offset")
+    invoke("UCDisposeTextBreakLocator", [handle])
+    read(handle, 0, "disposing the rule locator releases the tables and clears the handle")
+    invoke("UCDisposeTextBreakLocator", [handle])
+    invoke("UCCreateTextBreakLocator", [0, 0, 1, 0], -50)
+
+
+def unicode_keyboard_operations(probe):
+    p = probe.p
+    layout = bytearray(68)
+
+    def add(data):
+        offset = len(layout)
+        layout.extend(data)
+        return offset
+
+    modifiers = add(struct.pack(">HHI2B", 0x3001, 0, 2, 0, 1))
+    records = add(struct.pack(">HH3I", 0x5001, 3, 0, 0, 0))
+    accents = add(struct.pack(">HH3H", 0x6001, 3, ord("^"), ord("~"), ord("!")))
+    sequences = add(struct.pack(">4H2H", 0x7001, 1, 8, 12, 0x03B1, 0x03B2))
+    tables = add(struct.pack(">HHI2I", 0x4001, 6, 2, 0, 0))
+    preferred = add(struct.pack(">HHII", 0x4001, 6, 1, 0))
+    dead = add(struct.pack(">4H", 0xFFFF, 1, 0, 0))
+    e = add(struct.pack(">6H", ord("e"), 0, 1, 1, 1, 0x00E9))
+    span = add(struct.pack(">5H2B2H", 0xFFFF, 0, 1, 2, 1, 1, 1, ord("A"), 2))
+    normal = add(struct.pack(">6H", ord("a"), 0x4000, 0x4001, 0x8000, 0xFFFF, 0x4002))
+    shifted = add(struct.pack(">6H", ord("A"), 0x4000, 0x4001, 0x8000, 0xFFFE, 0x4002))
+    special = add(struct.pack(">6H", ord("x"), 0x4000, 0x4001, 0x8001, 0xFFFE, 0x4002))
+    struct.pack_into(">2H2I", layout, 0, 0x1002, 0x0110, 0, 2)
+    struct.pack_into(">7I", layout, 12, 0, 0, modifiers, tables, records, accents, sequences)
+    struct.pack_into(">7I", layout, 40, 41, 42, modifiers, preferred, records, accents, sequences)
+    struct.pack_into(">3I", layout, records + 4, dead, e, span)
+    struct.pack_into(">2I", layout, tables + 8, normal, shifted)
+    struct.pack_into(">I", layout, preferred + 8, special)
+    resource = probe.far_raw(layout)
+    _, out = probe.far_raw(bytes(16))
+    state, actual, buffer = (probe.ptr(out + offset) for offset in (0, 4, 8))
+
+    def write(address, value):
+        probe.arguments([address, value], 0)
+        p.emit(0x90830000)
+
+    def read(address, expected, label):
+        probe.arguments([address], 0)
+        p.emit(0x80630000)
+        p.expect(expected, label)
+
+    def translate(key, expected, *, action=0, modifiers=0, device=0, options=0, capacity=3, status=0):
+        write(buffer, 0xA5A5A5A5)
+        probe.call(
+            "UCKeyTranslate",
+            [resource, key, action, modifiers, device, options, state, capacity, actual, buffer],
+        )
+        p.expect(status, "translate with the requested layout, action and output capacity")
+        read(actual, len(expected), "report the exact number of UTF-16 units written")
+        data = b"".join(struct.pack(">H", unit) for unit in expected)
+        read(buffer, int.from_bytes(data.ljust(4, bytes([0xA5])), "big"), "preserve the output bytes past the result")
+
+    probe.call("UCKeyboardLayoutStringMax", [resource, actual])
+    p.expect(0, "measure the largest possible translated output in the layout")
+    read(actual, 4, "the bound includes both dead-key terminator and key sequences")
+    features = add(struct.pack(">2HI", 0x2001, 0, 17))
+    struct.pack_into(">I", layout, 4, features)
+    probe.call("UCKeyboardLayoutStringMax", [probe.far_raw(layout), actual])
+    p.expect(0, "read the explicit keyboard feature information")
+    read(actual, 17, "the declared maximum supersedes the table scan")
+
+    translate(0, (ord("a"),))
+    translate(0, (ord("A"),), modifiers=1)
+    translate(0, (ord("a"),), modifiers=999)
+    translate(0, (ord("x"),), device=42)
+    translate(3, (0x03B1, 0x03B2))
+    translate(3, (0x03B1,), capacity=1, status=-25340)
+    translate(3, (0x8001,), device=41)
+    translate(4, (), capacity=0)
+    translate(6, (), status=-50)
+
+    translate(1, ())
+    read(state, 1, "a dead key installs its next state without emitting a character")
+    translate(2, (0x00E9,))
+    read(state, 0x00010000, "key down saves the prior state for auto-repeat")
+    translate(2, (0x00E9,), action=2)
+
+    write(state, 0)
+    translate(1, (ord("^"),), options=1)
+    read(state, 0, "no-dead-key mode emits the terminator without a pending state")
+    translate(1, (ord("^"),), action=3)
+    read(state, 1, "display mode returns the accent and reports its pending state")
+    translate(0, (ord("^"), ord("a")))
+    read(state, 0, "an unmatched normal key consumes the pending dead key")
+
+    write(state, 2)
+    translate(5, (ord("B"),))
+    read(state, 0x00020003, "range matching applies its delta to both the unit and the next state")
+    translate(0, (ord("!"), ord("a")))
+    read(state, 0, "the updated state supplies the correct terminator")
+
 
 def appearance_geometry_operations(probe):
     p = probe.p
@@ -13895,7 +14790,7 @@ def appearance_geometry_operations(probe):
             p.expect(int.from_bytes(expected[offset : offset + 4], "big"), f"{label} rect word {offset // 4}")
 
     button = probe.far_raw(struct.pack(">4h", top, left, bottom, right))
-    vertical_tab = probe.far_raw(struct.pack(">4h", 10, 20, 80, 44))
+    vertical_tab = probe.far_raw(struct.pack(">4h", 10, 20, 80, 47))
     focused = probe.far_raw(struct.pack(">IHH", 1, 0, 4))
     indicator = probe.far_raw(struct.pack(">IHH", 1, 1, 0x30))
     plain = probe.far_raw(struct.pack(">IHH", 1, 0, 0))
@@ -13974,9 +14869,9 @@ def appearance_geometry_operations(probe):
         probe.call("GetRegionBounds", [thumb, output])
         check_rect(struct.pack(">4h", 7, 17, 33, 93), "push button focus region")
         for tab, style, direction, region_bounds, points in (
-            (button, 0, 0, (10, 20, 29, 90), ((10, 20, 0), (10, 30, 1), (27, 20, 1), (27, 45, 0))),
+            (button, 0, 0, (10, 20, 26, 90), ((10, 20, 0), (10, 30, 1), (27, 20, 0), (27, 45, 0))),
             (button, 3, 1, (11, 20, 30, 90), ((11, 20, 1), (29, 20, 0), (29, 45, 1))),
-            (vertical_tab, 0, 2, (10, 23, 80, 47), ((10, 23, 1), (10, 43, 0), (19, 45, 1), (35, 45, 0))),
+            (vertical_tab, 0, 2, (10, 26, 80, 47), ((10, 23, 0), (10, 26, 1), (10, 43, 0), (19, 45, 1), (35, 45, 1))),
             (vertical_tab, 4, 3, (10, 20, 80, 44), ((10, 43, 1), (10, 20, 0), (35, 20, 1))),
         ):
             probe.call("GetThemeTabRegion", [tab, style, direction, thumb], side=side)
@@ -13989,7 +14884,7 @@ def appearance_geometry_operations(probe):
         probe.call("GetThemeTrackThumbRgn", [slider, thumb], side=side)
         p.expect(0, "construct the pointed slider thumb region")
         probe.call("GetRegionBounds", [thumb, output])
-        check_rect(struct.pack(">4h", 10, 48, 26, 63), "slider thumb")
+        check_rect(struct.pack(">4h", 10, 48, 26, 64), "slider thumb")
         for y, x, inside in ((10, 48, 0), (11, 48, 1), (25, 55, 1), (25, 49, 0)):
             probe.call("PtInRgn", [(y << 16) | x, thumb])
             p.expect(inside, "the thumb silhouette includes its point and clips its corners")
@@ -14546,12 +15441,15 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
     manager_rows = vector_cases("manager_vectors.h", 176) if file_entries else []
     browser_control_rows = data_browser_control_cases() if file_entries else []
+
     native_names = file_names | {row["name"] for row in interface_rows + manager_rows}
     native_names.update(
         {"GetWindowFeatures", "IsWindowCollapsable", "IsWindowCollapsed", "CollapseWindow", "CollapseAllWindows"}
     )
     if file_entries:
-        native_names.add("UCCompareCollationKeys")
+        native_names.update(("UCCompareCollationKeys", "UCCompareTextNoLocale", "UCKeyTranslate"))
+        native_names.update(("UCCreateTextBreakLocator", "UCFindTextBreak", "UCDisposeTextBreakLocator"))
+        native_names.update(("UCCreateCollator", "UCDisposeCollator", "UCCompareTextDefault"))
     if file_entries and not original_only:
         native_names.update(windows_metadata_names(ROOT))
         native_names.update(("CopyThemeIdentifier", "GetThemeWindowRegion", "GetThemeWindowRegionHit"))
@@ -14581,6 +15479,27 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
 
         native_names.add("AEPrintDescToHandle")
         native_names.update(("AEGetArray", "AEPutArray"))
+    toolbox_registry_entries = (
+        "InstallTBInstanceDefinitionDirect",
+        "InstallTBInstanceDefinition",
+        "FindDefinitionFromTBInstance",
+        "RemoveTBInstanceDefinition",
+        "CreateWindowFromResource",
+        "IsWindowPathSelectEvent",
+        "IsMenuKeyEvent",
+    )
+    if file_entries:
+        native_names.update(toolbox_registry_entries)
+        native_names.update(
+            (
+                "IsTSMTEDialog",
+                "GetTSMTEDialogDocumentID",
+                "GetTSMTEDialogTSMTERecHandle",
+                "SetTSMTEDialogDocumentID",
+                "SetTSMTEDialogTSMTERecHandle",
+                "GetFontFamilyFromMenuSelection",
+            )
+        )
     native_names.update(name for name, *_ in browser_control_rows)
     if color_profiles:
         native_names.update(COLOR_PROFILE_APIS)
@@ -14726,6 +15645,9 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "CFStringCreateMutableCopy",
                 "GetSmallSystemFont",
                 "GetViewsFont",
+                "SetViewsFont",
+                "SetSystemFont",
+                "SetSmallSystemFont",
                 "GetThemeFontSmoothing",
                 "SetThemeFontSmoothing",
                 "GetPortTextFont",
@@ -14858,6 +15780,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                 "CallComponentFunction",
                 "CallComponentFunctionWithStorage",
                 "CallComponentFunctionWithStorageProcInfo",
+                "CallComponentDispatch",
                 "GetComponentPublicResource",
                 "GetComponentPublicIndString",
                 "GetComponentIconSuite",
@@ -15025,6 +15948,7 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                     {"name": name}
                     for name in event_names(ROOT)
                     + window_property_names(ROOT)
+                    + list(toolbox_registry_entries)
                     + [
                         "CheckMenuItem",
                         "EqualRgn",
@@ -15180,6 +16104,11 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                         "HitTestThemeTrack",
                         "GetThemeScrollBarTrackRect",
                         "HitTestThemeScrollBarArrows",
+                        "IsWindowCollapsable",
+                        "IsWindowCollapsed",
+                        "CollapseWindow",
+                        "CollapseAllWindows",
+                        "GetWindowFeatures",
                     )
                 ]
                 + (
@@ -15197,6 +16126,8 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                             "RecalculateAllWindowTitleWidths",
                             "FileContainsPossibleDesktopPicture",
                             "GetPictureFromFile",
+                            "ConstrainedDragRgn",
+                            "DrawMonitorDesktopFromList",
                             "DrawMonitorDesktopFromListWillTakeTime",
                             "SetMonitorDesktopToFile",
                             "CopyMonitorDesktopFile",
@@ -15254,14 +16185,14 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
                             "WMIsWindowCollapsable",
                             "WMIsWindowCollapsed",
                             "WindowManagerSetThemeWindowBackground",
-                            "IsWindowCollapsable",
-                            "IsWindowCollapsed",
-                            "CollapseWindow",
-                            "CollapseAllWindows",
-                            "GetWindowFeatures",
                         )
                     ]
                     if not text_only
+                    else []
+                )
+                + (
+                    [{"name": name} for name in ("UCGetCollationKey", "UCCompareText")]
+                    if not text_only and not original_only
                     else []
                 )
                 + text_scrap_rows(ROOT)
@@ -15276,6 +16207,9 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         )
     if not math_only:
         probe.p.imports.append(("NQD", "RSect", 2))
+    if "UCKeyTranslate" in native_names:
+        probe.p.imports.append(("UnicodeUtilitiesCoreLib", "UCKeyboardLayoutStringMax", 2))
+        probe.p.imports.append(("UnicodeUtilitiesLib.CL", "UCGetTextBreakLocatorBreakTypes", 2))
     if file_entries and not text_only:
         probe.p.imports.extend(
             ("ToolboxUtils", name, 2)
@@ -15306,6 +16240,10 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
     probe.section("MathLib environment and output parameters", lambda: math_environment(probe, entries))
     probe.section("MathLib decimal conversion and NaN payloads", lambda: math_decimals(probe))
     probe.section("MathLib double-double and extended80", lambda: math_extended(probe))
+    if "UCKeyTranslate" in native_names:
+        probe.section("Unicode keyboard layout translation", lambda: unicode_keyboard_operations(probe))
+        probe.section("Unicode text break locators", lambda: unicode_text_break_operations(probe))
+        probe.section("Unicode collation lifecycle", lambda: unicode_collator_lifecycle_operations(probe))
     probe.section("MathLib long-double functions", lambda: math_long(probe, entries))
     probe.section("Math64Lib integer arithmetic and double-double conversions", lambda: math_wide(probe, wide_entries))
     if file_entries:
@@ -15488,6 +16426,13 @@ def make_probe(destination, original_only, math_only=False, atsui=False, text_on
         fond += b"".join(struct.pack(">3h", *entry) for entry in associations)
         sfnt = struct.pack(">I4H4sIII", 0x00010000, 1, 16, 0, 0, b"head", 0, 28, 4) + bytes.fromhex("11223344")
         resources.extend(((b"FOND", 32010, fond), (b"sfnt", 3004, sfnt)))
+        roman_bitmap = struct.pack(">hh", 0, 16009) + bytes(48) + struct.pack(">H3h", 0, 12, 0, 3002)
+        resources.append((b"FOND", 16009, roman_bitmap))
+        roman_outline = struct.pack(">hh", 0, 16010) + bytes(48) + struct.pack(">H3h", 0, 0, 0, 3006)
+        font_name = b"ROMAW Encoding"
+        names = struct.pack(">9H", 0, 1, 18, 1, 0, 0, 1, len(font_name), 0) + font_name
+        named_sfnt = struct.pack(">I4H4sIII", 0x00010000, 1, 16, 0, 0, b"name", 0, 28, len(names)) + names
+        resources.extend(((b"FOND", 16010, roman_outline), (b"sfnt", 3006, named_sfnt)))
         resources.extend((b"NFNT", identifier, bytes(26)) for identifier in (3002, 3003, 3005))
     probe.p.finish(destination, name, carbon=True, extra_resources=resources)
     expected = set(probe.names) | native_names

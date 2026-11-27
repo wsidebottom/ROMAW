@@ -136,8 +136,8 @@ void ROMlib_carbon_window_closed(uint32_t window)
 {
     ROMlib_carbon_reference ref;
     if (ROMlib_carbon_probe_reference("WindowsLib", "RecalculateAllWindowTitleWidths", &ref) &&
-        ref.code_offset == 0x2488 && ref.code_size == 0x1cd10 && ref.toc && !ref.toc_offset &&
-        ref.toc_size == 0x27ec && cfp_toc(&ref, 0x241c)) {
+        ref.code_offset == 0x2488 && ref.code_size == 0x1cd10 && ref.toc && !ref.toc_offset && ref.toc_size == 0x27ec &&
+        cfp_toc(&ref, 0x241c)) {
         /* WindowsLib removes the hash entry and releases its collection before
            freeing the window. The native CloseWindow path owns the rest. */
         cfp_private(&ref, 0x2150, &window, 1, NULL);
@@ -217,6 +217,7 @@ enum {
     windows_get_device_picture = 0x19a64,
     windows_file_may_contain_picture = 0x193e0,
     windows_get_picture_from_file = 0x169a4,
+    windows_monitor_draw = 0x19bc4,
     windows_monitor_draw_takes_time = 0x1a270,
     windows_reposition_window = 0xe8b8,
     windows_reshape_windows = 0x11c30,
@@ -1841,6 +1842,68 @@ static int windows_monitor_draw_duration(const ROMlib_carbon_reference* ref, ROM
     return window_result(call, noErr);
 }
 
+static int windows_draw_monitor_desktop(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    uint32_t handle = call->words[0];
+    const uint32_t index = call->words[1];
+    const uint32_t port_address = call->words[2], bounds_address = call->words[3];
+    const uint32_t region_address = call->words[4], pattern_address = call->words[5];
+    const bool draw_picture = (uint8_t)call->words[7];
+    GrafPtr port = port_address ? ROMlib_carbon_try_guest_memory(port_address, sizeof *port, 1) : NULL;
+    const Rect* bounds = bounds_address ? ROMlib_carbon_try_guest_memory(bounds_address, sizeof *bounds, 0) : NULL;
+    uint32_t extent;
+    if (!handle || !port || !bounds || !region_address || !cfp_handle_data(region_address, &extent, 0) || extent < 10 ||
+        (pattern_address && (!cfp_handle_data(pattern_address, &extent, 0) || extent < sizeof(PixPat))))
+        return window_result(call, paramErr);
+    if (!windows_resolve_monitor_list(ref, &handle))
+        return 0;
+
+    monitor_desktop_list list;
+    Byte* record = windows_monitor_list(handle, &list) ? windows_monitor_record(&list, index, draw_picture) : NULL;
+    if (!record)
+        return window_result(call, paramErr);
+    if (draw_picture && (windows_monitor_word(record + monitor_desktop_picture) ||
+                         windows_monitor_word(record + monitor_desktop_preview)))
+        return ROMlib_carbon_invoke_frame(ref->function, call);
+    if (draw_picture) {
+        const uint32_t cache_flags = windows_monitor_word(record + monitor_desktop_cache_flags);
+        windows_set_monitor_word(record + monitor_desktop_cache_flags, cache_flags & ~1u);
+    }
+    if (!pattern_address)
+        return window_result(call, noErr);
+
+    const uint32_t device = windows_monitor_word(record + monitor_desktop_device);
+    _Alignas(8) Rect display;
+    const Rect target = *bounds;
+    const uint32_t monitor[] = {device, 0, 0, US_TO_SYN68K(&display)};
+    if (!device)
+        return window_result(call, paramErr);
+    if (!cfp_private(ref, 0x18848, monitor, NELEM(monitor), NULL))
+        return 0;
+
+    const GrafPtr saved_port = thePort;
+    RgnHandle saved_clip = NewRgn(), paint_region = NewRgn();
+    if (saved_clip && paint_region) {
+        const int16_t x = (int16_t)(CW(display.left) - CW(target.left));
+        const int16_t y = (int16_t)(CW(display.top) - CW(target.top));
+        SetPort(port);
+        GetClip(saved_clip);
+        CopyRgn((RgnHandle)SYN68K_TO_US(region_address), paint_region);
+        OffsetRgn(paint_region, x, y);
+        SetClip(paint_region);
+        SetOrigin(x, y);
+        FillCRgn(paint_region, (PixPatHandle)SYN68K_TO_US(pattern_address));
+        SetOrigin(0, 0);
+        SetClip(saved_clip);
+        SetPort(saved_port);
+    }
+    if (paint_region)
+        DisposeRgn(paint_region);
+    if (saved_clip)
+        DisposeRgn(saved_clip);
+    return window_result(call, noErr);
+}
+
 static int windows_monitor_lists(const ROMlib_carbon_reference* ref, uint32_t offset, ROMlib_carbon_ppc_frame* call)
 {
     const uint32_t argument = call->words[0];
@@ -1880,6 +1943,8 @@ static int windows_monitor_lists(const ROMlib_carbon_reference* ref, uint32_t of
         return windows_file_may_be_picture(ref, call);
     case windows_get_picture_from_file:
         return windows_picture_from_file(ref, call);
+    case windows_monitor_draw:
+        return windows_draw_monitor_desktop(ref, call);
     case windows_monitor_draw_takes_time:
         return windows_monitor_draw_duration(ref, call);
     default:
@@ -2901,6 +2966,196 @@ int ROMlib_carbon_window_saved_screen_bits(const char* name, uint32_t offset, RO
     return !node && window_result(call, noErr);
 }
 
+enum {
+    window_drag_start = 0,
+    window_drag_move = 1,
+    window_drag_leave = 2,
+    window_drag_parameters_size = 22,
+};
+
+static int windows_drag_callback(const ROMlib_carbon_reference* ref, uint32_t callback, uint32_t region, uint32_t delta,
+                                 uint32_t constraints, unsigned phase, bool* proceed)
+{
+    const uint32_t arguments[] = {callback, 0x3fd0, region, delta, constraints, phase};
+    uint32_t status;
+    if (!cfp_private(ref, 0x1edcc, arguments, NELEM(arguments), &status))
+        return 0;
+    *proceed = (uint8_t)status != 0;
+    return 1;
+}
+
+static int windows_drag_outline(const ROMlib_carbon_reference* ref, bool enabled, uint32_t region)
+{
+    return !enabled || cfp_private(ref, 0x1dc68, &region, 1, NULL);
+}
+
+static int windows_drag_yield(const ROMlib_carbon_reference* ref, uint32_t region, uint32_t hook, bool* held)
+{
+    if (hook) {
+        const uint32_t set[] = {7, region};
+        uint32_t saved;
+        if (!cfp_private(ref, 0x20254, set, NELEM(set), &saved))
+            return 0;
+        const uint32_t notify[] = {hook, 0};
+        const uint32_t restore[] = {7, saved};
+        const int called = cfp_private(ref, 0x1edcc, notify, NELEM(notify), NULL);
+        if (!cfp_private(ref, 0x20254, restore, NELEM(restore), NULL) || !called)
+            return 0;
+    }
+
+    const uint32_t drag_hook[] = {cfp_read(0x9f6), 0};
+    if (drag_hook[0] && !cfp_private(ref, 0x1edcc, drag_hook, NELEM(drag_hook), NULL))
+        return 0;
+    if (!*held)
+        return 1;
+
+    if (!cfp_private(ref, 0x20b3c, NULL, 0, NULL))
+        return 0;
+    unsigned char* yield_depth = NULL;
+    const uint32_t process_manager = cfp_read(0x2b6);
+    const uint32_t process = process_manager ? cfp_read(process_manager + 0x78) : 0;
+    if (process && process <= UINT32_MAX - 0xe2)
+        yield_depth = ROMlib_carbon_try_guest_memory(process + 0xe0, 2, 1);
+    uint16_t depth = 0;
+    if (yield_depth) {
+        memcpy(&depth, yield_depth, 2);
+        const uint16_t next = CW(CW(depth) + 1);
+        memcpy(yield_depth, &next, 2);
+    }
+    uint32_t status;
+    const int ok = cfp_private(ref, 0x20b54, NULL, 0, &status);
+    if (yield_depth)
+        memcpy(yield_depth, &depth, 2);
+    *held = ok && (uint8_t)status != 0;
+    return ok;
+}
+
+static int windows_constrained_drag(const ROMlib_carbon_reference* ref, ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t start = call->words[0], region = call->words[1], parameters = call->words[2],
+                   callback = call->words[3];
+    const uint32_t result = call->words[4];
+    const Point* initial = start ? ROMlib_carbon_try_guest_memory(start, sizeof *initial, 0) : NULL;
+    const unsigned char* constraint =
+        parameters ? ROMlib_carbon_try_guest_memory(parameters, window_drag_parameters_size, 0) : NULL;
+    Point* delta = result ? ROMlib_carbon_try_guest_memory(result, sizeof *delta, 1) : NULL;
+    if (!delta)
+        return window_result(call, 0);
+    *delta = (Point){0};
+    if (!initial || !constraint || !region || !callback)
+        return window_result(call, 0);
+
+    uint32_t limits = 0, outside = 0, original = 0;
+    int ok = cfp_private(ref, 0x14560, NULL, 0, &limits);
+    if (ok && limits)
+        ok = cfp_private(ref, 0x14560, NULL, 0, &outside);
+    bool inside = false, proceed = false, outline = false, framed = false;
+    if (ok && outside) {
+        const RgnHandle limit_region = SYN68K_TO_US(limits), outside_region = SYN68K_TO_US(outside);
+        Rect limit, slop, main_area, clipped;
+        memcpy(&limit, constraint, sizeof limit);
+        memcpy(&slop, constraint + 8, sizeof slop);
+        const GDHandle device = GetMainDevice();
+        if (device && STARH(device)) {
+            main_area = GD_RECT(device);
+            main_area.top = CW((int16_t)CW(main_area.top) + CW(MBarHeight) + 30);
+            InsetRect(&main_area, 6, 6);
+            SectRect(&limit, &main_area, &clipped);
+        }
+        if (device && STARH(device) && EqualRect(&main_area, &clipped) && GrayRgn) {
+            CopyRgn(MR(GrayRgn), limit_region);
+            InsetRgn(limit_region, 4, 4);
+            CopyRgn(limit_region, outside_region);
+        }
+        else {
+            RectRgn(outside_region, &limit);
+            RectRgn(limit_region, &slop);
+        }
+
+        uint32_t held;
+        ok = cfp_private(ref, 0x20aac, NULL, 0, &held);
+        if (ok && (uint8_t)held) {
+            const unsigned char* outline_flag = ROMlib_carbon_try_guest_memory(US_TO_SYN68K(ref->toc) + 0x29a0, 1, 0);
+            outline = outline_flag && *outline_flag;
+            inside = true;
+            Point prior = *initial;
+            ok = windows_drag_outline(ref, outline, region) &&
+                 windows_drag_callback(ref, callback, region, result, parameters, window_drag_start, &proceed);
+            if (ok && proceed) {
+                ok = cfp_private(ref, 0x14560, NULL, 0, &original);
+                if (ok && original) {
+                    CopyRgn(SYN68K_TO_US(region), SYN68K_TO_US(original));
+                    const uint32_t border[] = {UINT32_MAX, TICK("brdr"), original, 0};
+                    ok = cfp_private(ref, 0x1498c, border, NELEM(border), NULL);
+                    framed = ok;
+                }
+            }
+
+            uint32_t hook;
+            uint16_t axis;
+            memcpy(&hook, constraint + 16, sizeof hook);
+            memcpy(&axis, constraint + 20, sizeof axis);
+            while (ok && proceed) {
+                Point mouse;
+                GetMouse(&mouse);
+                const Point local = {(int16_t)CW(mouse.v), (int16_t)CW(mouse.h)};
+                if (PtInRgn(local, limit_region)) {
+                    inside = true;
+                    if (!PtInRgn(local, outside_region)) {
+                        mouse.h =
+                            CW(MIN(MAX((int16_t)CW(mouse.h), (int16_t)CW(limit.left)), (int16_t)CW(limit.right) - 1));
+                        mouse.v =
+                            CW(MIN(MAX((int16_t)CW(mouse.v), (int16_t)CW(limit.top)), (int16_t)CW(limit.bottom) - 1));
+                    }
+                    if (mouse.h != prior.h || mouse.v != prior.v) {
+                        const int16_t dx = CW(axis) == 2 ? 0 : CW(mouse.h) - CW(prior.h);
+                        const int16_t dy = CW(axis) == 1 ? 0 : CW(mouse.v) - CW(prior.v);
+                        OffsetRgn(SYN68K_TO_US(region), dx, dy);
+                        ok = windows_drag_outline(ref, outline, region) &&
+                             windows_drag_callback(ref, callback, region, result, parameters, window_drag_move,
+                                                   &proceed);
+                        delta->h = CW(CW(delta->h) + dx);
+                        delta->v = CW(CW(delta->v) + dy);
+                        prior = mouse;
+                    }
+                }
+                else if (inside) {
+                    inside = false;
+                    ok = windows_drag_outline(ref, outline, region) &&
+                         windows_drag_callback(ref, callback, region, result, parameters, window_drag_leave, &proceed);
+                    const uint32_t sound = cfp_toc(ref, 0x928);
+                    if (sound && !cfp_private(ref, 0x20a34, &sound, 1, NULL))
+                        ok = 0;
+                }
+                bool held = proceed;
+                if (ok)
+                    ok = windows_drag_yield(ref, region, CL(hook), &held);
+                if (ok && proceed && !held) {
+                    ok = windows_drag_outline(ref, outline, region);
+                    if (inside)
+                        ok = windows_drag_callback(ref, callback, region, result, parameters, window_drag_leave,
+                                                   &proceed) &&
+                             ok;
+                    else if (framed) {
+                        const uint32_t border[] = {UINT32_MAX, TICK("erdr"), original, 0};
+                        ok = cfp_private(ref, 0x1498c, border, NELEM(border), NULL) && ok;
+                    }
+                    break;
+                }
+                proceed = proceed && held;
+            }
+        }
+    }
+
+    if (!windows_drag_outline(ref, outline, 0))
+        ok = 0;
+    const uint32_t regions[] = {original, outside, limits};
+    for (unsigned i = 0; i < NELEM(regions); ++i)
+        if (regions[i] && !cfp_private(ref, 0x14624, &regions[i], 1, NULL))
+            ok = 0;
+    return ok && window_result(call, inside);
+}
+
 int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMlib_carbon_ppc_frame* call)
 {
     const bool desktop = offset == windows_set_desktop_pattern || offset == windows_get_desktop_pattern ||
@@ -2915,7 +3170,7 @@ int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMli
                           offset == windows_set_monitor_file || offset == windows_copy_monitor_file ||
                           offset == windows_set_device_picture || offset == windows_get_device_picture ||
                           offset == windows_file_may_contain_picture || offset == windows_get_picture_from_file ||
-                          offset == windows_monitor_draw_takes_time;
+                          offset == windows_monitor_draw || offset == windows_monitor_draw_takes_time;
     const bool proxy = offset == windows_get_proxy_alias || offset == windows_get_proxy_file ||
                        offset == windows_get_proxy_icon || offset == windows_set_proxy_alias ||
                        offset == windows_set_proxy_file || offset == windows_set_proxy_icon ||
@@ -2928,12 +3183,13 @@ int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMli
                           offset == windows_recalculate_title_widths || offset == windows_collapse_window ||
                           offset == windows_collapse_all_windows || offset == windows_title_double_click ||
                           offset == windows_transition;
+    const bool drag = offset == 0x1381c;
     const bool extra =
-        desktop || monitors || proxy || geometry || offset == windows_set_features || offset == windows_get_features ||
-        offset == windows_is_collapsable || offset == windows_is_collapsed || offset == windows_is_path_select ||
-        offset == windows_get_pattern || offset == windows_set_pattern || offset == windows_set_theme_background ||
-        offset == windows_next_activation || offset == windows_post_activation || offset == windows_post_reshape ||
-        offset == windows_hilite_drag_frame;
+        drag || desktop || monitors || proxy || geometry || offset == windows_set_features ||
+        offset == windows_get_features || offset == windows_is_collapsable || offset == windows_is_collapsed ||
+        offset == windows_is_path_select || offset == windows_get_pattern || offset == windows_set_pattern ||
+        offset == windows_set_theme_background || offset == windows_next_activation ||
+        offset == windows_post_activation || offset == windows_post_reshape || offset == windows_hilite_drag_frame;
     ROMlib_carbon_reference ref;
     if (!ROMlib_carbon_probe_reference("WindowsLib", name, &ref) &&
         (!extra || !ROMlib_carbon_load_reference("WindowsLib", name, &ref))) {
@@ -2955,6 +3211,8 @@ int ROMlib_carbon_windows_compatibility(const char* name, uint32_t offset, ROMli
     }
     if (ref.code_offset != offset || ref.code_size != 0x1cd10 || !ref.toc || ref.toc_offset || ref.toc_size != 0x27ec)
         return ROMlib_carbon_invoke_frame(ref.function, call);
+    if (drag)
+        return windows_constrained_drag(&ref, call);
     if (monitors)
         return windows_monitor_lists(&ref, offset, call);
     switch (offset) {

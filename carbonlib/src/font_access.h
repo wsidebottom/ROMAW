@@ -641,6 +641,91 @@ static int carbon_FMGetFontGeneration(ROMlib_carbon_ppc_frame* call)
     return font_result(call, noErr);
 }
 
+static int font_sfnt_table(const carbon_font_resource* resource, uint32_t tag, uint32_t* start, uint32_t* length)
+{
+    if (resource->length < 12)
+        return 0;
+    const unsigned count = font_read16(resource->bytes + 4);
+    if (count > (resource->length - 12) / 16)
+        return 0;
+    for (unsigned at = 0; at < count; ++at) {
+        const Byte* entry = resource->bytes + 12 + at * 16;
+        if (font_read32(entry) != tag)
+            continue;
+        *start = font_read32(entry + 8);
+        *length = font_read32(entry + 12);
+        return *length && *start <= resource->length && *length <= resource->length - *start;
+    }
+    return 0;
+}
+
+static int font_sfnt_family_language(const carbon_font_resource* font, int16_t script, int16_t* language)
+{
+    uint32_t offset, length;
+    if (!font_sfnt_table(font, TICK("name"), &offset, &length) || length < 6)
+        return 0;
+    const Byte* table = font->bytes + offset;
+    const unsigned count = font_read16(table + 2), strings = font_read16(table + 4);
+    if (count > (length - 6) / 12 || strings < 6 + count * 12 || strings > length)
+        return 0;
+
+    int16_t selected = -1;
+    for (unsigned i = 0; i < count; ++i) {
+        const Byte* entry = table + 6 + i * 12;
+        if (font_read16(entry) != 1 || font_read16(entry + 2) != script || font_read16(entry + 6) != 1)
+            continue;
+        const int16_t entry_language = font_read16(entry + 4);
+        const unsigned size = font_read16(entry + 8), start = font_read16(entry + 10);
+        if (entry_language < 0 || !size || start > length - strings || size > length - strings - start)
+            return 0;
+        if (selected >= 0 && selected != entry_language)
+            return 0;
+        selected = entry_language;
+    }
+    if (selected < 0)
+        return 0;
+    *language = selected;
+    return 1;
+}
+
+static int carbon_FMGetFontFamilyTextEncoding(ROMlib_carbon_ppc_frame* call)
+{
+    const char* name = "FMGetFontFamilyTextEncoding";
+    const uint32_t output = call->words[1];
+    if (!font_output(output, 4))
+        return font_result(call, paramErr);
+    const int16_t family = font_actual_family((int16_t)call->words[0]);
+    carbon_font_resource fond;
+    unsigned count;
+    if (family < 0 || !font_family_associations(family, &fond, &count))
+        return font_reference(call, name, font_invalid_family);
+
+    const int16_t script = family < 0x4000 ? 0 : 1 + (family - 0x4000) / 512;
+    const int neutral_fond = !font_read32(fond.bytes + offsetof(FamRec, ffIntl));
+    int16_t language = -128;
+    for (unsigned i = 0; i < count; ++i) {
+        const carbon_font_variant variant = font_variant(&fond, i);
+        if (variant.size)
+            continue;
+        carbon_font_resource outline;
+        int16_t outline_language;
+        unsigned current_count;
+        if (!font_variant_resource(variant, &outline) ||
+            !font_sfnt_family_language(&outline, script, &outline_language) ||
+            (language != -128 && language != outline_language) ||
+            !font_family_associations(family, &fond, &current_count) || count != current_count)
+            return font_reference(call, name, font_invalid_family);
+        language = outline_language;
+    }
+    if (language == -128 && (!neutral_fond || script != 0))
+        return font_reference(call, name, font_invalid_family);
+
+    ROMlib_carbon_ppc_frame upgrade = {.words = {script, language, (uint32_t)-128, 0, output}};
+    if (!carbon_text_UpgradeScriptInfoToTextEncoding(&upgrade) || upgrade.words[0])
+        return font_reference(call, name, font_invalid_family);
+    return font_result(call, noErr);
+}
+
 static int font_table_query(ROMlib_carbon_ppc_frame* call, int directory)
 {
     const char* original = directory ? "FMGetFontTableDirectory" : "FMGetFontTable";
@@ -657,20 +742,8 @@ static int font_table_query(ROMlib_carbon_ppc_frame* call, int directory)
     if (count > (resource.length - 12) / 16)
         return font_result(call, font_table_error);
     uint32_t start = 0, length = 12 + count * 16;
-    if (!directory) {
-        const uint32_t tag = call->words[1];
-        length = 0;
-        for (unsigned at = 0; at < count; ++at) {
-            const Byte* entry = resource.bytes + 12 + at * 16;
-            if (font_read32(entry) == tag) {
-                start = font_read32(entry + 8);
-                length = font_read32(entry + 12);
-                break;
-            }
-        }
-        if (!length || start > resource.length || length > resource.length - start)
-            return font_result(call, font_table_error);
-    }
+    if (!directory && !font_sfnt_table(&resource, call->words[1], &start, &length))
+        return font_result(call, font_table_error);
     const uint32_t position = directory ? 0 : call->words[2];
     const uint32_t capacity = call->words[directory ? 1 : 3];
     const uint32_t buffer = call->words[directory ? 2 : 4];

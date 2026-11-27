@@ -64,6 +64,7 @@ def ticket_checks(probe, call):
     p.expect(12, "job name round trip")
     probe.call("CFRelease", [slot(48)])
     call("PMSetJobName", [settings, 0], -30871)
+    call("PMSetProfile", [settings, 0x73726370, 0], -30871)
     call("PMBegin", [])
     legacy_name = probe.raw(b"\x03A:B")
     call("PMSetJobName", [settings, legacy_name])
@@ -579,19 +580,30 @@ def print_file_checks(probe, call):
 
 def raw_ticket_checks(probe, call):
     p = probe.p
-    _, base = probe.raw(bytes(32))
+    _, base = probe.raw(bytes(80))
     ptr = lambda at: probe.ptr(base + at)
     slot = lambda at: probe.slot(base + at)
     call("PMTicketSetRetainCount", [0, -1], -50)
     call("PMTicketSetRetainCount", [0, 1], -30891)
     call("PMTicketGetTypedItem", [0, 0, 0, 0, 0, ptr(4)], -30891)
 
+    probe.call("CFStringCreateWithCString", [0, probe.far_raw(b"com.apple.print.PageFormatTicket\0"), 0])
+    p.nonzero("allocate the print ticket type string")
+    p.emit(0x907E0000 | (base + 12))
+    call("FindEnumTicketType", [slot(12), ptr(32)])
+    p.emit(0xA07E0000 | (base + 32))
+    p.expect(4, "the ticket type maps to the saved 16-bit enumeration")
+    call("FindEnumTicketType", [0, ptr(32)], -50)
+    p.emit(0xA07E0000 | (base + 32))
+    p.expect(0xFFFF, "the missing ticket type is marked unknown")
+    probe.call("CFRelease", [slot(12)])
+
     plist = (
         b'<?xml version="1.0"?><plist version="1.0"><dict>'
         b"<key>com.apple.print.ticket.type</key><string>com.apple.print.PageFormatTicket</string>"
         b"<key>com.apple.print.ticket.APIVersion</key><string>00.20</string>"
         b"<key>TestValue</key><dict><key>com.apple.print.ticket.itemArray</key>"
-        b"<array><dict><key>com.apple.print.ticket.stateFlag</key><integer>0</integer>"
+        b"<array><dict><key>com.apple.print.ticket.stateFlag</key><integer>4</integer>"
         b"<key>TestValue</key><string>ticket data</string></dict></array></dict>"
         b"</dict></plist>"
     )
@@ -622,6 +634,56 @@ def raw_ticket_checks(probe, call):
     probe.call("CFStringCreateWithCString", [0, probe.far_raw(b"TestValue\0"), 0])
     p.nonzero("allocate the print ticket item key")
     p.emit(0x907E0000 | (base + 12))
+    call("GetItemArrayAndDict", [slot(0), slot(12), ptr(24), ptr(28)])
+    probe.call("CFArrayGetCount", [slot(24)])
+    p.expect(1, "the print item has one version")
+    probe.call("CFArrayGetValueAtIndex", [slot(24), 0])
+    p.emit(0x809E0000 | (base + 28))
+    p.equal("the lookup returns the borrowed item dictionary")
+
+    initial = 0xAABBCCDD
+    probe.arguments([initial], 0)
+    p.emit(0x907E0000 | (base + 32))
+    call("GetLockedBitState", [slot(28), ptr(32)])
+    p.emit(0x807E0000 | (base + 32))
+    p.expect(0x00BBCCDD, "the lock query writes exactly one Boolean byte")
+    call("SetLockedBitState", [slot(28), 1])
+    call("GetLockedBitState", [slot(28), ptr(32)])
+    p.emit(0x807E0000 | (base + 32))
+    p.expect(0x01BBCCDD, "the item lock updates the existing state number")
+    # The saved routine leaves the dictionary argument to CFDictionaryCreateMutableCopy
+    # unset. Exercise native replacement and use the saved setter for the shared bit checks.
+    if call("LockOrUnlockItem", [slot(28), slot(24), 0, slot(12), 0], native_only=True):
+        call("GetItemArrayAndDict", [slot(0), slot(12), ptr(24), ptr(28)])
+    else:
+        call("SetLockedBitState", [slot(28), 0])
+    call("GetLockedBitState", [slot(28), ptr(32)])
+    p.emit(0x807E0000 | (base + 32))
+    p.expect(0x00BBCCDD, "unlocking clears the active item's lock state")
+    probe.call("CFStringCreateWithCString", [0, probe.far_raw(b"com.apple.print.ticket.stateFlag\0"), 0])
+    p.nonzero("allocate the print item state key")
+    p.emit(0x907E0000 | (base + 36))
+    probe.call("CFDictionaryGetValue", [slot(28), slot(36)])
+    p.nonzero("the replacement has its own state number")
+    p.emit(0x907E0000 | (base + 40))
+    probe.call("CFNumberGetValue", [slot(40), 3, ptr(44)])
+    p.expect(1, "read the replacement item's state number")
+    p.emit(0x807E0000 | (base + 44))
+    p.expect(4, "item locking preserves all other ticket state bits")
+    probe.call("CFRelease", [slot(36)])
+
+    call("BuildItemDictionary", [0, slot(12), slot(12), slot(12), 1, 1, ptr(40)])
+    probe.call("CFDictionaryGetValue", [slot(40), slot(12)])
+    p.emit(0x809E0000 | (base + 12))
+    p.equal("the builder stores the supplied value under the item key")
+    call("GetLockedBitState", [slot(40), ptr(32)])
+    p.emit(0x807E0000 | (base + 32))
+    p.expect(0x01BBCCDD, "the builder honors the initial lock flag")
+    call("RemoveMetaData", [slot(12), slot(12), slot(40)], None)
+    probe.call("CFDictionaryGetValue", [slot(40), slot(12)])
+    p.expect(0, "removing metadata deletes the unprotected item")
+    probe.call("CFRelease", [slot(40)])
+
     probe.call("CFStringGetTypeID")
     p.emit(0x907E0000 | (base + 20))
     call("PMTicketGetTypedItem", [slot(0), 0, 0, slot(12), slot(20), ptr(4)])
@@ -632,8 +694,132 @@ def raw_ticket_checks(probe, call):
     call("PMTicketGetTypedItem", [slot(0), 0, 0, slot(12), slot(20), ptr(4)], -30893)
     probe.call("CFStringGetLength", [slot(4)])
     p.expect(11, "a type mismatch leaves the borrowed item in the output")
+    call("CreateSubTicketKey", [0, 4, ptr(48), -17])
+    probe.call(
+        "CFStringCreateWithCString",
+        [0, probe.far_raw(b"com.apple.print.subTicket.page_format_ticket -17\0"), 0],
+    )
+    p.nonzero("allocate the expected subticket key")
+    p.emit(0x907E0000 | (base + 52))
+    probe.call("CFEqual", [slot(48), slot(52)])
+    p.expect(1, "the numbered subticket key is the exact prefix, type and signed suffix")
+    probe.call("CFRelease", [slot(48)])
+    probe.call("CFRelease", [slot(52)])
+    call("CreateSubTicketKey", [0, -1, ptr(48), 0], -50)
+    p.emit(0x807E0000 | (base + 48))
+    p.expect(0, "the key output is cleared for the unknown type")
+
+    call("SearchLeafForItem", [slot(0), slot(12), ptr(48)])
+    probe.call("CFStringGetLength", [slot(48)])
+    p.expect(11, "the direct leaf lookup returns a borrowed item")
+    children = (
+        b'<?xml version="1.0"?><plist version="1.0"><dict>'
+        b"<key>com.apple.print.subTicket.page_format_ticket</key><dict>"
+        b"<key>com.apple.print.subTicket.paper_info_ticket</key><dict>"
+        b"<key>TestValue</key><dict><key>com.apple.print.ticket.itemArray</key>"
+        b"<array><dict><key>com.apple.print.ticket.stateFlag</key><integer>0</integer>"
+        b"<key>TestValue</key><string>nested paper</string></dict></array></dict>"
+        b"</dict></dict></dict></plist>"
+    )
+    probe.call("CFDataCreate", [0, probe.far_raw(children), len(children)])
+    p.nonzero("allocate the nested ticket data")
+    p.emit(0x907E0000 | (base + 48))
+    probe.call("CFPropertyListCreateFromXMLData", [0, slot(48), 1, 0])
+    p.nonzero("create the nested ticket dictionary")
+    p.emit(0x907E0000 | (base + 52))
+    probe.call("CFRelease", [slot(48)])
+    call("FindSubDict", [slot(52), 0, 4, 0, ptr(56)])
+    p.emit(0x807E0000 | (base + 56))
+    p.nonzero("the page format subticket is present")
+    call("FindSubDict", [slot(52), 0, 5, 0, ptr(56)], -9583)
+    p.emit(0x807E0000 | (base + 56))
+    p.expect(0, "a missing print settings subticket clears the output")
+    call("SearchNodeForItem", [slot(52), 0, slot(12), ptr(56)])
+    probe.call("CFStringGetLength", [slot(56)])
+    p.expect(12, "the node search finds the item in the nested paper ticket")
+
+    probe.arguments([ptr(64)], 0)
+    p.emit(0x907E0000 | (base + 72), 0x38000000, 0x901E0000 | (base + 68))
+    call("FindAllSubTickets", [slot(52), ptr(72)])
+    p.emit(0x807E0000 | (base + 68))
+    p.nonzero("the traversal appends the page format node to the original tail")
+    p.emit(0x907E0000 | (base + 48), 0x80630004)
+    p.nonzero("the depth-first list includes the nested paper node")
+    p.emit(0x809E0000 | (base + 72))
+    p.equal("the returned tail is the last allocated node")
+    p.emit(0x807E0000 | (base + 72), 0x80630004)
+    p.expect(0, "the last subticket node terminates the list")
+    call("FindSubDict", [slot(52), 0, 4, 0, ptr(56)])
+    p.emit(0x807E0000 | (base + 48), 0x80630000, 0x809E0000 | (base + 56))
+    p.equal("enumeration stores the borrowed page-format ticket")
+    call("FindSubDict", [slot(56), 0, 11, 0, ptr(56)])
+    p.emit(0x807E0000 | (base + 72), 0x80630000, 0x809E0000 | (base + 56))
+    p.equal("enumeration stores the borrowed paper-info ticket")
+    probe.call("free", [slot(72)])
+    probe.call("free", [slot(48)])
+    probe.call("CFRelease", [slot(52)])
+
+    call("ValidItem", [slot(12)], 1)
+    call("AddItem", [slot(0), slot(12), slot(12), slot(12), 1], -9590)
+    probe.call("CFStringCreateWithCString", [0, probe.far_raw(b"AddedItem\0"), 0])
+    p.nonzero("allocate a new print ticket item key")
+    p.emit(0x907E0000 | (base + 36))
+    call("GetItemArrayAndDict", [slot(0), slot(36), ptr(24), ptr(28)], -9589)
+    p.emit(0x807E0000 | (base + 24))
+    p.expect(0, "a missing item clears the version array output")
+    p.emit(0x807E0000 | (base + 28))
+    p.expect(0, "a missing item clears the item dictionary output")
+    call("AddItem", [slot(0), slot(12), slot(36), slot(12), 1])
+    call("GetItemArrayAndDict", [slot(0), slot(36), ptr(24), ptr(28)])
+    probe.call("CFDictionaryGetValue", [slot(28), slot(36)])
+    p.emit(0x809E0000 | (base + 12))
+    p.equal("the new item retains the supplied value")
+    call("GetLockedBitState", [slot(28), ptr(32)])
+    p.emit(0x807E0000 | (base + 32))
+    p.expect(0x01BBCCDD, "the new item honors the initial lock state")
+    call("UpdateItem", [slot(0), slot(12), slot(36), slot(36), 0, 0], -9586)
+    call("SetLockedBitState", [slot(28), 0])
+    call("UpdateItem", [slot(0), slot(12), slot(36), slot(36), 0, 0])
+    call("GetItemArrayAndDict", [slot(0), slot(36), ptr(24), ptr(28)])
+    probe.call("CFDictionaryGetValue", [slot(28), slot(36)])
+    p.emit(0x809E0000 | (base + 36))
+    p.equal("updating the unlocked item replaces the value")
+    probe.call("CFRelease", [slot(36)])
     probe.call("CFRelease", [slot(12)])
     call("PMTicketSetRetainCount", [slot(0), 0])
+
+
+def print_mutex_checks(probe, call):
+    p = probe.p
+    _, base = probe.raw(bytes(12))
+    holder, alias, locked = (probe.ptr(base + offset) for offset in (0, 4, 8))
+    mutex = probe.slot(base)
+    # The saved error path needs the Classic C++ exception runtime.
+    call("PMMutexCreate", [0], -50, native_only=True)
+    call("PMMutexCreate", [holder])
+    p.emit(0x807E0000 | base)
+    p.nonzero("create a saved-layout print mutex")
+    p.emit(0x907E0000 | (base + 4))
+    call("PMMutexRetain", [mutex])
+    call("PMMutexLock", [mutex])
+    probe.arguments([0x5A5A5A5A], 0)
+    p.emit(0x907E0000 | (base + 8))
+    call("PMMutexTryLock", [mutex, locked])
+    p.emit(0x807E0000 | (base + 8))
+    p.expect(0x015A5A5A, "the classic mutex reports success in one Boolean byte")
+    call("PMMutexUnlock", [mutex])
+    call("PMMutexRelease", [holder])
+    p.emit(0x807E0000 | base)
+    p.expect(0, "releasing one owner clears its reference")
+    call("PMMutexLock", [probe.slot(base + 4)])
+    call("PMMutexUnlock", [probe.slot(base + 4)])
+    call("PMMutexRelease", [alias])
+    p.emit(0x807E0000 | (base + 4))
+    p.expect(0, "the final release clears the other reference")
+    call("PMMutexRelease", [alias], -50, native_only=True)
+    if call("PMMutexTryLock", [0, locked], -50, native_only=True):
+        p.emit(0x807E0000 | (base + 8))
+        p.expect(0x005A5A5A, "a failed try-lock clears the Boolean and preserves adjacent bytes")
 
 
 def make_printing_checks(destination, reference_only):
@@ -653,7 +839,7 @@ def make_printing_checks(destination, reference_only):
     }
     for table in definitions.glob("printing*_entries.h"):
         names.update(re.findall(r"^CARBON_PRINT\w*\((\w+),", table.read_text(), re.M))
-    if len(names) != 164:
+    if len(names) != 186:
         raise ValueError("Incomplete Printing Manager batch")
     support = {
         "CFArrayGetValueAtIndex",
@@ -705,7 +891,7 @@ def make_printing_checks(destination, reference_only):
                 def call(symbol, arguments, expected=0, *, same_status=False, fp=None, compare=None, native_only=False):
                     nonlocal same_index
                     if side and native_only:
-                        return
+                        return False
                     key = (symbol, side)
                     if key not in labels:
                         label = ("saved " if side else "native ") + symbol
@@ -715,7 +901,8 @@ def make_printing_checks(destination, reference_only):
                         p.emit(0xC83E0000 | fp[1])
                     probe.call(symbol, arguments, side)
                     if not same_status:
-                        p.expect(expected, symbol + " returns the expected result")
+                        if expected is not None:
+                            p.expect(expected, symbol + " returns the expected result")
                     elif side:
                         p.emit(0x907E0000 | (statuses + 4 * same_index))
                     else:
@@ -733,6 +920,7 @@ def make_printing_checks(destination, reference_only):
                                 p.emit(0x809E0000 | reference)
                                 p.equal(symbol + " matches the saved output")
                             same_index += 1
+                    return True
 
                 scenario(probe, call)
 
@@ -744,6 +932,7 @@ def make_printing_checks(destination, reference_only):
     run_section("Document and page lifecycle", document_checks)
     run_section("Staged print dialogs", staged_dialog_checks)
     run_section("Raw print ticket ownership and typed items", raw_ticket_checks)
+    run_section("Print mutex ownership and locking", print_mutex_checks)
     if not reference_only:
         # The saved print file wrappers depend on Classic StdCLib file streams.
         run_section("Print data and property-list files", print_file_checks, native_section=True)

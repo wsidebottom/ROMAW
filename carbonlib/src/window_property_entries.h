@@ -198,6 +198,8 @@ CARBON_WINDOWS_COMPAT(SetDesktopPictureForDevice, 0x1999c)
 CARBON_WINDOWS_COMPAT(GetDesktopPictureForDevice, 0x19a64)
 CARBON_WINDOWS_COMPAT(FileContainsPossibleDesktopPicture, 0x193e0)
 CARBON_WINDOWS_COMPAT(GetPictureFromFile, 0x169a4)
+CARBON_WINDOWS_COMPAT(ConstrainedDragRgn, 0x1381c)
+CARBON_WINDOWS_COMPAT(DrawMonitorDesktopFromList, 0x19bc4)
 CARBON_WINDOWS_COMPAT(DrawMonitorDesktopFromListWillTakeTime, 0x1a270)
 CARBON_WINDOWS_COMPAT(RepositionWindow, 0xe8b8)
 CARBON_WINDOWS_COMPAT(ReshapeWindows, 0x11c30)
@@ -222,4 +224,62 @@ CARBON_SCREEN_BITS(DisposeSavedScreenBits, 0xde84)
 CARBON_SCREEN_BITS(GetSavedScreenBitsRepresentativePixMap, 0xdef4)
 
 #undef CARBON_SCREEN_BITS
+
+static int carbon_IsWindowPathSelectEvent(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t window = call->words[0], event = call->words[1];
+    _Alignas(16) EventRecord record;
+    const uint32_t address = US_TO_SYN68K(&record);
+    ROMlib_carbon_ppc_frame convert = {.words = {event, address}};
+    if (event && !carbon_event_ConvertEventRefToEventRecord(&convert))
+        return 0;
+    if (!event || !convert.words[0]) {
+        call->words[0] = 0;
+        return 1;
+    }
+    call->words[0] = window;
+    call->words[1] = address;
+    return carbon_window_IsWindowPathSelectClick(call);
+}
+
+static int carbon_CreateWindowFromResource(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32_t output = call->words[1];
+    if (!output || !ROMlib_carbon_try_guest_memory(output, 4, 1)) {
+        call->words[0] = paramErr;
+        return 1;
+    }
+
+    ROMlib_carbon_reference ref;
+    if (!ROMlib_carbon_load_reference("CarbonLib", "CreateWindowFromResource", &ref))
+        return 0;
+    if (ref.code_offset != 0x1068c || ref.code_size != 0xb8fb4 || ref.toc_offset != 0x2f78 || ref.toc_size != 0x10f0c)
+        return ROMlib_carbon_invoke_frame(ref.function, call);
+
+    const uint32_t get[] = {TICK("wind"), (uint32_t)(int16_t)call->words[0]};
+    uint32_t resource, status;
+    if (!cfp_private(&ref, 0xb1fb0, get, NELEM(get), &resource) || !cfp_private(&ref, 0xb1ff8, NULL, 0, &status))
+        return 0;
+    if (status || !resource) {
+        call->words[0] = status ? status : (uint32_t)resNotFound;
+        return 1;
+    }
+
+    uint32_t collection = 0;
+    int ok = cfp_private(&ref, 0xb6240, NULL, 0, &collection);
+    if (ok && collection) {
+        const uint32_t load[] = {collection, resource}, create[] = {collection, output};
+        ok = cfp_private(&ref, 0xb6258, load, NELEM(load), &status) &&
+             (status || cfp_private(&ref, 0xb2ac0, create, NELEM(create), &status));
+        if (!cfp_private(&ref, 0xb6270, &collection, 1, NULL))
+            ok = 0;
+    }
+    else
+        status = memFullErr;
+    if (!cfp_private(&ref, 0xb1f98, &resource, 1, NULL))
+        ok = 0;
+    call->words[0] = status;
+    return ok;
+}
+
 #endif

@@ -63,6 +63,7 @@ enum carbon_event_operation {
     event_classic_os_available,
     event_classic_os_get,
     event_is_cancel_key,
+    event_check_queue_for_cancel,
     event_is_context_menu,
     event_could_be_menu_key,
     event_control_drag,

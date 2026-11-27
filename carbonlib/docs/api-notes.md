@@ -1234,6 +1234,13 @@ operations to its application directory.
 Raw print ticket operations share the live dictionary lock flag, use Core
 Foundation retain counts, and verify the returned item's type after the
 existing ticket search.
+Item dictionaries preserve the other state bits when their lock is changed.
+The native builder and insertion path use the saved ticket's Core Foundation
+allocator and the existing dictionary and version array fields.
+Subticket keys use the saved type names and signed decimal indices. Lookup
+follows page-format and print-settings tickets into their paper information.
+Enumeration appends borrowed subtickets to the caller's linked list using
+the guest StdCLib allocator.
 
 The two reporting apps passed 62,370 assertions across both engines. MyABCD
 reached its first event wait under the interpreter and JIT.
@@ -1255,6 +1262,15 @@ existing classic catalog and fork limits. The broad HFS Plus Gestalt capability
 remains disabled while additional filesystem operations retain fallback.
 Toolbox and Printing passed 24,847 assertions per engine in the same app.
 MyABCD reached its first event wait under the interpreter and JIT.
+
+Component dispatch reads the component token following the packed Pascal
+arguments and calls the shared registry with the original parameter block.
+Foreign tokens and patched component traps use the saved dispatcher.
+
+The event cancellation check walks the main event queue. It removes earlier
+mouse and keyboard events through the cancel key, preserves other event
+classes and later input, and checks the classic queue when the Carbon queue
+contains no cancel key.
 
 The Carbon Event Manager adds 40 native entries for event records, parameters,
 queue membership and ownership, event targets, handler chains, timers and
@@ -1379,6 +1395,11 @@ saved encoding worker with the real fragment. The grouped app checks
 Unicode-to-Thai conversion, run counts and the version record against that
 fragment. The loader runs the real initializer to populate the plug-in registry
 when CarbonLib binds every TEC import to a native entry.
+
+The monitor desktop renderer fills the supplied clipping region with the
+desktop pattern, aligned to the monitor's origin. Drawing restores the
+target port's clip and the caller's current port. Picture loading,
+tiling, and cached image drawing use the installed WindowsLib fragment.
 
 The Window Manager uses native code for properties, persistence attributes, and
 default and cancel button selection. These APIs share the saved CarbonLib
@@ -1530,8 +1551,44 @@ IdleUpdate, UpdateSystemActivity and GetLastActivity share the guest Power
 Manager's tick bookkeeping through patchable OS vectors. IdleUpdate returns
 the low-memory Ticks value and records overall activity. Input events record
 user activity, and explicit updates record their selected activity type.
-These calls track guest activity timestamps. Portable sleep, display dimming
-and hardware power management still use their existing resolution paths.
+The wakeup and startup timers keep independent guest preferences through
+the live PowerDispatch vector. The virtual desktop can report the configured
+values within the current session. It advertises neither hardware timer
+capability and does not wake or start the host. Minimum, maximum and current
+processor speed report the same fixed emulated clock.
+
+Font-family encoding uses the resource-backed Font Manager catalog. It
+passes a matching Macintosh family-name language from each outline to
+TextCommon, or uses Roman defaults for a neutral Roman bitmap family.
+Ambiguous or unsupported font metadata falls through to FontManager.
+
+UCCompareTextNoLocale follows the HFS Extended comparison in the saved
+UnicodeUtilitiesCoreLib. It reads the reference case-fold table, skips
+ignorable units for equivalence, and breaks ties using the original UTF-16
+units. The code preserves the primary and tie-break order magnitudes.
+
+UCKeyTranslate reads guest Unicode keyboard layouts, including modifier and
+keyboard-type tables, dead-key state transitions and multicharacter output.
+It preserves the translated prefix when the output buffer is too short.
+The companion UCKeyboardLayoutStringMax reads the declared output limit or
+derives a bound from the sequence and dead-key tables.
+
+Unicode text-break locators share the saved guest handle layout and retain
+locale-specific class and transition resources until disposal. Character
+search handles UTF-16 surrogate pairs without a locator. Cluster, word and
+line searches use the forward and backward transition tables. Unfamiliar
+locator layouts and rule data retain the saved implementation path.
+
+Native collator creation merges the root and locale-specific weight ranges
+and retains their locale operation resources and Unicode property table.
+The guest handle remains usable by the saved comparison workers. Disposal
+releases the retained resources and clears the caller's handle. Sort-key
+generation builds the weight levels in C using the saved normalization and
+weight workers. Numeric collation still uses the full saved routine.
+Text comparison uses the sort-key weights for significant nonnumeric
+differences. Equivalent weights, numeric ordering, and unrecognized
+collator layouts use the saved comparison engine. Default text comparison
+applies each caller's options to the fragment's cached collator.
 
 The seven public CFM re-exports use native Carbon argument handling and the
 shared ROMAW PEF loader. Unnamed disk and memory fragments can be opened
@@ -1658,6 +1715,31 @@ control settings and retarget a borrowed text pointer without changing the
 selected text range. The grouped ATSUI checks cover both native and saved
 style records.
 
+The TSMTE dialog accessors recognize the CarbonLib extension by its
+signature and live document ID. They query or update the document ID and
+TextEdit record in place. Ordinary dialogs have no TSMTE attachment.
+Font-menu selection reads the family and style from the menu item's font
+property. When the property is missing, it resolves the Pascal item title
+through the available Font Manager lookup.
+
+Constrained region drags preserve the caller's callback phases, clamped
+mouse movement, axis constraints, and accumulated displacement. They use
+the saved WindowsLib region pool, outline, and border drawing helpers.
+
+Print mutexes use the saved CFM object and method layout, so either path
+can retain, release, or invoke their locking methods. The classic mutex
+reports immediate acquisition through its standard backend. Ticket
+metadata removal preserves protected keys and dictionaries with embedded
+ticket metadata markers.
+
+The Toolbox instance definition entries share the original registry and
+report missing entries without retaining an old descriptor. Window resource
+creation unflattens the window collection and releases its temporary
+resource. The window proxy and menu predicates convert Carbon event data
+before dispatching to their established search rules. The print profile
+entry validates the legacy document phase and closes the ColorSync profile
+after recording its QuickDraw comment.
+
 ## ColorSync and later Toolbox groups
 
 The native ColorSync array converters cover RGB to gray, RGB to and from HSV
@@ -1682,6 +1764,69 @@ same resolver. Saved ColorSync calls the InterfaceLib entry point when opening
 its temporary profile. The grouped Toolbox app compares saved and native
 `CMUpdateProfile` on handle-backed and buffer-backed profiles and reopens the
 result with the saved reader.
+
+Profile identifiers combine the live ICC header, optional calibration date,
+and ASCII profile description. The identifier query reports its required
+size and rejects undersized buffers. List searches compare the header,
+calibration date, and ASCII name, in list order and up to the caller's
+capacity. Folder searches keep their own identifier and use ColorSync's
+saved profile enumeration callback. Preferred CMM getters and setters use
+the saved ColorSync preference store. Color-world queries report the CMM
+signature and version for each active component. Workflow deletion preserves
+the active and last workflow and leaves staged deletions for the save path.
+Workflow entries accept counted Unicode strings and return their raw payload.
+Profile entries use the saved resolver to repair missing locations. Copying
+a workflow validates the new name, copies its resource record, and stages
+an independent, inactive workflow. Export embeds the workflow's profile
+entries, clears its local display binding, and names the portable copy
+after its destination file. Import checks for name conflicts and restores
+embedded profiles to the local directory, repairs missing profile entries,
+and publishes the workflow with its local display binding. Unfamiliar
+fragment layouts use the
+saved ColorSync exports.
+
+Color-world operations use the installed color management modules. Color
+arrays apply both transforms when the world has two components. Bitmap and
+PixMap paths select the component's direct bitmap operation when available
+and otherwise use the saved conversion and gamut workers. Disposal closes
+the component connections before releasing the world's handle.
+A new world uses the system profile for one omitted endpoint. It tests the
+endpoint CMMs for a complete transform, then tries pairs joined through
+the profile connection space before trying the Apple CMM alone. The world
+records its selected components, versions, profile classes and color spaces.
+World concatenation and device-link creation validate the profile chain,
+try the eligible CMMs in reference order, and preserve the extended
+progress callback. Failed attempts release their component connections.
+Successful concatenation installs the resulting transform in the world.
+The four PostScript Level 2 entries select the CMM operation, pass the
+stream callback and context to the selected component, and close the
+component after use. The saved default PostScript generator handles
+requests the selected CMM cannot serve. The VM size query publishes its
+count independently of the optional preferred-CMM flag.
+Picture matching installs the display search procedures, publishes the
+profile comment, and restores the QuickDraw color selections. Ending a
+match removes those procedures and releases the device contexts and
+shared resource state. Profile comments restore the input profile flags
+after flattening, and the enable and disable entries emit the QuickDraw
+picture comment opcodes. Matched playback installs temporary QuickDraw
+procedures for the picture's profile state, then restores the port's
+procedures and cleans up the transient profiles and graphics search state.
+
+Display profile operations follow the live Display Manager capabilities and
+use the legacy preference store when the manager cannot apply a profile.
+Gamma operations query the required buffer size and convert either gamma
+table or formula records before invoking the installed display worker.
+Display-profile creation sizes the ICC tags for the supplied gamma and
+description records, fills the profile header, and writes the display tags
+through the saved ColorSync workers. The control-panel entry first activates
+an existing ColorSync process. It otherwise looks up the panel's signature
+in the Desktop Manager and launches the matching local application.
+
+ColorSync enumeration reports installed CMM metadata and visits indexed
+profile files through the saved resource and catalog workers. Folder
+enumeration publishes the current seed and skips callbacks when that seed
+matches the caller's. A callback error ends enumeration and releases the
+temporary records and component connections.
 
 ColorSync profile descriptions use the ICC v2 `desc` tag in the live profile
 directory. The native readers report full ASCII and Unicode lengths on
@@ -1831,6 +1976,16 @@ outside the native coverage count. The other weak import,
 The native theme font APIs resolve Carbon role aliases and read the Script
 Manager's packed font and size selectors. They use live Font Manager and
 QuickDraw traps and consult the saved Appearance font settings when available.
+The views font setter updates the installed Appearance font collection and
+stores the name and size through the fragment's preferences service. It sends
+the views font change notification for the system script. Redraw requests
+and unfamiliar Appearance layouts use the saved setter.
+The system font setter reads the chosen font's size from the script's
+'sfn#' resource, updates the Script Manager selectors and 'itlb'
+resource, and refreshes system font metrics through the installed fragment.
+The small system font setter uses the matching position in 'sfs#' and
+'sfe#' to keep the normal and emphasized font collections paired.
+Both setters retain the saved preference store and system-script notifications.
 
 `SetControlColorProc` installs or clears a per-control color UPP.
 `SetUpControlBackground` and `SetUpControlTextColor` pass the original message,

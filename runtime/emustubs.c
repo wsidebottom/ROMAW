@@ -3137,9 +3137,16 @@ STUB(Microseconds)
 
 enum { power_unimplemented = -4 };
 
+typedef struct {
+    uint32 time;
+    BOOLEAN enabled;
+} power_timer_preference_t;
+
 /* Power Manager preferences belong to the emulated machine. Keeping a timeout
    configured does not confer the corresponding portable hardware feature. */
 static struct {
+    power_timer_preference_t wakeup_timer;
+    power_timer_preference_t startup_timer;
     uint8 sleep_timeout;
     uint8 disk_timeout;
     uint8 dim_timeout;
@@ -3161,6 +3168,21 @@ STUB(IMVI_IdleUpdate)
     RTS();
 }
 
+static int16 power_timer_preference(power_timer_preference_t* timer, syn68k_addr_t record, bool setting)
+{
+    if (!record)
+        return paramErr;
+    if (setting) {
+        timer->time = READUL(record);
+        timer->enabled = READUB(record + 4) != 0;
+    }
+    else {
+        WRITEUL(record, timer->time);
+        WRITEUB(record + 4, timer->enabled);
+    }
+    return noErr;
+}
+
 STUB(PowerDispatch)
 {
     const uint8 argument = EM_D0 >> 16;
@@ -3174,6 +3196,7 @@ STUB(PowerDispatch)
     case 0x1b: /* GetBatteryVoltage: 0.0 when the requested battery is unavailable. */
         EM_D0 = 0;
         break;
+    case 0x36: /* MinimumProcessorSpeed. */
     case 0x10: /* MaximumProcessorSpeed. */
     case 0x11: /* CurrentProcessorSpeed. */
         EM_D0 = ROMLIB_PPC_CORE_MHZ;
@@ -3201,6 +3224,14 @@ STUB(PowerDispatch)
         break;
     case 0x0d: /* AutoSleepControl */
         power_preferences.automatic_sleep_disabled = argument == 0;
+        break;
+    case 0x16: /* GetWakeupTimer */
+    case 0x17: /* SetWakeupTimer */
+        EM_D0 = power_timer_preference(&power_preferences.wakeup_timer, EM_A0, (uint16)EM_D0 == 0x17);
+        break;
+    case 0x26: /* GetStartupTimer */
+    case 0x27: /* SetStartupTimer */
+        EM_D0 = power_timer_preference(&power_preferences.startup_timer, EM_A0, (uint16)EM_D0 == 0x27);
         break;
     case 0x1c: /* Unavailable BatteryTimeRec measurements are zero. */
         if (EM_A0)

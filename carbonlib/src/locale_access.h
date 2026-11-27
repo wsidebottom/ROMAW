@@ -715,6 +715,29 @@ static int carbon_LocaleOperationUnloadData(ROMlib_carbon_ppc_frame* call)
     return locale_status(call, status);
 }
 
+typedef struct {
+    uint32_t token;
+    uint32_t data;
+} locale_operation_resource;
+
+static int locale_acquire_operation_resource(uint32_t stack, uint32_t operation, uint32_t locale, uint32_t variant,
+                                             locale_operation_resource* resource)
+{
+    ROMlib_carbon_ppc_frame call = {
+        .words = {operation, locale, variant, US_TO_SYN68K(&resource->token), US_TO_SYN68K(&resource->data)},
+        .stack = stack};
+    return carbon_LocaleOperationLoadData(&call) ? (int32_t)call.words[0] : resNotFound;
+}
+
+static int locale_release_operation_resource(uint32_t stack, locale_operation_resource resource)
+{
+    if (!resource.data)
+        return noErr;
+    _Alignas(16) uint32_t handle = resource.data;
+    ROMlib_carbon_ppc_frame call = {.words = {CL(resource.token), US_TO_SYN68K(&handle)}, .stack = stack};
+    return carbon_LocaleOperationUnloadData(&call) ? (int32_t)call.words[0] : resNotFound;
+}
+
 enum locale_name_query { locale_name_lookup, locale_name_count, locale_name_index };
 
 static OSErr locale_read_names(const ROMlib_carbon_reference* runtime, uint32 data, enum locale_name_query query,

@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_carbon_compare_collation_keys and private TextCommon adapters.
+  Functions: ROMlib_carbon_compare_collation_keys, ROMlib_carbon_compare_text_no_locale, and private TextCommon adapters.
 
   Origin:    Mac OS 9.2.1 TextCommon and UnicodeUtilitiesCoreLib, and Universal Interfaces 3.4.2.
 
@@ -942,19 +942,95 @@ static int text_common_dispatch(const char* name, uint32_t offset, int operation
     return text_common_resolve(&ref, call->words[0], &call->words[0]);
 }
 
-static const Byte* text_collation_key(uint32 address, uint32 count)
+static const Byte* text_comparison_buffer(uint32 address, uint32 count, unsigned unit_size)
 {
-    const uint64 size = (uint64)count * 4;
-    if (!address || size > (uint64)UINT32_MAX + 1 - address)
+    const uint64 extent = (uint64)count * unit_size;
+    if (!address || extent > (uint64)UINT32_MAX + 1 - address)
         return NULL;
-    return ROMlib_carbon_try_guest_memory(address, size ? size : 1, 0);
+    return ROMlib_carbon_try_guest_memory(address, extent ? extent : 1, 0);
+}
+
+static uint16 text_hfs_next(const Byte* table, const Byte** text, uint32* remaining)
+{
+    while (*remaining) {
+        const uint16 unit = text_table_word(*text);
+        *text += 2;
+        --*remaining;
+        const uint16 page = text_table_word(table + 2 * (unit >> 8));
+        const uint16 weight = page ? text_table_word(table + 2 * (page + (unit & 255))) : unit;
+        if (weight)
+            return weight;
+    }
+    return 0;
+}
+
+int ROMlib_carbon_compare_text_no_locale(ROMlib_carbon_ppc_frame* call)
+{
+    const uint32 left_count = call->words[2], right_count = call->words[4];
+    const Byte* left = text_comparison_buffer(call->words[1], left_count, 2);
+    const Byte* right = text_comparison_buffer(call->words[3], right_count, 2);
+    Byte* equivalent = call->words[5] ? ROMlib_carbon_try_guest_memory(call->words[5], 1, 1) : NULL;
+    Byte* order = call->words[6] ? ROMlib_carbon_try_guest_memory(call->words[6], 4, 1) : NULL;
+    if (equivalent)
+        *equivalent = true;
+    if (order)
+        memset(order, 0, 4);
+    if (!left || !right || (!equivalent && !order) || (call->words[5] && !equivalent) || (call->words[6] && !order))
+        return text_result(call, paramErr);
+
+    ROMlib_carbon_reference reference;
+    if (!ROMlib_carbon_load_reference("UnicodeUtilitiesCoreLib", "UCCompareTextNoLocale", &reference))
+        return 0;
+    if (reference.code_offset != 0xa58 || reference.code_size != 0xe38 || !reference.toc || reference.toc_offset != 4 ||
+        reference.toc_size != 0x1624)
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    if ((call->words[0] >> 24) != 1)
+        return text_result(call, paramErr);
+
+    uint32 address;
+    if (!cfp_get(US_TO_SYN68K(reference.toc) - 4, &address))
+        return 0;
+    const Byte* table = ROMlib_carbon_try_guest_memory(address, 0x1600, 0);
+    if (!table)
+        return ROMlib_carbon_invoke_frame(reference.function, call);
+    for (unsigned i = 0; i < 256; ++i) {
+        const uint16 page = text_table_word(table + 2 * i);
+        if (page > 0xa00)
+            return ROMlib_carbon_invoke_frame(reference.function, call);
+    }
+    const Byte *a = left, *b = right;
+    uint32 a_count = left_count, b_count = right_count;
+    uint16 x, y;
+    do {
+        x = text_hfs_next(table, &a, &a_count);
+        y = text_hfs_next(table, &b, &b_count);
+    } while (x && x == y);
+
+    int32 result = 0;
+    if (x != y) {
+        if (equivalent)
+            *equivalent = false;
+        result = x < y ? -2 : 2;
+    }
+    else if (order) {
+        const int raw = memcmp(left, right, (size_t)MIN(left_count, right_count) * 2);
+        if (raw)
+            result = raw < 0 ? -1 : 1;
+        else if (left_count != right_count)
+            result = left_count < right_count ? -1 : 1;
+    }
+    if (order) {
+        const uint32 encoded = CL((uint32)result);
+        memcpy(order, &encoded, sizeof encoded);
+    }
+    return text_result(call, noErr);
 }
 
 int ROMlib_carbon_compare_collation_keys(ROMlib_carbon_ppc_frame* call)
 {
     const uint32 left_count = call->words[1], right_count = call->words[3];
-    const Byte* left = text_collation_key(call->words[0], left_count);
-    const Byte* right = text_collation_key(call->words[2], right_count);
+    const Byte* left = text_comparison_buffer(call->words[0], left_count, 4);
+    const Byte* right = text_comparison_buffer(call->words[2], right_count, 4);
     Byte* equivalent = call->words[4] ? ROMlib_carbon_try_guest_memory(call->words[4], 1, 1) : NULL;
     Byte* order = call->words[5] ? ROMlib_carbon_try_guest_memory(call->words[5], 4, 1) : NULL;
     if (equivalent)
