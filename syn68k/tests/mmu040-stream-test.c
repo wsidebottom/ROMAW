@@ -1478,7 +1478,7 @@ static void guest_call_pointer_faults(void)
                        run.step.vector == 2 && run.step.format == 7 && run.step.restartable_read && !run.step.store_state);
                 assert(run.step.access.request == 0x24080 && run.step.access.logical == 0x24080 &&
                        run.step.access.size == 4 && run.step.access.fc == 1 && !run.step.access.writing &&
-                       !run.step.access.completed && run.step.access.bus_error == physical_fault);
+                       !run.step.access.completed && run.step.access.bus_error == (int)physical_fault);
                 assert(!memcmp(expected, cpu_state.regs, sizeof expected) && !writes &&
                        watched_tail_reads == physical_fault && scalar_store_value(operand, 4) == 0x91929394);
 
