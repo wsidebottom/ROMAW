@@ -70,6 +70,14 @@ int syn68k_mmu040_operand_status(const Syn68kMMU040Access* access, uint16_t* ssw
     abort();
 }
 
+unsigned long destroy_blocks(syn68k_addr_t address, uint32 size)
+{
+    (void)address;
+    (void)size;
+    assert(!"allocation fixture must not execute guest cache control");
+    return 0;
+}
+
 void syn68k_invalidate_checked_write(uint32 address, unsigned size)
 {
     abort();
