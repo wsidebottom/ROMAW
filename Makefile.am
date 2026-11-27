@@ -155,7 +155,7 @@ dial_sources = dialogs/dialAlert.c dialogs/dialCreate.c dialogs/dialHandle.c dia
                dialogs/dialDispatch.c dialogs/dialItem.c
 
 file_sources = files/fileAccess.c files/fileCreate.c files/fileDirs.c files/fileDouble.c files/fileInfo.c \
-               files/fileMisc.c files/fileVolumes.c files/fileHighlevel.c files/dcache.c
+               files/afpCatalog.c files/fileMisc.c files/fileVolumes.c files/fileHighlevel.c files/dcache.c
 
 hfs_sources = hfs/hfsBtree.c hfs/hfsChanging.c hfs/hfsCreate.c hfs/hfsFile.c hfs/hfsHelper.c \
               hfs/hfsHier.c hfs/hfsMisc.c hfs/hfsVolume.c hfs/hfsWorkingdir.c hfs/hfsXbar.c
@@ -299,6 +299,7 @@ include_sources = include/rsys/component.h \
                   include/rsys/desperate.h \
                   include/rsys/device.h \
                   include/rsys/mactcp.h \
+                  include/rsys/afp_catalog.h \
                   include/rsys/host_afp.h \
                   include/rsys/host_mactcp.h \
                   include/rsys/host_mactcp_stream.h \

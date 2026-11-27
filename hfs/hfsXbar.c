@@ -24,6 +24,7 @@
 #include "FileMgr.h"
 #include "rsys/hfs.h"
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
 #include "rsys/stdfile.h"
 #include "rsys/flags.h"
 #include "rsys/legacysound.h"
@@ -196,6 +197,10 @@ PUBLIC int ROMlib_directdiskaccess = FALSE;
 
 A2(PUBLIC trap, OSErrRET, PBRead, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        OSErr error = ROMlib_afp_read(&pb->ioParam);
+        FAKEASYNC(pb, async, error);
+    }
     if (!ROMlib_fork_access_allowed(CW(pb->ioParam.ioRefNum), file_access_read)) {
         pb->ioParam.ioActCount = 0;
         FAKEASYNC(pb, async, permErr);
@@ -357,6 +362,10 @@ A2(PUBLIC trap, OSErrRET, PBWrite, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBClose, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        OSErr error = ROMlib_afp_close_fork(CW(pb->ioParam.ioRefNum));
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsfil((ioParam*)pb))
@@ -379,6 +388,12 @@ A2(PUBLIC trap, OSErrRET, PBClose, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBHOpen, HParmBlkPtr, pb, BOOLEAN, async)
 {
+    LONGINT directory = 2;
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), &directory, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_open(volume, directory, pb, FALSE);
+        FAKEASYNC(pb, async, error);
+    }
     if (host_image_locked((ioParam*)pb, FALSE)) {
         if (pb->ioParam.ioPermssn == fsCurPerm)
             pb->ioParam.ioPermssn = fsRdPerm;
@@ -401,6 +416,12 @@ A2(PUBLIC trap, OSErrRET, PBHOpen, HParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBOpenDF, HParmBlkPtr, pb, BOOLEAN, async)
 {
+    LONGINT directory = 2;
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), &directory, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_open(volume, directory, pb, FALSE);
+        FAKEASYNC(pb, async, error);
+    }
     if (host_image_locked((ioParam*)pb, FALSE)) {
         if (pb->ioParam.ioPermssn == fsCurPerm)
             pb->ioParam.ioPermssn = fsRdPerm;
@@ -420,6 +441,12 @@ A2(PUBLIC trap, OSErrRET, PBOpenDF, HParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBHOpenRF, HParmBlkPtr, pb, BOOLEAN, async)
 {
+    LONGINT directory = 2;
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), &directory, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_open(volume, directory, pb, TRUE);
+        FAKEASYNC(pb, async, error);
+    }
     if (host_image_locked((ioParam*)pb, FALSE)) {
         if (pb->ioParam.ioPermssn == fsCurPerm)
             pb->ioParam.ioPermssn = fsRdPerm;
@@ -442,6 +469,16 @@ A2(PUBLIC trap, OSErrRET, PBGetCatInfo, CInfoPBPtr, pb, BOOLEAN, async)
     OSErr retval;
     BOOLEAN ishfs;
     StringPtr savep;
+    LONGINT working_directory = 2;
+    StringPtr lookup = pb->dirInfo.ioFDirIndex ? NULL : PPR(pb->dirInfo.ioNamePtr);
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->dirInfo.ioVRefNum), lookup, &working_directory, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        uint32 directory = CL(pb->hFileInfo.ioDirID);
+        if (!directory)
+            directory = working_directory;
+        retval = ROMlib_afp_mounted_catalog(volume, directory, pb);
+        FAKEASYNC(pb, async, retval);
+    }
 
     if (CW(pb->dirInfo.ioFDirIndex) < 0 && pb->hFileInfo.ioDirID == CLC(1))
         retval = -43; /* perhaps we should check for a valid volume
@@ -464,8 +501,8 @@ A2(PUBLIC trap, OSErrRET, PBGetCatInfo, CInfoPBPtr, pb, BOOLEAN, async)
 static OSErr open_fork_with_deny(HParmBlkPtr request, bool resource)
 {
     ForkAccessParam* access = (ForkAccessParam*)request;
-    const unsigned modes = CW(access->ioDenyModes) &
-                           (file_access_read | file_access_write | file_deny_read | file_deny_write);
+    const unsigned modes =
+        CW(access->ioDenyModes) & (file_access_read | file_access_write | file_deny_read | file_deny_write);
     HParamBlockRec block = {0};
     PP_RAW(block.ioParam.ioNamePtr) = PP_RAW(access->ioNamePtr);
     block.ioParam.ioVRefNum = access->ioVRefNum;
@@ -478,7 +515,7 @@ static OSErr open_fork_with_deny(HParmBlkPtr request, bool resource)
         return wPrErr;
     }
     const OSErr status = hfsvol(&block.ioParam) ? ROMlib_hfs_open_deny(&block, resource, modes)
-                                               : ROMlib_ufs_open_deny(&block, resource, modes);
+                                                : ROMlib_ufs_open_deny(&block, resource, modes);
     access->ioRefNum = block.ioParam.ioRefNum;
     return status;
 }
@@ -550,6 +587,11 @@ A2(PUBLIC trap, OSErrRET, PBGetVInfo, ParmBlkPtr, pb, BOOLEAN, async)
 
 A1(PUBLIC trap, OSErrRET, PBUnmountVol, ParmBlkPtr, pb)
 {
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), NULL, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_unmount(volume);
+        PBRETURN(pb, error);
+    }
     OSErr retval;
 
     if (hfsvol((ioParam*)pb))
@@ -561,6 +603,11 @@ A1(PUBLIC trap, OSErrRET, PBUnmountVol, ParmBlkPtr, pb)
 
 A1(PUBLIC trap, OSErrRET, PBEject, ParmBlkPtr, pb)
 {
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), NULL, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_unmount(volume);
+        PBRETURN(pb, error);
+    }
     OSErr retval;
 
     if (hfsvol((ioParam*)pb))
@@ -714,6 +761,11 @@ A2(PUBLIC trap, OSErrRET, PBUnlockRange, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBGetFPos, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        pb->ioParam.ioPosOffset = ROMlib_refnumtofcbp(CW(pb->ioParam.ioRefNum))->fcbCrPs;
+        OSErr error = noErr;
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsfil((ioParam*)pb))
@@ -725,6 +777,10 @@ A2(PUBLIC trap, OSErrRET, PBGetFPos, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBSetFPos, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        OSErr error = ROMlib_afp_set_position(&pb->ioParam);
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsfil((ioParam*)pb))
@@ -736,6 +792,11 @@ A2(PUBLIC trap, OSErrRET, PBSetFPos, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBGetEOF, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        pb->ioParam.ioMisc = (Ptr)(uintptr_t)(uint32)ROMlib_refnumtofcbp(CW(pb->ioParam.ioRefNum))->fcbEOF;
+        OSErr error = noErr;
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsfil((ioParam*)pb))
@@ -747,6 +808,10 @@ A2(PUBLIC trap, OSErrRET, PBGetEOF, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBFlushFile, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    if (ROMlib_afp_is_fork(CW(pb->ioParam.ioRefNum))) {
+        OSErr error = noErr;
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsfil((ioParam*)pb))
@@ -786,6 +851,12 @@ A2(PUBLIC trap, OSErrRET, PBDelete, ParmBlkPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBOpenWD, WDPBPtr, pb, BOOLEAN, async)
 {
+    LONGINT directory = 2;
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioVRefNum), PPR(pb->ioNamePtr), &directory, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        OSErr error = ROMlib_afp_open_wd(volume, directory, pb);
+        FAKEASYNC(pb, async, error);
+    }
     OSErr retval;
 
     if (hfsvol((ioParam*)pb))
@@ -1089,6 +1160,10 @@ A2(PUBLIC trap, OSErrRET, PBHSetVol, WDPBPtr, pb, BOOLEAN, async)
 
 A2(PUBLIC trap, OSErrRET, PBFlushVol, ParmBlkPtr, pb, BOOLEAN, async)
 {
+    VCB* volume = (VCB*)ROMlib_findvcb(CW(pb->ioParam.ioVRefNum), PPR(pb->ioParam.ioNamePtr), NULL, TRUE);
+    if (ROMlib_afp_is_volume(volume)) {
+        FAKEASYNC(pb, async, noErr);
+    }
     OSErr retval;
 
     if (hfsvol((ioParam*)pb))

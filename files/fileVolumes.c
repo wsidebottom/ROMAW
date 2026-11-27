@@ -32,6 +32,7 @@
 #include "rsys/hfs.h"
 
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
 #include "rsys/glue.h"
 #include "rsys/notmac.h"
 #include "rsys/segment.h"
@@ -909,7 +910,7 @@ A2(PRIVATE, VCB*, grabvcb, ParmBlkPtr, pb, INTEGER*, vrefnump)
     }
     free(therest);
     if (vcbp) {
-        if (!ROMlib_catalog_skip_counts) {
+        if (!ROMlib_catalog_skip_counts && !ROMlib_afp_is_volume(vcbp)) {
             struct stat root;
             const char* path = ((VCBExtra*)vcbp)->unixname;
             vcbp->vcbNmFls = CW(ROMlib_ufs_directory_count(path));
@@ -945,7 +946,7 @@ A1(PRIVATE, VCB*, common, ParmBlkPtr, pb)
          volume/Get Info calls still refresh the allocation information. */
         uint64 total_bytes = 0, free_bytes = 0;
         int have_space = 0;
-        if (!ROMlib_catalog_skip_counts) {
+        if (!ROMlib_catalog_skip_counts && !ROMlib_afp_is_volume(vcbp)) {
 #if defined(CYGWIN32)
             /* GetDiskFreeSpaceEx accepts mounted directories as well as roots,
              and avoids overflowing Windows' cluster/sector products. */
@@ -1054,6 +1055,8 @@ A2(PUBLIC, OSErr, ufsPBSetVInfo, HParmBlkPtr, pb, /* INTERNAL */
     err = noErr;
 
     if ((vcbp = findvcb(PPR(pb->volumeParam.ioNamePtr), Cx(pb->volumeParam.ioVRefNum), &iswd, &temp)) && !iswd) {
+        if (ROMlib_afp_is_volume(vcbp))
+            return wPrErr;
         if (PP_RAW(pb->volumeParam.ioNamePtr)) {
             StringPtr name = PPR(pb->volumeParam.ioNamePtr);
             if ((!name[0] || name[name[0]] != VOLCHAR) && !EqualString(name, vcbp->vcbVN, TRUE, TRUE)) {

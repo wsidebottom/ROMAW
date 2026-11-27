@@ -301,7 +301,7 @@ PUBLIC HVCB* ROMlib_vcbbybiggestunixname(const char* name)
     bestvcbp = 0;
     bestsize = -1;
     for (vcbp = (HVCB*)PPR(VCBQHdr.qHead); vcbp; vcbp = (HVCB*)PPR(vcbp->qLink)) {
-        if (!vcbp->vcbCTRef) {
+        if (!vcbp->vcbCTRef && ((VCBExtra*)vcbp)->unixname) {
             namesize = strlen(((VCBExtra*)vcbp)->unixname);
             if (namesize > bestsize && VCB_CMPN_FUNC(((VCBExtra*)vcbp)->unixname, name, namesize) == 0) {
                 bestsize = namesize;
@@ -316,8 +316,8 @@ PUBLIC VCBExtra* ROMlib_vcbbyunixname(char* name)
 {
     HVCB* vcbp;
 
-    for (vcbp = (HVCB*)PPR(VCBQHdr.qHead);
-         vcbp && (vcbp->vcbCTRef || VCB_CMP_FUNC(((VCBExtra*)vcbp)->unixname, name) != 0);
+    for (vcbp = (HVCB*)PPR(VCBQHdr.qHead); vcbp && (vcbp->vcbCTRef || !((VCBExtra*)vcbp)->unixname ||
+                                                    VCB_CMP_FUNC(((VCBExtra*)vcbp)->unixname, name) != 0);
          vcbp = (HVCB*)PPR(vcbp->qLink))
         ;
     return (VCBExtra*)vcbp;

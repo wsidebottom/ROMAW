@@ -180,7 +180,7 @@ PUBLIC OSErr hfsPBGetWDInfo(WDPBPtr pb, BOOLEAN async)
     }
 
     if (!foundelsewhere) {
-        if (wdp) {
+        if (wdp && PP_RAW(wdp->vcbp)) {
             if (PP_RAW(pb->ioNamePtr))
                 str255assign(PPR(pb->ioNamePtr), (StringPtr)PPR(wdp->vcbp)->vcbVN);
             if (Cx(pb->ioWDIndex) > 0)

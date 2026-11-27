@@ -39,6 +39,7 @@
 #include "rsys/hfs.h"
 
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
 #include "rsys/glue.h"
 #include "rsys/filedouble.h"
 #include "rsys/segment.h"
@@ -332,9 +333,9 @@ A2(PUBLIC, VCB*, vlookupbyname, const char*, namep, const char*, endp)
     for (retval = (VCB*)PPR(VCBQHdr.qHead); retval; retval = (VCB*)PPR(retval->qLink))
         if ((n == retval->vcbVN[0] && strncasecmp(namep, (char*)retval->vcbVN + 1, n) == 0)
             /* Preserve drive-letter and historical C/ aliases after renaming. */
-            || (!((HVCB*)retval)->vcbCTRef && (n == 1 || (n == 2 && namep[1] == '/')) &&
-                strlen(((VCBExtra*)retval)->unixname) == 3 && ((VCBExtra*)retval)->unixname[1] == ':' &&
-                ((VCBExtra*)retval)->unixname[2] == '/' &&
+            || (!((HVCB*)retval)->vcbCTRef && ((VCBExtra*)retval)->unixname &&
+                (n == 1 || (n == 2 && namep[1] == '/')) && strlen(((VCBExtra*)retval)->unixname) == 3 &&
+                ((VCBExtra*)retval)->unixname[1] == ':' && ((VCBExtra*)retval)->unixname[2] == '/' &&
                 toupper((unsigned char)namep[0]) == toupper((unsigned char)((VCBExtra*)retval)->unixname[0])))
             return retval;
 #endif
@@ -1024,6 +1025,13 @@ A9(PUBLIC, OSErr, ROMlib_nami, ParmBlkPtr, pb, LONGINT, dir, /* INTERNAL */
         savenamep = (StringPtr)-1;
 #endif /* LETGCCWAIL */
     vcbp = (VCBExtra*)ROMlib_breakoutioname(pb, &dirid, &therest, &fullp, TRUE);
+    if (ROMlib_afp_is_volume((VCB*)vcbp)) {
+        free(therest);
+        if (indextype != NoIndex)
+            FIELD_ASSIGN_RAW(pb->ioParam.ioNamePtr, RM(savenamep));
+        ALLOCAEND
+        return extFSErr;
+    }
     if (vcbpp)
         *vcbpp = vcbp;
     /* A root FSSpec uses parent ID 1 plus the volume name, not a child
@@ -1309,6 +1317,7 @@ A5(PRIVATE, OSErr, macopen, char*, file, short, perm, LONGINT*, fdp, BOOLEAN, is
 }
 
 enum { fork_access_recorded = 0x40, fork_access_explicit = 0x80, fork_access_exclusive = 4, fork_access_mask = 3 };
+
 /* Guest FCB layouts remain fixed. Access metadata is indexed by the reference
    number, and a slot is ignored as soon as the FCB is closed. */
 static Byte fork_access[INT16_MAX + 1];
@@ -1337,8 +1346,7 @@ static OSErr fork_sharing_conflict(VCB* volume, LONGINT file_id, bool resource, 
         const unsigned active = fork_access[ref] & fork_access_recorded
                                     ? fork_access[ref]
                                     : file_access_read | ((file->fcbMdRByt & WRITEBIT) ? file_access_write : 0);
-        if (((active >> 4) & requested & fork_access_mask) ||
-            ((requested >> 4) & active & fork_access_mask))
+        if (((active >> 4) & requested & fork_access_mask) || ((requested >> 4) & active & fork_access_mask))
             return permErr;
         if (existing && (requested & file_access_write) && (active & fork_access_exclusive)) {
             *existing = ref;
@@ -1349,7 +1357,7 @@ static OSErr fork_sharing_conflict(VCB* volume, LONGINT file_id, bool resource, 
 }
 
 OSErr ROMlib_check_fork_sharing(VCB* volume, LONGINT file_id, bool resource, int modes, SignedByte* permission,
-                               INTEGER* existing)
+                                INTEGER* existing)
 {
     if (modes != file_open_regular)
         return fork_sharing_conflict(volume, file_id, resource, modes, existing);
@@ -1377,8 +1385,8 @@ void ROMlib_record_fork_access(INTEGER reference, int modes, SignedByte permissi
 
 bool ROMlib_fork_access_allowed(INTEGER reference, unsigned access)
 {
-    return reference <= 0 || !(fork_access[reference] & fork_access_explicit) ||
-           !ROMlib_refnumtofcbp(reference) || (fork_access[reference] & access);
+    return reference <= 0 || !(fork_access[reference] & fork_access_explicit) || !ROMlib_refnumtofcbp(reference) ||
+           (fork_access[reference] & access);
 }
 
 A1(PRIVATE, void, freeprn, fcbrec*, fp)
@@ -1473,8 +1481,8 @@ static OSErr PBOpenForkD(ParmBlkPtr pb, BOOLEAN a, ForkType fork, LONGINT dir, i
         mode_t file_mode = sbuf.st_mode;
         SignedByte permission = pb->ioParam.ioPermssn;
         INTEGER existing = 0;
-        err = ROMlib_check_fork_sharing((VCB*)vcbp, CL((LONGINT)ST_INO(sbuf)), fork == ResourceFork, modes,
-                                       &permission, &existing);
+        err = ROMlib_check_fork_sharing((VCB*)vcbp, CL((LONGINT)ST_INO(sbuf)), fork == ResourceFork, modes, &permission,
+                                        &existing);
         if (err) {
             pb->ioParam.ioRefNum = CW(existing);
             goto openfork_done;

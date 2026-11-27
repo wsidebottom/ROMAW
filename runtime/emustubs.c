@@ -81,6 +81,8 @@
 #include "rsys/quick.h"
 #include "rsys/ctl.h"
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
+#include "rsys/mactcp.h"
 #include "rsys/time.h"
 #include "rsys/mman.h"
 #include "rsys/prefs.h"
@@ -2536,6 +2538,12 @@ fsprocp_t hfstab[] = {
 STUB(HFSDispatch)
 {
     fsprocp_t vp;
+
+    if ((EM_D0 & 0xFFFF) == 0x41) {
+        ParmBlkPtr pb = ROMlib_mactcp_memory(EM_A0, sizeof(ioParam), TRUE);
+        EM_D0 = pb ? ROMlib_afp_volume_mount(pb, !!(EM_D1 & ASYNCBIT)) : paramErr;
+        RTS();
+    }
 
     if ((EM_D0 & 0xFFFF) >= NELEM(hfstab)) {
         warning_unexpected("d0 = 0x%lx", (unsigned long)EM_D0);
