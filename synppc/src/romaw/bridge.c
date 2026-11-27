@@ -3380,6 +3380,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetVCBQHdr", GetVCBQHdr, M0(5)},
     {"LMGetVCBQHdr", GetVCBQHdr, M0(5)},
     {"GetDrvQHdr", GetDrvQHdr, M0(5)},
+    {"LMGetDrvQHdr", GetDrvQHdr, M0(5)},
     {"OpenDriver", OpenDriver, M2(2, 5, 5)},
     {"CloseDriver", CloseDriver, M1(2, 2)},
     {"GetDCtlEntry", GetDCtlEntry, M1(5, 2)},
