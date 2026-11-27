@@ -1999,6 +1999,21 @@ This is distinct from enabling paging in ROMAW: its Toolbox and host-pointer
 interfaces still use flat guest memory. Physical cache/bus behavior belongs to
 the embedding memory implementation; the operand boundary is not a cycle model.
 
+### Generated mapped MOVES
+
+The x64 JIT and AOT mapped entry now executes MOVES in the closed integer
+effective-address root shared with MOVEM. It fetches the live extension,
+decodes the effective address and selects SFC or DFC. The final operand
+normalizes instruction FC 2 and 6 to data FC 1 and 5. Memory-indirect pointer
+reads keep the ordinary supervisor data FC. When RAM is bound, page walks
+and operand transfers use the native bus roots. Device requests still
+dispatch to the configured physical bus callback.
+
+The focused fixture passes 296,112 cases in each of checked execution,
+JIT, cold AOT and warm AOT. It checks address-register updates, extension
+and pointer faults, FC routing and partial-store continuation records.
+A further 48 cases per generated mode verify callback-free transfers in
+bound RAM. The warm run loads 460 entries with no emissions.
 ## Still required for full compatibility
 
 - General busy-frame continuation, including FPSP-generated internal states
