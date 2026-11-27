@@ -217,8 +217,6 @@ struct DropPlacement {
     size_t columns;
     bool desktop;
     size_t first = 0;
-    std::vector<POINT> nearby{};
-    HWND viewport = nullptr;
 };
 
 struct Extraction {
@@ -2373,9 +2371,14 @@ int archive_kind(const Item& item)
     return extension ? extension : romaw_archive_type(item.mac.type);
 }
 
+struct ExtractionPlacement {
+    const FolderWindow* folder = nullptr;
+    std::vector<POINT> positions;
+};
+
 // Reserve unoccupied icon cells in the destination's current viewport,
 // starting with the cells closest to a selected archive in that folder.
-std::optional<DropPlacement> extraction_placement(const Extraction& extract, size_t count)
+ExtractionPlacement extraction_placement(const Extraction& extract, size_t count)
 {
     const auto& destination = extract.destination;
     for (const auto* folder : folders) {
@@ -2396,19 +2399,20 @@ std::optional<DropPlacement> extraction_placement(const Extraction& extract, siz
             area.right -= 16;
             area.bottom -= 16;
         }
-        const RECT limits{16, 0, area.right - 47, area.bottom - icon_cell_height + 1};
+        const RECT limits{std::max(16L, -origin.x), std::max(0L, -origin.y), area.right - 47,
+                          area.bottom - icon_cell_height + 1};
         if (IsRectEmpty(&limits))
-            return {};
+            return {folder, {}};
 
-        POINT anchor{limits.left, 8};
+        POINT anchor{limits.left, limits.top + 8};
         bool found_archive = false;
         std::vector<POINT> icons;
         for (size_t i = 0; i < folder->items.size(); ++i) {
             POINT point{};
             if (!ListView_GetItemPosition(list, i, &point))
                 continue;
-            point.x += origin.x;
-            point.y += origin.y;
+            point.x -= origin.x;
+            point.y -= origin.y;
             if (point.x > limits.left - icon_cell_width && point.x < limits.right + icon_cell_width &&
                 point.y > limits.top - icon_cell_height && point.y < limits.bottom + icon_cell_height)
                 icons.push_back(point);
@@ -2438,10 +2442,10 @@ std::optional<DropPlacement> extraction_placement(const Extraction& extract, siz
         if (candidates.size() > count)
             candidates.resize(count);
         for (auto& point : candidates) {
-            point.x -= origin.x;
-            point.y -= origin.y;
+            point.x += origin.x;
+            point.y += origin.y;
         }
-        return DropPlacement{{}, 1, folder->desktop, 0, std::move(candidates), list};
+        return {folder, std::move(candidates)};
     }
     return {};
 }
@@ -4016,43 +4020,41 @@ void confirm_image_deletion(HWND owner, int16_t volume, const std::vector<ImageC
         std::rethrow_exception(error);
 }
 
+// Persist published positions using the folder's normal icon catalog keys.
+void save_operation_position(const fs::path& path, uint32_t image_id, bool desktop_view, POINT point)
+{
+    auto position = std::to_wstring(point.x) + L"," + std::to_wstring(point.y);
+    if (image_id) {
+        save(L"ImagePositionsNative", path_key(path.parent_path() / std::to_wstring(image_id)), position);
+    }
+    else if (desktop_view) {
+        Item item;
+        item.path = path;
+        try {
+            item.mac = mac_file(path);
+        }
+        catch (...) {
+            // An unreadable fork still has a place on the desktop.
+        }
+        item.name = host_icon_name(path, item.mac);
+        if (has_catalog_icon_position(item))
+            save_desktop_catalog_override(item, position);
+        else
+            save(L"PositionsNative", path_key(fs::path(L"Desktop") / item.name), position);
+    }
+    else
+        save(L"PositionsNative", path_key(path), position);
+}
+
 // Save before refreshing the destination so a newly published icon is
 // drawn at the drop point on its first paint, even if its window was closed.
 void save_drop_positions(const CopyJob& job, const DropPlacement& drop)
 {
-    size_t next_nearby = 0;
     for (const auto& result : job.published_items) {
-        const auto& path = job.destinations.at(result.index);
         size_t slot = drop.first + result.index;
-        LONG x = drop.origin.x + LONG(slot % drop.columns) * icon_cell_width;
-        LONG y = drop.origin.y + LONG(slot / drop.columns) * icon_cell_height;
-        if (drop.viewport) {
-            if (next_nearby == drop.nearby.size())
-                break;
-            x = drop.nearby[next_nearby].x;
-            y = drop.nearby[next_nearby++].y;
-        }
-        auto position = std::to_wstring(x) + L"," + std::to_wstring(y);
-        if (result.image_id) {
-            save(L"ImagePositionsNative", path_key(path.parent_path() / std::to_wstring(result.image_id)), position);
-        }
-        else if (drop.desktop) {
-            Item item;
-            item.path = path;
-            try {
-                item.mac = mac_file(path);
-            }
-            catch (...) {
-                // An unreadable fork still has a place on the desktop.
-            }
-            item.name = host_icon_name(path, item.mac);
-            if (has_catalog_icon_position(item))
-                save_desktop_catalog_override(item, position);
-            else
-                save(L"PositionsNative", path_key(fs::path(L"Desktop") / item.name), position);
-        }
-        else
-            save(L"PositionsNative", path_key(path), position);
+        POINT point{drop.origin.x + LONG(slot % drop.columns) * icon_cell_width,
+                    drop.origin.y + LONG(slot / drop.columns) * icon_cell_height};
+        save_operation_position(job.destinations.at(result.index), result.image_id, drop.desktop, point);
     }
 }
 
@@ -4098,8 +4100,15 @@ void publish_completed_operations()
                 follow_moves(archived);
             }
             follow_moves(moved);
-            if (op->extraction && !op->job->published_items.empty())
-                op->drop = extraction_placement(*op->extraction, op->job->published_items.size());
+            ExtractionPlacement placement;
+            if (op->extraction && !op->job->published_items.empty()) {
+                placement = extraction_placement(*op->extraction, op->job->published_items.size());
+                for (size_t i = 0; i < placement.positions.size(); ++i) {
+                    const auto& result = op->job->published_items[i];
+                    save_operation_position(op->job->destinations.at(result.index), result.image_id,
+                                            placement.folder->desktop, placement.positions[i]);
+                }
+            }
             if (op->drop)
                 save_drop_positions(*op->job, *op->drop);
             op->job->replacements.clear();
@@ -4108,7 +4117,7 @@ void publish_completed_operations()
                 completions.emplace_back(op->job, std::move(op->on_complete));
             auto open = folders;
             for (auto* folder : open) {
-                HWND viewport = op->drop && op->drop->viewport == folder->list ? folder->list : nullptr;
+                HWND viewport = placement.folder == folder ? folder->list : nullptr;
                 POINT before{};
                 if (viewport)
                     ListView_GetOrigin(viewport, &before);
@@ -4118,7 +4127,19 @@ void publish_completed_operations()
                 POINT after{};
                 if (viewport && IsWindow(viewport) && ListView_GetOrigin(viewport, &after) &&
                     (before.x != after.x || before.y != after.y))
-                    ListView_Scroll(viewport, after.x - before.x, after.y - before.y);
+                    ListView_Scroll(viewport, before.x - after.x, before.y - after.y);
+                // A packed viewport may have no spare cell. Reveal the
+                // first result in its normal layout position in that case.
+                if (viewport && IsWindow(viewport) && placement.positions.empty()) {
+                    const auto& result = op->job->published_items.front();
+                    const auto& path = op->job->destinations.at(result.index);
+                    const auto& items = folder->items;
+                    auto row = std::find_if(items.begin(), items.end(), [&](const Item& item) {
+                        return result.image_id ? item.image_id == result.image_id : item.path == path;
+                    });
+                    if (row != items.end())
+                        ListView_EnsureVisible(viewport, std::distance(items.begin(), row), FALSE);
+                }
             }
             if (op->job->state == CopyJob::complete)
                 ShowWindow(op->window, SW_HIDE);

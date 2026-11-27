@@ -498,8 +498,8 @@ def main():
                 x, y = point_message(listing, 0x1010, names.index(name))
                 assert (x, y) != (anchor_x, anchor_y)
                 assert abs(x - anchor_x) + abs(y - anchor_y) <= 128, (name, (x, y), (anchor_x, anchor_y))
-                assert 0 <= x + origin_x <= area.right - 48, (name, x, origin_x, area.right)
-                assert 0 <= y + origin_y <= area.bottom - 52, (name, y, origin_y, area.bottom)
+                assert 0 <= x - origin_x <= area.right - 48, (name, x, origin_x, area.right)
+                assert 0 <= y - origin_y <= area.bottom - 52, (name, y, origin_y, area.bottom)
                 positions.add((x, y))
             assert len(positions) == len(outputs), positions
             return origin_y
@@ -721,11 +721,14 @@ def main():
         listing, names = rows(scrolled)
         assert send(listing, 0x1013, names.index(scrolled_archive.name), 0)  # LVM_ENSUREVISIBLE
         before = point_message(listing, 0x1029)[1]
-        assert before < 0, before
+        assert before > 0, before
         outputs = ["Near One.txt", "Near Two.txt"]
         command(scrolled, scrolled_archive.name, "extract_here_command")
         for name in outputs:
-            verify_file(scrolled_folder / name, full=False)
+            path = scrolled_folder / name
+            wait(path.is_file, f"extracted {name}")
+            assert path.read_bytes() == fixtures.DATA
+        wait(lambda: set(outputs).issubset(rows(scrolled)[1]), "published both extracted icons")
         assert check_nearby(scrolled, scrolled_archive.name, outputs) == before
         print("PASS extracted icons near their archives, including multiple results in a scrolled folder", flush=True)
         folder, archive = cases["Zip Picker"]
