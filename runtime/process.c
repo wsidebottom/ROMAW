@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_begin_system_mode, ROMlib_end_system_mode, ROMlib_get_system_client_process,
+  Functions: ROMlib_get_active_task_info, ROMlib_begin_system_mode, ROMlib_end_system_mode, ROMlib_get_system_client_process,
              ROMlib_process_identity, ROMlib_process_enable_scripts, ROMlib_process_take_wakeup, ROMlib_tsm_registration, ROMlib_tsm_use_input_window,
              ROMlib_tsm_new_document, ROMlib_tsm_delete_document, ROMlib_tsm_set_active, ROMlib_tsm_active_document,
              ROMlib_tsm_fix_document, ROMlib_tsm_set_input_window, ROMlib_tsm_document_input_window,
@@ -106,6 +106,27 @@ static const int default_process_mode_flags;
 static ProcessSerialNumber no_process = {0, CLC(kNoProcess)};
 static ProcessSerialNumber current_process = {0, CLC(kCurrentProcess)};
 
+INTEGER ROMlib_get_active_task_info(ROMlib_task_info* tasks, INTEGER slots)
+{
+    /* ProcessMgr/Puppet.c: count every eligible process, even when the
+       supplied table has no room. TaskInfoRec has a two-byte ProcessID. */
+    INTEGER count = 0;
+    INTEGER filled = 0;
+    for (process_info_t* info = process_info_list; info; info = info->next) {
+        if (info->mode & (modeDeskAccessory | modeOnlyBackground))
+            continue;
+        if (tasks && filled < slots) {
+            tasks[filled].descriptor = info->identity.pid;
+            tasks[filled].signature = info->identity.signature;
+            tasks[filled].version = info->identity.version;
+            ++filled;
+        }
+        if (count < INT16_MAX)
+            ++count;
+    }
+    return count;
+}
+
 OSErr ROMlib_get_system_client_process(ProcessSerialNumber* serial)
 {
     if (!serial)
@@ -182,6 +203,7 @@ void process_create(boolean_t desk_accessory_p, uint32 type, uint32 signature)
     info->identity.pid = CW(next_free_psn - 1);
     info->identity.type = CL(type);
     info->identity.signature = CL(signature);
+    info->identity.version = CL(ROMlib_version_long);
     info->identity.serial = info->serial_number;
     info->identity.zone = (uint32)ApplZone;
     info->identity.next = process_info_list ? CL(US_TO_SYN68K(process_info_list)) : 0;

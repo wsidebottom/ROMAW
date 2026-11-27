@@ -35,11 +35,13 @@ _Static_assert(offsetof(AE_info_t, process_manager_exists) == 0x128, "Process Ma
 
 _Static_assert(offsetof(AE_info_t, min_system_heap_free) == 0x1ae, "System heap reserve ABI");
 _Static_assert(sizeof(AE_info_t) == 596, "ExpandMem extent ABI");
+_Static_assert(sizeof(ROMlib_task_info) == 10, "legacy TaskInfoRec ABI");
 
 int main(void)
 {
     process_info_t process = {0};
     ProcessSerialNumber serial;
+    assert(ROMlib_get_active_task_info(NULL, 0) == 0);
     assert(C_GetCurrentProcess(NULL) == paramErr);
     assert(C_GetCurrentProcess(&serial) == procNotFound);
     assert(ROMlib_tsm_use_input_window());
@@ -54,6 +56,27 @@ int main(void)
     process.serial_number.lowLongOfPSN = CLC(34);
     current_process_info = &process;
     process_info_list = &process;
+    {
+        process_info_t other = {0};
+        unsigned char guarded[sizeof(ROMlib_task_info) + 4];
+        memset(guarded, 0xa5, sizeof guarded);
+        process.identity.pid = CWC(4);
+        process.identity.signature = CLC(0x54455354);
+        process.identity.version = CLC(0x06188000);
+        process.next = &other;
+        assert(ROMlib_get_active_task_info(NULL, 0) == 2);
+        assert(ROMlib_get_active_task_info((ROMlib_task_info*)(guarded + 2), 1) == 2);
+        assert(!memcmp(guarded + 2, "\0\4TEST\6\30\200\0", 10));
+        assert(guarded[0] == 0xa5 && guarded[1] == 0xa5);
+        assert(guarded[12] == 0xa5 && guarded[13] == 0xa5);
+        assert(ROMlib_get_active_task_info((ROMlib_task_info*)guarded, -1) == 2);
+        assert(guarded[0] == 0xa5 && guarded[1] == 0xa5);
+        other.mode = modeDeskAccessory;
+        assert(ROMlib_get_active_task_info(NULL, 0) == 1);
+        other.mode = modeOnlyBackground;
+        assert(ROMlib_get_active_task_info(NULL, 0) == 1);
+        process.next = NULL;
+    }
     ROMlib_process_enable_scripts(1U << 7, TRUE);
     assert(process.keyboard_scripts == ((1U << 7) | 1));
     assert(process.keyboard_unicode);

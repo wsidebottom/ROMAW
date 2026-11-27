@@ -24,6 +24,13 @@ typedef struct PACKED size_resource {
     int32 min_size;
 } size_resource_t;
 
+typedef struct PACKED {
+    INTEGER descriptor;
+    OSType signature;
+    uint32 version;
+} ROMlib_task_info;
+
+extern INTEGER ROMlib_get_active_task_info(ROMlib_task_info* tasks, INTEGER slots);
 extern void* ROMlib_process_identity(void);
 extern void ROMlib_process_enable_scripts(uint32 mask, BOOLEAN unicode);
 extern OSErr ROMlib_tsm_registration(BOOLEAN registering);

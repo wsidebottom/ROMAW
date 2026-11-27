@@ -67,6 +67,24 @@ def dispatch(file, name, expected):
 
 
 try:
+    assert value("(int)ROMlib_osdispatch_available(1)")
+    task_info = allocate(24)
+    for slots, output in ((0, 0), (-1, task_info + 2), (1, task_info + 2)):
+        memory.write_memory(task_info, b"\xa5" * 24)
+        frame = struct.pack(">IHHIH", 0x1234ABCD, 1, slots & 0xFFFF, output - base if output else 0, 0xA55A) + b"guard"
+        memory.write_memory(stack, frame)
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 12
+        assert bytes(memory.read_memory(stack + 12, 2)) == b"\0\1"
+        assert bytes(memory.read_memory(stack + 14, 5)) == b"guard"
+        actual = bytes(memory.read_memory(task_info, 24))
+        if slots == 1:
+            assert actual[:2] == b"\xa5" * 2 and actual[12:] == b"\xa5" * 12
+            assert actual[4:8] == b"FwPr", actual.hex()
+        else:
+            assert actual == b"\xa5" * 24
+    print("GET_ACTIVE_TASK_INFO_STACK_AND_BOUNDS_OK")
     assert value("(int)ROMlib_osdispatch_available(2)")
     switch_info = allocate(16)
     for output in (switch_info + 4, 0):
