@@ -2553,7 +2553,8 @@ PRIVATE boolean_t do_new_folder(fltype* f)
 
     retval = FALSE;
     gp = thePort;
-    dp = GetNewDialog(-6044, (Ptr)0, (WindowPtr)-1);
+    dp = f->choice ? ROMlib_get_new_dialog(-6044, NULL, (WindowPtr)-1, TRUE)
+                   : GetNewDialog(-6044, NULL, (WindowPtr)-1);
     if (dp) {
         boolean_t done;
         INTEGER ihit;
@@ -2584,7 +2585,10 @@ PRIVATE boolean_t do_new_folder(fltype* f)
                 break;
             }
         }
-        CloseDialog(dp);
+        if (f->choice)
+            C_DisposDialog(dp);
+        else
+            CloseDialog(dp);
         SetPort(gp);
     }
     return retval;
