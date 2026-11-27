@@ -469,6 +469,15 @@ EOF
       SYN68K_AOT_CACHE=$(wslpath -m "$fixture/execution")
       "$fixture/execution-test.exe" 0
       "$fixture/execution-test.exe" 1
+      mkdir "$fixture/moves"
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mmu040-moves-test.c \
+        syn68k/obj/src/runtime/libsyn68k.a -o "$fixture/moves-test.exe"
+      SYN68K_AOT_CACHE=
+      "$fixture/moves-test.exe" 0
+      SYN68K_AOT_CACHE=$(wslpath -m "$fixture/moves")
+      "$fixture/moves-test.exe" 0
+      "$fixture/moves-test.exe" 1
       mkdir "$fixture/flat-rte"
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         syn68k/tests/rte-test.c syn68k/obj/src/runtime/libsyn68k.a \

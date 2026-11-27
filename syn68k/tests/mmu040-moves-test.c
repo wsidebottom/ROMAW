@@ -18,14 +18,19 @@
 /* Real integer instruction stepping over disjoint code/data physical pages. */
 #include "syn68k_public.h"
 #include "integer.h"
+#include "jit-x64.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static unsigned char ram[0x20000];
 static Syn68kMMU040 mmu;
 static unsigned cases, reads, writes, page_size, supervisor;
 static unsigned last_fc;
+#ifdef GENERATE_X64_CODE
+static int run_native;
+#endif
 static unsigned char devices[8][16];
 static uint32_t fail_physical;
 
@@ -155,7 +160,15 @@ static void fixture(unsigned page8k, unsigned privileged)
 static Syn68kIntegerStep step(uint32_t pc, unsigned vector)
 {
     Syn68kIntegerStep result;
-    assert(syn68k_integer_step(pc, &memory, &result));
+#ifdef GENERATE_X64_CODE
+    if (run_native) {
+        unsigned opcode = (ram[physical(pc)] << 8) | ram[physical(pc + 1)];
+        assert(syn68k_x64_mapped_mmu(pc, opcode, &memory, &result) == 1);
+        ++reads; /* The mapped dispatcher receives the already fetched opcode. */
+    }
+    else
+#endif
+        assert(syn68k_integer_step(pc, &memory, &result));
     if (result.vector != vector)
         fprintf(stderr, "pc=%08x vector=%u expected=%u\n", pc, result.vector, vector);
     assert(result.vector == vector);
@@ -368,11 +381,27 @@ static void fetch_and_indirection(void)
     }
 }
 
-int main(void)
+int main(int argc, char** argv)
 {
+#ifdef GENERATE_X64_CODE
+    run_native = argc > 1;
+    uint64 emits = syn68k_native_compile_count(), hits = syn68k_aot_hit_count();
+#else
+    (void)argc;
+    (void)argv;
+#endif
     transfers();
     registers_and_faults();
     bypass_spaces();
     fetch_and_indirection();
+#ifdef GENERATE_X64_CODE
+    if (run_native) {
+        emits = syn68k_native_compile_count() - emits;
+        hits = syn68k_aot_hit_count() - hits;
+        printf("MOVES generated entries emitted=%llu hits=%llu.\n", (unsigned long long)emits,
+               (unsigned long long)hits);
+        assert(atoi(argv[1]) ? emits == 0 && hits > 0 : emits > 0);
+    }
+#endif
     printf("%u mapped MOVES space/width/register/update/fault cases passed.\n", cases);
 }
