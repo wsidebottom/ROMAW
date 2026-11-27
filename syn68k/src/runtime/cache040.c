@@ -154,8 +154,23 @@ static Syn68kCache040Line* fill_line(Syn68kCache040* cache, const Syn68kCache040
     if (store)
         store_line(&fresh, address, store, size, 1);
     *line = fresh;
-    /* The requested fill precedes the victim push. The fresh line remains
-       installed if the old push faults; the result owns the captured victim. */
+    /* The requested fill precedes the victim push. An external bus grant at
+       this boundary must see both the incoming line and the buffered victim
+       (UM 4.7.2). Snoop changes determine the subsequent push, including its
+       dirty-word selection or cancellation after ownership is relinquished. */
+    if (!bank && old.valid && (old.dirty & 15) && cache->arbitrate) {
+        cache->victim = old;
+        cache->victim_live = 1;
+        cache->victim_way = way;
+        cache->snoop_window = 1;
+        cache->arbitrate(cache->arbitrate_opaque, cache);
+        cache->snoop_window = 0;
+        old = cache->victim;
+        cache->victim = (Syn68kCache040Line){0};
+        cache->victim_live = cache->victim_way = 0;
+    }
+    /* The fresh line remains installed if the old push faults; the returned
+       fault owns the complete, possibly snoop-modified victim data. */
     if (!push_line(cache, &old, bus, way, result))
         return 0;
     return line;
@@ -395,7 +410,7 @@ Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040* cache, uint32_t addres
     result.fault = CACHE040_OK;
     if (!cache || !control || control == 3 || transfer_type >= 2)
         return result;
-    if (cache->active)
+    if (cache->active && cache->snoop_window != 1)
         return (Syn68kCache040Snoop){.fault = CACHE040_BAD_REQUEST};
     unsigned char input[4];
     if (writing && size != 16)
@@ -410,10 +425,18 @@ Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040* cache, uint32_t addres
         }
     }
     Syn68kCache040Line* line = lookup(cache, 0, address);
+    unsigned selected = CACHE040_SNOOP_DATA;
+    unsigned way = line ? (unsigned)(line - cache->lines[0][(address >> 4) & 63]) : 0;
+    if (!line && cache->active && cache->snoop_window == 1 && cache->victim_live == 1 && cache->victim.valid &&
+        cache->victim.address == (address & ~15u)) {
+        line = &cache->victim;
+        selected = CACHE040_SNOOP_VICTIM;
+        way = cache->victim_way;
+    }
     if (!line)
         return result;
-    result.hit |= 1;
-    result.way[0] = (unsigned)(line - cache->lines[0][(address >> 4) & 63]);
+    result.hit |= selected;
+    result.way[0] = way;
     unsigned dirty = line->dirty & 15;
     if (!writing) {
         if (dirty) {
@@ -427,7 +450,7 @@ Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040* cache, uint32_t addres
         }
         if (control == 2) {
             line->valid = 0;
-            result.invalidated |= 1;
+            result.invalidated |= selected;
         }
     }
     else if (control == 1 && dirty && size != 16) {
@@ -440,7 +463,7 @@ Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040* cache, uint32_t addres
     }
     else {
         line->valid = 0;
-        result.invalidated |= 1;
+        result.invalidated |= selected;
     }
     return result;
 }

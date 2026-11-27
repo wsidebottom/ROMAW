@@ -53,12 +53,20 @@ typedef struct {
     unsigned valid, dirty; /* One dirty bit per memory-addressed longword. */
 } Syn68kCache040Line;
 
-typedef struct {
+typedef struct Syn68kCache040 {
     Syn68kCache040Line lines[2][64][4];
     unsigned replacement[2];
     unsigned active;                    /* A physical transaction owns this bank pair. */
     enum Syn68kCache040Traffic traffic; /* Active invocation, cleared on return. */
     unsigned bypass_data_miss;          /* Disabled-cache locked-hit rule, UM 4.3.3. */
+    /* Live only across the board's between-cycle arbitration callback.
+       Snoop may update/invalidate the victim; other cache operations remain
+       excluded by active. These temporary fields are cleared before return. */
+    Syn68kCache040Line victim;
+    unsigned victim_live, victim_way, snoop_window;
+    /* Board configuration survives accesses and CPU reset. */
+    void* arbitrate_opaque;
+    void (*arbitrate)(void*, struct Syn68kCache040*);
 } Syn68kCache040;
 
 /* Whole-beat callbacks. burst is zero for scalar transfers, 16 for a line;
@@ -104,15 +112,24 @@ typedef struct {
     unsigned interrupt_level;  /* Maintenance stopped before instruction retirement. */
 } Syn68kCache040Access;
 
+enum Syn68kCache040SnoopHit { CACHE040_SNOOP_DATA = 1, CACHE040_SNOOP_INSTRUCTION = 2, CACHE040_SNOOP_VICTIM = 4 };
+
 /* Response to one accepted external-master snoop transaction. A miss or
    nonintervening hit leaves bytes for the embedding's memory controller.
    No processor memory access, writeback or exception is generated. */
 typedef struct {
     enum Syn68kCache040Fault fault;
     unsigned hit, intervention, invalidated;
-    unsigned way[2]; /* Data (0), instruction (1), valid when the hit mask selects it. */
+    unsigned way[2]; /* Data/victim (0), instruction (1), valid for the corresponding hit. */
 } Syn68kCache040Snoop;
 
+/* Board initialization also clears arbitration configuration. CPU reset does
+   not call this function. Set arbitrate/arbitrate_opaque after initialization to service
+   a bus grant after a successful data fill and before its dirty victim push.
+   The callback may issue snoops, including against the newly installed line
+   and buffered victim. It must not recursively execute other cache operations.
+   Reads have acquired their operand and CB stores have updated the incoming
+   line before the grant. There is no grant inside a line burst or locked pair. */
 void syn68k_cache040_init(Syn68kCache040* cache);
 /* One-to-four-byte physical chunks, including three-byte MMU page tails.
    CM is taken from attributes bits 6:5; CACR bit
@@ -146,7 +163,9 @@ Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040*, const Syn68kCache04
    writes; SC=2 supplies dirty reads then invalidates, or invalidates writes.
    TT=0/1 is snoopable; TT=2/3 is not. Both caches may be disabled: only
    physical tags in both banks are searched, independently of the MMU/ATC.
-   hit/invalidated are bank masks (data=1, instruction=2). Instruction lines
+   hit/invalidated are masks (data=1, instruction=2, buffered victim=4).
+   During the board arbitration window, the victim is searched on a data miss.
+   way[0] identifies the data or victim way. Instruction lines
    invalidate on either snooped write or SC=2 read; SC=1 reads do not snoop IC.
    size is 1/2/4 or 16. Scalars must fit within one line; split cross-line
    requests in the embedding. Line bytes are in memory-address order and
@@ -156,8 +175,8 @@ Syn68kCache040Access syn68k_cache040_move16(Syn68kCache040*, const Syn68kCache04
    Clean write hits and all line write hits invalidate without intervention.
    The embedding owns external arbitration/termination and memory response;
    this API never calls a memory bus. Submit accepted transactions only.
-   An active cache cannot accept a snoopable lookup: retry after its owner
-   yields the bank. Invalid requests preserve both cache and byte buffer. */
+   An active cache accepts a snoopable lookup only in its arbitration window;
+   otherwise retry after its owner yields the bank. Invalid requests preserve both cache and byte buffer. */
 Syn68kCache040Snoop syn68k_cache040_snoop(Syn68kCache040*, uint32_t address, unsigned control, unsigned transfer_type,
                                           unsigned size, int writing, unsigned char bytes[16]);
 

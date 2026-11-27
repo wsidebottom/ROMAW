@@ -961,7 +961,7 @@ EOF
       cd "$root"
       output=${MMU040_CACHE_OBJ:-syn68k/obj/tests/mmu040-cache}
       mkdir -p "$output"
-      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test mmu040-read-prefix-test cache040-snoop-test; do
+      for fixture in mmu040-cache-test mmu040-cache-op-test cache040-move16-test mmu040-move16-test mmu040-read-prefix-test cache040-snoop-test cache040-snoop-buffer-test; do
         sources=(syn68k/src/runtime/mmu040.c syn68k/src/runtime/mmu040-memory.c
           syn68k/src/runtime/cache040.c "syn68k/tests/$fixture.c")
         "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -O2 -g -Wall -Wextra -Werror \
