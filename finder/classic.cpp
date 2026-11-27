@@ -43,6 +43,7 @@
 #include "finder/classic.h"
 #include "finder/actions.h"
 #include "rsys/icon_color.h"
+#include "rsys/configprefs.h"
 #include "classic-ui/classic_ui.h"
 #include <algorithm>
 #include <array>
@@ -50,7 +51,9 @@
 #include <commctrl.h>
 #include <deque>
 #include <map>
+#include <memory>
 #include <cstring>
+#include <cstdlib>
 #include <cctype>
 #include <uxtheme.h>
 #include <string>
@@ -3519,6 +3522,46 @@ void artwork(HICON stop, HICON warning, HICON app, HICON apple, const HICON* lab
 }
 
 namespace {
+constexpr const char* app_keys[] = {"WindowName", "SystemVersion", "Size", "BitsPerPixel", "SysZone", "ApplZone"};
+constexpr const wchar_t* app_labels[] = {
+    L"Window name:", L"System version:", L"Window size (W x H):", L"Bits per pixel:", L"System zone:", L"Application zone:"
+};
+enum AppControl {
+    app_first = 100, app_default_cpu = 110, app_68k, app_ppc, app_gestalt_list, app_gestalt_value,
+    app_gestalt_add, app_gestalt_update, app_gestalt_delete
+};
+struct AppPreferences {
+    std::wstring title;
+    std::string path, section;
+    bool fat;
+    std::array<std::wstring, std::size(app_keys)> fields;
+    std::vector<std::string> gestalts;
+    int cpu = app_default_cpu;
+};
+
+std::wstring preference_wide(const std::string& text)
+{
+    UINT page = CP_UTF8;
+    int count = MultiByteToWideChar(page, MB_ERR_INVALID_CHARS, text.data(), int(text.size()), nullptr, 0);
+    if (!count && !text.empty()) {
+        page = CP_ACP;
+        count = MultiByteToWideChar(page, 0, text.data(), int(text.size()), nullptr, 0);
+    }
+    std::wstring result(count, L'\0');
+    MultiByteToWideChar(page, 0, text.data(), int(text.size()), result.data(), count);
+    return result;
+}
+
+std::string preference_text(HWND field)
+{
+    std::wstring text(GetWindowTextLengthW(field) + 1, L'\0');
+    text.resize(GetWindowTextW(field, text.data(), int(text.size())));
+    const int count = WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string result(count, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), result.data(), count, nullptr, nullptr);
+    return result;
+}
+
 struct Notice {
     int result = IDCANCEL;
     const wchar_t* text;
@@ -3533,12 +3576,169 @@ struct Notice {
     std::wstring simple_name{};
     bool changing_find = false;
     bool about = false;
+    AppPreferences* application = nullptr;
 
     bool is_alert() const { return !about && !find && !input; }
 };
 
 // Match the dBoxProc frame used by the classic Window Manager.
 constexpr int alert_frame = 8;
+constexpr int app_width = 464, app_height = 339, app_cpu_height = 25;
+
+void build_app_controls(HWND window, const AppPreferences& app)
+{
+    auto make = [&](const wchar_t* kind, const wchar_t* text, DWORD style, int id, int x, int y, int w, int h) {
+        auto child = CreateWindowW(kind, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, window,
+                                   reinterpret_cast<HMENU>(INT_PTR(id)), GetModuleHandleW(nullptr), nullptr);
+        SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(geneva), FALSE);
+        return child;
+    };
+    auto label = [&](const wchar_t* text, int x, int y, int width) {
+        return make(L"STATIC", text, SS_LEFT, 0, x, y, width, 16);
+    };
+    SendMessageW(label(app.title.c_str(), 12, 10, app_width - 24), WM_SETFONT,
+                 reinterpret_cast<WPARAM>(chicago), FALSE);
+    label(L"Blank fields inherit ROMAW defaults. Use k or m for memory sizes.", 12, 30, app_width - 24);
+    for (unsigned i = 0; i < app.fields.size(); ++i) {
+        int y = 51 + 23 * i;
+        label(app_labels[i], 12, y + 3, 125);
+        auto field = make(L"EDIT", app.fields[i].c_str(), WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_first + i,
+                          140, y, app_width - 152, 19);
+        SendMessageW(field, EM_SETLIMITTEXT, 240, 0);
+        style_text_control(field, true);
+    }
+    int row = 196;
+    if (app.fat) {
+        label(L"Run FAT app as:", 12, row, 125);
+        constexpr const wchar_t* choices[] = {L"Default", L"m68k", L"PowerPC"};
+        for (int i = 0; i < 3; ++i) {
+            auto radio = make(L"BUTTON", choices[i], BS_AUTORADIOBUTTON | (i ? 0 : WS_GROUP | WS_TABSTOP),
+                              app_default_cpu + i, 140 + 90 * i, row - 2, 88, 19);
+            style_checkbox(radio);
+        }
+        CheckRadioButton(window, app_default_cpu, app_ppc, app.cpu);
+        row += app_cpu_height;
+    }
+    label(L"Gestalt overrides", 12, row, 420);
+    auto list = make(L"LISTBOX", L"", WS_GROUP | WS_BORDER | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                     app_gestalt_list, 12, row + 18, app_width - 24, 54);
+    for (const auto& statement : app.gestalts)
+        SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(preference_wide(statement).c_str()));
+    auto field = make(L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_gestalt_value, 12, row + 77, 220, 19);
+    SendMessageW(field, EM_SETLIMITTEXT, 240, 0);
+    style_text_control(field, true);
+    auto button = [&](const wchar_t* text, int id, int x, int y, int width) {
+        return make(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, id, x, y, width, 24);
+    };
+    button(L"Add", app_gestalt_add, 240, row + 75, 62);
+    EnableWindow(button(L"Update", app_gestalt_update, 310, row + 75, 66), FALSE);
+    EnableWindow(button(L"Delete", app_gestalt_delete, 384, row + 75, 68), FALSE);
+    label(L"Example: Gestalt('fs  ')={0,1};", 12, row + 105, 234);
+    button(L"Cancel", IDCANCEL, 282, row + 106, 76);
+    SetPropW(button(L"OK", IDOK, 376, row + 106, 76), L"FinderDefault", reinterpret_cast<HANDLE>(1));
+}
+
+// Treat quoted and hexadecimal spellings of the same selector as one override.
+uint32_t gestalt_selector(const std::string& statement)
+{
+    if (statement[8] == '0')
+        return uint32_t(std::strtoul(statement.c_str() + 10, nullptr, 16));
+    uint32_t code = 0;
+    for (unsigned i = 9; i < 13; ++i)
+        code = code << 8 | static_cast<unsigned char>(statement[i]);
+    return code;
+}
+
+void update_app_gestalt(HWND window, AppPreferences& app, int command)
+{
+    auto list = GetDlgItem(window, app_gestalt_list);
+    auto edit = GetDlgItem(window, app_gestalt_value);
+    auto selected = SendMessageW(list, LB_GETCURSEL, 0, 0);
+    if (command == app_gestalt_list) {
+        if (selected != LB_ERR)
+            SetWindowTextW(edit, preference_wide(app.gestalts[selected]).c_str());
+        EnableWindow(GetDlgItem(window, app_gestalt_update), selected != LB_ERR);
+        EnableWindow(GetDlgItem(window, app_gestalt_delete), selected != LB_ERR);
+        return;
+    }
+    if (command != app_gestalt_add && selected == LB_ERR)
+        return;
+    if (command == app_gestalt_delete) {
+        SendMessageW(list, LB_DELETESTRING, selected, 0);
+        app.gestalts.erase(app.gestalts.begin() + selected);
+        SendMessageW(list, LB_SETCURSEL, -1, 0);
+        SetWindowTextW(edit, L"");
+        update_app_gestalt(window, app, app_gestalt_list);
+        return;
+    }
+    auto statement = preference_text(edit);
+    if (_strnicmp(statement.c_str(), "Gestalt(", 8) || !config_prefs_validate_line(statement.c_str())) {
+        message_box(window, L"Enter a Gestalt override such as Gestalt('fs  ')={0,1};", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    // The parser expects a complete statement even if the editor omitted its terminator.
+    statement.replace(0, 8, "Gestalt(");
+    statement.erase(statement.find_last_not_of(" \t") + 1);
+    if (statement.back() != ';')
+        statement += ';';
+    uint32_t code = gestalt_selector(statement);
+    for (size_t i = 0; i < app.gestalts.size(); ++i)
+        if ((command == app_gestalt_add || size_t(selected) != i) && gestalt_selector(app.gestalts[i]) == code) {
+            message_box(window, L"That selector already exists. Select it and choose Update.", MB_OK | MB_ICONWARNING);
+            return;
+        }
+    auto text = preference_wide(statement);
+    if (command == app_gestalt_add) {
+        selected = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
+        if (selected < 0)
+            return;
+        app.gestalts.push_back(std::move(statement));
+    }
+    else {
+        SendMessageW(list, LB_DELETESTRING, selected, 0);
+        SendMessageW(list, LB_INSERTSTRING, selected, reinterpret_cast<LPARAM>(text.c_str()));
+        app.gestalts[selected] = std::move(statement);
+    }
+    SendMessageW(list, LB_SETCURSEL, selected, 0);
+    update_app_gestalt(window, app, app_gestalt_list);
+}
+
+bool save_app_controls(HWND window, const AppPreferences& app)
+{
+    std::unique_ptr<FILE, decltype(&fclose)> script(tmpfile(), fclose);
+    if (script) {
+        for (unsigned i = 0; i < app.fields.size(); ++i) {
+            auto field = GetDlgItem(window, app_first + i);
+            auto value = preference_text(field);
+            if (value.empty())
+                continue;
+            if (i == 0) {
+                if (value.find('"') != std::string::npos) {
+                    message_box(window, L"Window names cannot contain double quotes.", MB_OK | MB_ICONWARNING);
+                    SetFocus(field);
+                    return false;
+                }
+                value = '"' + value + '"';
+            }
+            auto line = std::string(app_keys[i]) + '=' + value;
+            if (!config_prefs_validate_line(line.c_str())) {
+                auto prompt = L"Check the value for " + std::wstring(app_labels[i]);
+                message_box(window, prompt.c_str(), MB_OK | MB_ICONWARNING);
+                SetFocus(field);
+                return false;
+            }
+            fprintf(script.get(), "%s\n", line.c_str());
+        }
+        if (app.fat && IsDlgButtonChecked(window, app_default_cpu) != BST_CHECKED)
+            fprintf(script.get(), "PreferM68K=%d\n", IsDlgButtonChecked(window, app_68k) == BST_CHECKED);
+        for (const auto& statement : app.gestalts)
+            fprintf(script.get(), "%s\n", statement.c_str());
+        if (!fflush(script.get()) && config_prefs_store_app(app.path.c_str(), app.section.c_str(), script.get(), app.fat))
+            return true;
+    }
+    message_box(window, L"ROMAW could not save the application's preferences.", MB_OK | MB_ICONERROR);
+    return false;
+}
 
 void paint_alert_frame(HWND window, HDC dc)
 {
@@ -3801,6 +4001,10 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     if (msg == WM_CREATE) {
         RECT r;
         GetClientRect(w, &r);
+        if (data->application) {
+            build_app_controls(w, *data->application);
+            return 0;
+        }
         if (data->about) {
             int right = r.right - ROMAW_ABOUT_FRAME - ROMAW_ABOUT_MARGIN;
             int bottom = r.bottom - ROMAW_ABOUT_FRAME - ROMAW_ABOUT_MARGIN;
@@ -3889,6 +4093,19 @@ LRESULT CALLBACK notice_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         for (const auto& rule : {find_expanded_rule1, find_expanded_rule2})
             draw_line(dc, rule.left, rule.top, rule.right, rule.top, RGB(0, 0, 0));
         EndPaint(w, &paint);
+        return 0;
+    }
+    if (msg == WM_COMMAND && data->application) {
+        int id = LOWORD(wp);
+        if (id == IDOK || id == IDCANCEL) {
+            if (id == IDCANCEL || save_app_controls(w, *data->application)) {
+                data->result = id;
+                DestroyWindow(w);
+            }
+        }
+        else if ((id == app_gestalt_list && HIWORD(wp) == LBN_SELCHANGE) ||
+                 (id >= app_gestalt_add && id <= app_gestalt_delete && HIWORD(wp) == BN_CLICKED))
+            update_app_gestalt(w, *data->application, id);
         return 0;
     }
     if (msg == WM_COMMAND && data->find) {
@@ -4020,6 +4237,10 @@ static int run_notice(HWND owner, Notice data)
         width = ROMAW_ABOUT_WIDTH + 2 * ROMAW_ABOUT_FRAME;
         height = ROMAW_ABOUT_HEIGHT + 2 * ROMAW_ABOUT_FRAME;
     }
+    if (data.application) {
+        width = app_width + 2 * alert_frame;
+        height = app_height + 2 * alert_frame + (data.application->fat ? app_cpu_height : 0);
+    }
     if (data.find && data.find->query.field == FindField::name)
         data.simple_name = data.find->query.text;
     HWND focus = GetFocus(), previous = front;
@@ -4037,8 +4258,11 @@ static int run_notice(HWND owner, Notice data)
     ShowWindow(dialog, SW_SHOW);
     if (data.about)
         SetFocus(GetDlgItem(dialog, IDOK));
-    else
+    else {
         activate(dialog);
+        if (data.application)
+            SetFocus(GetDlgItem(dialog, app_first));
+    }
     MSG msg;
     while (IsWindow(dialog)) {
         int got = GetMessageW(&msg, nullptr, 0, 0);
@@ -4053,6 +4277,11 @@ static int run_notice(HWND owner, Notice data)
         }
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
             int command = data.conflict || (data.flags & MB_YESNO) ? IDYES : IDOK;
+            if (data.application) {
+                int focused = GetDlgCtrlID(GetFocus());
+                if (focused == IDCANCEL || (focused >= app_gestalt_add && focused <= app_gestalt_delete))
+                    command = focused;
+            }
             if ((data.flags & MB_TYPEMASK) == MB_YESNOCANCEL) {
                 int focused = GetDlgCtrlID(GetFocus());
                 if (focused == IDYES || focused == IDNO || focused == IDCANCEL)
@@ -4092,6 +4321,33 @@ void about_box(HWND owner)
     Notice data{IDCANCEL, L"About ROMAW", 0};
     data.about = true;
     run_notice(owner, data);
+}
+
+void configure_app(HWND owner, const std::wstring& name, const std::string& prefs, const char* section, bool fat)
+{
+    AppPreferences app{L"Configure App: " + name, prefs, section, fat, {}, {}};
+    char value[1024];
+    for (size_t i = 0; i < app.fields.size(); ++i) {
+        size_t count = config_prefs_get(prefs.c_str(), section, app_keys[i], value, sizeof value);
+        if (i == 0 && count >= 2 && value[0] == '"' && value[count - 1] == '"')
+            app.fields[i] = preference_wide(std::string(value + 1, count - 2));
+        else
+            app.fields[i] = preference_wide(std::string(value, count));
+    }
+    if (fat && config_prefs_get(prefs.c_str(), section, "PreferM68K", value, sizeof value))
+        app.cpu = strcmp(value, "1") == 0 ? app_68k : app_ppc;
+    if (std::unique_ptr<FILE, decltype(&fclose)> script{config_prefs_open(prefs.c_str(), section), fclose}) {
+        char line[4096];
+        while (fgets(line, sizeof line, script.get())) {
+            if (_strnicmp(line, "Gestalt(", 8) == 0)
+                app.gestalts.emplace_back(line, strcspn(line, "\r\n"));
+            else if (!strchr(line, '\n'))
+                while (fgets(line, sizeof line, script.get()) && !strchr(line, '\n')) {}
+        }
+    }
+    Notice notice{IDCANCEL, L"Configure App", MB_OKCANCEL};
+    notice.application = &app;
+    run_notice(owner, notice);
 }
 
 // Return a standard dialog result from the shared classic notice

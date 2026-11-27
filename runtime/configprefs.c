@@ -1151,6 +1151,20 @@ static int config_key(const char* line, size_t length)
     return kind && kind != 6;
 }
 
+static int app_config_key(const char* line, size_t length, int fat)
+{
+    static const char* const fields[] = {
+        "WindowName", "SystemVersion", "Size", "BitsPerPixel", "SysZone", "ApplZone"
+    };
+    size_t equals, key;
+    if (natural_key(line, length, &equals, &key) == 6)
+        return 1;
+    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; ++i)
+        if (matches_key(line, length, fields[i], &equals))
+            return 1;
+    return fat && matches_key(line, length, "PreferM68K", &equals);
+}
+
 FILE* config_prefs_open(const char* path, const char* section)
 {
     size_t length;
@@ -1216,16 +1230,19 @@ static int ini_key(const char* line, size_t n)
     return i > 0 && i < n && line[i] == '=';
 }
 
-static int write_settings(FILE* output, const char* settings, size_t length, int natural)
+/* Mode 0 owns an INI section, 1 owns the legacy preferences panel keys,
+   and 2/3 own Configure App keys (with CPU choice only in mode 3). */
+static int write_settings(FILE* output, const char* settings, size_t length, int mode)
 {
     for (size_t offset = 0; offset < length;) {
         size_t end, next = next_line(settings, length, offset, &end);
         const char* line = settings + offset;
         size_t n = end - offset, e, k;
-        int kind = natural ? natural_key(line, n, &e, &k) : ini_key(line, n);
+        int kind = mode >= 2 ? app_config_key(line, n, mode == 3)
+                 : mode ? natural_key(line, n, &e, &k) : ini_key(line, n);
         if (n && !kind && !(n >= 2 && line[0] == '/' && line[1] == '/'))
             return 0;
-        if (natural && kind && n - e - 1 == 1 && line[e + 1] == '0' && (KEY_IN(line, k, default_zero_keys))) {
+        if (mode == 1 && kind && n - e - 1 == 1 && line[e + 1] == '0' && (KEY_IN(line, k, default_zero_keys))) {
             offset = next;
             continue;
         }
@@ -1236,7 +1253,7 @@ static int write_settings(FILE* output, const char* settings, size_t length, int
     return !ferror(output);
 }
 
-static int store_section(const char* path, const char* section, FILE* script, int natural)
+static int store_section(const char* path, const char* section, FILE* script, int mode)
 {
     if (!*section || strpbrk(section, "[]\r\n"))
         return 0;
@@ -1259,13 +1276,15 @@ static int store_section(const char* path, const char* section, FILE* script, in
         size_t n = end - offset;
         if (n && line[0] == '[')
             active = section_matches(line, n, section);
-        if (!(active && (natural ? config_key(line, n) : ini_key(line, n))) &&
+        int owned = mode >= 2 ? app_config_key(line, n, mode == 3)
+                  : mode ? config_key(line, n) : ini_key(line, n);
+        if (!(active && owned) &&
             fwrite(line, 1, next - offset, output) != next - offset)
             goto close_output;
         if (active && !written) {
             if (next == end && fputs("\r\n", output) == EOF)
                 goto close_output;
-            if (!write_settings(output, settings, script_length, natural))
+            if (!write_settings(output, settings, script_length, mode))
                 goto close_output;
             written = 1;
         }
@@ -1274,7 +1293,7 @@ static int store_section(const char* path, const char* section, FILE* script, in
     if (!written) {
         if (fprintf(output, "%s[%s]\r\n", !length ? "" : bytes[length - 1] == '\n' ? "\r\n" : "\r\n\r\n", section) < 0)
             goto close_output;
-        if (!write_settings(output, settings, script_length, natural))
+        if (!write_settings(output, settings, script_length, mode))
             goto close_output;
     }
     if (!fflush(output) && !fseek(output, 0, SEEK_SET)) {
@@ -1296,6 +1315,11 @@ done:
 int config_prefs_store(const char* path, const char* section, FILE* script)
 {
     return store_section(path, section, script, 1);
+}
+
+int config_prefs_store_app(const char* path, const char* section, FILE* script, int fat)
+{
+    return store_section(path, section, script, fat ? 3 : 2);
 }
 
 int config_prefs_store_ini(const char* path, const char* section, FILE* script)

@@ -108,6 +108,8 @@ def main():
         "[HostDrives]\nSidecarDrives=none\nFormatC=Windows\n"
         + ("" if args.import_format else "FormatD=Windows\n")
         + drive_format
+        + '\n[APPL.CFGF]\nWindowName="Existing title"\nSize=640x480\nPreferM68K=0\n'
+        + "Gestalt('keep')={0,1};\nGestalt('gone')={0,2};\nDisplayScale=125\n"
     )
     (apps.parent / "ROMAW.ftm").write_text(
         "ZIP,,APPL,BAD!,x,x,Attempted override\nSIT,,APPL,BAD!,x,x,Attempted override\n"
@@ -143,6 +145,20 @@ def main():
         (windows / "%FormatMarker").write_bytes(ad)
     verify = desktop_path / "Verify"
     verify.mkdir()
+    from runtime_fixtures import module
+
+    resources = module("app_config_resources", ROOT / "tools/romaw/system_resources.py")
+    member = b"pwpc" + bytes(18) + b"\x01\x01" + bytes(16) + struct.pack(">H", 44) + bytes(2)
+    for name, creator, fat in (("FAT Fixture", b"CFGF", True), ("68k Fixture", b"CFGM", False)):
+        entries = [(b"CODE", 0, 0, None, bytes(16))]
+        if fat:
+            entries.append((b"cfrg", 0, 0, None, bytes(28) + struct.pack(">I", 1) + member))
+        fork = resources.build_fork(entries)
+        (verify / name).touch()
+        (verify / ("._" + name)).write_bytes(
+            struct.pack(">II16xHIIIIII", 0x51607, 0x20000, 2, 9, 50, 32, 2, 82, len(fork))
+            + b"APPL" + creator + bytes(24) + fork
+        )
     incompatible = (("Keyboard Layout", b"kfil", "Keyboard"), ("Printer Driver", b"PRER", "Printer"))
     for name, type_code, _ in incompatible:
         (verify / name).touch()
@@ -789,6 +805,66 @@ def main():
         assert caption(get_item(notice, 7)) == "Cancel"  # IDNO
         assert post(notice, 0x111, 7, 0)
         wait(lambda: not is_window(notice) and enabled(desktop), "cancel disk image registration")
+
+        def configure(name):
+            command(check_folder, name, "configure_app_command")
+            dialog = wait(lambda: named(None, "FinderNotice", "Configure App"), f"configure {name}")
+            wait(lambda: not enabled(desktop), "Configure App blocks Finder")
+            assert not get_style(dialog, -16) & (0x00C00000 | 0x00080000)
+            return dialog
+
+        def field(dialog, id_, value):
+            text = c.create_unicode_buffer(value)
+            assert send(get_item(dialog, id_), 0xC, 0, c.addressof(text))  # WM_SETTEXT
+
+        def control_command(dialog, id_, notification=0):
+            assert post(dialog, 0x111, id_ | notification << 16, 0)
+
+        prefs = apps.parent / "ROMAW.prefs"
+        dialog = configure("FAT Fixture")
+        assert caption(get_item(dialog, 100)) == "Existing title"
+        assert caption(get_item(dialog, 102)) == "640x480"
+        assert send(get_item(dialog, 112), 0xF0) == 1  # BM_GETCHECK
+        list_ = get_item(dialog, 113)
+        assert send(list_, 0x18B) == 2  # LB_GETCOUNT
+        assert send(list_, 0x186, 0) == 0  # LB_SETCURSEL
+        control_command(dialog, 113, 1)  # LBN_SELCHANGE
+        wait(lambda: "keep" in caption(get_item(dialog, 114)), "load the selected Gestalt override")
+        field(dialog, 114, "Gestalt('keep')={0,3};")
+        control_command(dialog, 116)  # Update
+        wait(lambda: caption(get_item(dialog, 114)).endswith("{0,3};"), "update Gestalt")
+        assert send(list_, 0x186, 1) == 1
+        control_command(dialog, 117)  # Delete
+        wait(lambda: send(list_, 0x18B) == 1, "delete Gestalt")
+        field(dialog, 114, "Gestalt(0x74657374)={0,0x1234};")
+        control_command(dialog, 115)  # Add
+        wait(lambda: send(list_, 0x18B) == 2, "add Gestalt")
+        values = ("Configured Finder test", "7.6.1", "800x600", "16", "8m", "32m")
+        for id_, value in enumerate(values, 100):
+            field(dialog, id_, value)
+        send(get_item(dialog, 111), 0xF5)  # BM_CLICK
+        control_command(dialog, 1)
+        wait(lambda: not is_window(dialog) and enabled(desktop), "save Configure App")
+        saved = prefs.read_text()
+        assert "DisplayScale=125" in saved and "Gestalt('gone')" not in saved
+        assert "Gestalt('keep')={0,3};" in saved and "Gestalt(0x74657374)={0,0x1234};" in saved
+        assert "PreferM68K=1" in saved
+        dialog = configure("FAT Fixture")
+        assert [caption(get_item(dialog, id_)) for id_ in range(100, 106)] == list(values)
+        assert send(get_item(dialog, 111), 0xF0) == 1
+        field(dialog, 100, "discard")
+        control_command(dialog, 2)
+        wait(lambda: not is_window(dialog), "cancel Configure App")
+        assert prefs.read_text() == saved
+        dialog = configure("68k Fixture")
+        assert not get_item(dialog, 110)
+        assert not caption(get_item(dialog, 100))
+        field(dialog, 100, "New application settings")
+        control_command(dialog, 1)
+        wait(lambda: not is_window(dialog), "create Configure App section")
+        assert '[APPL.CFGM]\nWindowName="New application settings"' in prefs.read_text()
+        print("PASS classic Configure App, FAT CPU selection, Gestalt editing, reload and cancellation", flush=True)
+
         command(win_folder, "OrdinaryWindows", "copy_command")
         time.sleep(0.15)
         assert post(win_copy_folder, 0x111, commands["paste_command"], 0)

@@ -154,6 +154,7 @@ void menu_icon(unsigned command, HICON icon);
 // Movable notices disable/re-enable their owner, restore focus and forward quit.
 int message_box(HWND owner, const wchar_t* text, UINT flags);
 void about_box(HWND owner);
+void configure_app(HWND owner, const std::wstring& name, const std::string& prefs, const char* section, bool fat);
 // IDYES replaces, IDNO skips, IDCANCEL stops this transfer only.
 int conflict_box(HWND owner, const wchar_t* text);
 int yes_no_cancel_box(HWND owner, const wchar_t* text);

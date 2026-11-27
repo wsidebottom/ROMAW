@@ -126,6 +126,7 @@ enum Command {
     romaw_prefs_command,
     windows_shortcut_command,
     register_images_command,
+    configure_app_command,
     label_command = 200,
     sort_command = 300
 };
@@ -1544,7 +1545,7 @@ std::string image_item_path(const Item& item)
     return raw;
 }
 
-const Item* shortcut_application(FolderWindow& folder)
+const Item* selected_application(FolderWindow& folder, bool include_windows = false)
 {
     if (ListView_GetSelectedCount(folder.list) != 1)
         return nullptr;
@@ -1554,7 +1555,8 @@ const Item* shortcut_application(FolderWindow& folder)
     const auto& item = folder.items[index];
     if (item.folder || item.special)
         return nullptr;
-    bool native = !item.image_volume && !item.mac.kind && !_wcsicmp(item.path.extension().c_str(), L".exe");
+    bool native = include_windows && !item.image_volume && !item.mac.kind &&
+                  !_wcsicmp(item.path.extension().c_str(), L".exe");
     return item.mac.kind == FINDER_CLASSIC_APPLICATION || native ? &item : nullptr;
 }
 
@@ -1874,6 +1876,7 @@ constexpr unsigned unavailable_suitcase_commands[] = {open_command,
                                                       clear_command,
                                                       alias_command,
                                                       windows_shortcut_command,
+                                                      configure_app_command,
                                                       put_away_command,
                                                       parent_command,
                                                       extract_here_command,
@@ -2004,6 +2007,56 @@ SuitcaseSnapshot read_suitcase(const Item& item, bool data_only = false)
     if (error)
         throw std::runtime_error("Cannot read the file's fork (Macintosh error " + std::to_string(error) + ").");
     return {std::move(bytes), !resource};
+}
+
+// Match the launcher: classic CODE 0 and application cfrg members qualify.
+// Walk the packed resource in disk order without opening guest handles.
+bool is_fat_application(const MacFile& application)
+{
+    bool m68k = !mac_resource(application, 0x434f4445, 0).empty(); // CODE
+    bool ppc = false;
+    auto fragments = mac_resource(application, 0x63667267, 0); // cfrg
+    if (fragments.size() < 32)
+        return false;
+    auto longword = [&](size_t at) {
+        return uint32_t(fragments[at]) << 24 | uint32_t(fragments[at + 1]) << 16 |
+               uint32_t(fragments[at + 2]) << 8 | fragments[at + 3];
+    };
+    size_t at = 32;
+    for (uint32_t count = longword(28); count && fragments.size() - at >= 43; --count) {
+        unsigned size = unsigned(fragments[at + 40]) << 8 | fragments[at + 41];
+        if (size < 43 || size > fragments.size() - at || fragments[at + 42] > size - 43)
+            break;
+        if (fragments[at + 22] == 1) { // kApplicationCFrag
+            m68k |= longword(at) == 0x6d36386b; // m68k
+            ppc |= longword(at) == 0x70777063; // pwpc
+        }
+        if (m68k && ppc)
+            return true;
+        at += size;
+    }
+    return false;
+}
+
+void configure_application(HWND owner, Item item)
+{
+    auto prefs = file_manager_path((romaw_folder.parent_path() / L"ROMAW.prefs").native());
+    if (prefs.empty())
+        throw std::runtime_error("Cannot open the ROMAW preferences path.");
+    MacFile application;
+    if (item.image_volume) {
+        FinderImageEntry info{};
+        if (ROMlib_finder_image_info(item.image_volume, item.image_parent, item.image_name.c_str(), &info) ||
+            info.id != item.image_id)
+            throw std::runtime_error("The application on the mounted image is no longer available.");
+        if (info.resource_size)
+            application.fork = read_suitcase(item).bytes;
+    }
+    else
+        application = mac_file(item.path);
+    char section[CONFIG_PREFS_SECTION_SIZE];
+    config_prefs_app_section(item.mac.type ? item.mac.type : 0x4150504c, item.mac.creator, section);
+    classic::configure_app(owner, item.name, prefs, section, is_fat_application(application));
 }
 
 bool save_shortcut_artwork(Item& item, const fs::path& path)
@@ -3652,6 +3705,7 @@ menu()
         return popup;
     };
     HMENU file = resource_menu(L"&File", finder_menu_1252);
+    InsertMenuW(file, info_command, MF_BYCOMMAND | MF_STRING | MF_GRAYED, configure_app_command, L"Configure App...");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, parent_command, L"Open Enclosing Folder");
     AppendMenuW(file, MF_STRING, extract_here_command, L"Extract Here");
@@ -4472,10 +4526,14 @@ void command(FolderWindow& f, unsigned id)
         break;
     }
     case windows_shortcut_command:
-        if (const auto* application = shortcut_application(f)) {
+        if (const auto* application = selected_application(f, true)) {
             classic::WaitingCursor waiting;
             make_windows_shortcut(*application);
         }
+        break;
+    case configure_app_command:
+        if (const auto* application = selected_application(f))
+            configure_application(f.window, *application);
         break;
     case put_away_command: {
         std::vector<std::pair<fs::path, fs::path>> changes;
@@ -4729,11 +4787,12 @@ void folder_context_menu(FolderWindow& folder, POINT screen)
         add(extract_here_command, L"Extract Here");
         add(extract_to_command, L"Extract To...");
         add(info_command, L"Get Info");
+        add(configure_app_command, L"Configure App...");
         add(duplicate_command, L"Duplicate");
         add(rename_command, L"Rename");
         AppendMenuW(popup.get(), MF_SEPARATOR, 0, nullptr);
         add(alias_command, L"Make Alias");
-        if (shortcut_application(folder))
+        if (selected_application(folder, true))
             add(windows_shortcut_command, L"Make Windows Shortcut");
         AppendMenuW(popup.get(), MF_SEPARATOR, 0, nullptr);
         add(copy_command, L"Copy");
@@ -5931,7 +5990,9 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 }
                 EnableMenuItem(bar, open_command, MF_BYCOMMAND | (any ? MF_ENABLED : MF_GRAYED));
                 EnableMenuItem(bar, windows_shortcut_command,
-                               MF_BYCOMMAND | (shortcut_application(*target) ? MF_ENABLED : MF_GRAYED));
+                               MF_BYCOMMAND | (selected_application(*target, true) ? MF_ENABLED : MF_GRAYED));
+                EnableMenuItem(bar, configure_app_command,
+                               MF_BYCOMMAND | (selected_application(*target) ? MF_ENABLED : MF_GRAYED));
                 bool archives = any;
                 for (int index = -1; (index = selected_item_after(target->list, target->items.size(), index)) >= 0;)
                     archives &= archive_kind(target->items[index]) != 0;

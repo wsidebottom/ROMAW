@@ -69,6 +69,8 @@ int ROMlib_win_drive_preferences(const char* path);
 int ROMlib_win_default_preferences(void* owner, const char* path);
 #endif
 int config_prefs_store(const char* path, const char* section, FILE* script);
+/* Replace Configure App fields and direct Gestalt overrides in one publication. */
+int config_prefs_store_app(const char* path, const char* section, FILE* script, int fat);
 /* Atomically replace an owned INI section without application-key filtering. */
 int config_prefs_store_ini(const char* path, const char* section, FILE* script);
 #ifdef __cplusplus
