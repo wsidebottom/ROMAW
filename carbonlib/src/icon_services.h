@@ -685,8 +685,12 @@ static int carbon_GetIconRef(ROMlib_carbon_ppc_frame* call)
     uint32 creator = call->words[1], type = call->words[2];
     IconReference* icon = icon_find_key(creator, type);
     ROMlib_carbon_reference saved;
-    if (!icon && icon_saved_reference("GetIconRef", &saved))
-        return ROMlib_carbon_invoke_frame(saved.function, call);
+    if (!icon && icon_saved_reference("GetIconRef", &saved)) {
+        if (!ROMlib_carbon_invoke_frame(saved.function, call))
+            return 0;
+        if ((int16)call->words[0] != no_such_icon || creator != TICK("macs"))
+            return 1;
+    }
     if (!icon && creator == TICK("macs"))
         icon = icon_get_system(type);
     return icon ? icon_return_reference(call, icon, output) : icon_status(call, no_such_icon);
