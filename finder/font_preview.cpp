@@ -99,7 +99,7 @@ struct Strike {
         height = word(data, 14);
         row_bytes = word(data, 24) * 2;
         leading = word(data, 22);
-        kern = int16_t(word(data, 10));
+        kern = int16_t(word(data, 8)); // kernMax precedes nDescent in the strike header.
         if (first > last || last > 255 || !height || height > 256 || !row_bytes || leading > 256)
             return;
         locations = 26 + size_t(height) * row_bytes;
@@ -150,7 +150,7 @@ bool render_bitmap(Panel& panel, const Bytes& bytes, float scale)
             unsigned glyph = strike.index(sample[i]);
             unsigned column = strike.column(glyph), last = strike.column(glyph + 1);
             int width = last == column ? 0 : std::max(1, int(std::round((last - column) * scale)));
-            int bearing = glyph == strike.count ? 0 : int8_t(strike.bytes[strike.widths + glyph * 2]) + strike.kern;
+            int bearing = glyph == strike.count ? 0 : strike.bytes[strike.widths + glyph * 2] + strike.kern;
             int x = int(std::round(pen + bearing * scale));
             int height = std::min(int(std::round(strike.height * scale)), panel.height - 2 - top);
             for (int y = 0; y < height; ++y) {

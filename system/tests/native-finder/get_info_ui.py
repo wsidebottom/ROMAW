@@ -208,19 +208,20 @@ def _check_get_info(
         row_words = glyphs * 4 // 16
         bitmap = bytes(0x99 if row % 2 else 0xF0 for row in range(strike_height) for _ in range(row_words * 2))
         locations = struct.pack(f">{glyphs + 1}H", *(column * 4 for column in range(glyphs + 1)))
-        widths = struct.pack(f">{glyphs + 1}H", *([4] * glyphs), 0xFFFF)
+        widths = struct.pack(f">{glyphs + 1}H", *([0x0204] * glyphs), 0xFFFF)
         header = struct.pack(
-            ">H12h", 0x9000, 32, 126, 4, 0, -2, 4, strike_height,
+            ">H12h", 0x9000, 32, 126, 4, -2, -9, 4, strike_height,
             5 + row_words * strike_height + len(locations) // 2, 7, 2, 0, row_words,
         )
         family = bytes(52) + struct.pack(">HHHh", 0, 9, 0, 2569)
-        scalable_family = bytes(52) + struct.pack(">HHHhHHh", 1, 0, 0, 21, 9, 0, 2569)
+        scalable_family = bytes(52) + struct.pack(">HHHhHHhHHh", 2, 0, 0, 21, 9, 0, 2569, 12, 0, 2572)
         outline = (root / "fonts" / "Chicago.ttf").read_bytes()
         preview_fork = resources.build_fork(
             [
                 (b"FOND", 20, 0, b"Preview Family", family),
                 (b"FOND", 22, 0, b"Scalable Family", scalable_family),
                 (b"NFNT", 2569, 0, None, header + bitmap + locations + widths),
+                (b"NFNT", 2572, 0, None, header + bitmap + locations + widths),
                 (b"sfnt", 21, 0, b"Preview Outline", outline),
             ]
         )
@@ -640,7 +641,7 @@ def _check_get_info(
         delete = api(gdi, "DeleteObject", w.BOOL, w.HANDLE)
         blit = api(gdi, "BitBlt", w.BOOL, w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD)
 
-        def check_window(title, samples, size):
+        def check_window(title, samples, size, strike_rows=()):
             window = wait(lambda: named(desktop, "FinderFontPreview", title), f"preview {title}")
             bounds = w.RECT()
             assert get_rect(window, c.byref(bounds))
@@ -656,7 +657,15 @@ def _check_get_info(
                 image = bitmap(dc, 40, height)
                 previous = select(snapshot, image)
                 try:
-                    assert previous and blit(snapshot, 0, 0, 40, height, dc, origin.x + 18, origin.y, 0xCC0020)
+                    assert previous and blit(snapshot, 0, 0, 40, height, dc, origin.x + 10, origin.y, 0xCC0020)
+                    # The first glyph starts seven pixels inside the sample box.
+                    # A shifted strike can still pass the overall ink count.
+                    if any(
+                        pixel(snapshot, 5, y) != 0
+                        or any(pixel(snapshot, x, y) == 0 for x in range(5))
+                        for y in strike_rows
+                    ):
+                        return False
                     return all(
                         sum(pixel(snapshot, x, y) == 0 for x in range(40) for y in range(top, bottom)) > 12
                         for top, bottom in samples
@@ -678,7 +687,7 @@ def _check_get_info(
         double_click_item(suitcase, "Bitmap font #2569")
         check_window("Preview Family 9", ((17, 26),), (244, 225))
         double_click_item(suitcase, "Scalable Family")
-        check_window("Scalable Family", ((17, 26), (67, 79), (135, 153)), (248, 288))
+        check_window("Scalable Family", ((17, 26), (67, 79), (135, 153)), (248, 288), strike_rows=(17, 67))
         double_click_item(suitcase, "Preview Outline")
         check_window("Preview Outline", ((17, 26), (67, 79), (135, 153)), (248, 288))
         assert post(suitcase, WM_CLOSE, 0, 0)
