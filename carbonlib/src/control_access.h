@@ -519,11 +519,8 @@ static int carbon_control(enum carbon_control_operation op, ROMlib_carbon_ppc_fr
         memcpy(words, identifier, sizeof words);
         HIDDEN_RAW_SET(*output, 0);
         for (ControlHandle control = WINDOW_CONTROL_LIST(window); control; control = CTL_NEXT_CONTROL(control)) {
-            AuxCtlHandle aux = ROMlib_live_control_aux(control);
-            if (!aux)
-                continue;
-            const ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
-            if (words[0] == extra->identifier_signature && words[1] == extra->identifier_id) {
+            const ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(control);
+            if (extra && words[0] == extra->identifier_signature && words[1] == extra->identifier_id) {
                 HIDDEN_RAW_SET(*output, RM(control));
                 return carbon_control_result(call, noErr);
             }
@@ -566,19 +563,29 @@ static int carbon_control(enum carbon_control_operation op, ROMlib_carbon_ppc_fr
                                      ROMlib_control_data(control, (int16_t)args[1], args[2], size, data, actual, mode));
     }
 
-    ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
     if (op == control_set_command) {
-        extra->command_id = CL(args[1]);
-        return carbon_control_result(call, noErr);
+        const OSErr error = ROMlib_extend_control_aux_storage(aux);
+        if (!error)
+            ROMlib_aux_control_extra(aux)->command_id = CL(args[1]);
+        return carbon_control_result(call, error);
     }
     const size_t length = op == control_get_command ? 4 : 8;
     void* record = args[1] ? ROMlib_carbon_guest_memory(args[1], length, op != control_set_id) : NULL;
     if (!record)
         return carbon_control_result(call, paramErr);
-    if (op == control_set_id)
-        memcpy(&extra->identifier_signature, record, length);
-    else
+    if (op == control_set_id) {
+        uint32_t identifier[2];
+        memcpy(identifier, record, sizeof identifier);
+        const OSErr error = ROMlib_extend_control_aux_storage(aux);
+        if (!error)
+            memcpy(&ROMlib_aux_control_extra(aux)->identifier_signature, identifier, sizeof identifier);
+        return carbon_control_result(call, error);
+    }
+    const ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(control);
+    if (extra)
         memcpy(record, op == control_get_id ? &extra->identifier_signature : &extra->command_id, length);
+    else
+        memset(record, 0, length);
     return carbon_control_result(call, noErr);
 }
 

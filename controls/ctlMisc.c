@@ -342,7 +342,7 @@ PUBLIC boolean_t ROMlib_control_uses_saved_range(AuxCtlHandle aux)
            ROMlib_aux_control_extra(aux)->saved_range;
 }
 
-static OSErr extend_control_hierarchy_storage(AuxCtlHandle aux)
+PUBLIC OSErr ROMlib_extend_control_aux_storage(AuxCtlHandle aux)
 {
     const Size size = GetHandleSize((Handle)aux);
     const Size full_size = sizeof(AuxCtlRec) + sizeof(ROMlib_aux_control_data);
@@ -393,9 +393,9 @@ PUBLIC OSErr ROMlib_embed_control(ControlHandle control, ControlHandle parent)
     }
     if (Hx(child_aux, acReserved) == ROMlib_root_control_proc)
         return paramErr;
-    OSErr error = extend_control_hierarchy_storage(child_aux);
+    OSErr error = ROMlib_extend_control_aux_storage(child_aux);
     if (!error)
-        error = extend_control_hierarchy_storage(parent_aux);
+        error = ROMlib_extend_control_aux_storage(parent_aux);
     if (error)
         return error;
     for (candidate = parent; candidate;) {
@@ -568,7 +568,7 @@ PUBLIC OSErr ROMlib_set_control_supervisor(ControlHandle control, ControlHandle 
     const OSErr error = ROMlib_get_root_control(CTL_OWNER(control), &root);
     if (error)
         return error;
-    const OSErr storage_error = extend_control_hierarchy_storage(aux);
+    const OSErr storage_error = ROMlib_extend_control_aux_storage(aux);
     if (storage_error)
         return storage_error;
     ROMlib_aux_control_extra(aux)->supervisor = supervisor ? US_TO_SYN68K(supervisor) : 0;
