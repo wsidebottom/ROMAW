@@ -433,6 +433,8 @@ PUBLIC int ROMlib_native_control_kind(ControlHandle control)
     return aux ? Hx(aux, acReserved) : 0;
 }
 
+static boolean_t system_user_pane_upp(Handle definition, ResType tag);
+
 PUBLIC OSErr ROMlib_get_control_features(ControlHandle control, uint32* features)
 {
     if (!control || !STARH(control) || !features)
@@ -844,7 +846,8 @@ PUBLIC OSErr ROMlib_control_activate(ControlHandle control, boolean_t active)
     if (!ROMlib_live_control_aux(control))
         return noErr;
     HiliteControl(control, active ? 0 : INACTIVE);
-    if (ROMlib_live_control_aux(control) && control_has_feature(control, 1U << 4))
+    if (ROMlib_live_control_aux(control) &&
+        (system_user_pane_upp(CTL_DEFPROC(control), TICK("acti")) || control_has_feature(control, 1U << 4)))
         CTL_CALL_EXCURSION(control, { CTLCALL(control, 22, active); });
     return noErr;
 }
