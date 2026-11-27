@@ -69,6 +69,7 @@ typedef struct {
     unsigned unsupported, source_tag, restoring;
     unsigned original_null;
     unsigned captured, captured_destination, captured_frame, frame_header, has_entry, frame_checked;
+    const uint8* captured_image;
     Syn68kEA captured_ea;
     uint32 entry_fpcr;
     unsigned command, has_command;
@@ -970,13 +971,17 @@ static void state_frame(FPUContext* context)
         else if (frame == 0x41300000 || frame == 0x41600000) {
             uint8 restored[100];
             size = frame == 0x41600000 ? 100 : 52;
-            span(context, ea.address, size);
-            for (unsigned i = 0; i < 4; ++i)
-                restored[i] = frame >> ((3 - i) * 8);
-            for (unsigned i = 4; i < size; i += 4) {
-                uint32 value = read_value(context, ea.address + i, 4);
-                for (unsigned j = 0; j < 4; ++j)
-                    restored[i + j] = value >> ((3 - j) * 8);
+            if (context->captured_image)
+                memcpy(restored, context->captured_image, size);
+            else {
+                span(context, ea.address, size);
+                for (unsigned i = 0; i < 4; ++i)
+                    restored[i] = frame >> ((3 - i) * 8);
+                for (unsigned i = 4; i < size; i += 4) {
+                    uint32 value = read_value(context, ea.address + i, 4);
+                    for (unsigned j = 0; j < 4; ++j)
+                        restored[i + j] = value >> ((3 - j) * 8);
+                }
             }
             unsigned command_offset = size - 36, flags_offset = size - 28;
             unsigned command = restored[command_offset] * 256 + restored[command_offset + 1];
@@ -1342,6 +1347,13 @@ int syn68k_fpu_finish_frame(const Syn68kFPUFrame* captured, Syn68kMMU040Memory* 
     if (mode < 2 || (writing && mode == 3) || (!writing && mode == 4) ||
         (mode == 7 && ((captured->opcode & 7) > (writing ? 1u : 4u))))
         return 0;
+    if (captured->image) {
+        unsigned size = captured->header == 0x41600000 ? 100 : captured->header == 0x41300000 ? 52 : 0;
+        if (writing || !size || captured->image_size != size || frame_read_u32(captured->image) != captured->header)
+            return 0;
+    }
+    else if (captured->image_size)
+        return 0;
     FPUContext context = {.start = captured->pc,
                           .pc = captured->next,
                           .opcode = captured->opcode,
@@ -1351,6 +1363,7 @@ int syn68k_fpu_finish_frame(const Syn68kFPUFrame* captured, Syn68kMMU040Memory* 
                           .has_entry = 1,
                           .captured_frame = 1,
                           .frame_header = captured->header,
+                          .captured_image = captured->image,
                           .captured_ea = {.address = captured->ea}};
     memset(result, 0, sizeof *result);
     result->next = captured->pc;

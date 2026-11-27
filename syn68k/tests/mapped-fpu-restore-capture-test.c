@@ -7,6 +7,22 @@
 #include "native040.h"
 #include "jit-x64.h"
 #include <stdlib.h>
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+#include "fpu-captured.h"
+
+static unsigned complete_captures;
+int __real_syn68k_fpu_finish_frame(const Syn68kFPUFrame*, Syn68kMMU040Memory*, Syn68kFPUStep*);
+int __wrap_syn68k_fpu_finish_frame(const Syn68kFPUFrame* captured, Syn68kMMU040Memory* memory, Syn68kFPUStep* result)
+{
+    if ((captured->opcode & 0xffc0) == 0xf340 &&
+        (captured->header == 0x41300000 || captured->header == 0x41600000)) {
+        unsigned expected = captured->header == 0x41300000 ? 52 : 100;
+        assert(captured->image && captured->image_size == expected);
+        ++complete_captures;
+    }
+    return __real_syn68k_fpu_finish_frame(captured, memory, result);
+}
+#endif
 
 static unsigned visits[25], word_address[25], words, callback_mode, fail_word;
 static unsigned source_attempts, duplicate_faults;
@@ -323,5 +339,9 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
     printf("%u FRESTORE captured-frame/volatile-read/body-fault/ATC/state cases passed; emitted=%llu hits=%llu\n",
            cases, (unsigned long long)emitted, (unsigned long long)loaded);
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+    assert(complete_captures);
+    printf("%u complete native FRESTORE images handed off\n", complete_captures);
+#endif
     return 0;
 }

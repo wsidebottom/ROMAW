@@ -86,6 +86,8 @@ typedef struct {
     uint32_t pc, next, ea, header;
     unsigned opcode;
     Syn68kFPUEntry entry;
+    const uint8_t* image;
+    unsigned image_size;
 } Syn68kFPUFrame;
 
 /* Exceptional FSAVE/FRESTORE continuation after EA evaluation. A restore

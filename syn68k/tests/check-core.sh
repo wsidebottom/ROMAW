@@ -516,7 +516,7 @@ EOF
       "$fixture/frame-test.exe" "$(wslpath -m "$fixture/frame")" 0
       "$fixture/frame-test.exe" "$(wslpath -m "$fixture/frame")" 1
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
-        -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Isyn68k/src/runtime/include -DVERIFY_NATIVE_RESTORE_IMAGE syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_fpu_finish_frame \
         -o "$fixture/restore-capture-test.exe"
       "$fixture/restore-capture-test.exe" "$(wslpath -m "$fixture/restore-capture")" 0
       "$fixture/restore-capture-test.exe" "$(wslpath -m "$fixture/restore-capture")" 1
@@ -877,7 +877,7 @@ EOF
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_effective_address -o syn68k/obj/tests/mapped-fpu-frame-test.exe
       syn68k/obj/tests/mapped-fpu-frame-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
-        syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -DVERIFY_NATIVE_RESTORE_IMAGE syn68k/tests/mapped-fpu-restore-capture-test.c syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_fpu_finish_frame \
         -o syn68k/obj/tests/mapped-fpu-restore-capture-test.exe
       syn68k/obj/tests/mapped-fpu-restore-capture-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \

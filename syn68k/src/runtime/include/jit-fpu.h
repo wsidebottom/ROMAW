@@ -1369,7 +1369,41 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         unsigned idle = jump(out, 0x84);
         FP_BYTES(out, 0xa9);
         word32(out, 0xff000000);
-        failures[count++] = jump(out, 0x85); // Busy or malformed captured header.
+        unsigned non_null = jump(out, 0x85);
+        unsigned null_frame = fpu_jump(out);
+        patch(out, non_null, out->size);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_capture), 0);
+        byte(out, 0);
+        failures[count++] = jump(out, 0x84);
+        FP_BYTES(out, 0x3d);
+        word32(out, 0x41300000);
+        unsigned short_frame = jump(out, 0x84);
+        FP_BYTES(out, 0x3d);
+        word32(out, 0x41600000);
+        failures[count++] = jump(out, 0x85); // Malformed header remains a checked format exit.
+        fpu_constant(out, offsetof(FPUInvocation, frame_image_size), 100, 0);
+        unsigned image_size = fpu_jump(out);
+        patch(out, short_frame, out->size);
+        fpu_constant(out, offsetof(FPUInvocation, frame_image_size), 52, 0);
+        patch(out, image_size, out->size);
+        fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_header), 0);
+        FP_BYTES(out, 0x0f, 0xc8);
+        fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_image), 0);
+        unsigned short_done = 0;
+        for (unsigned i = 4; i < 100; i += 4) {
+            if (i == 52) {
+                fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_image_size), 0);
+                byte(out, 52);
+                short_done = jump(out, 0x84);
+            }
+            fpu_mapped_read(out, i, 4, failures, &count);
+            FP_BYTES(out, 0x0f, 0xc8);
+            fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_image) + i, 0);
+        }
+        patch(out, short_done, out->size);
+        fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
+        failures[count++] = fpu_jump(out);
+        patch(out, null_frame, out->size);
         // Exact architectural null reset, including padding and saved frame bytes.
         FP_BYTES(out, 0x57, 0x51, 0x48, 0x8d, 0xb9);
         word32(out, offsetof(CPUState, fpu));
