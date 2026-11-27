@@ -1715,9 +1715,10 @@ the embedding memory implementation; the operand boundary is not a cycle model.
 - General busy-frame continuation, including FPSP-generated internal states
   outside the documented operand/writeback fields. The model's revision $41
   rejects revision $40 frames rather than interpreting their different layout.
-- Remaining mapped access-error work: further active-stack/call effective-address
-  and double-fault variants, a physical block/cache bus, and the
-  constructed user-mode throwaway-RTE case.
+- Remaining mapped access-error work includes further active-stack and call
+  effective-address variants, double-fault cases, and physical bus arbitration
+  within partial bursts. The RTE user-stack checkpoint above covers faults
+  after a throwaway frame has selected the user stack.
   Scalar/FPU/locked writebacks populate format-7 slots; MOVEM loads and stores
   use CM/saved-EA continuation as described in the current checkpoints above.
 - Remaining trace/exception-priority audit, mapped cache
