@@ -4238,8 +4238,16 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         if (!native && (!strcmp(library, "FontManager") || !strcmp(library, "InterfaceLib")) &&
             !strcmp(name, "QDTextBounds"))
             native = ROMlib_carbon_find_export(name, symbol_class);
-        if (!native && !strcmp(library, "ControlsLib") && !strcmp(name, "IsValidControlHandle"))
+        if (!native && !strcmp(library, "ControlsLib") && !strcmp(name, "IsValidControlHandle")) {
             native = ROMlib_carbon_find_export(name, symbol_class);
+            /* Saved ControlsLib initializes its shared property tables. Load
+               its PEF before the native dependency can enter the init graph. */
+            if (native && carbon_classic_reference && cfm_architecture(ctx) == kPowerPCArch) {
+                uint32 original;
+                if (ppc_external_symbol(ctx, library, name, symbol_class, &original) < 0)
+                    return 0;
+            }
+        }
         if (!native && !strcmp(library, "MenusLib")) {
             static const char* const menu_reexports[] = {
                 "ShowMenuBar",
@@ -8386,8 +8394,7 @@ PRIVATE uint32 ppc_prepare_routine_resource(ppc_context* ctx, uint32 descriptor,
     Handle resource;
     Size length;
     ppc_fragment* fragment;
-    uint32 stack_address, vector = 0;
-    void* stack;
+    uint32 vector = 0;
     SignedByte state;
     char name[64];
     if (descriptor < 12 || !ppc_memory(ctx, descriptor - 12, 44, FALSE))
@@ -8404,12 +8411,11 @@ PRIVATE uint32 ppc_prepare_routine_resource(ppc_context* ctx, uint32 descriptor,
     snprintf(name, sizeof name, "Routine resource %08lx", (unsigned long)address);
     fragment = ppc_register_memory(ctx, address, length - (address - resource_start), name);
     if (fragment && ppc_link_pending(ctx, NULL)) {
-        stack = ppc_allocate(ctx, 256 * 1024, 16, &stack_address);
+        ppc_callback_stack* stack = ppc_acquire_callback_stack(ctx);
         if (stack) {
-            memset(stack, 0, 256 * 1024);
-            if (ppc_initialize_owned_library(ctx, fragment, stack_address + 256 * 1024 - 256))
+            if (ppc_initialize_owned_library(ctx, fragment, stack->address + 256 * 1024 - 256))
                 vector = ROMlib_pef_main(fragment->image);
-            ppc_release(ctx, stack);
+            stack->busy = 0;
         }
     }
     HSetState(resource, state);
