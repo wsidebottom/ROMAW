@@ -720,7 +720,12 @@ static int carbon_FMGetFontFamilyTextEncoding(ROMlib_carbon_ppc_frame* call)
     if (language == -128 && (!neutral_fond || script != 0))
         return font_reference(call, name, font_invalid_family);
 
-    ROMlib_carbon_ppc_frame upgrade = {.words = {script, language, (uint32_t)-128, 0, output}};
+    ROMlib_carbon_ppc_frame upgrade = *call;
+    upgrade.words[0] = script;
+    upgrade.words[1] = language;
+    upgrade.words[2] = (uint32_t)-128;
+    upgrade.words[3] = 0;
+    upgrade.words[4] = output;
     if (!carbon_text_UpgradeScriptInfoToTextEncoding(&upgrade) || upgrade.words[0])
         return font_reference(call, name, font_invalid_family);
     return font_result(call, noErr);
