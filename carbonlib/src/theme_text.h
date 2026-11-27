@@ -69,11 +69,12 @@ static theme_text_port theme_text_save_port(void)
     return (theme_text_port){PORT_TX_FONT(thePort), PORT_TX_SIZE(thePort), PORT_TX_MODE(thePort), PORT_TX_FACE(thePort)};
 }
 
-static OSErr theme_text_set_font(uint16_t role)
+static OSErr theme_text_set_font(const ROMlib_carbon_ppc_frame* call, uint16_t role)
 {
     if (role != 200) {
-        ROMlib_carbon_ppc_frame args = {0};
+        ROMlib_carbon_ppc_frame args = *call;
         args.words[0] = role;
+        args.words[1] = 0;
         if (!carbon_UseThemeFont(&args))
             return paramErr;
         if (args.words[0])
@@ -178,7 +179,7 @@ static int carbon_DrawThemeTextBox(ROMlib_carbon_ppc_frame* call)
     OSErr status = theme_text_prepare(call->words[0], role, false, &text);
     if (!status && text.length) {
         const theme_text_port saved = theme_text_save_port();
-        status = theme_text_set_font(role);
+        status = theme_text_set_font(call, role);
         if (!status && !C_EmptyRect(&area))
             status = theme_text_draw(&text, &area, (int16_t)call->words[5], (Byte)call->words[3] != 0);
         theme_text_restore_port(saved, true);
@@ -203,7 +204,7 @@ static int carbon_GetThemeTextDimensions(ROMlib_carbon_ppc_frame* call)
     int16_t offset = 0;
     if (!status && text.length) {
         const theme_text_port saved = theme_text_save_port();
-        status = theme_text_set_font(role);
+        status = theme_text_set_font(call, role);
         if (!status) {
             FontInfo metrics;
             C_GetFontInfo(&metrics);
@@ -247,7 +248,7 @@ static int carbon_TruncateThemeText(ROMlib_carbon_ppc_frame* call)
     bool truncated = false;
     if (!status && text.length) {
         const theme_text_port saved = theme_text_save_port();
-        status = theme_text_set_font(role);
+        status = theme_text_set_font(call, role);
         if (!status) {
             _Alignas(16) INTEGER length = CW(text.length);
             const INTEGER width = (int16_t)((int16_t)call->words[3] - 1);
