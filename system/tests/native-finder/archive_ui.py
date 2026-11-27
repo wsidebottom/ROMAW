@@ -839,7 +839,7 @@ def main():
         wait(lambda: caption(get_item(dialog, 118)) == "keep", "load the selected Gestalt type")
         assert caption(get_item(dialog, 114)) == "1"
         field(dialog, 114, "3")
-        control_command(dialog, 116)  # Update
+        send(dialog, 0x111, 116)  # Commit Update before changing the selected row.
         assert send(list_, 0x186, 1) == 1
         control_command(dialog, 117)  # Delete
         wait(lambda: send(list_, 0x18B) == 1, "delete Gestalt")
