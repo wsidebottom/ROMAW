@@ -37,8 +37,11 @@ int main(void)
     }
     if (!error) {
         romaw_afp_entry entry;
+        error = romaw_afp_lookup(session, volume, 2, NULL, 0, &entry);
+        if (!error && (!entry.directory || entry.node_id != 2 || strcmp(entry.name, "Macintosh")))
+            error = ROMAW_AFP_TRANSPORT_ERROR;
         int read_data = 0;
-        for (uint32_t index = 1; index <= 64; ++index) {
+        for (uint32_t index = 1; !error && index <= 64; ++index) {
             error = romaw_afp_enumerate(session, volume, 2, index, &entry);
             if (error)
                 break;
@@ -49,7 +52,8 @@ int main(void)
             if (entry.directory)
                 continue;
             uint16_t fork;
-            error = romaw_afp_open_read_fork(session, volume, 2, entry.name, 0, &fork);
+            uint32_t length;
+            error = romaw_afp_open_read_fork(session, volume, 2, entry.name, 0, &fork, &length);
             if (error)
                 break;
             unsigned char data;
@@ -62,7 +66,7 @@ int main(void)
                 error = closed;
             if (error)
                 break;
-            if (received == 1) {
+            if (received == 1 && length) {
                 printf("PASS read a file byte from root catalog entry %lu\n", (unsigned long)index);
                 read_data = 1;
                 break;

@@ -36,15 +36,21 @@ typedef struct {
 int32_t romaw_afp_list_volumes(romaw_afp_session* session, romaw_afp_volume_list* volumes);
 
 typedef struct {
-    uint32_t node_id;
+    uint32_t node_id, parent_id;
+    uint32_t created, modified, backup;
+    uint32_t data_length, resource_length;
+    uint16_t children;
+    unsigned char finder_info[32];
     int directory;
     char name[256];
 } romaw_afp_entry;
 
 int32_t romaw_afp_enumerate(romaw_afp_session* session, uint16_t volume, uint32_t directory, uint32_t index,
                             romaw_afp_entry* entry);
+int32_t romaw_afp_lookup(romaw_afp_session* session, uint16_t volume, uint32_t directory, const char* path,
+                         unsigned length, romaw_afp_entry* entry);
 int32_t romaw_afp_open_read_fork(romaw_afp_session* session, uint16_t volume, uint32_t directory, const char* name,
-                                 int resource, uint16_t* fork);
+                                 int resource, uint16_t* fork, uint32_t* fork_length);
 int32_t romaw_afp_read_fork(romaw_afp_session* session, uint16_t fork, uint32_t offset, void* data, unsigned length,
                             unsigned* received);
 int32_t romaw_afp_close_fork(romaw_afp_session* session, uint16_t fork);

@@ -7,7 +7,7 @@
 
   Functions: romaw_afp_connect, romaw_afp_close, romaw_afp_command,
              romaw_afp_open_volume, romaw_afp_close_volume, romaw_afp_list_volumes,
-             romaw_afp_enumerate, romaw_afp_open_read_fork, romaw_afp_read_fork, romaw_afp_close_fork.
+             romaw_afp_enumerate, romaw_afp_lookup, romaw_afp_open_read_fork, romaw_afp_read_fork, romaw_afp_close_fork.
 
   Origin:    ROMAW implementation of AFP and the Data Stream Interface.
 
@@ -256,17 +256,46 @@ static void put32(unsigned char* p, uint32_t value)
     put16(p + 2, value);
 }
 
+enum { file_parameters = 0x273e, directory_parameters = 0x233e };
+
+static int32_t decode_entry(const unsigned char* parameters, unsigned size, int directory, romaw_afp_entry* entry)
+{
+    const unsigned name_field = directory ? 54 : 60;
+    if (size < name_field + 6)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned offset = get16(parameters + name_field);
+    if (offset < name_field + 6 || offset > size - 6)
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    unsigned length = get16(parameters + offset + 4);
+    const unsigned char* name = parameters + offset + 6;
+    if (!length || length >= sizeof entry->name || length > size - offset - 6 || memchr(name, 0, length))
+        return ROMAW_AFP_TRANSPORT_ERROR;
+    memset(entry, 0, sizeof *entry);
+    entry->parent_id = get32(parameters);
+    entry->created = get32(parameters + 4);
+    entry->modified = get32(parameters + 8);
+    entry->backup = get32(parameters + 12);
+    memcpy(entry->finder_info, parameters + 16, sizeof entry->finder_info);
+    entry->node_id = get32(parameters + 48);
+    entry->directory = directory;
+    if (directory)
+        entry->children = get16(parameters + 52);
+    else {
+        entry->data_length = get32(parameters + 52);
+        entry->resource_length = get32(parameters + 56);
+    }
+    memcpy(entry->name, name, length);
+    return 0;
+}
+
 int32_t romaw_afp_enumerate(romaw_afp_session* session, uint16_t volume, uint32_t directory, uint32_t index,
                             romaw_afp_entry* entry)
 {
-    /* One entry per call matches the classic indexed catalog API.
-       Request node ID and UTF-8 name from both files and directories. */
-    const uint16_t bitmap = 0x2100;
     unsigned char request[24] = {68};
     put16(request + 2, volume);
     put32(request + 4, directory);
-    put16(request + 8, bitmap);
-    put16(request + 10, bitmap);
+    put16(request + 8, file_parameters);
+    put16(request + 10, directory_parameters);
     put16(request + 12, 1);
     put32(request + 14, index);
     put32(request + 18, 4096);
@@ -276,29 +305,42 @@ int32_t romaw_afp_enumerate(romaw_afp_session* session, uint16_t volume, uint32_
     int32_t result = romaw_afp_command(session, request, sizeof request, reply, sizeof reply, &size);
     if (result)
         return result;
-    if (size < 22 || get16(reply) != bitmap || get16(reply + 2) != bitmap || get16(reply + 4) != 1)
+    if (size < 10 || get16(reply) != file_parameters || get16(reply + 2) != directory_parameters ||
+        get16(reply + 4) != 1)
         return ROMAW_AFP_TRANSPORT_ERROR;
     unsigned record_size = get16(reply + 6);
-    if (record_size < 20 || record_size > size - 6)
+    if (record_size < 4 || record_size > size - 6)
         return ROMAW_AFP_TRANSPORT_ERROR;
-    const unsigned char* parameters = reply + 10;
-    unsigned param_size = record_size - 4;
-    unsigned name_offset = get16(parameters + 4);
-    if (name_offset < 10 || name_offset > param_size - 6)
+    return decode_entry(reply + 10, record_size - 4, !!(reply[8] & 0x80), entry);
+}
+
+int32_t romaw_afp_lookup(romaw_afp_session* session, uint16_t volume, uint32_t directory, const char* path,
+                         unsigned length, romaw_afp_entry* entry)
+{
+    if (length > 1024)
         return ROMAW_AFP_TRANSPORT_ERROR;
-    unsigned length = get16(parameters + name_offset + 4);
-    const unsigned char* name = parameters + name_offset + 6;
-    if (!length || length >= sizeof entry->name || length > param_size - name_offset - 6 || memchr(name, 0, length))
+    unsigned char request[1043] = {34};
+    put16(request + 2, volume);
+    put32(request + 4, directory);
+    put16(request + 8, file_parameters);
+    put16(request + 10, directory_parameters);
+    request[12] = 3;
+    put32(request + 13, 0x08000103);
+    put16(request + 17, length);
+    if (length)
+        memcpy(request + 19, path, length);
+    unsigned char reply[4096];
+    unsigned size;
+    int32_t result = romaw_afp_command(session, request, 19 + length, reply, sizeof reply, &size);
+    if (result)
+        return result;
+    if (size < 6 || get16(reply) != file_parameters || get16(reply + 2) != directory_parameters)
         return ROMAW_AFP_TRANSPORT_ERROR;
-    entry->node_id = get32(parameters);
-    entry->directory = !!(reply[8] & 0x80);
-    memcpy(entry->name, name, length);
-    entry->name[length] = 0;
-    return 0;
+    return decode_entry(reply + 6, size - 6, !!(reply[4] & 0x80), entry);
 }
 
 int32_t romaw_afp_open_read_fork(romaw_afp_session* session, uint16_t volume, uint32_t directory, const char* name,
-                                 int resource, uint16_t* fork)
+                                 int resource, uint16_t* fork, uint32_t* fork_length)
 {
     size_t length = strlen(name);
     if (!length || length > 255)
@@ -306,19 +348,22 @@ int32_t romaw_afp_open_read_fork(romaw_afp_session* session, uint16_t volume, ui
     unsigned char request[274] = {26, resource ? 0x80 : 0};
     put16(request + 2, volume);
     put32(request + 4, directory);
+    uint16_t bitmap = resource ? 0x400 : 0x200;
+    put16(request + 8, bitmap);
     put16(request + 10, 1);
     request[12] = 3;
     put32(request + 13, 0x08000103);
     put16(request + 17, length);
     memcpy(request + 19, name, length);
-    unsigned char reply[4];
+    unsigned char reply[8];
     unsigned size;
     int32_t result = romaw_afp_command(session, request, 19 + length, reply, sizeof reply, &size);
     if (result)
         return result;
-    if (size != 4 || get16(reply) || !get16(reply + 2))
+    if (size != sizeof reply || get16(reply) != bitmap || !get16(reply + 2))
         return ROMAW_AFP_TRANSPORT_ERROR;
     *fork = get16(reply + 2);
+    *fork_length = get32(reply + 4);
     return 0;
 }
 
