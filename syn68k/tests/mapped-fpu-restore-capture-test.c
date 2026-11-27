@@ -452,12 +452,13 @@ static void arithmetic_replay_operations(void)
                                    0x40, 0x44, 0x41, 0x45, 0x58, 0x5c, 0x5a, 0x5e, 0x60, 0x64, 0x62, 0x66,
                                    0x63, 0x67, 0x68, 0x6c};
     for (unsigned i = 0; i < sizeof operations / sizeof *operations; ++i)
-        for (unsigned variant = 0; variant < 5; ++variant) {
+        for (unsigned variant = 0; variant < 8; ++variant) {
             unsigned frame = 0x20040;
             int divide_inexact = (variant == 2 || variant == 4) && (operations[i] == 0x20 || operations[i] == 0x24);
             int negative_sqrt = variant == 1 &&
                                 (operations[i] == 4 || operations[i] == 5 || (operations[i] & ~4u) == 0x41);
-            int exceptional = negative_sqrt || (variant == 4 && divide_inexact);
+            int divide = operations[i] == 0x20 || operations[i] == 0x24 || (operations[i] & ~4u) == 0x60;
+            int exceptional = negative_sqrt || (variant == 4 && divide_inexact) || (variant >= 5 && variant != 6 && divide);
             Syn68kFPUState expected;
             for (unsigned config = 0; config < 2; ++config) {
                 Syn68kMappedCPU cpu = setup(config, 0, 6, frame, 1, 0, variant == 4 ? 0x0200 : 0);
@@ -466,6 +467,15 @@ static void arithmetic_replay_operations(void)
                     ram[physical(frame + 0x58)] |= 0x80;
                 if (variant == 3)
                     ram[physical(frame + 0x3d)] = 0x80; /* Older E3 rounding sets INEX. */
+                if (variant >= 5 && variant != 6) {
+                    ram[physical(frame + 0x58)] = 0x80;
+                    ram[physical(frame + 0x59)] = 0;
+                    ram[physical(frame + 0x5c)] = 0; /* ETEMP = -0. */
+                }
+                if (variant >= 6) {
+                    ram[physical(frame + 0x4c)] = 0;
+                    ram[physical(frame + 0x50)] = 0; /* FPTEMP = +0. */
+                }
                 if (divide_inexact) {
                     ram[physical(frame + 0x58)] = 0x40;
                     ram[physical(frame + 0x59)] = 0;

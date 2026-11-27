@@ -40,9 +40,11 @@ static floatx80 restore_operand(const uint8* bytes)
     return (floatx80){restore_long(bytes) >> 16, (uint64)restore_long(bytes + 4) << 32 | restore_long(bytes + 8)};
 }
 
-static int restore_normal(floatx80 operand, unsigned exponent_tag)
+static int restore_finite(floatx80 operand, unsigned exponent_tag)
 {
     unsigned exponent = operand.high & 0x7fff;
+    if (!exponent && !operand.low)
+        return 1;
     return exponent && exponent != 0x7fff && (operand.low >> 63) &&
            !((exponent_tag & 0x10) && (exponent & 0x4000));
 }
@@ -50,7 +52,8 @@ static int restore_normal(floatx80 operand, unsigned exponent_tag)
 static FPUdivision restore_compare(floatx80 target, floatx80 source)
 {
     FPUdivision result = {0};
-    if (target.high != source.high || target.low != source.low) {
+    int both_zero = !((target.high | source.high) & 0x7fff) && !(target.low | source.low);
+    if (!both_zero && (target.high != source.high || target.low != source.low)) {
         int less = (target.high & 0x7fff) < (source.high & 0x7fff) ||
                    (target.high == source.high && target.low < source.low);
         if ((target.high ^ source.high) & 0x8000)
@@ -86,8 +89,8 @@ static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operat
     floatx80 source = restore_operand(frame + size - 12), target = restore_operand(frame + size - 24);
     int uses_target = base == 0x20 || base == 0x22 || base == 0x23 || base == 0x28 ||
                       base == 0x24 || base == 0x27 || base == 0x38;
-    if (!restore_normal(source, frame[size - 40]) ||
-        (uses_target && !restore_normal(target, frame[size - 32])))
+    if (!restore_finite(source, frame[size - 40]) ||
+        (uses_target && !restore_finite(target, frame[size - 32])))
         return 0;
     if (base == 0x38)
         *result = restore_compare(target, source);
