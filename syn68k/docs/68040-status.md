@@ -41,7 +41,25 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: physical cache and MOVE16 retry (2026-11-27)
+## Latest validated bundle: nonfinite FPU arithmetic (2026-11-27)
+
+Commit f0aa0751 generates ordinary nonfinite arithmetic results with
+the 68040's NaN payload and operand selection rules. The register and
+IEEE single-input differential suite passed 59,058 mapped cases and
+cold and warm AOT runs. Both x64 ABIs passed the 22 generated kernel
+groups. The mapped MOVE16 suite passed 101,709 cases per AOT run,
+including format-7 recovery from physical retries.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT and saved-state checks passed.
+The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
+startup and is current at build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-arithmetic1-bin-20261127.
+
+CPU build ID d56343b86540cd2603b7bebc808da80b38df5200d6cbd472198a4a4a52c62589
+Archive SHA256 75d7d9dd53cdc04357b87236dffed53777c1985fdc74d6a457ec42b9bd060465
+Audit build/68040-arithmetic1-output/68040-arithmetic1-source-audit.json
+
+## Previous validated bundle: physical cache and MOVE16 retry (2026-11-27)
 
 Commit b752f021 retries the first physical line beat or an ordinary scalar
 cycle on TA+TEA. A retry on a later line beat aborts the transfer as a bus
