@@ -76,6 +76,7 @@ ROOTS = (
     "bus_snoop",
     "rte",
     "restore_writeback",
+    "movem",
 )
 
 

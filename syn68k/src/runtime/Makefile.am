@@ -61,7 +61,7 @@ DIST_SOURCES = 68k.defines.scm 68k.scm alloc.c backpatch.c block.c fpu.c ea.c ji
 	       include/trap.h include/ea.h include/mmu040.h \
                include/mmu040-memory.h include/cache040.h include/mapped-cpu.h include/fpu.h include/integer.h include/native040.h \
                include/native040-ea.h include/native040-memory.h include/fpu_convert.h include/fpu-captured.h \
-               include/control040.h include/native040-control.h include/native040-registers.h include/native040-flat.h
+               include/control040.h include/native040-control.h include/native040-registers.h include/native040-flat.h include/movem040.h
 
 
 LOCAL_INCLUDES =
@@ -177,7 +177,7 @@ clean-local:
 generated/native040.h: $(srcdir)/../../tools/build-native040.py \
                       $(srcdir)/../../../tools/native_code_image.py \
                       $(srcdir)/native040-fpu.c $(srcdir)/native040-mmu.c \
-                      $(srcdir)/native040-ea.c $(srcdir)/ea.c $(srcdir)/blockinfo.c \
+                      $(srcdir)/native040-ea.c $(srcdir)/include/movem040.h $(srcdir)/ea.c $(srcdir)/blockinfo.c \
                       $(srcdir)/native040-control.c $(srcdir)/include/native040-control.h $(srcdir)/include/control040.h \
                       $(srcdir)/native040-registers.c $(srcdir)/include/native040-registers.h \
                       $(srcdir)/native040-flat.c $(srcdir)/include/native040-flat.h \

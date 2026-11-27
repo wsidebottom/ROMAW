@@ -18,6 +18,7 @@
 /* Real integer instruction stepping over disjoint code/data physical pages. */
 #include "syn68k_public.h"
 #include "integer.h"
+#include "jit-x64.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -319,10 +320,61 @@ static void fetch_and_code(void)
         }
 }
 
+#ifdef GENERATE_X64_CODE
+static void native_restart(void)
+{
+    unsigned count = 0;
+    for (unsigned page = 0; page < 2; ++page)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned load = 0; load < 2; ++load)
+                for (unsigned width = 2; width <= 4; width += 2)
+                    for (unsigned fault = 0; fault < 3; ++fault) {
+                        uint32_t saved = load ? 0x20020 : 0x20030;
+                        unsigned opcode = 0x4880 | load << 10 | (width == 4 ? 0x40 : 0) | (load ? 3 : 4) << 3;
+                        Syn68kIntegerStep expected;
+                        uint32_t expected_d0 = 0, expected_a0 = 0;
+                        unsigned expected_reads = 0, expected_writes = 0;
+                        for (unsigned native = 0; native < 2; ++native) {
+                            fixture(page, privileged);
+                            instruction(load ? 3 : 4, width, load, 1);
+                            EM_A0 = 0xdead0000;
+                            EM_D0 = 0x12345678;
+                            uint32_t operand = load ? saved : saved - width;
+                            put32(physical(operand), 0xabcdef01);
+                            if (fault == 1)
+                                fail_physical = physical(0x10002);
+                            else if (fault == 2)
+                                fail_physical = physical(operand);
+                            Syn68kIntegerStep result;
+                            if (!native) {
+                                assert(syn68k_integer_resume_movem(0x10000, opcode, &memory, saved, &expected));
+                                expected_d0 = EM_D0;
+                                expected_a0 = EM_A0;
+                                expected_reads = reads;
+                                expected_writes = writes;
+                            }
+                            else {
+                                assert(syn68k_x64_resume_movem(0x10000, opcode, &memory, saved, &result) == 1);
+                                assert(result.next == expected.next && result.vector == expected.vector &&
+                                       result.format == expected.format && result.fault_address == expected.fault_address &&
+                                       result.movem_state == expected.movem_state && result.movem_ea == expected.movem_ea);
+                                assert(EM_D0 == expected_d0 && EM_A0 == expected_a0);
+                                assert(reads == expected_reads && writes == expected_writes);
+                                ++count;
+                            }
+                        }
+                    }
+    printf("%u native MOVEM restart mask and repeat-fault cases passed.\n", count);
+}
+#endif
+
 int main(void)
 {
     masks_and_pages();
     faults();
     fetch_and_code();
+#ifdef GENERATE_X64_CODE
+    native_restart();
+#endif
     printf("%u mapped MOVEM mask/page/update/partial-fault cases passed.\n", cases);
 }

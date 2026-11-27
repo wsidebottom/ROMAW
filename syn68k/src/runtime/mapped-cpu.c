@@ -652,8 +652,20 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         }
         int handled;
         if (cpu->movem_pending) {
-            if (cpu->pc != cpu->movem_pc ||
-                !syn68k_integer_resume_movem(cpu->pc, opcode, &memory, cpu->movem_ea, &result->step)) {
+            handled = 0;
+            if (cpu->pc == cpu->movem_pc) {
+#ifdef GENERATE_X64_CODE
+                if (cpu->native)
+                    handled = syn68k_x64_resume_movem(cpu->pc, opcode, &memory, cpu->movem_ea, &result->step);
+                if (handled < 0) {
+                    result->reason = SYN68K_MAPPED_BAD_REQUEST;
+                    return 0;
+                }
+#endif
+                if (!handled)
+                    handled = syn68k_integer_resume_movem(cpu->pc, opcode, &memory, cpu->movem_ea, &result->step);
+            }
+            if (!handled) {
                 result->reason = SYN68K_MAPPED_UNSUPPORTED;
                 return 1;
             }

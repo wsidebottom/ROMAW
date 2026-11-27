@@ -43,6 +43,41 @@ __attribute__((used, noinline)) void native040_ea_body(void)
     context->memory = original;
 }
 
+static inline uint32 integer_exception(Syn68kIntegerStep* step, const Syn68kEAContext* context, unsigned vector,
+                                       uint32 pc, uint32 address, unsigned format)
+{
+    step->vector = vector;
+    step->exception_pc = pc;
+    step->fault_address = address;
+    step->format = format;
+    step->access = context->access;
+    return pc;
+}
+
+#define write_checked_memory syn68k_ea_write_memory
+#include "movem040.h"
+#undef write_checked_memory
+
+__attribute__((used, noinline)) void native040_movem_body(void)
+{
+    Syn68kNative040MOVEM* packet = (Syn68kNative040MOVEM*)native_ea;
+    Syn68kEAContext* context = &native_ea->context;
+    Syn68kMMU040Memory* original = context->memory;
+    Syn68kNative040MMU frame = {.memory = original, .ram = native_ea->ram};
+    NativeMemory bound;
+    context->memory = native040_bind_memory(&frame, &bound);
+    context->pc = packet->pc + 2;
+    if (packet->resuming)
+        context->resume_ea = &packet->resume_address;
+    packet->step.next = move_multiple(packet->pc, packet->opcode, context, &packet->step);
+    if (packet->resuming && packet->step.vector == 2) {
+        packet->step.movem_state = 1;
+        packet->step.movem_ea = packet->resume_address;
+    }
+    context->resume_ea = 0;
+    context->memory = original;
+}
+
 #if defined(_WIN32)
 #define ROOT_ENTER "push %r12\nmov %rcx,%r12\nsub $32,%rsp\n"
 #define ROOT_LEAVE "add $32,%rsp\npop %r12\nret\n"
@@ -52,3 +87,5 @@ __attribute__((used, noinline)) void native040_ea_body(void)
 #endif
 __asm__(".text\n.p2align 4\n.globl native040_ea\nnative040_ea:\n"
         "endbr64\n" ROOT_ENTER "call native040_ea_body\n" ROOT_LEAVE);
+__asm__(".text\n.p2align 4\n.globl native040_movem\nnative040_movem:\n"
+        "endbr64\n" ROOT_ENTER "call native040_movem_body\n" ROOT_LEAVE);

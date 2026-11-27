@@ -63,6 +63,8 @@ int syn68k_x64_mapped_fpu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
 /* Decoded flat counterpart; normal semantics execute through closed native bindings. */
 int syn68k_x64_flat_fpu(uint32 pc, unsigned opcode, Syn68kFPUStep* result);
 int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result);
+int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, uint32 address,
+                            Syn68kIntegerStep* result);
 /* Bounded process cache; retirement is safe even from an active callback. */
 void syn68k_x64_mapped_clear(void);
 extern uint64 syn68k_x64_executions;

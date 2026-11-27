@@ -17,6 +17,7 @@
 #define SYN68K_NATIVE040_EA_H
 #include "ea.h"
 #include "native040.h"
+#include "integer.h"
 
 typedef struct Syn68kNative040EA {
     CPUState* cpu;
@@ -26,4 +27,11 @@ typedef struct Syn68kNative040EA {
     Syn68kEA result;
     Syn68kNative040RAM ram;
 } Syn68kNative040EA;
+
+typedef struct {
+    Syn68kNative040EA ea;
+    uint32 pc, resume_address;
+    unsigned opcode, resuming;
+    Syn68kIntegerStep step;
+} Syn68kNative040MOVEM;
 #endif

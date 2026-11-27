@@ -82,6 +82,7 @@ typedef struct {
     unsigned frame_header;
     Syn68kNative040Restore restore;
     Syn68kNative040RTE rte;
+    Syn68kNative040MOVEM movem;
 } FPUInvocation;
 
 enum {
@@ -98,7 +99,8 @@ enum {
     FPU_EXIT_REGISTERS,
     FPU_EXIT_EXCEPTION,
     FPU_EXIT_FRAME,
-    NATIVE_EXIT_RTE
+    NATIVE_EXIT_RTE,
+    NATIVE_EXIT_MOVEM,
 };
 
 /* Unmanaged register arithmetic cannot call guest code. Managed invocations
@@ -3251,9 +3253,31 @@ static uint32 flat_native_run(uint32 pc, unsigned opcode)
     return step.vector ? trap_exception(step.vector, step.exception_pc, step.fault_address, step.format) : step.next;
 }
 
+int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, uint32 address,
+                            Syn68kIntegerStep* result)
+{
+    if ((pc & 1) || !movem040_opcode(opcode) || !memory || !memory->mmu || !result)
+        return 0;
+    void* code = mapped_code(pc, opcode);
+    if (!code)
+        return 0;
+    FPUInvocation packet = {.movem = {.ea = {.cpu = &cpu_state, .context = {.memory = memory}},
+                                       .pc = pc, .resume_address = address, .opcode = opcode, .resuming = 1}};
+    if (memory->native)
+        packet.movem.ea.ram = memory->native->ram;
+    ++syn68k_x64_executions;
+    execute_managed_packet(code, &packet);
+    if (packet.exit == FPU_EXIT_UNFETCHED)
+        return 0;
+    if (packet.exit != NATIVE_EXIT_MOVEM)
+        return -1;
+    *result = packet.movem.step;
+    return 1;
+}
+
 int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result)
 {
-    if ((pc & 1) || !mapped_mmu_opcode(opcode) || !memory || !memory->mmu || !result)
+    if ((pc & 1) || !mapped_mmu_opcode(opcode) || movem040_opcode(opcode) || !memory || !memory->mmu || !result)
         return 0;
     if ((opcode & 0xff00) == 0xf400 && (opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory->cache)
         return 0;
