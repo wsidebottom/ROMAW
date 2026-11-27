@@ -576,6 +576,14 @@ P6(PUBLIC pascal trap, void, CopyMask, /* IMIV-24 */
     if (EmptyRect(mask_rect))
         return;
 
+    /* A bitmap mask is raw coverage, independent of the current device's
+       black/white pixel values. CopyBits through a direct-color device can
+       invert those bits while constructing the temporary monochrome map. */
+    if (!(CW(mask_bogo_map->rowBytes) & ROWBYTES_FLAG_BITS)) {
+        copy_mask_1(src_bogo_map, mask_bogo_map, dst_bogo_map, src_rect, mask_rect, dst_rect);
+        return;
+    }
+
     row_bytes = (RECT_WIDTH(mask_rect) + 31) / 32 * 4;
     TEMP_ALLOC_ALLOCATE(mask_bits, temp_mask_bits, row_bytes * RECT_HEIGHT(mask_rect));
     PP_RAW(mask_bm.baseAddr) = RM(mask_bits);

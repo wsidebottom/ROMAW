@@ -47,6 +47,12 @@ subsidiary deallocation, replacement bit patterns and actual 8/32-bit painting.
 It reproduces Kid Pix's preview lifetime without requiring its application assets.
 `-Executable` selects an isolated staged build.
 
+`./system/tests/check-graphics.ps1 monochrome-mask` checks classic one-bit
+mask/paint icon transfers and CopyMask on indexed and direct-color GWorlds.
+It verifies transparent pixels retain their previous colors, opaque pixels
+use the requested colors, and reversed foreground/background colors preserve
+the mask's polarity. `-Executable` selects an isolated staged build.
+
 `./system/tests/check-graphics.ps1 window-exposure` checks bringing overlapping
 windows forward after application drawing changes a window's `visRgn`. It
 verifies that covered pixels are repainted and invalidated, uncovered pixels

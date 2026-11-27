@@ -75,6 +75,27 @@ function Invoke-Check-copybits-colorize {
     Write-Output 'Indexed CopyBits RGB colorization and source/port preservation passed on Windows.'
 }
 
+function Invoke-Check-monochrome-mask {
+    param(
+        [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
+        [string]$Executable = ''
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if (-not $Executable) { $Executable = Join-Path $root 'windows-binaries/bin/ROMAW.exe' }
+    $probe = (Join-Path $PSScriptRoot 'monochrome_mask_probe.py').Replace('\', '/')
+    $output = & $Gdb -batch -ex 'set pagination off' -ex 'set confirm off' `
+        -ex 'break romaw_finder_main' -ex 'run -sdlaudio test' `
+        -ex "source $probe" -ex 'quit' $Executable 2>&1
+    $status = $LASTEXITCODE
+    $log = Join-Path $root 'build/monochrome-mask-test.log'
+    $output | Set-Content -LiteralPath $log
+    if ($status -ne 0 -or -not ($output -match 'MONOCHROME_MASK_TRANSPARENCY_OK')) {
+        throw "Monochrome mask transparency failed; see $log"
+    }
+    Write-Output 'One-bit mask/paint and CopyMask coverage passed for 8/32-bit destinations and reversed port colors.'
+}
+
 function Invoke-Check-gworld-staged {
     param(
         [string]$Gdb = 'C:\msys64\mingw64\bin\gdb.exe',
@@ -169,4 +190,4 @@ quit 0
 }
 
 . (Join-Path $PSScriptRoot '../../tools/regression-support.ps1')
-Invoke-RegressionCheck -Names @('copybits-colorize', 'gworld-staged', 'pixpat-lifetime', 'quickdraw-host', 'window-exposure') -CheckArguments $args
+Invoke-RegressionCheck -Names @('copybits-colorize', 'monochrome-mask', 'gworld-staged', 'pixpat-lifetime', 'quickdraw-host', 'window-exposure') -CheckArguments $args
