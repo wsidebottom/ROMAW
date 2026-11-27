@@ -390,20 +390,23 @@ Handle ROMlib_mgetres(resmaphand map, resref* rr)
     return retval;
 }
 
-P4(PUBLIC pascal trap, void, dcmp_template, Ptr, source, Ptr, dest, Ptr, working, Size, len)
+P4(PUBLIC pascal trap, void, dcmp_template, Ptr, source, Ptr, dest, Ptr, working, Size, working_size)
 {
     uintptr_t base = (uintptr_t)ROMlib_offset;
     uintptr_t input = (uintptr_t)source - base;
     uintptr_t output = (uintptr_t)dest - base;
-    size_t decoded_size;
+    size_t decoded_size = (uint32)EM_D0;
+    size_t input_size;
     uint8_t* buffer;
 
-    /* This Pascal interface supplies the compressed length only. Measure the
-     stream before writing, bound both guest extents, and use separate storage
-     because callers may place compressed input inside their output buffer. */
-    if (len < 0 || input >= ROMlib_guest_memory_size || (size_t)len > ROMlib_guest_memory_size - input ||
-        output >= ROMlib_guest_memory_size ||
-        !ROMlib_decode_dcmp0((const uint8_t*)source, len, NULL, ROMlib_guest_memory_size - output, &decoded_size)) {
+    /* The fourth Pascal argument is workspace size, not compressed length.
+       D0 supplies the output size. Require a complete, exactly sized stream
+       within guest memory before committing any bytes to the destination. */
+    (void)working;
+    if (working_size < 0 || input >= ROMlib_guest_memory_size || output >= ROMlib_guest_memory_size ||
+        decoded_size > ROMlib_guest_memory_size - output ||
+        !ROMlib_decompress_dcmp0_prefix((const uint8_t*)source, ROMlib_guest_memory_size - input, NULL, decoded_size,
+                                        &input_size)) {
         ROMlib_setreserr(CantDecompress);
         return;
     }
@@ -412,7 +415,7 @@ P4(PUBLIC pascal trap, void, dcmp_template, Ptr, source, Ptr, dest, Ptr, working
         ROMlib_setreserr(memFullErr);
         return;
     }
-    if (ROMlib_decompress_dcmp0((const uint8_t*)source, len, buffer, decoded_size)) {
+    if (ROMlib_decompress_dcmp0((const uint8_t*)source, input_size, buffer, decoded_size)) {
         memcpy(dest, buffer, decoded_size);
         ROMlib_destroy_blocks(US_TO_SYN68K(dest), decoded_size, TRUE);
         ROMlib_setreserr(noErr);
@@ -544,16 +547,16 @@ PRIVATE boolean_t decompress_setup(INTEGER rn, int32* dlenp, int32* final_sizep,
             LoadResource(*dcmp_handlep);
             final_size = CL(info.uncompressedSize);
 
-            /*
-	   * The MacTech article says that the workingBufferFractionalSize
-	   * byte is a fixed point value, but it doesn't give enough
-	   * information to be sure how to interpret it.  I tried  using it
-	   * in a variety of ways and found I was not allocating enough bytes.
-	   * This use seems to work, but I'm sufficiently nervous to merit
-	   * possibly allocating more room than we needed.
-	   */
+            /* Classic type-8 decompressors size their workspace from the
+               uncompressed length and the header's fixed-point ratio. */
 
-            working_size = (*dlenp + (double)*dlenp * CB(info.workingBufferFractionalRatio) / (1 << 8));
+            uint64 workspace =
+                (uint64)final_size * ((unsigned)(uint8)CB(info.workingBufferFractionalRatio) + 1) / 256 + 4;
+            if (workspace > INT32_MAX) {
+                ROMlib_setreserr(CantDecompress);
+                return FALSE;
+            }
+            working_size = workspace;
 
 #define DONT_TRUST_FRACTIONAL_RATIO
 #if defined(DONT_TRUST_FRACTIONAL_RATIO)
@@ -692,8 +695,13 @@ PRIVATE Handle mgetres_helper(resmaphand map, resref* rr, int32 dlen, Handle ret
                     CToPascalCall(decode, CTOP_dcmp9_template, xxx, STARH(retval), dcmp_workspace);
                     CToPascalCall(finish, CTOP_dcmp9_state_template, dcmp_workspace);
                 }
-                else
-                    CToPascalCall(dcmp, CTOP_dcmp_template, xxx, STARH(retval), dcmp_workspace, dlen);
+                else {
+                    const uint32 saved_d0 = EM_D0;
+                    EM_D0 = uncompressed_size;
+                    CToPascalCall(dcmp, CTOP_dcmp_template, xxx, STARH(retval), dcmp_workspace,
+                                  GetPtrSize(dcmp_workspace));
+                    EM_D0 = saved_d0;
+                }
                 HUnlock(retval);
                 SetHandleSize(retval, uncompressed_size);
                 HSetState(dcmp_handle, state);

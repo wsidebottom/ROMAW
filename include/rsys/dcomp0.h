@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: Interface declarations and inline definitions; see the declarations below.
+  Functions: ROMlib_decode_dcmp0, ROMlib_decompress_dcmp0, ROMlib_decompress_dcmp0_prefix;
+             internal stream helpers (all static).
 
   Origin:    https://github.com/dgelessus/python-rsrcfork/blob/master/src/rsrcfork/compress/dcmp0.py
 
@@ -107,25 +108,23 @@ static int ROMlib_dcmp0_emit(uint8_t* dest, size_t size, size_t* pos, const uint
     return 1;
 }
 
-static int ROMlib_decode_dcmp0(const uint8_t* src, size_t len, uint8_t* dest, size_t size, size_t* decoded_size)
+static int ROMlib_decode_dcmp0_stream(const uint8_t* src, size_t len, uint8_t* dest, size_t size, size_t* decoded_size,
+                                      size_t* consumed_size)
 {
     struct literal {
         size_t offset, length;
-    }* literals;
+    }* literals = NULL;
 
-    size_t nlit = 0, out = 0, count, index;
+    size_t nlit = 0, capacity = 0, out = 0, count, index;
     ROMlib_dcmp0_reader r = {src, len, 0};
     int ok = 0;
-    if ((!src && len) || (!dest && size && !decoded_size) || len > SIZE_MAX / sizeof(*literals))
-        return 0;
-    literals = malloc((len ? len : 1) * sizeof(*literals));
-    if (!literals)
+    if ((!src && len) || (!dest && size && !decoded_size && !consumed_size) || len > SIZE_MAX / sizeof(*literals))
         return 0;
     while (r.pos < len) {
         unsigned tag = src[r.pos++];
         uint8_t bytes[8];
         if (tag == 0xff) {
-            ok = r.pos == len && (decoded_size || out == size || ((size & 1) && out == size + 1));
+            ok = (consumed_size || r.pos == len) && (decoded_size || out == size || ((size & 1) && out == size + 1));
             break;
         }
         if (tag < 0x20) {
@@ -139,6 +138,18 @@ static int ROMlib_decode_dcmp0(const uint8_t* src, size_t len, uint8_t* dest, si
             if (count > len - r.pos)
                 break;
             if (tag >= 0x10) {
+                if (nlit == capacity) {
+                    size_t next = capacity ? capacity * 2 : 16;
+                    if (next > len)
+                        next = len;
+                    if (next <= capacity || next > SIZE_MAX / sizeof(*literals))
+                        break;
+                    void* grown = realloc(literals, next * sizeof(*literals));
+                    if (!grown)
+                        break;
+                    literals = grown;
+                    capacity = next;
+                }
                 literals[nlit].offset = r.pos;
                 literals[nlit++].length = count;
             }
@@ -285,8 +296,24 @@ static int ROMlib_decode_dcmp0(const uint8_t* src, size_t len, uint8_t* dest, si
 done:
     if (ok && decoded_size)
         *decoded_size = out < size ? out : size;
+    if (ok && consumed_size)
+        *consumed_size = r.pos;
     free(literals);
     return ok;
+}
+
+static int ROMlib_decode_dcmp0(const uint8_t* src, size_t len, uint8_t* dest, size_t size, size_t* decoded_size)
+{
+    return ROMlib_decode_dcmp0_stream(src, len, dest, size, decoded_size, NULL);
+}
+
+/* The Classic dcmp ABI supplies an output size in D0, but no input length.
+   Accept the first complete stream within a known readable input extent. */
+static int ROMlib_decompress_dcmp0_prefix(const uint8_t* src, size_t limit, uint8_t* dest, size_t size,
+                                          size_t* consumed_size)
+{
+    size_t consumed;
+    return ROMlib_decode_dcmp0_stream(src, limit, dest, size, NULL, consumed_size ? consumed_size : &consumed);
 }
 
 static int ROMlib_decompress_dcmp0(const uint8_t* src, size_t len, uint8_t* dest, size_t size)

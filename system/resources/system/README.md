@@ -145,11 +145,21 @@ inventory, including this embedded hook and the early-boot DSAT procedures.
 See [the native resource inventory](../../../docs/native-code-resources.md).
 
 The added `dcmp 0` resource exposes the bounded native System 7 decoder through
-the classic four-argument Pascal interface. Its guest dispatch stub can be
-copied or relocated. Resource Manager decoding retains the declared output
-length (including odd-size padding) and prefers application-supplied
+the classic four-argument Pascal interface. D0 carries the uncompressed size;
+the fourth stack argument is workspace size. The decoder validates a terminated
+stream within guest memory and requires the declared output size before writing
+the destination. Its guest dispatch stub can be copied or relocated. Resource Manager
+decoding retains the declared output length (including odd-size padding) and prefers application-supplied
 decompressors. Run `bash system/tests/check-toolbox.sh dcomp0` for decoder checks and
-`system/tests/check-toolbox.ps1 dcmp0-resource` for staged guest calls, overlap and malformed input.
+`system/tests/check-toolbox.ps1 dcmp0-resource` for staged guest calls, independent
+workspace sizes, overlap, output guards and malformed input.
+
+Classic trap lookups report the unpatched Drag Manager dispatcher as unavailable;
+its native services currently support PPC callers. Finder 7.5.6 uses that lookup
+to select its non-Drag-Manager startup path. Installed classic patches remain
+visible, and native PPC lookups retain the callable bridge vector. The staged
+decoder probe checks the classic lookup and patch behavior; the PPC Finder
+services suite checks the PPC vector and drag lifecycle.
 
 The build verifies every instruction byte and generates the actual C dispatch
 assignments from these decoded stubs. Modified or new executable resources

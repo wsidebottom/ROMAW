@@ -2670,6 +2670,9 @@ PRIVATE long unimplementedtool(long d0)
     case 0xB5: /* ScriptUtil */
         retval = ROMlib_pretend_script ? 0 : 1;
         break;
+    case 0x3ED: /* DragManagerDispatch has native PPC services, but no 68K dispatcher. */
+        retval = tooltraptable[d0] == toolstuff[d0].orig;
+        break;
     default:
         retval = 0;
         break;

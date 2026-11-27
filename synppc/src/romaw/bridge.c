@@ -3249,6 +3249,11 @@ PRIVATE const ppc_native_import printing_imports[] = {
 
 PRIVATE uint32 ppc_get_tool_trap(uint16 trap_no)
 {
+    /* Native PPC Mixed Mode calls have a Drag Manager bridge. Classic 68K
+       callers must still detect its absent dispatcher, and installed guest
+       patches retain their actual vector on both architectures. */
+    if ((trap_no & 0x3ff) == 0x3ed && ppc_active_context && cfm_architecture(ppc_active_context) == kPowerPCArch)
+        return (uint32)(uintptr_t)tooltraptable[0x3ed];
     uint32 d0 = trap_no, result;
     ROMlib_GetTrapAddress_helper(&d0, 0xa746, &result);
     return result;
@@ -4020,8 +4025,8 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
     ppc_import binding;
     unsigned i;
     int carbon_classic_reference = 1;
-    if (ctx->requester && !strcmp(ctx->requester->name, "ControlsLib") &&
-        !strcmp(library, "AppearanceLib") && !strcmp(name, "GetRootControl")) {
+    if (ctx->requester && !strcmp(ctx->requester->name, "ControlsLib") && !strcmp(library, "AppearanceLib") &&
+        !strcmp(name, "GetRootControl")) {
         /* The saved auto-embedding worker expects root metadata allocated
            by its own Control Manager. */
         const int found = ppc_external_symbol(ctx, "ControlsLib", "__GetRootControl", symbol_class, address);

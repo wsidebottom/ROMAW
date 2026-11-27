@@ -19,15 +19,28 @@
 
 static void check(const uint8_t* src, size_t n, const uint8_t* expected, size_t size)
 {
-    uint8_t dest[2048];
+    uint8_t dest[2048], padded[2048];
     size_t i;
+    size_t consumed = 999;
     assert(size + 2 <= sizeof dest);
     memset(dest, 0xa5, sizeof dest);
     assert(ROMlib_decompress_dcmp0(src, n, dest + 1, size));
     assert(!memcmp(dest + 1, expected, size));
     assert(dest[0] == 0xa5 && dest[size + 1] == 0xa5);
-    for (i = 0; i < n; ++i)
+    assert(n + 2 <= sizeof padded);
+    memcpy(padded, src, n);
+    memset(padded + n, 0xab, 2);
+    memset(dest, 0xa5, sizeof dest);
+    assert(ROMlib_decompress_dcmp0_prefix(padded, n + 2, NULL, size, &consumed));
+    assert(consumed == n);
+    assert(ROMlib_decompress_dcmp0_prefix(padded, n + 2, dest + 1, size, &consumed));
+    assert(!memcmp(dest + 1, expected, size));
+    assert(dest[0] == 0xa5 && dest[size + 1] == 0xa5);
+    assert(!ROMlib_decompress_dcmp0(padded, n + 2, dest + 1, size));
+    for (i = 0; i < n; ++i) {
         assert(!ROMlib_decompress_dcmp0(src, i, dest + 1, size));
+        assert(!ROMlib_decompress_dcmp0_prefix(src, i, NULL, size, &consumed));
+    }
     if (size > 1)
         assert(!ROMlib_decompress_dcmp0(src, n, dest + 1, size - 2));
 }
@@ -74,6 +87,7 @@ int main(void)
           "AZ\xff",
           "A"); /* Odd-sized resource padding. */
     CHECK("\xff", "");
+    CHECK("\x10\0\x10\0\xff", "");
     CHECK("\xfe\0\x02\0\xff", "\x3f\x3c\0\x02\xa9\xf0");
     /* Two- and three-byte literal references. */
     pos = 0;
@@ -128,6 +142,8 @@ int main(void)
             }
             memset(output, 0xa5, sizeof output);
             ROMlib_decompress_dcmp0(data, n, output + 1, size);
+            assert(output[0] == 0xa5 && output[size + 1] == 0xa5);
+            ROMlib_decompress_dcmp0_prefix(data, n, output + 1, size, &measured);
             assert(output[0] == 0xa5 && output[size + 1] == 0xa5);
         }
     }
