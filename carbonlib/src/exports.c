@@ -332,6 +332,33 @@ static int carbon_TEGetPoint(ROMlib_carbon_ppc_frame* call)
     return carbon_point_result(call, 0x0ef4, 0xebe, 0x08);
 }
 
+static ControlHandle carbon_native_custom_control(uint32 address)
+{
+    ControlHandle control = address ? ROMlib_carbon_try_guest_memory(address, sizeof *control, 0) : NULL;
+    if (!ROMlib_live_control_aux(control))
+        return NULL;
+    const ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(control);
+    return extra && extra->custom_definition ? control : NULL;
+}
+
+static int carbon_GetControlReference(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = carbon_native_custom_control(call->words[0]);
+    if (!control)
+        return carbon_vector_GetControlReference(call);
+    call->words[0] = CL(HxX(control, contrlRfCon));
+    return 1;
+}
+
+static int carbon_SetControlReference(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = carbon_native_custom_control(call->words[0]);
+    if (!control)
+        return carbon_vector_SetControlReference(call);
+    HxX(control, contrlRfCon) = CL(call->words[1]);
+    return 1;
+}
+
 static int carbon_dispose_saved_control(ControlHandle control, void* opaque)
 {
     ROMlib_carbon_ppc_frame saved_call = *(const ROMlib_carbon_ppc_frame*)opaque;
@@ -3106,7 +3133,7 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"GetControlMinimum", carbon_vector_GetControlMinimum, ROMLIB_CARBON_PPC_FRAME, 0x5cf, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
-    {"GetControlReference", carbon_vector_GetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4c0, "InterfaceLib",
+    {"GetControlReference", carbon_GetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4c0, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"GetControlTitle", carbon_vector_GetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x505, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
@@ -3120,7 +3147,7 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"SetControlMinimum", carbon_vector_SetControlMinimum, ROMLIB_CARBON_PPC_FRAME, 0x788, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
-    {"SetControlReference", carbon_vector_SetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4f8, "InterfaceLib",
+    {"SetControlReference", carbon_SetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4f8, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"SetControlTitle", carbon_vector_SetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x4ee, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
