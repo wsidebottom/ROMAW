@@ -29,7 +29,7 @@
 static unsigned char ram[0x20000];
 static Syn68kMMU040 mmu;
 static unsigned cases, reads, writes, page_size, supervisor;
-static unsigned last_fc;
+static unsigned last_fc, table_reads;
 #ifdef GENERATE_X64_CODE
 static int run_native;
 #endif
@@ -46,6 +46,7 @@ static void put32(uint32_t address, uint32_t value)
 static int table_read(void* opaque, uint32_t address, uint32_t* value)
 {
     assert(opaque == &mmu);
+    ++table_reads;
     if (address > sizeof ram - 4)
         return 0;
     *value = (uint32_t)ram[address] << 24 | (uint32_t)ram[address + 1] << 16 | (uint32_t)ram[address + 2] << 8 |
@@ -401,15 +402,18 @@ static void direct_ram_transfers(void)
                     fixture(page8k, 1);
                     map_data(fc);
                     instruction(size, 0, writing, 2);
-                    cpu_state.sfc = cpu_state.dfc = fc;
+                    cpu_state.sfc = writing ? fc ^ 4 : fc;
+                    cpu_state.dfc = writing ? fc : fc ^ 4;
                     EM_A0 = 0x20000;
                     EM_D0 = 0x12345678;
                     uint32_t data = data_physical(EM_A0, fc);
                     put32(data, 0x89abcdef);
                     unsigned opcode = 0x0e10 | (size == 4 ? 0x80 : size == 2 ? 0x40 : 0);
                     Syn68kIntegerStep result;
+                    table_reads = 0;
                     assert(syn68k_x64_mapped_mmu(0x10000, opcode, &memory, &result) == 1);
                     assert(!result.vector && result.next == 0x10004 && !reads && !writes);
+                    assert(!table_reads);
                     if (writing)
                         for (unsigned byte = 0; byte < size; ++byte)
                             assert(ram[data + byte] == (0x12345678u >> ((size - byte - 1) * 8) & 255));
