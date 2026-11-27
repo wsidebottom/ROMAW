@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <tuple>
 
 namespace finder {
 namespace {
@@ -65,6 +66,14 @@ bool save(const std::vector<Image>& images, const fs::path& path)
     return ok;
 }
 
+bool save_mac_icons(std::vector<Image>& images, const fs::path& path)
+{
+    std::stable_sort(images.begin(), images.end(), [](const Image& left, const Image& right) {
+        return std::tie(left.width, left.height, left.depth) < std::tie(right.width, right.height, right.depth);
+    });
+    return save(images, path);
+}
+
 // ICO DIBs store bottom-up color rows and a separate, inverted 1-bit mask.
 void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, unsigned depth,
                 const unsigned char* pixels, const unsigned char* mask, const unsigned char* palette = nullptr,
@@ -87,7 +96,8 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
                 Bytes(sizeof dib + 4 * colors + (pixel_stride + mask_stride) * height)};
     memcpy(frame.payload.data(), &dib, sizeof dib);
     auto* output = frame.payload.data() + sizeof dib;
-    unsigned black = colors;
+    // Keep the Macintosh white-at-zero palette and pixel indices together.
+    // Only the separate opacity plane is inverted for the ICO AND mask.
     for (unsigned index = 0; index < colors; ++index) {
         unsigned char rgb[3]{};
         if (!palette)
@@ -97,8 +107,6 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
         output[index * 4] = rgb[2];
         output[index * 4 + 1] = rgb[1];
         output[index * 4 + 2] = rgb[0];
-        if (!(rgb[0] | rgb[1] | rgb[2]))
-            black = index;
     }
     output += 4 * colors;
     auto* and_bits = output + pixel_stride * height;
@@ -119,16 +127,9 @@ void add_bitmap(std::vector<Image>& images, unsigned width, unsigned height, uns
             }
             if (!opaque) {
                 and_bits[y * mask_stride + x / 8] |= 0x80 >> (x % 8);
-                // With AND set, Windows still XORs the destination with the
-                // color plane. Black leaves the destination unchanged.
+                // Clear the BGRA/BGR value under a fully transparent pixel.
                 if (depth >= 24)
                     memset(image_row + x * (depth / 8), 0, depth / 8);
-                else if (black < colors) {
-                    unsigned bit = x * depth;
-                    unsigned shift = 8 - depth - bit % 8;
-                    auto& packed = image_row[bit / 8];
-                    packed = (packed & ~((colors - 1) << shift)) | (black << shift);
-                }
             }
         }
     }
@@ -299,7 +300,7 @@ bool save_application_icon(const MacFile& application, const fs::path& path)
         finder_icon_resource_id(application.fork.data(), application.fork.size(), application.creator,
                                 application.type, &id))
         add_mac_resources(images, application, id);
-    return save(images, path);
+    return save_mac_icons(images, path);
 }
 
 bool save_application_icon(const FinderIcon& family, const fs::path& path)
@@ -312,7 +313,7 @@ bool save_application_icon(const FinderIcon& family, const fs::path& path)
                 return Bytes(planes[i], planes[i] + finder_icon_sizes[i]);
         return {};
     });
-    return save(images, path);
+    return save_mac_icons(images, path);
 }
 
 bool save_native_application_icon(const fs::path& application, const fs::path& path)

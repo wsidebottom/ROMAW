@@ -136,15 +136,18 @@ void check_shortcut_icons(const fs::path& root)
         assert(image >= 6 + 16 * word(4) && image + length <= ico.size());
         assert(dword(image) == 40 && dword(image + 4) == width && dword(image + 8) == 2 * width);
         assert(word(image + 14) == depth);
+        assert(formats.empty() || *formats.rbegin() < std::make_pair(width, depth));
         formats.emplace(width, depth);
+        if (width == 16 && depth == 1) {
+            assert(dword(image + 40) == 0xffffff && dword(image + 44) == 0);
+            assert(dword(image + 48) == 0x00008080);
+            assert(dword(image + 112) == 0x00007f7f);
+        }
         if (width == 32 && depth == 32)
             assert(ico.at(image + 43) == 0xa0);
         if (width == 16 && depth == 4) {
-            // Preserve the opaque index and write black under the AND bit.
-            unsigned packed = ico.at(image + 40 + 64);
-            assert((packed >> 4) == 8);
-            size_t clear_color = image + 40 + (packed & 15) * 4;
-            assert(dword(clear_color) == 0);
+            // Preserve the indexed color plane independently of the AND mask.
+            assert(ico.at(image + 40 + 64) == 0x80);
             assert((ico.at(image + 40 + 64 + 8 * 16) & 0xc0) == 0x40);
         }
     }
