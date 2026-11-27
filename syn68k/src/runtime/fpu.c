@@ -468,44 +468,7 @@ static void unsupported_operand(FPUContext* context, unsigned command, floatx80 
 
 static int unimplemented_operation(unsigned operation)
 {
-    switch (operation) {
-    case 1:
-    case 2:
-    case 3:
-    case 6:
-    case 8:
-    case 9:
-    case 10:
-    case 12:
-    case 13:
-    case 14:
-    case 15:
-    case 16:
-    case 17:
-    case 18:
-    case 20:
-    case 21:
-    case 22:
-    case 25:
-    case 28:
-    case 29:
-    case 30:
-    case 31:
-    case 0x21:
-    case 0x25:
-    case 0x26:
-    case 0x30:
-    case 0x31:
-    case 0x32:
-    case 0x33:
-    case 0x34:
-    case 0x35:
-    case 0x36:
-    case 0x37:
-        return 1;
-    default:
-        return 0;
-    }
+    return operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1);
 }
 
 static void destination_value(FPUContext* context, unsigned extension, unsigned ea_code, floatx80 value)

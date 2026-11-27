@@ -365,6 +365,48 @@ static void quiescent_frame_matrix(void)
                 }
 }
 
+static Syn68kMappedCPU short_frame(unsigned config, unsigned command, unsigned flags, unsigned frame)
+{
+    unsigned page = command & 1, post = !!(command & 2), old = !!(command & 4);
+    Syn68kMappedCPU cpu = setup(config, page, 2, frame, post, old, 0xa0);
+    ram[physical(frame + 16)] = command >> 8;
+    ram[physical(frame + 17)] = command & 255;
+    ram[physical(frame + 24)] = flags & 1;
+    ram[physical(frame + 25)] = (flags & 2) << 6;
+    return cpu;
+}
+
+static void short_frame_command_matrix(void)
+{
+    for (unsigned flags = 0; flags < 4; ++flags)
+        for (unsigned command = 0; command < 65536; ++command) {
+            unsigned boundary = 0x20000 + ((command & 1) ? 8192 : 4096);
+            unsigned frame = boundary - 4 * ((command >> 3) % 14);
+            Syn68kMappedCPU cpu = short_frame(0, command, flags, frame);
+            Syn68kMappedRun run;
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
+            Syn68kFPUState expected = cpu_state.fpu;
+            cpu = short_frame(command & 8 ? 3 : 1, command, flags, frame);
+            CPUState before = cpu_state;
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+            unsigned captures = complete_captures;
+            expect_direct_restore = !expected.frame_size;
+#endif
+            callback_mode = 2;
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+            expect_direct_restore = 0;
+            assert(complete_captures - captures == (expected.frame_size != 0));
+#endif
+            assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
+            assert(!memcmp(&cpu_state.fpu, &expected, sizeof expected));
+            expect_registers(&before, frame, 52, !!(command & 2));
+            expect_once(13);
+            ++cases;
+        }
+}
+
 #ifndef CAPTURE_TEST_ENTRY
 #define CAPTURE_TEST_ENTRY main
 #endif
@@ -380,6 +422,7 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     fault_matrix();
     guest_roundtrips();
     quiescent_frame_matrix();
+    short_frame_command_matrix();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);

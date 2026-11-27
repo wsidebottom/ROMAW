@@ -1410,26 +1410,69 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         unsigned short_capture = jump(out, 0x85);
         fpu_packet(out, 0xf6, 0, offsetof(FPUInvocation, frame_image) + 0x48, 0);
         byte(out, 6);
-        unsigned active = jump(out, 0x85);
+        unsigned full_stage = jump(out, 0x85);
         fpu_packet(out, 0x80, 7, offsetof(FPUInvocation, frame_image) + 8, 0);
         byte(out, 0xfe);
         unsigned conversion = jump(out, 0x84);
+        unsigned full_ready = fpu_jump(out);
+
+        patch(out, short_capture, out->size);
+        unsigned image = offsetof(FPUInvocation, frame_image);
+        fpu_packet(out, 0xf6, 0, image + 24, 0);
+        byte(out, 6);
+        unsigned short_stage = jump(out, 0x85);
+        fpu_packet(out, 0x0fb7, 0, image + 16, 0);
+        FP_BYTES(out, 0x66, 0xc1, 0xc0, 8, 0xa9); // Byte-swap command; TEST EAX, imm32.
+        word32(out, 0xa000);
+        unsigned other_class = jump(out, 0x85);
+        fpu_packet(out, 0xf6, 0, image + 24, 0);
+        byte(out, 1);
+        unsigned no_software_flag = jump(out, 0x84);
+        fpu_packet(out, 0xf6, 0, image + 25, 0);
+        byte(out, 0x80);
+        unsigned software_complete = jump(out, 0x85);
+        patch(out, no_software_flag, out->size);
+        FP_BYTES(out, 0x89, 0xc2, 0x81, 0xe2); // MOV EDX,EAX; AND EDX,imm32.
+        word32(out, 0xfc00);
+        FP_BYTES(out, 0x81, 0xfa);
+        word32(out, 0x5c00);
+        unsigned constant_instruction = jump(out, 0x84);
+        FP_BYTES(out, 0x83, 0xe0, 127, 0x83, 0xf8, 64);
+        unsigned high_operation = jump(out, 0x83);
+        FP_BYTES(out, 0x49, 0xb9);
+        word32(out, (uint32)SYN68K_FPU_FPSP_OPERATIONS);
+        word32(out, (uint32)(SYN68K_FPU_FPSP_OPERATIONS >> 32));
+        FP_BYTES(out, 0x49, 0x0f, 0xa3, 0xc1); // BT R9,RAX.
+        unsigned software_instruction = jump(out, 0x82);
+        patch(out, full_ready, out->size);
+        patch(out, other_class, out->size);
+        patch(out, software_complete, out->size);
+        patch(out, high_operation, out->size);
+        unsigned short_commit = 0;
         for (unsigned i = 0; i < 100; i += 4) {
-            fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, frame_image) + i, 0);
+            if (i == 52) {
+                fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_image_size), 0);
+                byte(out, 52);
+                short_commit = jump(out, 0x84);
+            }
+            fpu_packet(out, 0x8b, 0, image + i, 0);
             fpu_cpu(out, 0x89, 0, offsetof(CPUState, fpu.frame) + i);
         }
+        patch(out, short_commit, out->size);
         for (unsigned i = 0; i < sizeof cleared / sizeof *cleared; ++i) {
             fpu_cpu(out, 0xc7, 0, cleared[i]);
             word32(out, 0);
         }
         if (mode == 3) {
-            fpu_cpu(out, 0x83, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
-            byte(out, 100);
+            fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, frame_image_size), 0);
+            fpu_cpu(out, 0x01, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
         }
         unsigned quiescent_done = fpu_jump(out);
-        patch(out, short_capture, out->size);
-        patch(out, active, out->size);
+        patch(out, full_stage, out->size);
         patch(out, conversion, out->size);
+        patch(out, short_stage, out->size);
+        patch(out, constant_instruction, out->size);
+        patch(out, software_instruction, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         failures[count++] = fpu_jump(out);
         patch(out, null_frame, out->size);
