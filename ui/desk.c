@@ -20,6 +20,7 @@
 /* Forward declarations in DeskMgr.h (DO NOT DELETE THIS LINE) */
 
 #include "rsys/common.h"
+#include "rsys/mactcp.h"
 #include "rsys/desk.h"
 #include "rsys/systemwindow.h"
 #include "QuickDraw.h"
@@ -146,6 +147,7 @@ P1(PUBLIC pascal trap, BOOLEAN, SystemEdit, INTEGER, editcmd)
 
 P0(PUBLIC pascal trap, void, SystemTask)
 {
+    ROMlib_mactcp_poll();
     DCtlHandle dctlh;
     INTEGER i;
 

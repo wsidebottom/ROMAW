@@ -31,6 +31,7 @@
 /* Forward declarations in MemoryMgr.h (DO NOT DELETE THIS LINE) */
 
 #include "rsys/common.h"
+#include "rsys/mactcp.h"
 #include "rsys/cooperative.h"
 
 uint32 ROMlib_cooperative_stack_low, ROMlib_cooperative_stack_high;
@@ -349,6 +350,7 @@ static void canonicalize_memory_sizes(void)
 
 void InitApplZone(void)
 {
+    ROMlib_mactcp_reset();
     /* ApplZone must already be set before getting here */
 
     /* nisus writer demands that `ApplLimit - ZONE_BK_LIM (ApplZone)' be
@@ -376,6 +378,7 @@ void print_mem_full_message(void)
 
 void ROMlib_InitZones(offset_enum which)
 {
+    ROMlib_mactcp_reset();
     static boolean_t beenhere = FALSE;
     static Ptr stack_begin, stack_end;
     static unsigned long applzone_memory_segment_size;

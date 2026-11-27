@@ -17,7 +17,18 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    ;;
+  mactcp)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      mkdir -p "$root/build/mactcp"
+      x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -Wall -Wextra -Werror -I"$root/include" \
+        "$root/system/tests/mactcp_host_test.c" "$root/platform/os/cygwin32/win_mactcp.c" \
+        -o "$root/build/mactcp/host-test.exe" -liphlpapi -lws2_32
+      "$root/build/mactcp/host-test.exe"
+    )
     ;;
   syserr)
     (

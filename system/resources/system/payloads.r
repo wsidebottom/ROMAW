@@ -3605,3 +3605,8 @@ resource 'wctb' (0) {
 resource 'dcmp' (0, locked) {
     P_dcmp_template /* native definition dispatch; byte offset in the guest table */
 };
+
+/* MacTCP resolver: public C selector ABI, native definition slot 17. */
+data 'dnrp' (0, "DNR", sysheap, locked) {
+    $"2078 0058 2068 0044 4ED0"
+};

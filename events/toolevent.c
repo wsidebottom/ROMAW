@@ -25,6 +25,7 @@
 #include "rsys/romaw.h"
 #include "rsys/mixed_mode.h"
 #include "rsys/speech.h"
+#include "rsys/mactcp.h"
 #include "rsys/fileplay.h"
 #include "rsys/process.h"
 #include "QuickDraw.h"
@@ -521,6 +522,7 @@ P2(PUBLIC pascal trap, BOOLEAN, GetNextEvent, INTEGER, em, EventRecord*, evt)
     ROMlib_ppc_event_loop_entered();
 #endif
 
+    ROMlib_mactcp_poll();
     ROMlib_speech_poll();
     ROMlib_fileplay_poll();
     if (ROMlib_pending_image_dialog) {

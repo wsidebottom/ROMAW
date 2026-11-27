@@ -148,3 +148,11 @@ C:/msys64/mingw64/bin/gdb.exe -batch -x build/script-enable/probe.gdb windows-bi
 The probe checks argument consumption, guards, byte order, invalid input lists
 and per-process script restrictions. Exercise desktop interaction, disk/folder
 browsing and normal Windows window-close separately from these focused checks.
+
+
+`bash system/tests/check-runtime.sh mactcp` builds and executes the Windows
+networking backend suite. It checks actual local IPv4 discovery, numeric and
+localhost resolution, nested resolver lifetimes, real loopback ICMP payloads
+of four sizes, invalid lengths/options and cancellation. It does not require
+administrator privileges or alter the firewall. Test MacTCP Ping's Start/Stop,
+packet options and summary display separately through the staged application.

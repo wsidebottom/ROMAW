@@ -32,6 +32,7 @@ from native_code_resources import audit_native_resources, validate_alert_procedu
 
 # Decompiled 68000 tail calls. The handlers already have maintained C bodies.
 CODE_HANDLERS = {
+    (b"dnrp", 0): (17, "ROMlib_mactcp_resolver_definition()"),
     (b"CDEF", 0): (0, "P_cdef0"),
     (b"CDEF", 1): (1, "P_cdef16"),
     (b"WDEF", 0): (2, "P_wdef0"),

@@ -23,6 +23,7 @@ INTL1_LOCALIZATION_SLOT = 16
 EXECUTABLE_TYPES = frozenset(
     {
         b"CODE",
+        b"dnrp",
         b"INIT",
         b"DRVR",
         b"PACK",
