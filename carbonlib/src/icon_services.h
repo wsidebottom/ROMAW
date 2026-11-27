@@ -1289,27 +1289,68 @@ typedef enum { icon_draw, icon_region, icon_point, icon_rect } IconOperation;
 
 #include "icon_rgb_draw.h"
 
+static int icon_saved_rgb_operation(ROMlib_carbon_ppc_frame* call, IconOperation operation, const Rect* rect,
+                                    int16 alignment, void* argument, const char* name)
+{
+    ROMlib_carbon_reference saved;
+    if (icon_saved_reference("IconRefToIconFamily", &saved)) {
+        _Alignas(4) uint32 packed_handle = 0;
+        ROMlib_carbon_ppc_frame copy = *call;
+        copy.words[0] = call->words[4];
+        copy.words[1] = UINT32_MAX;
+        copy.words[2] = US_TO_SYN68K(&packed_handle);
+        if (!ROMlib_carbon_invoke_frame(saved.function, &copy))
+            return 0;
+        if (packed_handle) {
+            const uint32 address = CL(packed_handle);
+            Handle family = ROMlib_carbon_try_guest_memory(address, sizeof *family, 0);
+            if (family) {
+                HLock(family);
+                uint32 size;
+                const Byte* bytes = icon_handle_data(address, &size);
+                IconRGBImage image;
+                const OSErr status = icon_family_valid(bytes, size)
+                                         ? icon_rgb_find_image((IconFamilyView){bytes, size}, rect, &image)
+                                         : paramErr;
+                if (!copy.words[0] && !status) {
+                    const int32 result = icon_rgb_operation(operation, &image, *rect, alignment, argument);
+                    DisposHandle(family);
+                    return icon_status(call, result);
+                }
+                DisposHandle(family);
+            }
+        }
+    }
+    return icon_fallback(call, name, operation == icon_point || operation == icon_rect ? FALSE : invalid_icon_ref);
+}
+
 static int icon_ref_operation(ROMlib_carbon_ppc_frame* call, IconOperation operation, const char* name)
 {
     const boolean_t drawing = operation == icon_draw;
     const boolean_t hit = operation == icon_point || operation == icon_rect;
     IconReference* icon = icon_find(call->words[4]);
-    if (!icon)
-        return icon_fallback(call, name, hit ? FALSE : invalid_icon_ref);
     uint32 address = call->words[drawing ? 0 : 1];
     const Rect* bounds = address ? ROMlib_carbon_try_guest_memory(address, sizeof *bounds, 0) : NULL;
     uint32 input = call->words[0];
     unsigned input_size = operation == icon_point ? sizeof(Point) : operation == icon_rect ? sizeof(Rect) : 4;
     void* argument = !drawing && input ? ROMlib_carbon_try_guest_memory(input, input_size, 0) : NULL;
+    const boolean_t rgb = !drawing || (icon_deep_icons_enabled && (int16)call->words[2] == ttNone);
+    const int16 alignment = call->words[drawing ? 1 : 2];
+    if (!icon) {
+        if (rgb && bounds && (drawing || argument)) {
+            const Rect rect = *bounds;
+            return icon_saved_rgb_operation(call, operation, &rect, alignment, argument, name);
+        }
+        return icon_fallback(call, name, hit ? FALSE : invalid_icon_ref);
+    }
     if (!bounds || (!drawing && !argument))
         return icon_status(call, hit ? FALSE : paramErr);
     const Rect rect = *bounds;
-    const int16 alignment = call->words[drawing ? 1 : 2];
     IconFamilyView view;
     OSErr load_status = icon_family_view(icon, &view);
     if (load_status)
         return icon_status(call, hit ? FALSE : load_status);
-    if (!drawing || (icon_deep_icons_enabled && (int16)call->words[2] == ttNone)) {
+    if (rgb) {
         IconRGBImage image;
         OSErr status = icon_rgb_find_image(view, &rect, &image);
         if (!status)

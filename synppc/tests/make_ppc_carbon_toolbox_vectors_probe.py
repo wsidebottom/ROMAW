@@ -10380,6 +10380,8 @@ def icon_rgb_draw_operations(probe):
     probe.call("SetGWorld", [probe.slot(old_world), probe.slot(old_device)])
     probe.call("UnlockPixels", [probe.slot(pixmap)])
     probe.call("DisposeGWorld", [probe.slot(world)])
+    probe.call("AcquireIconRef", [probe.slot(icon)])
+    p.expect(0, "keep a true-color reference across unregister")
     probe.call("UnregisterIconRef", [*key])
     p.expect(0, "remove the registered true-color test icon")
     probe.call("ReleaseIconRef", [probe.slot(icon)])
