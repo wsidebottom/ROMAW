@@ -395,7 +395,8 @@ P1(PUBLIC pascal trap, void, CloseDialog, DialogPtr, dp) /* IMI-413 */
             BUMPIP(itp);
         }
     }
-    CloseWindow((WindowPtr)dp);
+    /* The classic dialog and its window share the native Window Manager record. */
+    C_CloseWindow((WindowPtr)dp);
 }
 
 P1(PUBLIC pascal trap, void, DisposDialog, DialogPtr, dp) /* IMI-415 */

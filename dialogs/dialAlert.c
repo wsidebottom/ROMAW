@@ -241,7 +241,8 @@ OSErr ROMlib_standard_alert(INTEGER type, StringPtr message, StringPtr explanati
     ShowWindow((WindowPtr)dialog);
     SetPort((GrafPtr)dialog);
     while (!*hit) {
-        GetNextEvent(everyEvent, event);
+        /* Internal alerts handle their own keys rather than dispatching application menu shortcuts. */
+        C_GetNextEvent(everyEvent, event);
         if (filter && CToPascalCall(filter, CTOP_ROMlib_myfilt, dialog, event, hit)) {
             int item = CW(*hit);
             if (item >= 1 && item <= 4 && present[item - 1])
