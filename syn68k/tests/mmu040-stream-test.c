@@ -1300,7 +1300,7 @@ static void stack_store_guest_cleanup(const Syn68kIntegerStep* step, const M68kR
 static unsigned call_store_setup(unsigned page8k, unsigned form, unsigned operand, unsigned odd, unsigned near,
                                  unsigned sr, unsigned* target)
 {
-    static const unsigned lengths[] = {2, 4, 6, 2, 2, 4, 4, 4, 4, 6, 4, 4, 8};
+    static const unsigned lengths[] = {2, 4, 6, 2, 2, 4, 4, 4, 4, 6, 4, 4, 8, 6, 10, 8};
     fixture(page8k, 0);
     syn68k_fpu_reset();
     put32(pte(0x28000), 0x10001);
@@ -1328,7 +1328,8 @@ static unsigned call_store_setup(unsigned page8k, unsigned form, unsigned operan
                       : form == 8  ? 0x4eb8
                       : form == 9  ? 0x4eb9
                       : form == 10 ? 0x4eba
-                      : form == 11 ? 0x4ebb
+                      : form == 11 || form == 14 ? 0x4ebb
+                      : form == 15 ? 0x4eb7
                                    : 0x4eb0;
     code_word(0x10000, opcode);
     EM_A0 = *target;
@@ -1361,6 +1362,23 @@ static unsigned call_store_setup(unsigned page8k, unsigned form, unsigned operan
         code_word(0x10004, 0);
         code_word(0x10006, 0x1234);
     }
+    else if (form == 13) {
+        EM_A0 = 0x24080;
+        EM_D1 = 0x10;
+        put32(0x1c080, *target - 0x22);
+        code_word(0x10002, 0x1916); // Postindexed, word outer displacement.
+        code_word(0x10004, 0x12);
+    }
+    else if (form == 14 || form == 15) {
+        unsigned base = form == 14 ? 0x10002 : EM_A7;
+        unsigned offset = 0x24080 - base;
+        put32(0x1c080, *target - (form == 14 ? 0x22 : 0));
+        code_word(0x10002, form == 14 ? 0x0172 : 0x0171);
+        code_word(0x10004, offset >> 16);
+        code_word(0x10006, offset);
+        if (form == 14)
+            code_word(0x10008, 0x22);
+    }
     watched_tail_physical = 0x1c080;
     watched_tail_reads = watched_tail_successes = 0;
     return next;
@@ -1370,7 +1388,7 @@ static void guest_call_writebacks(void)
 {
     unsigned first = cases;
     for (unsigned page8k = 0; page8k < 2; ++page8k)
-        for (unsigned form = 0; form < 13; ++form)
+        for (unsigned form = 0; form < 16; ++form)
             for (unsigned odd = 0; odd < 2; ++odd)
                 for (unsigned trace = 0; trace < 4; ++trace)
                     for (unsigned fault = 1; fault < 4; ++fault)
@@ -1412,7 +1430,7 @@ static void guest_call_writebacks(void)
                                     assert(run.step.access.request == operand && run.step.access.size == 4 &&
                                            run.step.access.logical == operand + completed &&
                                            run.step.access.completed == completed && run.step.access.value == next &&
-                                           watched_tail_reads == (form == 7));
+                                           watched_tail_reads == (form == 7 || form >= 13));
                                     for (unsigned i = 0; i < 4; ++i)
                                         assert(ram[scalar_store_physical(operand + i)] ==
                                                (i < completed ? (next >> (24 - i * 8)) & 255 : 0x91 + i));
@@ -1430,7 +1448,7 @@ static void guest_call_writebacks(void)
                                                !memcmp(expected, cpu_state.regs, sizeof expected) && status() == sr &&
                                                scalar_store_value(operand, 4) == next);
                                     }
-                                    assert(watched_tail_reads == (form == 7 ? 1u + odd : 0u) &&
+                                    assert(watched_tail_reads == (form == 7 || form >= 13 ? 1u + odd : 0u) &&
                                            !watched_tail_successes);
                                     ++cases;
                                 }
@@ -1438,6 +1456,57 @@ static void guest_call_writebacks(void)
     printf("%u call writeback/abort/guest-RTE/address-priority cases passed\n", cases - first);
 }
 
+static void guest_call_pointer_faults(void)
+{
+    unsigned first = cases;
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned form = 13; form < 16; ++form)
+            for (unsigned physical_fault = 0; physical_fault < 2; ++physical_fault) {
+                unsigned operand = 0x28100, target;
+                unsigned next = call_store_setup(page8k, form, operand, 0, 0, 0, &target);
+                M68kReg expected[16];
+                memcpy(expected, cpu_state.regs, sizeof expected);
+                unsigned descriptor = pte(0x24080);
+                if (physical_fault)
+                    fail_physical = watched_tail_physical;
+                else
+                    put32(descriptor, 0);
+                Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                Syn68kMappedRun run;
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                assert(run.reason == SYN68K_MAPPED_EXCEPTION && !run.completed && cpu.pc == 0x10000 &&
+                       run.step.vector == 2 && run.step.format == 7 && run.step.restartable_read && !run.step.store_state);
+                assert(run.step.access.request == 0x24080 && run.step.access.logical == 0x24080 &&
+                       run.step.access.size == 4 && run.step.access.fc == 1 && !run.step.access.writing &&
+                       !run.step.access.completed && run.step.access.bus_error == physical_fault);
+                assert(!memcmp(expected, cpu_state.regs, sizeof expected) && !writes &&
+                       watched_tail_reads == physical_fault && scalar_store_value(operand, 4) == 0x91929394);
+
+                fail_physical = UINT32_MAX;
+                put32(descriptor, 0x1c001);
+                supervisor = 1;
+                put32(pte(0x10000), 0xc001);
+                put32(pte(0x20000), 0x18001);
+                cpu_state.vbr = 0x20000;
+                put32(physical(0x20008), 0x10040);
+                code_word(0x10040, 0xf518); // PFLUSHA, then return to the faulting JSR.
+                code_word(0x10042, 0x4e73);
+                Syn68kMappedDelivery delivery;
+                assert(syn68k_mapped_exception_enter(&cpu, &run.step, 0, &delivery));
+                assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && cpu.pc == 0x10040);
+                assert(syn68k_mapped_cpu_run(&cpu, 2, &run));
+                assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 2 && cpu.pc == 0x10000 &&
+                       !memcmp(expected, cpu_state.regs, sizeof expected) && !status());
+                supervisor = 0;
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                expected[15].ul.n -= 4;
+                assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1 && cpu.pc == target &&
+                       !memcmp(expected, cpu_state.regs, sizeof expected));
+                assert(watched_tail_reads == physical_fault + 1 && scalar_store_value(operand, 4) == next);
+                ++cases;
+            }
+    printf("%u indexed call pointer faults and guest RTE retry cases passed\n", cases - first);
+}
 static void call_replay_guards(void)
 {
     static const unsigned mutations[] = {0, 1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
@@ -7790,6 +7859,7 @@ int main(int argc, char** argv)
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
+            guest_call_pointer_faults();
             call_replay_guards();
             guest_fpu_physical_writebacks();
             guest_fpu_physical_replays();
@@ -7848,6 +7918,7 @@ int main(int argc, char** argv)
             guest_fpu_branch_prefetches();
             guest_boundary_priority();
             guest_call_writebacks();
+            guest_call_pointer_faults();
             call_replay_guards();
             guest_partial_read_restarts();
             guest_movem_prefix_restarts();
