@@ -299,6 +299,7 @@ include_sources = include/rsys/component.h \
                   include/rsys/desperate.h \
                   include/rsys/device.h \
                   include/rsys/mactcp.h \
+                  include/rsys/host_afp.h \
                   include/rsys/host_mactcp.h \
                   include/rsys/host_mactcp_stream.h \
                   include/rsys/host_mactcp_dns.h \
@@ -567,6 +568,7 @@ os_sources = platform/os/cygwin32/cygwin32.c \
              platform/os/cygwin32/win_disk.c          \
              platform/os/cygwin32/win_stat.c          \
              platform/os/cygwin32/win_memory.c        \
+             platform/os/cygwin32/win_afp.c \
              platform/os/cygwin32/win_mactcp_dns.c \
              platform/os/cygwin32/win_mactcp_stream.c \
              platform/os/cygwin32/win_mactcp.c        \
