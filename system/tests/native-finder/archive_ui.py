@@ -349,7 +349,7 @@ def main():
     )
     image = base / "Archive Test.hfv"
     shutil.copyfile(ROOT / "build/image-desktop-fixture/DesktopMetadata.hfv", image)
-    source = (ROOT / "finder/main.cpp").read_text()
+    source = (ROOT / "finder/main.cpp").read_text(encoding="utf-8")
     enum = source.split("enum Command {", 1)[1].split("};", 1)[0]
     commands, number = {}, 0
     for entry in enum.split(","):
