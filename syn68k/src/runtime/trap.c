@@ -281,24 +281,21 @@ static uint32 call_store_exception(Syn68kIntegerStep* step, const Syn68kEAContex
 
 /* A failed frame read has not popped the current frame. Resume at the live
    selected SP; earlier throwaway frames and callback effects stay committed. */
-static uint32 rte_read_exception(uint32 pc, Syn68kEAContext* context, Syn68kIntegerStep* step, int restoring)
+typedef Syn68kEAContext RTEBus;
+static int rte_frame_read(RTEBus* bus, CPUState* cpu, uint32 address, unsigned size, uint32* result)
 {
-    uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
-    if (step && context->memory && restoring && context->access.bus_error &&
-        context->access.translation.fault == MMU040_OK) {
-        step->rte_internal_fault = 1;
-        return next;
-    }
-    uint16 ssw;
-    if (step && context->memory && context->access.fc == (cpu_state.sr & SR_SUPERVISOR_BIT ? 5u : 1u) &&
-        !context->access.writing && !context->access.rmw) {
-        if (syn68k_mmu040_access_ssw(&context->access, &ssw))
-            step->restartable_read = 1;
-        else if (syn68k_mmu040_cache_push_ssw(&context->access, &ssw))
-            step->cache_restart = 2; /* Keep the live SP after completed throwaway frames. */
-    }
-    return next;
+    (void)cpu;
+    *result = syn68k_ea_read_memory(bus, address, size);
+    return !bus->error;
 }
+
+static void rte_frame_load_status(CPUState* cpu, uint16 sr)
+{
+    (void)cpu;
+    load_status_register(sr);
+}
+
+#include "rte-frame.h"
 
 static uint32 move16(uint32 pc, unsigned opcode, Syn68kEAContext* context, Syn68kIntegerStep* step)
 {
@@ -954,67 +951,20 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
                                                   : context->pc;
     }
     if (opcode == 0x4e73) {
-        if (!(cpu_state.sr & SR_SUPERVISOR_BIT))
-            return integer_exception(step, context, 8, pc, 0, 0);
-        for (;;) {
-            context->pc = pc + 2;
-            uint16 saved_sr = syn68k_ea_read_memory(context, EM_A7, 2);
-            uint32 saved_pc = syn68k_ea_read_memory(context, EM_A7 + 2, 4);
-            unsigned format = syn68k_ea_read_memory(context, EM_A7 + 6, 2) >> 12;
-            if (context->error)
-                return rte_read_exception(pc, context, step, 0);
-            unsigned length = format <= 1 ? 8 : format <= 3 ? 12 : format == 7 ? 60 : 0;
-            if (!length)
-                return integer_exception(step, context, 14, pc, 0, 0);
-            uint32 frame_ea = 0;
-            unsigned continuation = 0;
-            /* Format-7 validation reads SSW. Only a continuation restores
-               the internal EA, and the rest of the frame belongs to the handler. */
-            if (format == 7) {
-                continuation = syn68k_ea_read_memory(context, EM_A7 + 12, 2);
-                if (context->error)
-                    return rte_read_exception(pc, context, step, 0);
-                unsigned pending = continuation & 0xf000;
-                if (pending == 0x1000 || pending == 0x2000 || pending == 0x4000 || pending == 0x8000) {
-                    frame_ea = syn68k_ea_read_memory(context, EM_A7 + 8, 4);
-                    if (context->error)
-                        return rte_read_exception(pc, context, step, 1);
-                }
-            }
-            else if (length == 12) {
-                (void)syn68k_ea_read_memory(context, EM_A7 + 8, 4);
-                if (context->error)
-                    return rte_read_exception(pc, context, step, 0);
-            }
-            unsigned fpu_vector = 0;
-            if (context->memory && format == 7) {
-                if ((continuation & 0xf000) == 0x4000)
-                    fpu_vector = 11;
-                else if ((continuation & 0xf000) == 0x8000) {
-                    fpu_vector = cpu_state.fpu.pending_vector;
-                    if (fpu_vector < 48 || fpu_vector > 55)
-                        return integer_exception(step, context, 14, pc, 0, 0);
-                }
-            }
-            EM_A7 += length;
-            load_status_register(saved_sr);
-            /* MC68040 UM 8.4.6.7: CP/CU immediately dispatch the pending
-               exception using the restored EA, without executing saved PC.
-               Preserve stacked trace bits for the FPU exception handler. */
-            if (fpu_vector)
-                return integer_exception(step, context, fpu_vector, saved_pc, frame_ea, fpu_vector == 11 ? 2 : 3);
-            /* A completed mapped store with CT pending becomes a normal trace
-             exception after handler cleanup, before the next instruction.
-             External entry recreates the format-2 frame at old SP + $30. */
-            if (context->memory && format == 7 && (continuation & 0xF000) == 0x2000)
-                return integer_exception(step, context, 9, saved_pc, frame_ea, 2);
-            if (context->memory && step && format == 7 && (continuation & 0xF000) == 0x1000) {
-                step->movem_state = 2;
-                step->movem_ea = frame_ea;
-            }
-            if (format != 1)
-                return saved_pc;
+        Syn68kRTEFrameResult frame = rte_frame_execute(&cpu_state, context, pc, context->memory != NULL);
+        if (frame.backing_fault) {
+            uint32 next = integer_exception(step, context, 2, pc, context->fault_address, 7);
+            if (step && context->memory)
+                rte_mark_read_fault(&cpu_state, step, frame.restoring);
+            return next;
         }
+        if (frame.vector)
+            return integer_exception(step, context, frame.vector, frame.pc, frame.ea, frame.format);
+        if (step && frame.movem) {
+            step->movem_state = 2;
+            step->movem_ea = frame.ea;
+        }
+        return frame.pc;
     }
     if (opcode == 0x4e72) {
         if (!(cpu_state.sr & SR_SUPERVISOR_BIT))

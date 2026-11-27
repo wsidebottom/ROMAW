@@ -74,6 +74,7 @@ ROOTS = (
     "bus_move16",
     "cache_snoop",
     "bus_snoop",
+    "rte",
 )
 
 

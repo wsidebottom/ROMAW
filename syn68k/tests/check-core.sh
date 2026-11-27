@@ -631,7 +631,7 @@ EOF
       "$fixture/unaligned-lock-test.exe" "$(wslpath -m "$fixture/unaligned-lock")"
       "$fixture/unaligned-lock-test.exe" "$(wslpath -m "$fixture/unaligned-lock")"
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
-        -Isyn68k/src/runtime/include syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_integer_step_decoded \
         -o "$fixture/rte-user-test.exe"
       "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 0
       "$fixture/rte-user-test.exe" "$(wslpath -m "$fixture/rte-user")" 1
@@ -1187,7 +1187,7 @@ EOF
       "$output/unaligned-lock-test.exe"
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
         -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
-        syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        syn68k/tests/mapped-rte-user-test.c syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_integer_step_decoded \
         -o "$output/rte-user-test.exe"
       "$output/rte-user-test.exe"
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \

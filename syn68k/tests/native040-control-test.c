@@ -102,12 +102,70 @@ static void compare(unsigned selector, unsigned reg, unsigned writing, unsigned 
     ++cases;
 }
 
+typedef struct {
+    unsigned char frame[14];
+    uint32 addresses[5];
+    unsigned calls, failed_offset;
+} RTEMemory;
+
+static int rte_stack_read(void* opaque, uint32 address, unsigned char* bytes, unsigned size, uint32 attributes,
+                          unsigned fc)
+{
+    (void)attributes;
+    RTEMemory* stack = opaque;
+    unsigned offset = address - 0x1000;
+    assert(fc == 5 && stack->calls < 5 && offset + size <= sizeof stack->frame);
+    stack->addresses[stack->calls++] = address;
+    if (offset == stack->failed_offset)
+        return 0;
+    memcpy(bytes, stack->frame + offset, size);
+    return 1;
+}
+
+static void rte_checks(void)
+{
+    Syn68kNative040Entry entry = syn68k_native040_entry(NATIVE040_RTE);
+    assert(entry);
+    for (unsigned continuation = 0; continuation < 2; ++continuation)
+        for (unsigned fault = 0; fault < 3; ++fault) {
+            RTEMemory stack = {.frame = {0x20, 0x15, 0, 0, 0x30, 0, 0x70, 8, 0x12, 0x34, 0x56, 0x78},
+                               .failed_offset = fault == 1 ? 8 : fault == 2 ? 12 : 99};
+            stack.frame[12] = continuation ? 0x10 : 0;
+            Syn68kMMU040 mmu = {0};
+            Syn68kMMU040Memory memory = {.mmu = &mmu, .opaque = &stack, .read = rte_stack_read};
+            CPUState cpu = {.sr = 0x2000};
+            cpu.regs[15].ul.n = 0x1000;
+            Syn68kNative040MMU bus = {.memory = &memory};
+            Syn68kNative040RTE packet = {.cpu = &cpu, .memory = &bus, .pc = 0x2000};
+            entry(&packet);
+            assert(stack.calls == (continuation && fault != 2 ? 5u : 4u));
+            assert(stack.addresses[0] == 0x1000 && stack.addresses[1] == 0x1002 &&
+                   stack.addresses[2] == 0x1006 && stack.addresses[3] == 0x100c);
+            if (stack.calls == 5)
+                assert(stack.addresses[4] == 0x1008);
+            if (fault == 2 || (fault == 1 && continuation)) {
+                assert(packet.step.vector == 2 && packet.step.format == 7 && packet.step.next == 0x2000 &&
+                       packet.step.fault_address == 0x1000 + stack.failed_offset && packet.step.access.bus_error);
+                assert(packet.step.rte_internal_fault == (fault == 1) &&
+                       packet.step.restartable_read == (fault == 2) && cpu.regs[15].ul.n == 0x1000);
+            }
+            else {
+                assert(!packet.step.vector && packet.step.next == 0x3000 && cpu.regs[15].ul.n == 0x103c &&
+                       cpu.ccc == 1 && !cpu.ccnz && cpu.ccx == 16);
+                assert(packet.step.movem_state == continuation * 2);
+                if (continuation)
+                    assert(packet.step.movem_ea == 0x12345678);
+            }
+        }
+    puts("6 emitted RTE frame-order, continuation and double-fault cases passed");
+}
 int main(void)
 {
     entries[0] = syn68k_native040_entry(NATIVE040_MOVEC_READ);
     entries[1] = syn68k_native040_entry(NATIVE040_MOVEC_WRITE);
     assert(entries[0] && entries[1]);
     stop_checks();
+    rte_checks();
     for (unsigned selector = 0; selector < 4096; ++selector)
         for (unsigned writing = 0; writing < 2; ++writing)
             compare(selector, 0, writing, 0x2000, 1, 0x12345678);

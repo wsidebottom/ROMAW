@@ -15,6 +15,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "native040-control.h"
 #include "control040.h"
+#include "native040-memory.h"
 
 static inline void transfer(Syn68kNative040Control* frame, int writing)
 {
@@ -40,15 +41,9 @@ __attribute__((used, noinline)) void native040_movec_write(Syn68kNative040Contro
     transfer(frame, 1);
 }
 
-/* Privilege and the immediate fetch precede this closed body. The mapped
-   dispatcher owns trace, the stopped latch and interrupt delivery. */
-__attribute__((used, noinline)) void native040_stop(Syn68kNative040Control* frame)
+static void rte_frame_load_status(CPUState* cpu, uint16 sr)
 {
-    frame->ok = 0;
-    CPUState* cpu = frame->cpu;
-    if (!cpu || frame->command > 65535)
-        return;
-    unsigned old_sr = cpu->sr, value = frame->command & 0xf71f;
+    unsigned old_sr = cpu->sr, value = sr & 0xf71f;
     cpu->sr = value & ~31;
     cpu->ccc = value & 1;
     cpu->ccv = value & 2;
@@ -66,5 +61,55 @@ __attribute__((used, noinline)) void native040_stop(Syn68kNative040Control* fram
             cpu->interrupt_status_changed = INTERRUPT_STATUS_CHANGED;
             break;
         }
+}
+
+/* Privilege and the immediate fetch precede this closed body. The mapped
+   dispatcher owns trace, the stopped latch and interrupt delivery. */
+__attribute__((used, noinline)) void native040_stop(Syn68kNative040Control* frame)
+{
+    frame->ok = 0;
+    CPUState* cpu = frame->cpu;
+    if (!cpu || frame->command > 65535)
+        return;
+    rte_frame_load_status(cpu, frame->command);
     frame->ok = 1;
+}
+
+typedef Syn68kNative040MMU RTEBus;
+static int rte_frame_read(RTEBus* bus, CPUState* cpu, uint32 address, unsigned size, uint32* value)
+{
+    bus->address = address;
+    bus->fc = cpu->sr & SR_SUPERVISOR_BIT ? 5 : 1;
+    bus->size = size;
+    native040_read(bus);
+    *value = bus->value;
+    return !bus->access.bus_error && bus->access.translation.fault == MMU040_OK;
+}
+
+#include "rte-frame.h"
+
+__attribute__((used, noinline)) void native040_rte(Syn68kNative040RTE* packet)
+{
+    Syn68kNative040MMU* bus = packet->memory;
+    Syn68kRTEFrameResult frame = rte_frame_execute(packet->cpu, bus, packet->pc, 1);
+    Syn68kIntegerStep* step = &packet->step;
+    step->next = frame.pc;
+    if (frame.backing_fault) {
+        step->vector = 2;
+        step->format = 7;
+        step->exception_pc = packet->pc;
+        step->fault_address = bus->access.logical;
+        step->access = bus->access;
+        rte_mark_read_fault(packet->cpu, step, frame.restoring);
+    }
+    else if (frame.vector) {
+        step->vector = frame.vector;
+        step->format = frame.format;
+        step->exception_pc = frame.pc;
+        step->fault_address = frame.ea;
+    }
+    else if (frame.movem) {
+        step->movem_state = 2;
+        step->movem_ea = frame.ea;
+    }
 }

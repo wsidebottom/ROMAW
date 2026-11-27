@@ -5,6 +5,14 @@
 #include "mmu040-stream-test.c"
 #undef main
 
+static unsigned require_native_rte;
+int __real_syn68k_integer_step_decoded(uint32, unsigned, Syn68kMMU040Memory*, Syn68kIntegerStep*);
+
+int __wrap_syn68k_integer_step_decoded(uint32 pc, unsigned op, Syn68kMMU040Memory* bus, Syn68kIntegerStep* step)
+{
+    assert(op != 0x4e73 || !require_native_rte);
+    return __real_syn68k_integer_step_decoded(pc, op, bus, step);
+}
 static unsigned header_faults(void)
 {
     const struct {
@@ -62,6 +70,7 @@ static unsigned header_faults(void)
                             if (config & 2)
                                 assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
                             Syn68kFPUState fpu = cpu_state.fpu;
+                            require_native_rte = config & 1;
                             Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = config & 1};
                             Syn68kMappedRun run;
                             Syn68kMappedDelivery delivery;
@@ -202,6 +211,7 @@ static unsigned cache_faults(void)
                             fail_write_physical = address;
                         }
                     }
+                    require_native_rte = config & 1;
                     Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = config & 1};
                     Syn68kMappedRun run;
                     Syn68kMappedDelivery d;

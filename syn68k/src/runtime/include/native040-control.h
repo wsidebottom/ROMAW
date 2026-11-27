@@ -16,7 +16,8 @@
 #ifndef SYN68K_NATIVE040_CONTROL_H
 #define SYN68K_NATIVE040_CONTROL_H
 #include "syn68k_private.h"
-#include "mmu040-memory.h"
+#include "integer.h"
+#include "native040.h"
 
 typedef struct {
     CPUState* cpu;
@@ -24,4 +25,11 @@ typedef struct {
     unsigned command;
     int ok;
 } Syn68kNative040Control;
+
+typedef struct {
+    CPUState* cpu;
+    Syn68kNative040MMU* memory;
+    uint32 pc;
+    Syn68kIntegerStep step;
+} Syn68kNative040RTE;
 #endif

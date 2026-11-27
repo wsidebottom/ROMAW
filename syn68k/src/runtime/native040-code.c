@@ -127,7 +127,8 @@ Syn68kNative040Entry syn68k_native040_entry(enum Syn68kNative040Operation operat
                                 native040_memory_cache_maintain_offset,
                                 native040_bus_move16_offset,
                                 native040_cache_snoop_offset,
-                                native040_bus_snoop_offset};
+                                native040_bus_snoop_offset,
+                                native040_rte_offset};
     _Static_assert(sizeof offsets / sizeof *offsets == NATIVE040_COUNT, "native root table");
     if ((unsigned)operation >= NATIVE040_COUNT || offsets[operation] >= sizeof native040_code)
         return NULL;

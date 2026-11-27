@@ -80,6 +80,7 @@ typedef struct {
     Syn68kFPUStep exception;
     unsigned frame_header, frame_image_size;
     uint8 frame_image[100];
+    Syn68kNative040RTE rte;
 } FPUInvocation;
 
 enum {
@@ -95,7 +96,8 @@ enum {
     FPU_EXIT_DESTINATION,
     FPU_EXIT_REGISTERS,
     FPU_EXIT_EXCEPTION,
-    FPU_EXIT_FRAME
+    FPU_EXIT_FRAME,
+    NATIVE_EXIT_RTE
 };
 
 /* Unmanaged register arithmetic cannot call guest code. Managed invocations
@@ -3196,8 +3198,13 @@ int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
     FPUInvocation packet = {.memory = {.memory = memory}, .control = {.cpu = &cpu_state, .memory = memory}};
     if (memory->native)
         packet.memory.ram = memory->native->ram;
+    packet.rte = (Syn68kNative040RTE){.cpu = &cpu_state, .memory = &packet.memory, .pc = pc};
     ++syn68k_x64_executions;
     uint32 next = execute_managed_packet(code, &packet);
+    if (packet.exit == NATIVE_EXIT_RTE) {
+        *result = packet.rte.step;
+        return 1;
+    }
     if (packet.exit == FPU_EXIT_UNFETCHED)
         return syn68k_integer_step_decoded(pc, opcode, memory, result) ? 1 : -1;
     if ((opcode & 0xff00) == 0xf400 && packet.memory.access.cache.interrupt_level) {
