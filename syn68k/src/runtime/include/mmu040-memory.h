@@ -65,6 +65,8 @@ typedef struct {
     unsigned aligned_transfers;
     const Syn68kMMU040Cache* cache;
     const Syn68kMMU040Prefetch* prefetch;
+    const Syn68kMMU040Access* instruction_word;
+    unsigned instruction_word_count;
 } Syn68kMMU040Memory;
 
 struct Syn68kMMU040Access {

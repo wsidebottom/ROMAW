@@ -326,6 +326,11 @@ EOF
         syn68k/tests/mapped-branch-prefetch-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$output/branch-prefetch-test.exe"
       "$output/branch-prefetch-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-sequential-prefetch-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$output/sequential-prefetch-test.exe"
+      "$output/sequential-prefetch-test.exe"
     )
     ;;
   fpsp)
@@ -550,6 +555,12 @@ EOF
       mkdir -p "$fixture/branch-prefetch"
       "$fixture/branch-prefetch-test.exe" "$(wslpath -m "$fixture/branch-prefetch")"
       "$fixture/branch-prefetch-test.exe" "$(wslpath -m "$fixture/branch-prefetch")"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-sequential-prefetch-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/sequential-prefetch-test.exe"
+      mkdir -p "$fixture/sequential-prefetch"
+      "$fixture/sequential-prefetch-test.exe" "$(wslpath -m "$fixture/sequential-prefetch")"
+      "$fixture/sequential-prefetch-test.exe" "$(wslpath -m "$fixture/sequential-prefetch")"
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-cache-op-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -o "$fixture/cache-op-test.exe"

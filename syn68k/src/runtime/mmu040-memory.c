@@ -258,8 +258,36 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
        the data unit's misaligned-operand replay (MC68040UM 7.3/7.4.2). */
     if (repeat_prefix >= size || (fc & 3) == 2)
         repeat_prefix = 0;
+    unsigned queued =
+        !writing && !rmw && (fc == 2 || fc == 6) && !(logical & 1) && size >= 2 && memory->instruction_word
+            ? memory->instruction_word_count
+            : 0;
     while (result.completed < size) {
         result.logical = logical + result.completed;
+        const Syn68kMMU040Access* pending = NULL;
+        unsigned split = 0;
+        for (unsigned i = 0; i < queued; ++i) {
+            const Syn68kMMU040Access* word = &memory->instruction_word[i];
+            if (word->fc != fc || word->size != 2 ||
+                (!word->bus_error && word->translation.fault == MMU040_OK && word->completed != 2))
+                continue;
+            if (word->request == result.logical)
+                pending = word;
+            else if (word->request == result.logical + 2)
+                split = 1;
+        }
+        if (pending && pending->request == result.logical && size - result.completed >= 2) {
+            uint32_t prefix_value = result.value;
+            unsigned prefix_size = result.completed;
+            result = *pending;
+            result.request = logical;
+            result.size = size;
+            result.completed += prefix_size;
+            result.value |= prefix_value << (8 * pending->completed);
+            if (result.bus_error || result.translation.fault != MMU040_OK)
+                return result;
+            continue;
+        }
         Syn68kMMU040Access translated = syn68k_mmu040_memory_translate(memory, result.logical, fc, writing || rmw, 0);
         result.translation = translated.translation;
         result.cache = translated.cache;
@@ -273,6 +301,8 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
         unsigned chunk = mask + 1 - (result.logical & mask);
         if (chunk > size - result.completed)
             chunk = size - result.completed;
+        if (split && chunk > 2)
+            chunk = 2;
         if (repeat_prefix && chunk > repeat_prefix - result.completed)
             chunk = repeat_prefix - result.completed;
         /* The uncached data memory unit issues only naturally aligned bus

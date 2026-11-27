@@ -477,7 +477,7 @@ static void single_fetch_and_coherence(void)
         assert(syn68k_mapped_cpu_run(&cpu, 3, &result));
         unsigned direct_ram = memory.native && memory.native->ram.bytes;
         assert(result.reason == SYN68K_MAPPED_BUDGET && result.completed == 3 && cpu.pc == 0x1000C &&
-               reads == (direct_ram ? 0U : 7U) && writes == (direct_ram ? 0U : 1U));
+               reads == (direct_ram ? 0U : 6U) && writes == (direct_ram ? 0U : 1U));
         assert(ram[physical(EM_A0)] == 0x40 && !ram[physical(EM_A0 + 1)] && !ram[physical(EM_A0 + 2)] &&
                !ram[physical(EM_A0 + 3)]);
         ++cases;

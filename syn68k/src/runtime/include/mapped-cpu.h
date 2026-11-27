@@ -48,8 +48,8 @@ typedef struct {
        accepted exception entry clears this latch. Reset owners clear it. */
     unsigned stopped;
     /* The selected branch word or its access fault survives budget stops. */
-    unsigned prefetch_valid, prefetch_word;
-    Syn68kMMU040Access prefetch_access;
+    unsigned prefetch_valid;
+    Syn68kMMU040Access prefetch_access[2];
     /* Sticky until the embedding performs a CPU reset and reinitializes this
        instance. IRQs and exception entry cannot release a hardware halt. */
     enum Syn68kMappedHalt halted;

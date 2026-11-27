@@ -613,18 +613,11 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         bus.instruction_fc = before.sr & SR_SUPERVISOR_BIT ? 6 : 2;
         memory.prefetch = &prefetch;
         Syn68kEAContext context = {.pc = cpu->pc, .memory = &memory};
-        unsigned opcode;
-        if (cpu->prefetch_valid && cpu->prefetch_access.request == cpu->pc &&
-            cpu->prefetch_access.fc == bus.instruction_fc) {
-            opcode = cpu->prefetch_word;
-            context.access = cpu->prefetch_access;
-            if (context.access.bus_error || context.access.translation.fault != MMU040_OK) {
-                context.error = 2;
-                context.fault_address = context.access.logical;
-            }
-        }
-        else
-            opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
+        memory.instruction_word = cpu->prefetch_access;
+        if (cpu->prefetch_valid && cpu->prefetch_access[0].request == cpu->pc &&
+            cpu->prefetch_access[0].fc == bus.instruction_fc)
+            memory.instruction_word_count = cpu->prefetch_valid;
+        unsigned opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
         cpu->prefetch_valid = 0;
         result->opcode = opcode;
         if (context.error) {
@@ -927,6 +920,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             exception(cpu, result);
             return 1;
         }
+        memory.instruction_word_count = 0;
         /* Prefetch both conditional branch paths. Use the
            decoded target so extension words are never read a second time. */
         unsigned branch_class = (opcode >> 8) & 15, displacement = opcode & 255;
@@ -942,9 +936,30 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                 uint32_t word = 0;
                 Syn68kMMU040Access access = syn68k_mmu040_read(&memory, paths[i], bus.instruction_fc, 2, 0, &word);
                 if (result->step.next == paths[i]) {
-                    cpu->prefetch_access = access;
-                    cpu->prefetch_word = word;
+                    cpu->prefetch_access[0] = access;
                     cpu->prefetch_valid = 1;
+                }
+            }
+        }
+        else if (!result->step.stopped && !result->step.flow_changed && !unconditional_flow_opcode(opcode) &&
+                 before.sr == cpu_state.sr && !result->step.movem_state) {
+            uint32_t word = 0;
+            uint32_t next = result->step.next;
+            unsigned size = next & 2 ? 2 : 4;
+            Syn68kMMU040Access access = syn68k_mmu040_read(&memory, next, bus.instruction_fc, size, 0, &word);
+            cpu->prefetch_valid = size / 2;
+            for (unsigned i = 0; i < cpu->prefetch_valid; ++i) {
+                Syn68kMMU040Access* entry = &cpu->prefetch_access[i];
+                *entry = access;
+                entry->request = entry->logical = next + i * 2;
+                entry->size = 2;
+                if (access.completed >= (i + 1) * 2) {
+                    entry->completed = 2;
+                    entry->value = (access.value >> ((access.completed - (i + 1) * 2) * 8)) & 65535;
+                }
+                else {
+                    entry->completed = 0;
+                    entry->value = 0;
                 }
             }
         }
