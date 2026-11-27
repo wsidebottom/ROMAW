@@ -4178,6 +4178,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
             }
     if (!strcmp(library, "InterfaceLib") || !strcmp(library, "CarbonLib") || !strcmp(library, "MathLib") ||
         !strcmp(library, "StdCLib") || !strcmp(library, "AppearanceLib") || !strcmp(library, "ObjectSupportLib") ||
+        (!strcmp(library, "FoldersLib") && !strcmp(name, "FindFolder")) ||
         (!strcmp(library, "PrivateInterfaceLib") &&
          (!strcmp(name, "SndSoundManagerVersion") || !strcmp(name, "IsSystemMenu") ||
           !strcmp(name, "RequestVolumeNotification") || !strcmp(name, "DeclineVolumeNotification") ||
