@@ -41,15 +41,30 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: short FPSP restore (2026-11-27)
+## Latest validated bundle: E1 move-out restore (2026-11-27)
+
+Commit 755238e0 restores 52-byte and 100-byte E1 move-out frames in
+generated code. The replay matrix passed 491,520 cases in each AOT run,
+including the precision, status, and E3 priority combinations. Grouped
+cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel checks passed.
+
+The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
+startup. It is current at build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-e1moveout1-bin-20261127.
+
+CPU build ID 0611a0b800f91168884db3c8b2d82862c50260c7d3695087d9d26782ee1cb63d
+Archive SHA256 a94afc48834683e871790fc8f4e53026be442141a087d1947f0f9da0901cc1e0
+Audit build/68040-e1moveout1-output/68040-e1moveout1-source-audit.json
+
+## Previous validated bundle: short FPSP restore (2026-11-27)
 
 Commit 647d701e restores short FPSP entry frames in generated code and
 leaves F-line delivery pending for the next FPU instruction. The grouped
 cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel checks passed.
 
 The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
-startup. It is current at build/68040-current/bin. The preceding bundle is
-retained at build/68040-pre-shortfpsp1-bin-20261127.
+startup. Its preceding bundle is retained at
+build/68040-pre-shortfpsp1-bin-20261127.
 
 CPU build ID 3425f76a747abe89935d02c63a52ca22f3557d2c9d4be86e048accda84b6a8b9
 Archive SHA256 1da988ffcd76f8905bf2786ac6f0736748820e8b447fa2d7730ed157984ea527
