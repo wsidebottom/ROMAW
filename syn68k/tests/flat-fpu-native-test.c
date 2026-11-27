@@ -167,9 +167,18 @@ static void flat_setup(unsigned opcode, unsigned command, unsigned mode)
         /* Frame EAs start immediately after the opcode. */
         memmove(ram + start + 2, ram + start + 4, 12);
         cpu_state.sr |= 0x2000;
-        put(0x6000, flat_frame ? 0x41300000 : mode & 1 ? 0 : 0x41000000, 4);
+        put(0x6000, flat_frame == 1 ? 0x41300000 : flat_frame == 2 ? 0x41600000 : mode & 1 ? 0 : 0x41000000, 4);
         for (unsigned i = 4; i < 100; ++i)
             ram[0x6000 + i] = 0;
+        if (flat_frame && !(opcode & 0x40)) {
+            cpu_state.fpu.null_state = 0;
+            cpu_state.fpu.frame_size = flat_frame == 1 ? 52 : 100;
+            cpu_state.fpu.pending_vector = 49;
+            for (unsigned i = 0; i < cpu_state.fpu.frame_size; ++i)
+                cpu_state.fpu.frame[i] = 0x50 ^ i;
+            cpu_state.fpu.frame[0] = 0x41;
+            cpu_state.fpu.frame[1] = flat_frame == 1 ? 0x30 : 0x60;
+        }
     }
     syn68k_bus_read = flat_device_kind ? flat_device_read : NULL;
     flat_device_format = command >> 10 & 7;
@@ -200,7 +209,7 @@ static void flat_setup(unsigned opcode, unsigned command, unsigned mode)
             assert(syn68k_host_to_guest((uintptr_t)flat_aliases + i * 0x20000) == 0xf00000 + i * 0x20000);
         unsigned size;
         if ((opcode & ~127u) == 0xf300)
-            size = flat_frame ? 100 : 4;
+            size = flat_frame == 1 ? 52 : flat_frame == 2 ? 100 : 4;
         else if (command >> 13 >= 6) {
             unsigned mask = command & 0x0800 ? flat_dynamic_mask : command & 255;
             if (command & 0x0800)
@@ -254,7 +263,7 @@ static void flat_compare(unsigned opcode, unsigned command, unsigned mode, unsig
     uintptr_t expected_offset = ROMlib_offset;
     uint32 expected_mask = syn68k_address_mask, expected_size = syn68k_direct_memory_size;
     flat_setup(opcode, command, mode);
-    native_active = expected.vector || exceptional || flat_frame ? 2 : 1;
+    native_active = expected.vector || exceptional ? 2 : 1;
     if (flat_compiled) {
         int8 length = 1;
         unsigned translated;
@@ -428,7 +437,14 @@ int main(int argc, char** argv)
         if (atoi(argv[3]) == 2) {
             uint64 emitted_before = syn68k_native_compile_count(), hits_before = syn68k_aot_hit_count();
             flat_trace_cases();
-            uint64 emissions = syn68k_native_compile_count() - emitted_before;
+            for (flat_frame = 1; flat_frame <= 2; ++flat_frame) {
+            flat_compare(0xf310, 0, 0, 0);
+            flat_compare(0xf320, 0, 0, 0);
+            flat_compare(0xf350, 0, 0, 0);
+            flat_compare(0xf358, 0, 0, 0);
+        }
+        flat_frame = 0;
+        uint64 emissions = syn68k_native_compile_count() - emitted_before;
             uint64 hits = syn68k_aot_hit_count() - hits_before;
             assert(warm ? !emissions && hits : emissions);
             printf("%u flat frontend trace cases passed; emitted=%llu hits=%llu\n", cases,
@@ -451,10 +467,18 @@ int main(int argc, char** argv)
             flat_compare(0xf254, sample | 16, sample, 0);
             flat_compare(0xf356, 0, sample, 0);
         }
+        for (flat_frame = 1; flat_frame <= 2; ++flat_frame) {
+            flat_compare(0xf310, 0, 0, 0);
+            flat_compare(0xf320, 0, 0, 0);
+            flat_compare(0xf350, 0, 0, 0);
+            flat_compare(0xf358, 0, 0, 0);
+        }
+        flat_frame = 0;
         uint64 emissions = syn68k_native_compile_count() - emitted_before;
         uint64 hits = syn68k_aot_hit_count() - hits_before;
-        unsigned expected_emissions = warm ? 0 : flat_compiled ? 12 : 6;
-        unsigned expected_hits = flat_compiled ? warm ? 102 : 90 : warm ? 6 : 0;
+        unsigned expected_emissions = warm ? 0 : flat_compiled ? 20 : 10;
+        /* Three frame opcodes share a mapped-code slot and reload on the second pass. */
+        unsigned expected_hits = flat_compiled ? warm ? 117 : 97 : warm ? 13 : 3;
         if (emissions != expected_emissions || hits != expected_hits)
             fprintf(stderr, "Flat AOT compiled=%u warm=%u emissions=%llu/%u hits=%llu/%u\n", flat_compiled, warm,
                     (unsigned long long)emissions, expected_emissions, (unsigned long long)hits, expected_hits);
@@ -462,7 +486,7 @@ int main(int argc, char** argv)
         syn68k_x64_mapped_clear();
         free(flat_alias_allocation);
         free(expected_flat_aliases);
-        puts("Flat FPU AOT replayed live formats, masks, values, conditions and null headers");
+        puts("Flat FPU AOT replayed live formats, masks, values, conditions and null/busy frames");
         return 0;
     }
     const unsigned formats[] = {0, 1, 2, 4, 5, 6};
@@ -547,12 +571,22 @@ int main(int argc, char** argv)
                     flat_compare(0xf240 | ea, 1, 0, 0);
                     flat_compare(0xf300 | ea, 0, 0, 0);
                     flat_compare(0xf340 | ea, 0, 1, 0);
-                    flat_frame = 1;
-                    flat_compare(0xf340 | ea, 0, 0, 1);
+                    for (flat_frame = 1; flat_frame <= 2; ++flat_frame) {
+                        flat_compare(0xf300 | ea, 0, 0, 0);
+                        flat_compare(0xf340 | ea, 0, 0, 0);
+                    }
                     flat_frame = 0;
                 }
             }
     flat_alias_address = flat_alias_24 = flat_dynamic_mask = 0;
+    for (flat_compiled = 0; flat_compiled < 2; ++flat_compiled)
+        for (flat_frame = 1; flat_frame <= 2; ++flat_frame) {
+            flat_compare(0xf310, 0, 0, 0);
+            flat_compare(0xf320, 0, 0, 0);
+            flat_compare(0xf350, 0, 0, 0);
+            flat_compare(0xf358, 0, 0, 0);
+        }
+    flat_frame = 0;
     flat_device_kind = 0;
     flat_trace_cases();
     syn68k_bus_read = NULL;

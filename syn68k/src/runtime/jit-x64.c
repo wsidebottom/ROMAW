@@ -78,7 +78,7 @@ typedef struct {
     Syn68kFPUEntry entry;
     Syn68kNative040Registers registers;
     Syn68kFPUStep exception;
-    unsigned frame_capture, frame_header, frame_image_size;
+    unsigned frame_header, frame_image_size;
     uint8 frame_image[100];
 } FPUInvocation;
 
@@ -2957,15 +2957,12 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         return 0;
     int flat = memory->native && memory->native->flat;
     Syn68kMMU040Memory* checked_memory = flat ? NULL : memory;
-    if (flat && (opcode & ~63u) == 0xf300 && cpu_state.fpu.frame_size)
-        return syn68k_fpu_step_decoded(pc, opcode, NULL, result) ? 1 : -1;
     void* code = mapped_code(pc, opcode);
     if (!code)
         return 0;
     FPUInvocation packet = {.memory = {.memory = memory},
                             .registers = {.cpu = &cpu_state, .memory = memory},
                             .ea = {.cpu = &cpu_state, .context = {.pc = pc + 4, .memory = memory}},
-                            .frame_capture = !flat,
                             .next = pc + 4,
                             .original_null = cpu_state.fpu.null_state,
                             .entry = {cpu_state.fpu.fpcr, cpu_state.fpu.null_state, cpu_state.fpu.frame_size == 0}};

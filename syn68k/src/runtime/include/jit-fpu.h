@@ -1325,6 +1325,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, ea.size), 0);
         byte(out, 4);
         failures[count++] = jump(out, 0x84); // An EA callback posted a busy frame.
+        fpu_mapped_preflight(out, failures, &count);
         fpu_constant(out, offsetof(FPUInvocation, operation), 1, 0);
         unsigned short_done = 0;
         for (unsigned i = 0; i < 100; i += 4) {
@@ -1372,9 +1373,6 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         unsigned non_null = jump(out, 0x85);
         unsigned null_frame = fpu_jump(out);
         patch(out, non_null, out->size);
-        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_capture), 0);
-        byte(out, 0);
-        failures[count++] = jump(out, 0x84);
         FP_BYTES(out, 0x3d);
         word32(out, 0x41300000);
         unsigned short_frame = jump(out, 0x84);
@@ -1387,6 +1385,10 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         fpu_constant(out, offsetof(FPUInvocation, frame_image_size), 52, 0);
         patch(out, image_size, out->size);
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_header), 0);
+        fpu_packet(out, 0x8b, 2, offsetof(FPUInvocation, frame_image_size), 0);
+        fpu_packet(out, 0x89, 2, offsetof(FPUInvocation, ea.size), 0);
+        fpu_mapped_preflight(out, failures, &count);
+        fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, frame_header), 0);
         FP_BYTES(out, 0x0f, 0xc8);
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_image), 0);
         unsigned short_done = 0;
