@@ -223,6 +223,50 @@ static void timeout_policy(unsigned action)
     ulp_testing = 0;
 }
 
+#ifdef MACTCP_AFP_SERVER
+/* A real DSI GetStatus exchange through the guest .IPP TCP driver. */
+static int afp_status(void)
+{
+    unsigned char pb[128], list[12], header[16] = {0, 3, 0, 1}, reply[1400];
+    if (create(tcp_create[0], tcp_buffers[0], 0))
+        return 0;
+    uint32_t stream = get32(tcp_create[0] + 28);
+    int valid = 0;
+    prepare(pb, 32, stream);
+    put32(pb + 36, MACTCP_AFP_SERVER);
+    put16(pb + 40, 548);
+    pb[35] = 5;
+    if (control(pb, 0))
+        goto release;
+    prepare(pb, 34, stream);
+    wds(list, header, sizeof header);
+    put32(pb + 38, (uint32_t)list);
+    if (control(pb, 0))
+        goto release;
+    unsigned wanted = sizeof header;
+    for (unsigned received = 0; received < wanted;) {
+        prepare(pb, 37, stream);
+        pb[32] = 5;
+        put32(pb + 36, (uint32_t)(reply + received));
+        put16(pb + 40, wanted - received);
+        if (control(pb, 0) || !get16(pb + 40))
+            goto release;
+        received += get16(pb + 40);
+        if (received == sizeof header && wanted == sizeof header) {
+            uint32_t length = get32(reply + 8);
+            if (reply[0] != 1 || reply[1] != 3 || get16(reply + 2) != 1 || get32(reply + 4) || get32(reply + 12) ||
+                length < 11 || length > sizeof reply - sizeof header)
+                goto release;
+            wanted += length;
+        }
+    }
+    valid = reply[26] && reply[26] <= wanted - 27;
+release:
+    prepare(pb, 42, stream);
+    return !control(pb, 0) && valid;
+}
+#endif
+
 int main(void)
 {
     Str255 path = "\pD:Source:ROMAW:build:mactcp:stream-guest-results.txt";
@@ -445,6 +489,9 @@ int main(void)
     timeout_policy(1);
     timeout_policy(0);
     check(!callback_failures, "callback arguments and opaque user data remain valid");
+#ifdef MACTCP_AFP_SERVER
+    check(afp_status(), "Netatalk DSI GetStatus through the guest MacTCP driver");
+#endif
     check(!CloseDriver(driver), "close driver after all streams released");
     char line[80];
     long length = sprintf(line, "failures=%u checks=%u\n", failures, checks);

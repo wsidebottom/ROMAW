@@ -31,7 +31,12 @@ case "$check" in
       python3 system/tests/mactcp_resolver_fixtures.py
       for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt mactcp_resolver_guest_probe:MacTCPResolverProbe:resolver-guest-results.txt mactcp_driver_guest_probe:MacTCPDriverProbe:driver-results.txt; do
         IFS=: read -r source name report <<<"$entry"
-        "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "system/tests/$source.c" -o "$out/$name.code.bin"
+        flags=()
+        if [ "$source" = mactcp_stream_guest_probe ] && [ -n "${MACTCP_AFP_SERVER:-}" ]; then
+          address=$(python3 -c 'import ipaddress, sys; print(int(ipaddress.IPv4Address(sys.argv[1])))' "$MACTCP_AFP_SERVER")
+          flags+=("-DMACTCP_AFP_SERVER=${address}UL")
+        fi
+        "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "${flags[@]}" "system/tests/$source.c" -o "$out/$name.code.bin"
         "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
           -I"$retro68/m68k-apple-macos/RIncludes" --copy "$out/$name.code.bin" \
           -o "$out/$name.bin" -t APPL -c MTPr --cc "$out/%$name"
