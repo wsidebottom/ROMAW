@@ -13161,6 +13161,20 @@ def color_profile_operations(probe):
     compare(16, 32, "native and saved matched playback report the same QuickDraw status")
     probe.call("KillPicture", [probe.slot(base + 136)])
 
+    # ColorSync 0x10250 underflows its duplicate-removal loop with no CMM.
+    # Install a CMM that declines PostScript selectors so both sides use
+    # their real built-in generator paths.
+    cmm_callback = probe.far_raw(bytes(8))
+    p.routines.append((cmm_callback[1], [0x38600000, 0x4E800020]))
+    cmm_description = probe.far_raw(struct.pack(">4s4s4sII", b"cmm ", b"appl", b"RMAW", 0, 0))
+    cmm_upp, cmm = (probe.slot(base + offset) for offset in (192, 196))
+    probe.call("NewRoutineDescriptor", [cmm_callback, 0x3F0, 1])
+    p.nonzero("create a CMM selector probe")
+    p.emit(0x907E0000 | (base + 192))
+    probe.call("RegisterComponent", [cmm_description, cmm_upp, 0, 0, 0, 0])
+    p.nonzero("register a CMM for saved PostScript selection")
+    p.emit(0x907E0000 | (base + 196))
+
     flatten = probe.far_raw(bytes(8))
     p.routines.append((flatten[1], [0x80E60000, 0x38E70001, 0x90E60000, 0x90660004, 0x3860FF80, 0x4E800020]))
     probe.call("NewRoutineDescriptor", [flatten, 0x3FE0, 1])
@@ -13199,6 +13213,9 @@ def color_profile_operations(probe):
         for offset in (0, 4, 8, 12):
             compare(16 + offset, 32 + offset, "PostScript status, output and callback match the saved fragment")
     probe.call("DisposeRoutineDescriptor", [stream])
+    probe.call("UnregisterComponent", [cmm])
+    p.expect(0, "remove the temporary CMM")
+    probe.call("DisposeRoutineDescriptor", [cmm_upp])
 
     world_out = probe.ptr(base + 136)
     world = probe.slot(base + 136)
