@@ -243,11 +243,11 @@ static uint32 _writeul_unswapped(uint16* p, uint32 tmp)
 #else
 
 typedef struct {
-    int8 n __attribute__((packed));
+    int8 n;
 } HIDDEN_int8;
 
 typedef struct {
-    uint8 n __attribute__((packed));
+    uint8 n;
 } HIDDEN_uint8;
 
 typedef struct {
