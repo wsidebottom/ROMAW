@@ -156,9 +156,15 @@ def main():
             archive.writestr("__MACOSX/" + root_name + "/._Test", ad)
         return data.getvalue()
 
+    scroll_zip = io.BytesIO()
+    with zipfile.ZipFile(scroll_zip, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in ("Near One.txt", "Near Two.txt"):
+            archive.writestr(name, fixtures.DATA)
+
     cases = {}
     for name, extension, raw in (
         ("Zip Here", "zip", zipped("ZipPayload")),
+        ("Scrolled Zip", "zip", scroll_zip.getvalue()),
         ("By Type", "", zipped("TypePayload")),
         ("Zip Picker", "zip", zipped("PickerPayload")),
         ("BinHex", "hqx", fixtures.binhex()),
@@ -322,12 +328,23 @@ def main():
                 (windows_copy / name).write_bytes(fixtures.DATA)
                 (windows_copy / (prefix + name)).write_bytes(ad)
     (windows / "Blocked.zip").write_bytes(zipped("ForbiddenPayload"))
+    scrolled_folder, scrolled_archive = cases["Scrolled Zip"]
+    distant_item = scrolled_folder / "Distant.txt"
+    distant_item.touch()
     session = [folder for folder, _ in cases.values()] + [windows, verify, windows_copy]
+
+    def path_key(path):
+        value = 1469598103934665603
+        for character in str(path):
+            value = ((value ^ ord(character)) * 1099511628211) & ((1 << 64) - 1)
+        return value
+
     (local / "Finder/settings.ini").write_text(
         "[Session]\nCount="
         + str(len(session))
         + "\n"
-        + "".join(f"Window{i + 1}={path}\n" for i, path in enumerate(session)),
+        + "".join(f"Window{i + 1}={path}\n" for i, path in enumerate(session))
+        + f"[PositionsNative]\n{path_key(scrolled_archive)}=144,528\n{path_key(distant_item)}=144,840\n",
         encoding="utf-16",
     )
     image = base / "Archive Test.hfv"
@@ -364,6 +381,7 @@ def main():
         post = api(user, "PostMessageW", w.BOOL, w.HWND, w.UINT, word, word)
         get_item = api(user, "GetDlgItem", w.HWND, w.HWND, c.c_int)
         get_parent = api(user, "GetParent", w.HWND, w.HWND)
+        get_client = api(user, "GetClientRect", w.BOOL, w.HWND, c.POINTER(w.RECT))
         enabled = api(user, "IsWindowEnabled", w.BOOL, w.HWND)
         is_window = api(user, "IsWindow", w.BOOL, w.HWND)
         allocate = api(kernel, "VirtualAllocEx", pointer, w.HANDLE, pointer, word, w.DWORD, w.DWORD)
@@ -462,6 +480,29 @@ def main():
         def command(window, name, action):
             select(window, name)
             assert post(window, 0x111, commands[action], 0)
+
+        def point_message(listing, message, row=0):
+            point = w.POINT()
+            assert send(listing, message, row, remote)
+            assert read(handle, remote, c.byref(point), c.sizeof(point), None)
+            return point.x, point.y
+
+        def check_nearby(window, archive, outputs):
+            listing, names = rows(window)
+            origin_x, origin_y = point_message(listing, 0x1029)  # LVM_GETORIGIN
+            anchor_x, anchor_y = point_message(listing, 0x1010, names.index(archive))  # LVM_GETITEMPOSITION
+            area = w.RECT()
+            assert get_client(listing, c.byref(area))
+            positions = set()
+            for name in outputs:
+                x, y = point_message(listing, 0x1010, names.index(name))
+                assert (x, y) != (anchor_x, anchor_y)
+                assert abs(x - anchor_x) + abs(y - anchor_y) <= 128, (name, (x, y), (anchor_x, anchor_y))
+                assert 0 <= x + origin_x <= area.right - 48, (name, x, origin_x, area.right)
+                assert 0 <= y + origin_y <= area.bottom - 52, (name, y, origin_y, area.bottom)
+                positions.add((x, y))
+            assert len(positions) == len(outputs), positions
+            return origin_y
 
         expected_failures = set()
 
@@ -675,6 +716,18 @@ def main():
             verify_file(folder / payload, name in ("Zip Here", "By Type"))
             assert archive.exists()
         print("PASS native ZIP, StuffIt, BinHex and MacBinary Extract Here with exact forks", flush=True)
+        check_nearby(folders["Zip Here"], cases["Zip Here"][1].name, ["ZipPayload"])
+        scrolled = folders["Scrolled Zip"]
+        listing, names = rows(scrolled)
+        assert send(listing, 0x1013, names.index(scrolled_archive.name), 0)  # LVM_ENSUREVISIBLE
+        before = point_message(listing, 0x1029)[1]
+        assert before < 0, before
+        outputs = ["Near One.txt", "Near Two.txt"]
+        command(scrolled, scrolled_archive.name, "extract_here_command")
+        for name in outputs:
+            verify_file(scrolled_folder / name, full=False)
+        assert check_nearby(scrolled, scrolled_archive.name, outputs) == before
+        print("PASS extracted icons near their archives, including multiple results in a scrolled folder", flush=True)
         folder, archive = cases["Zip Picker"]
         command(folders["Zip Picker"], archive.name, "extract_to_command")
         picker = wait(lambda: named(None, "#32770", "Extract To"), "classic folder picker")
@@ -844,6 +897,7 @@ def main():
         command(mounted, "Archive.zip", "extract_here_command")
         wait(lambda: "ImageSourcePayload" in rows(mounted)[1], "native extraction from an image archive")
         wait(finished, "image archive extraction complete")
+        check_nearby(mounted, "Archive.zip", ["ImageSourcePayload"])
         image_readback("ImageSourcePayload")
         print("PASS extraction into live HFS image and independent host fork/FinderInfo read-back", flush=True)
         assert free(handle, remote, 0, 0x8000)

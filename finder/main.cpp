@@ -217,6 +217,13 @@ struct DropPlacement {
     size_t columns;
     bool desktop;
     size_t first = 0;
+    std::vector<POINT> nearby{};
+    HWND viewport = nullptr;
+};
+
+struct Extraction {
+    ArchiveDestination destination;
+    std::vector<ArchiveSource> sources;
 };
 
 struct Operation {
@@ -230,6 +237,7 @@ struct Operation {
     DWORD clipboard_sequence = 0; // Consume Cut only after this job succeeds.
     std::function<void(const CopyJob&)> on_complete;
     std::optional<DropPlacement> drop;
+    std::optional<Extraction> extraction;
 };
 
 HINSTANCE instance;
@@ -1430,7 +1438,8 @@ std::vector<fs::path> selected(FolderWindow& f)
 void open_folder(const fs::path&, std::shared_ptr<Search> = nullptr, int16_t image_volume = 0,
                  uint32_t image_directory = 2, const std::wstring& image_title = {});
 void show_operation(std::shared_ptr<CopyJob>, DWORD clipboard_sequence = 0,
-                    std::function<void(const CopyJob&)> on_complete = {}, std::optional<DropPlacement> drop = {});
+                    std::function<void(const CopyJob&)> on_complete = {}, std::optional<DropPlacement> drop = {},
+                    std::optional<Extraction> extraction = {});
 
 // Start an independent background copy and its operation window, reporting
 // validation errors through the owning folder.
@@ -2364,6 +2373,79 @@ int archive_kind(const Item& item)
     return extension ? extension : romaw_archive_type(item.mac.type);
 }
 
+// Reserve unoccupied icon cells in the destination's current viewport,
+// starting with the cells closest to a selected archive in that folder.
+std::optional<DropPlacement> extraction_placement(const Extraction& extract, size_t count)
+{
+    const auto& destination = extract.destination;
+    for (const auto* folder : folders) {
+        if (folder->closing || folder->search || folder->presentation.view != FolderView::icons)
+            continue;
+        if (destination.volume
+                ? folder->image_volume != destination.volume || folder->image_directory != destination.directory
+                : folder->image_volume ||
+                      _wcsicmp((folder->desktop ? desktop_folder : folder->path).c_str(), destination.path.c_str()) != 0)
+            continue;
+
+        RECT area{};
+        POINT origin{};
+        auto list = folder->list;
+        GetClientRect(list, &area);
+        ListView_GetOrigin(list, &origin);
+        if (!folder->desktop) {
+            area.right -= 16;
+            area.bottom -= 16;
+        }
+        const RECT limits{16, 0, area.right - 47, area.bottom - icon_cell_height + 1};
+        if (IsRectEmpty(&limits))
+            return {};
+
+        POINT anchor{limits.left, 8};
+        bool found_archive = false;
+        std::vector<POINT> icons;
+        for (size_t i = 0; i < folder->items.size(); ++i) {
+            POINT point{};
+            if (!ListView_GetItemPosition(list, i, &point))
+                continue;
+            point.x += origin.x;
+            point.y += origin.y;
+            if (point.x > limits.left - icon_cell_width && point.x < limits.right + icon_cell_width &&
+                point.y > limits.top - icon_cell_height && point.y < limits.bottom + icon_cell_height)
+                icons.push_back(point);
+            const auto& item = folder->items[i];
+            auto is_archive = [&](const ArchiveSource& source) {
+                return item.image_volume ? source.volume == item.image_volume && source.id == item.image_id
+                                         : !source.volume && source.path == item.path;
+            };
+            if (!found_archive && std::any_of(extract.sources.begin(), extract.sources.end(), is_archive)) {
+                anchor = point;
+                found_archive = PtInRect(&area, anchor);
+            }
+        }
+        anchor.x = std::clamp(anchor.x, limits.left, limits.right - 1);
+        anchor.y = std::clamp(anchor.y, limits.top, limits.bottom - 1);
+
+        std::vector<POINT> candidates;
+        for (LONG y = limits.top + (anchor.y - limits.top) % icon_cell_height; y < limits.bottom; y += icon_cell_height)
+            for (LONG x = limits.left + (anchor.x - limits.left) % icon_cell_width; x < limits.right; x += icon_cell_width)
+                if (std::none_of(icons.begin(), icons.end(), [&](POINT icon) {
+                        return std::abs(icon.x - x) < icon_cell_width && std::abs(icon.y - y) < icon_cell_height;
+                    }))
+                    candidates.push_back({x, y});
+        auto distance = [&](POINT point) { return std::abs(point.x - anchor.x) + std::abs(point.y - anchor.y); };
+        std::stable_sort(candidates.begin(), candidates.end(),
+                         [&](POINT left, POINT right) { return distance(left) < distance(right); });
+        if (candidates.size() > count)
+            candidates.resize(count);
+        for (auto& point : candidates) {
+            point.x -= origin.x;
+            point.y -= origin.y;
+        }
+        return DropPlacement{{}, 1, folder->desktop, 0, std::move(candidates), list};
+    }
+    return {};
+}
+
 void extract_items(HWND owner, const std::vector<Item>& items, ArchiveDestination destination, bool choose)
 {
     std::vector<ArchiveSource> sources;
@@ -2382,7 +2464,7 @@ void extract_items(HWND owner, const std::vector<Item>& items, ArchiveDestinatio
     }
     classic::WaitingCursor waiting;
     if (auto job = extract_archives(copies, sources, destination))
-        show_operation(job);
+        show_operation(job, 0, {}, {}, Extraction{std::move(destination), std::move(sources)});
 }
 
 void open_item(HWND owner, Item item)
@@ -3938,11 +4020,18 @@ void confirm_image_deletion(HWND owner, int16_t volume, const std::vector<ImageC
 // drawn at the drop point on its first paint, even if its window was closed.
 void save_drop_positions(const CopyJob& job, const DropPlacement& drop)
 {
+    size_t next_nearby = 0;
     for (const auto& result : job.published_items) {
         const auto& path = job.destinations.at(result.index);
         size_t slot = drop.first + result.index;
         LONG x = drop.origin.x + LONG(slot % drop.columns) * icon_cell_width;
         LONG y = drop.origin.y + LONG(slot / drop.columns) * icon_cell_height;
+        if (drop.viewport) {
+            if (next_nearby == drop.nearby.size())
+                break;
+            x = drop.nearby[next_nearby].x;
+            y = drop.nearby[next_nearby++].y;
+        }
         auto position = std::to_wstring(x) + L"," + std::to_wstring(y);
         if (result.image_id) {
             save(L"ImagePositionsNative", path_key(path.parent_path() / std::to_wstring(result.image_id)), position);
@@ -4009,6 +4098,8 @@ void publish_completed_operations()
                 follow_moves(archived);
             }
             follow_moves(moved);
+            if (op->extraction && !op->job->published_items.empty())
+                op->drop = extraction_placement(*op->extraction, op->job->published_items.size());
             if (op->drop)
                 save_drop_positions(*op->job, *op->drop);
             op->job->replacements.clear();
@@ -4016,8 +4107,19 @@ void publish_completed_operations()
             if (op->job->state == CopyJob::complete && op->on_complete)
                 completions.emplace_back(op->job, std::move(op->on_complete));
             auto open = folders;
-            for (auto* folder : open)
+            for (auto* folder : open) {
+                HWND viewport = op->drop && op->drop->viewport == folder->list ? folder->list : nullptr;
+                POINT before{};
+                if (viewport)
+                    ListView_GetOrigin(viewport, &before);
                 refresh_catalog_window(*folder);
+                // Rebuilding the rows can reset a scrolled icon view. Keep
+                // the visible part of the canvas where extraction placed icons.
+                POINT after{};
+                if (viewport && IsWindow(viewport) && ListView_GetOrigin(viewport, &after) &&
+                    (before.x != after.x || before.y != after.y))
+                    ListView_Scroll(viewport, after.x - before.x, after.y - before.y);
+            }
             if (op->job->state == CopyJob::complete)
                 ShowWindow(op->window, SW_HIDE);
         }
@@ -6544,13 +6646,15 @@ LRESULT CALLBACK operation_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 // Create a separate copy window for a shared job and retain its state in the
 // UI-owned operation registry.
 void show_operation(std::shared_ptr<CopyJob> job, DWORD clipboard_sequence,
-                    std::function<void(const CopyJob&)> on_complete, std::optional<DropPlacement> drop)
+                    std::function<void(const CopyJob&)> on_complete, std::optional<DropPlacement> drop,
+                    std::optional<Extraction> extraction)
 {
     auto op = std::make_unique<Operation>();
     op->job = std::move(job);
     op->clipboard_sequence = clipboard_sequence;
     op->on_complete = std::move(on_complete);
-    op->drop = drop;
+    op->drop = std::move(drop);
+    op->extraction = std::move(extraction);
     auto title = std::wstring(moving_transfer(op->job->kind) ? L"Move to \x201c" : L"Copy to \x201c") +
                  op->job->destinations[0].parent_path().filename().wstring() + L"\x201d";
     unsigned slot = 0;
