@@ -1933,7 +1933,9 @@ int32 ROMlib_ctlcall(ControlHandle c, int16 i, intptr_t native_param)
         AuxCtlHandle aux = HIDDEN_NATIVE(*lookup_aux_ctl(c));
         if (aux && ROMlib_aux_control_extra(aux)->custom_definition) {
             uint32 definition = ROMlib_aux_control_extra(aux)->custom_definition;
-            return CToPascalCall(SYN68K_TO_US(definition), CTOP_cdef0, VAR(c), c, i, l);
+            /* Native custom definitions keep the collection's variant in
+               their auxiliary record, outside the saved manager's table. */
+            return CToPascalCall(SYN68K_TO_US(definition), CTOP_cdef0, Hx(aux, acFlags), c, i, l);
         }
         int kind = aux ? Hx(aux, acReserved) : 0;
         if ((kind == ROMlib_progress_bar_proc || kind == ROMlib_relevance_bar_proc) && aux) {
