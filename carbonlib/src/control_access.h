@@ -1264,6 +1264,15 @@ static int carbon_toolbox_definition(const char* name, uint32_t offset, enum too
     uint32_t list = list_slot ? cfp_read(list_slot) : 0;
     const bool installing = operation <= toolbox_definition_install;
     if (installing) {
+        /* The saved installer expects the shared list to have been created by its caller. */
+        if (!list) {
+            if (!list_slot || !cfp_private(&reference, 0x55ec8, NULL, 0, NULL) || !cfp_get(list_slot, &list))
+                return 0;
+            if (!list) {
+                call->words[0] = 0;
+                return 1;
+            }
+        }
         uint32_t definition = second;
         if (operation == toolbox_definition_install) {
             const uint32_t definition_slot = cfp_toc(&reference, (unsigned)-0xa64);
