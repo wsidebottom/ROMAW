@@ -334,6 +334,10 @@ without a selected mapped drive letter also default to DOS.
 DOS volumes advertise no desktop items and cannot create, delete or rebuild
 Finder Desktop, Desktop DB or Desktop DF files. Selected host volumes use the
 Desktop Manager database; mounted HFS images retain their own desktop support.
+Desktop Manager references retain an open data fork of the actual Desktop DB
+file and identify a live File Manager control block. Repeated opens share that
+reference; closing it releases the file. Classic Finder uses the control block
+to recognize a mounted volume during its idle scans.
 The mapped profile Apps folder remains sidecar-capable even when its containing
 Windows drive is DOS. Existing sidecars and directory conventions are detected
 automatically; unmarked directories use OS X `._name` by default. `-netatalk`

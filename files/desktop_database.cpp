@@ -285,7 +285,13 @@ void save(const fs::path& path, const Records& records)
     temporary += ".romaw-new";
     write_file(temporary, bytes);
 #ifdef _WIN32
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    // MoveFileEx cannot replace a destination held by the Desktop Manager's
+    // live FCB. ReplaceFile supports that shared-delete reader and preserves
+    // the old index if publishing fails.
+    BOOL published = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES
+                         ? ReplaceFileW(path.c_str(), temporary.c_str(), nullptr, 0, nullptr, nullptr)
+                         : MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH);
+    if (!published)
         throw Error{-36};
 #else
     fs::rename(temporary, path);

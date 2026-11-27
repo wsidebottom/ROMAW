@@ -977,6 +977,12 @@ set $dt->ioVRefNum=(short)(($raw>>8)|($raw<<8))
 if PBDTOpenInform($dt) != 0
 quit 1
 end
+set $raw=(unsigned short)$dt->ioDTRefNum
+set $desktop_reference=(unsigned short)(($raw>>8)|($raw<<8))
+set $desktop_fcb=(filecontrolblock*)ROMlib_refnumtofcbp($desktop_reference)
+if !$desktop_reference || $desktop_reference > 32767 || !$desktop_fcb || !$desktop_fcb->fcbFlNum
+quit 1
+end
 set $guest=(unsigned int)((unsigned long long)$name-ROMlib_offset)
 set $dt->ioNamePtr.pp=($guest>>24)|(($guest>>8)&0xff00)|(($guest<<8)&0xff0000)|($guest<<24)
 set $dt->ioFileCreator=0x7473744d
@@ -984,6 +990,9 @@ if PBDTGetAPPL($dt,0) != 0 || $name[0] != 11 || (int)memcmp($name+1,"Application
 quit 1
 end
 if PBDTCloseDown($dt) != 0
+quit 1
+end
+if ROMlib_refnumtofcbp($desktop_reference) != 0
 quit 1
 end
 printf "IMAGE_DESKTOP_METADATA_PASS\n"

@@ -72,6 +72,26 @@ def desktop(vref, expected):
     struct.pack_into(">h", pb, 22, vref)
     write(base, pb)
     assert value(f"(int)PBDTOpenInform((void *){base})") == expected
+    if expected == 0:
+        # Finder 6 tests this reference directly in FCBSPtr every idle cycle.
+        reference = struct.unpack(">h", read(base + 24, 2))[0]
+        assert reference > 0
+        fcb = value(f"ROMlib_refnumtofcbp({reference})")
+        assert fcb and read(fcb, 4) != bytes(4)
+        assert int.from_bytes(read(fcb + 20, 4), "big") == value(f"ROMlib_vcbbyvrn({vref})") - offset
+        # Publishing a replacement DB must also work while its FCB is retained.
+        assert value(f"(int)PBDTReset((void *){base},0)") == 0
+        assert value(f"ROMlib_refnumtofcbp({reference})") == fcb
+        assert value(f"(int)PBDTOpenInform((void *){base})") == 0
+        assert struct.unpack(">h", read(base + 24, 2))[0] == reference
+        assert value(f"(int)PBDTCloseDown((void *){base})") == 0
+        assert read(fcb, 4) == bytes(4)
+        assert value(f"(int)PBDTCloseDown((void *){base})") == -51
+        assert value(f"(int)PBDTOpenInform((void *){base})") == 0
+        reference = struct.unpack(">h", read(base + 24, 2))[0]
+        assert value(f"(int)PBDTDelete((void *){base},0)") == 0
+        assert not value(f"ROMlib_refnumtofcbp({reference})")
+        assert value(f"(int)PBDTOpenInform((void *){base})") == 0
 
 
 dos_ref = mount(dos, 126)
@@ -214,5 +234,6 @@ assert wd_info(dos_ref, 1, b"ERIK") == (b"ERIK", dos_ref, 2)
 assert wd_info(127, 1, b"ERIK") == (b"ERIK", apps_ref, 2)
 assert wd_info(32767, 1, b"ERIK") is None
 print("DOS_VOLUME_AND_APPS_DESKTOP_POLICY_OK")
+print("DESKTOP_DATABASE_LIVE_FCB_REFERENCE_OK")
 print("HOST_VOLUME_RENAME_AND_DIRECTORY_OVERRIDE_OK")
 print("WORKING_DIRECTORY_OWNER_AND_VOLUME_FILTERS_OK")

@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: ROMlib_host_get_file_id, ROMlib_host_locate_file_id, ROMlib_host_name_to_mac, ROMlib_mac_name_to_utf8,
-             ROMlib_win_hide_desktop, ROMlib_win_icon_open, ROMlib_win_icon_stat
+             ROMlib_win_hide_desktop, ROMlib_win_icon_open, ROMlib_win_icon_stat, ROMlib_win_share_file_replacement
 
   Origin:    Existing repository source in executor/src/config/os/cygwin32; original attribution and provenance comments
              are preserved below.
@@ -27,6 +27,29 @@
 #include <errno.h>
 #include "rsys/host_names.h"
 #include "rsys/mac_storage.h"
+
+int ROMlib_win_share_file_replacement(int fd)
+{
+    /* Desktop DB is published by atomic replacement. Retain its real open
+       file while allowing the database writer to replace the directory entry. */
+    HANDLE file =
+        ReOpenFile((HANDLE)_get_osfhandle(fd), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    if (file == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        errno = error == ERROR_SHARING_VIOLATION ? EBUSY : error == ERROR_INVALID_HANDLE ? EBADF : EACCES;
+        return -1;
+    }
+    int shared = _open_osfhandle((intptr_t)file, O_RDONLY | O_BINARY);
+    if (shared < 0) {
+        CloseHandle(file);
+        return -1;
+    }
+    int result = _dup2(shared, fd);
+    int saved_errno = errno;
+    _close(shared);
+    errno = saved_errno;
+    return result;
+}
 
 int ROMlib_host_get_file_id(const char* path, ROMlib_host_file_id* id)
 {

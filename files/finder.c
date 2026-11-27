@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      finder.c
 
-  Summary:   Implements finder support for Macintosh File Manager and host-file operations.
+  Summary:   Implements Desktop Manager metadata operations with live Desktop DB File Manager references.
 
   Classes:   None.
 
@@ -29,13 +29,29 @@
 #include "finder/image_volumes.h"
 #include "rsys/application_registry.h"
 #include "rsys/configprefs.h"
+#if defined(__MINGW32__)
+#include "rsys/host_names.h"
+#endif
 
 static HVCB* desktop_volumes[128];
+static INTEGER desktop_references[128];
+
+static BOOLEAN desktop_reference_live(unsigned index)
+{
+    if (!desktop_volumes[index] || desktop_references[index] <= 0)
+        return FALSE;
+    filecontrolblock* file = ROMlib_refnumtofcbp(desktop_references[index]);
+    return file && file->fcbFlNum && PPR(file->fcbVPtr) == desktop_volumes[index] &&
+           memcmp(file->fcbCName, "\012Desktop DB", 11) == 0;
+}
 
 static HVCB* desktop_volume(DTPBPtr pb)
 {
-    unsigned index = (unsigned)(-CW(pb->ioDTRefNum) - 16384);
-    if (index >= NELEM(desktop_volumes))
+    unsigned index;
+    for (index = 0; index < NELEM(desktop_volumes); ++index)
+        if (desktop_volumes[index] && desktop_references[index] == CW(pb->ioDTRefNum) && desktop_reference_live(index))
+            break;
+    if (index == NELEM(desktop_volumes))
         return NULL;
     for (HVCB* v = (HVCB*)PPR(VCBQHdr.qHead); v; v = (HVCB*)PPR(v->qLink))
         if (v == desktop_volumes[index])
@@ -92,17 +108,43 @@ PUBLIC OSErr PBDTOpenInform(DTPBPtr pb)
     unsigned index = 0;
     if (!error) {
         for (; index < NELEM(desktop_volumes); ++index)
-            if (desktop_volumes[index] == v)
+            if (desktop_volumes[index] == v && desktop_reference_live(index))
                 break;
         if (index == NELEM(desktop_volumes))
             for (index = 0; index < NELEM(desktop_volumes); ++index)
-                if (!desktop_volumes[index])
+                if (!desktop_volumes[index] || !desktop_reference_live(index))
                     break;
         error = index == NELEM(desktop_volumes) ? tmfoErr
                 : ROMlib_image_volume_kind(v)
                     ? ROMlib_finder_image_desktop(CW(v->vcbVRefNum), desktop_open, NULL, 0, NULL, &existed, &tag)
                     : romaw_desktop_database(((VCBExtra*)v)->unixname, desktop_open, NULL, 0, NULL, &existed, &tag);
         if (!error) {
+            /* Classic Finder checks the Desktop reference directly in FCBSPtr
+               while reconciling mounted volumes. Keep the actual database fork
+               open, rather than returning a synthetic reference with no FCB. */
+            if (desktop_volumes[index] != v || !desktop_reference_live(index)) {
+                HParamBlockRec open = {0};
+                Str255 name = "\012Desktop DB";
+                PP_ASSIGN(open.ioParam.ioNamePtr, (StringPtr)name);
+                open.ioParam.ioVRefNum = v->vcbVRefNum;
+                open.ioParam.ioPermssn = fsRdPerm;
+                open.fileParam.ioDirID = CLC(2);
+                error = PBHOpen(&open, FALSE);
+#if defined(__MINGW32__)
+                if (!error && !ROMlib_image_volume_kind(v)) {
+                    fcbrec* file = (fcbrec*)ROMlib_refnumtofcbp(CW(open.ioParam.ioRefNum));
+                    if (ROMlib_win_share_file_replacement(file->fcfd) < 0) {
+                        error = ROMlib_maperrno();
+                        FSClose(CW(open.ioParam.ioRefNum));
+                    }
+                }
+#endif
+                if (error) {
+                    pb->ioResult = CW(error);
+                    return error;
+                }
+                desktop_references[index] = CW(open.ioParam.ioRefNum);
+            }
             if (!existed) {
                 uint32 files, directories;
                 ROMlib_ufs_volume_counts(((VCBExtra*)v)->unixname, &files, &directories);
@@ -110,7 +152,7 @@ PUBLIC OSErr PBDTOpenInform(DTPBPtr pb)
                 v->vcbDirCnt = CL(directories);
             }
             desktop_volumes[index] = v;
-            pb->ioDTRefNum = CW(-16384 - index);
+            pb->ioDTRefNum = CW(desktop_references[index]);
             pb->ioTagInfo = CL(existed ? 1 : 0);
             pb->ioVRefNum = v->vcbVRefNum;
             static const unsigned char names[][12] = {"\012Desktop DB", "\012Desktop DF"};
@@ -138,9 +180,15 @@ PUBLIC OSErr PBDTGetPath(DTPBPtr pb)
 
 PUBLIC OSErr PBDTCloseDown(DTPBPtr pb)
 {
-    OSErr error = desktop_volume(pb) ? noErr : rfNumErr;
+    HVCB* volume = desktop_volume(pb);
+    OSErr error = volume ? FSClose(CW(pb->ioDTRefNum)) : rfNumErr;
     if (!error)
-        desktop_volumes[-CW(pb->ioDTRefNum) - 16384] = NULL;
+        for (unsigned index = 0; index < NELEM(desktop_volumes); ++index)
+            if (desktop_volumes[index] == volume && desktop_references[index] == CW(pb->ioDTRefNum)) {
+                desktop_volumes[index] = NULL;
+                desktop_references[index] = 0;
+                break;
+            }
     pb->ioResult = CW(error);
     return error;
 }
@@ -367,11 +415,18 @@ PUBLIC OSErr PBDTDelete(DTPBPtr pb, BOOLEAN async)
     if (!error && (CW(v->vcbAtrb) & (VHARDLOCKBIT | VSOFTLOCKBIT)))
         error = wPrErr;
     if (!error)
+        for (unsigned i = 0; i < NELEM(desktop_volumes); ++i)
+            if (desktop_volumes[i] == v) {
+                if (desktop_reference_live(i))
+                    error = FSClose(desktop_references[i]);
+                if (error)
+                    break;
+                desktop_volumes[i] = NULL;
+                desktop_references[i] = 0;
+            }
+    if (!error)
         error = romaw_desktop_database(((VCBExtra*)v)->unixname, desktop_delete, NULL, 0, NULL, &size, &tag);
     if (!error) {
-        for (unsigned i = 0; i < NELEM(desktop_volumes); ++i)
-            if (desktop_volumes[i] == v)
-                desktop_volumes[i] = NULL;
         ROMlib_application_registry_reset();
     }
     FAKEASYNC(pb, async, error);

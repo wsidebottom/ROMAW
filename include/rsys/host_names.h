@@ -25,6 +25,7 @@ struct stat;
 int ROMlib_win_icon_stat(const char* path, struct stat* info);
 int ROMlib_win_icon_open(const char* path, int flags, int mode);
 void ROMlib_win_hide_desktop(int fd, const char* path);
+int ROMlib_win_share_file_replacement(int fd);
 
 typedef struct {
     uint32_t volume_serial;
