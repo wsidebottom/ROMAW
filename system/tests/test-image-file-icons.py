@@ -101,6 +101,7 @@ def main():
         "ffil": "type_ffil_2.icns",
         "sfil": "type_sfil.icns",
         "tfil": "type_tfil.icns",
+        "pref": "type_pref.icns",
         "INIT": "type_INIT.icns",
         "shlb": "type_INIT.icns",
     }
