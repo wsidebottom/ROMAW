@@ -346,8 +346,7 @@ void render_preview(Preview& preview, const SuitcaseFork& fork, const SuitcaseRe
         return;
     }
     auto add_panel = [&](unsigned size, int height) {
-        auto label = family ? std::to_wstring(size) + L" point" : std::wstring(L"Sample");
-        Panel panel(std::move(label), height);
+        Panel panel(std::to_wstring(size) + L" point", height);
         auto closest = std::min_element(bitmaps.begin(), bitmaps.end(), [&](const auto& a, const auto& b) {
             return std::abs(int(a.first) - int(size)) < std::abs(int(b.first) - int(size));
         });
@@ -356,19 +355,14 @@ void render_preview(Preview& preview, const SuitcaseFork& fork, const SuitcaseRe
         if (!rendered && outline)
             rendered = outline_font.render(panel, size);
         if (!rendered && closest != bitmaps.end())
-            rendered = render_bitmap(panel, closest->second->payload,
-                                     family ? float(size) / closest->first : 1);
+            rendered = render_bitmap(panel, closest->second->payload, float(size) / closest->first);
         if (!rendered)
             throw std::runtime_error("This font does not contain a usable bitmap or outline.");
         preview.panels.push_back(std::move(panel));
     };
-    if (family) {
-        add_panel(9, 40);
-        add_panel(12, 58);
-        add_panel(18, 108);
-    }
-    else
-        add_panel(12, 156);
+    add_panel(9, 40);
+    add_panel(12, 58);
+    add_panel(18, 108);
 }
 
 void paint_preview(HWND window, HDC dc, const Preview& preview)
@@ -474,7 +468,7 @@ void show_font_preview(HWND desktop, HINSTANCE instance, const std::wstring& ide
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&type);
     constexpr DWORD style = WS_CHILD | WS_CAPTION | WS_SYSMENU | WS_CLIPSIBLINGS;
-    int height = preview->panels.size() > 1 ? 288 : preview->bitmap_only ? 225 : 216;
+    int height = preview->bitmap_only ? 225 : 288;
     int width = preview->bitmap_only ? 244 : 248;
     auto title = preview_title(fork, *selected, name);
     if (preview->family_strike_size)

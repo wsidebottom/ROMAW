@@ -680,11 +680,11 @@ def _check_get_info(
         double_click_item(suitcase, "Scalable Family")
         check_window("Scalable Family", ((17, 26), (67, 79), (135, 153)), (248, 288))
         double_click_item(suitcase, "Preview Outline")
-        check_window("Preview Outline", ((17, 35),), (248, 216))
+        check_window("Preview Outline", ((17, 26), (67, 79), (135, 153)), (248, 288))
         assert post(suitcase, WM_CLOSE, 0, 0)
         wait(lambda: suitcase not in windows(desktop, "FinderSuitcase"), "close Preview Fonts")
         command(desktop, "Outline File", FINDER_OPEN)
-        check_window("Outline File", ((17, 35),), (248, 216))
+        check_window("Outline File", ((17, 26), (67, 79), (135, 153)), (248, 288))
         print("PASS font family, bitmap strike, and embedded and standalone outline previews", flush=True)
 
     def check_sound_previews():
