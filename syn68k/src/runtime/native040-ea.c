@@ -19,6 +19,7 @@ register struct Syn68kNative040EA* native_ea __asm__("r12");
 #include "native040-memory.h"
 #include "syn68k_private.h"
 #include "blockinfo.h"
+#include "trap.h"
 
 /* Headers must retain their ordinary global declarations. The maintained
    decoder below instead reads the current invocation and never a flat bus. */
