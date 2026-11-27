@@ -836,14 +836,15 @@ def main():
         assert send(list_, 0x18B) == 2  # LB_GETCOUNT
         assert send(list_, 0x186, 0) == 0  # LB_SETCURSEL
         control_command(dialog, 113, 1)  # LBN_SELCHANGE
-        wait(lambda: "keep" in caption(get_item(dialog, 114)), "load the selected Gestalt override")
-        field(dialog, 114, "Gestalt('keep')={0,3};")
+        wait(lambda: caption(get_item(dialog, 118)) == "keep", "load the selected Gestalt type")
+        assert caption(get_item(dialog, 114)) == "1"
+        field(dialog, 114, "3")
         control_command(dialog, 116)  # Update
-        wait(lambda: caption(get_item(dialog, 114)).endswith("{0,3};"), "update Gestalt")
         assert send(list_, 0x186, 1) == 1
         control_command(dialog, 117)  # Delete
         wait(lambda: send(list_, 0x18B) == 1, "delete Gestalt")
-        field(dialog, 114, "Gestalt(0x74657374)={0,0x1234};")
+        field(dialog, 118, "0x74657374")
+        field(dialog, 114, "'TEXT'")
         control_command(dialog, 115)  # Add
         wait(lambda: send(list_, 0x18B) == 2, "add Gestalt")
         values = ("Configured Finder test", "7.6.1", "800x600", "16", "8m", "32m")
@@ -854,7 +855,7 @@ def main():
         wait(lambda: not is_window(dialog) and enabled(desktop), "save Configure App")
         saved = prefs.read_text()
         assert "DisplayScale=125" in saved and "Gestalt('gone')" not in saved
-        assert "Gestalt('keep')={0,3};" in saved and "Gestalt(0x74657374)={0,0x1234};" in saved
+        assert "Gestalt('keep')={0,3};" in saved and "Gestalt(0x74657374)={0,0x54455854};" in saved
         assert "PreferM68K=1" in saved
         dialog = configure("FAT Fixture")
         assert [caption(get_item(dialog, id_)) for id_ in range(100, 106)] == list(values)

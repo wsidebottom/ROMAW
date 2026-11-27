@@ -52,6 +52,7 @@
 #include <map>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <cctype>
 #include <uxtheme.h>
 #include <string>
@@ -3525,7 +3526,7 @@ constexpr const wchar_t* app_labels[] = {
 };
 enum AppControl {
     app_first = 100, app_default_cpu = 110, app_68k, app_ppc, app_gestalt_list, app_gestalt_value,
-    app_gestalt_add, app_gestalt_update, app_gestalt_delete
+    app_gestalt_add, app_gestalt_update, app_gestalt_delete, app_gestalt_type
 };
 struct AppPreferences : AppPreferenceDraft {
     std::wstring title;
@@ -3577,7 +3578,7 @@ struct Notice {
 
 // Match the dBoxProc frame used by the classic Window Manager.
 constexpr int alert_frame = 8;
-constexpr int app_width = 464, app_height = 339, app_cpu_height = 25;
+constexpr int app_width = 464, app_height = 360, app_cpu_height = 25;
 
 void build_app_controls(HWND window, const AppPreferences& app)
 {
@@ -3623,18 +3624,23 @@ void build_app_controls(HWND window, const AppPreferences& app)
                      app_gestalt_list, 12, row + 18, app_width - 24, 54);
     for (const auto& statement : app.gestalts)
         SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(preference_wide(statement).c_str()));
-    auto field = make(L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_gestalt_value, 12, row + 77, 220, 19);
-    SendMessageW(field, EM_SETLIMITTEXT, 240, 0);
-    style_text_control(field, true);
+    label(L"Type", 12, row + 77, 96);
+    label(L"Value", 116, row + 77, 116);
+    auto type = make(L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_gestalt_type, 12, row + 94, 96, 19);
+    auto value = make(L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, app_gestalt_value, 116, row + 94, 116, 19);
+    SendMessageW(type, EM_SETLIMITTEXT, 10, 0);
+    SendMessageW(value, EM_SETLIMITTEXT, 240, 0);
+    style_text_control(type, true);
+    style_text_control(value, true);
     auto button = [&](const wchar_t* text, int id, int x, int y, int width) {
         return make(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, id, x, y, width, 24);
     };
-    button(L"Add", app_gestalt_add, 240, row + 75, 62);
-    EnableWindow(button(L"Update", app_gestalt_update, 310, row + 75, 66), FALSE);
-    EnableWindow(button(L"Delete", app_gestalt_delete, 384, row + 75, 68), FALSE);
-    label(L"Example: Gestalt('fs  ')={0,1};", 12, row + 105, 234);
-    button(L"Cancel", IDCANCEL, 282, row + 106, 76);
-    SetPropW(button(L"OK", IDOK, 376, row + 106, 76), L"FinderDefault", reinterpret_cast<HANDLE>(1));
+    button(L"Add", app_gestalt_add, 240, row + 92, 62);
+    EnableWindow(button(L"Update", app_gestalt_update, 310, row + 92, 66), FALSE);
+    EnableWindow(button(L"Delete", app_gestalt_delete, 384, row + 92, 68), FALSE);
+    label(L"Value: number, 'TEXT', or {error,value}", 12, row + 127, 262);
+    button(L"Cancel", IDCANCEL, 282, row + 127, 76);
+    SetPropW(button(L"OK", IDOK, 376, row + 127, 76), L"FinderDefault", reinterpret_cast<HANDLE>(1));
 }
 
 // Treat quoted and hexadecimal spellings of the same selector as one override.
@@ -3651,11 +3657,21 @@ uint32_t gestalt_selector(const std::string& statement)
 void update_app_gestalt(HWND window, AppPreferences& app, int command)
 {
     auto list = GetDlgItem(window, app_gestalt_list);
-    auto edit = GetDlgItem(window, app_gestalt_value);
+    auto type = GetDlgItem(window, app_gestalt_type);
+    auto value = GetDlgItem(window, app_gestalt_value);
     auto selected = SendMessageW(list, LB_GETCURSEL, 0, 0);
     if (command == app_gestalt_list) {
-        if (selected != LB_ERR)
-            SetWindowTextW(edit, preference_wide(app.gestalts[selected]).c_str());
+        if (selected != LB_ERR) {
+            const auto& line = app.gestalts[selected];
+            size_t end = line[8] == '0' ? 18 : 14;
+            auto key = line[8] == '0' ? line.substr(8, 10) : line.substr(9, 4);
+            auto data = line.substr(line.find('=', end) + 1);
+            data.erase(data.find_last_not_of("; \t") + 1);
+            if (data.compare(0, 3, "{0,") == 0 && data.back() == '}')
+                data = data.substr(3, data.size() - 4);
+            SetWindowTextW(type, preference_wide(key).c_str());
+            SetWindowTextW(value, preference_wide(data).c_str());
+        }
         EnableWindow(GetDlgItem(window, app_gestalt_update), selected != LB_ERR);
         EnableWindow(GetDlgItem(window, app_gestalt_delete), selected != LB_ERR);
         return;
@@ -3666,20 +3682,31 @@ void update_app_gestalt(HWND window, AppPreferences& app, int command)
         SendMessageW(list, LB_DELETESTRING, selected, 0);
         app.gestalts.erase(app.gestalts.begin() + selected);
         SendMessageW(list, LB_SETCURSEL, -1, 0);
-        SetWindowTextW(edit, L"");
+        SetWindowTextW(type, L"");
+        SetWindowTextW(value, L"");
         update_app_gestalt(window, app, app_gestalt_list);
         return;
     }
-    auto statement = preference_text(edit);
-    if (_strnicmp(statement.c_str(), "Gestalt(", 8) || !app.validate(statement.c_str())) {
-        message_box(window, L"Enter a Gestalt override such as Gestalt('fs  ')={0,1};", MB_OK | MB_ICONWARNING);
+    auto key = preference_text(type);
+    if (key.size() == 4)
+        key = "'" + key + "'";
+    auto data = preference_text(value);
+    if (data.size() == 6 && data.front() == '\'' && data.back() == '\'') {
+        // Four-character responses are stored as the corresponding 32-bit value.
+        char hex[11];
+        snprintf(hex, sizeof hex, "0x%02X%02X%02X%02X", unsigned(uint8_t(data[1])), unsigned(uint8_t(data[2])),
+                 unsigned(uint8_t(data[3])), unsigned(uint8_t(data[4])));
+        data = hex;
+    }
+    auto first = data.find_first_not_of(" \t");
+    if (first != std::string::npos && data[first] != '{')
+        data = "{0," + data + "}";
+    auto statement = "Gestalt(" + key + ")=" + data + ";";
+    if (!app.validate(statement.c_str())) {
+        message_box(window, L"Enter a four-character type or hex selector, and a number, 'TEXT', or {error,value}.",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
-    // The parser expects a complete statement even if the editor omitted its terminator.
-    statement.replace(0, 8, "Gestalt(");
-    statement.erase(statement.find_last_not_of(" \t") + 1);
-    if (statement.back() != ';')
-        statement += ';';
     uint32_t code = gestalt_selector(statement);
     for (size_t i = 0; i < app.gestalts.size(); ++i)
         if ((command == app_gestalt_add || size_t(selected) != i) && gestalt_selector(app.gestalts[i]) == code) {
