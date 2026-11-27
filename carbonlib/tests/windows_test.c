@@ -79,6 +79,7 @@ void ROMlib_carbon_classic_access_tests(void);
 void ROMlib_carbon_values_tests(void);
 
 uint64 ROMlib_offset;
+_Alignas(8) static Byte quickdraw_lowmemory[0x1000];
 CPUState cpu_state;
 uint32 syn68k_address_mask = 0xffffffff;
 unsigned syn68k_host_alias_count = 1;
@@ -88,7 +89,6 @@ static GrafPort offscreen;
 static GrafPtr selected;
 static Size state_size;
 static int region_empty;
-INTEGER ROMlib_qd_error;
 static Region temporary_region;
 static HIDDEN_RgnPtr temporary_master;
 static int fail_region_allocation, disappear_on_allocation, window_present = 1;
@@ -364,14 +364,14 @@ int ROMlib_change_menu_item_property(MenuHandle menu, INTEGER item, uint32_t cre
 
 void ROMlib_QDGetPatternOrigin(Point* origin)
 {
-    ROMlib_qd_error = origin ? noErr : paramErr;
+    QDErr_H = CW(origin ? noErr : paramErr);
     if (origin)
         *origin = test_pattern_origin;
 }
 
 void ROMlib_QDSetPatternOrigin(Point origin)
 {
-    ROMlib_qd_error = noErr;
+    QDErr_H = CW(noErr);
     test_pattern_origin = (Point){CW(origin.v), CW(origin.h)};
 }
 
@@ -841,10 +841,10 @@ static void quickdraw_accessors(void)
     assert(guarded.before == 0x12345678 && guarded.after == 0x87654321);
     assert(font(NULL) == -13 && size(NULL) == 19);
     assert(font(color) == 23 && size(color) == -2);
-    assert(ROMlib_qd_error == -177); /* Successful getters retain the error. */
-    assert(!pixmap(mono) && ROMlib_qd_error == paramErr);
+    assert(CW(QDErr_H) == -177); /* Successful getters retain the error. */
+    assert(!pixmap(mono) && CW(QDErr_H) == paramErr);
     error(-178);
-    assert(pixmap(color) == &pixel_master && ROMlib_qd_error == -178);
+    assert(pixmap(color) == &pixel_master && CW(QDErr_H) == -178);
     SET_THEPORT_RAW(RM(color));
     assert(current() == color && pixmap(NULL) == &pixel_master);
     assert(bounds(NULL, &guarded.bounds) == &guarded.bounds);
@@ -853,9 +853,9 @@ static void quickdraw_accessors(void)
         pixels.rowBytes = CW(i);
         assert(rowbytes(&pixel_master) == (i & 0x7fff));
     }
-    assert(!rowbytes(NULL) && ROMlib_qd_error == -178);
+    assert(!rowbytes(NULL) && CW(QDErr_H) == -178);
     HIDDEN_RAW_SET(pixel_master, 0);
-    assert(!rowbytes(&pixel_master) && ROMlib_qd_error == paramErr);
+    assert(!rowbytes(&pixel_master) && CW(QDErr_H) == paramErr);
 
     Region visible = {0}, clip = {0}, output = {0};
     HIDDEN_RgnPtr visible_master, clip_master, output_master;
@@ -874,8 +874,8 @@ static void quickdraw_accessors(void)
     assert(get_clip(color, &output_master) == &output_master);
     assert(!memcmp(&output, &clip, sizeof output));
     assert(get_clip(color, &clip_master) == &clip_master);
-    assert(ROMlib_qd_error == -179);
-    assert(!get_visible(color, NULL) && ROMlib_qd_error == paramErr);
+    assert(CW(QDErr_H) == -179);
+    assert(!get_visible(color, NULL) && CW(QDErr_H) == paramErr);
     HIDDEN_RAW_SET(PORT_VIS_REGION_X(color), 0);
     assert(get_visible(color, &output_master) == &output_master);
     assert(!memcmp(&output, &clip, sizeof output));
@@ -883,19 +883,19 @@ static void quickdraw_accessors(void)
     SET_THEPORT_RAW(0);
     guarded.bounds = sentinel;
     error(0);
-    assert(!current() && !font(NULL) && ROMlib_qd_error == paramErr);
+    assert(!current() && !font(NULL) && CW(QDErr_H) == paramErr);
     error(0);
-    assert(!size(NULL) && ROMlib_qd_error == paramErr);
+    assert(!size(NULL) && CW(QDErr_H) == paramErr);
     error(0);
-    assert(!pixmap(NULL) && ROMlib_qd_error == paramErr);
+    assert(!pixmap(NULL) && CW(QDErr_H) == paramErr);
     error(0);
-    assert(bounds(NULL, &guarded.bounds) == &guarded.bounds && ROMlib_qd_error == paramErr);
+    assert(bounds(NULL, &guarded.bounds) == &guarded.bounds && CW(QDErr_H) == paramErr);
     assert(!memcmp(&guarded.bounds, &sentinel, sizeof sentinel));
     error(0);
-    assert(!bounds(color, NULL) && ROMlib_qd_error == paramErr);
+    assert(!bounds(color, NULL) && CW(QDErr_H) == paramErr);
     error(0);
     get_clip(NULL, &output_master);
-    assert(ROMlib_qd_error == paramErr && !memcmp(&output, &clip, sizeof output));
+    assert(CW(QDErr_H) == paramErr && !memcmp(&output, &clip, sizeof output));
 }
 
 static void quickdraw_patterns(void)
@@ -924,15 +924,15 @@ static void quickdraw_patterns(void)
             } output = {0x12345678, {0}, 0x87654321};
 
             Pattern* (*get)(Pattern*) = function(names[i]);
-            ROMlib_qd_error = -177;
+            QDErr_H = CW(-177);
             assert(get(&output.pattern) == &output.pattern);
             assert(!memcmp(output.pattern, worlds[world].patterns[i], sizeof(Pattern)));
             assert(output.before == 0x12345678 && output.after == 0x87654321);
-            assert(ROMlib_qd_error == -177);
+            assert(CW(QDErr_H) == -177);
             output.pattern[0] ^= 0xff;
             assert(output.pattern[0] != worlds[world].patterns[i][0]);
             assert(get(&worlds[world].patterns[i]) == &worlds[world].patterns[i]);
-            assert(!get(NULL) && ROMlib_qd_error == paramErr);
+            assert(!get(NULL) && CW(QDErr_H) == paramErr);
         }
     }
     EM_A5 = saved_a5;
@@ -979,7 +979,7 @@ static void dialog_accessors(void)
     } guarded = {0x12345678, {0}, 0x87654321};
 
     Rect* (*bounds)(ControlHandle, Rect*) = function("GetControlBounds");
-    ROMlib_qd_error = -177;
+    QDErr_H = CW(-177);
     assert(bounds(&control, &guarded.bounds) == &guarded.bounds);
     assert(!memcmp(&guarded.bounds, &first.contrlRect, sizeof(Rect)));
     HIDDEN_RAW_SET(control, RM(&moved));
@@ -990,7 +990,7 @@ static void dialog_accessors(void)
     assert(bounds(&control, &guarded.bounds) == &guarded.bounds);
     assert(!memcmp(&guarded.bounds, &moved.contrlRect, sizeof(Rect)));
     assert(!bounds(&control, NULL));
-    assert(ROMlib_qd_error == -177);
+    assert(CW(QDErr_H) == -177);
     assert(guarded.before == 0x12345678 && guarded.after == 0x87654321);
 }
 
@@ -1190,7 +1190,7 @@ static void quickdraw_record_accessors(void)
         Byte procedures[64];
         HIDDEN_RAW_SET(PORT_GRAF_PROCS_X(port), RM(&procedures[0]));
         SET_THEPORT_RAW(RM(port));
-        ROMlib_qd_error = -177;
+        QDErr_H = CW(-177);
         LONGINT (*face)(GrafPtr) = function("GetPortTextFace");
         Fixed (*extra)(GrafPtr) = function("GetPortSpExtra");
         void* (*procs)(GrafPtr) = function("GetPortGrafProcs");
@@ -1219,14 +1219,14 @@ static void quickdraw_record_accessors(void)
             assert(!memcmp(&output.point, &wanted, sizeof wanted));
             assert(output.before == 0x12345678 && output.after == 0x87654321);
         }
-        assert(ROMlib_qd_error == -177);
+        assert(CW(QDErr_H) == -177);
     }
     color.chExtra = CWC(-17);
     color.pnLocHFrac = CWC(-1234);
     INTEGER (*ch)(GrafPtr) = function("GetPortChExtra");
     INTEGER (*fraction)(GrafPtr) = function("GetPortFracHPenLocation");
     assert(ch((GrafPtr)&color) == -17 && fraction((GrafPtr)&color) == -1234);
-    assert(ch(&mono) == 0 && ROMlib_qd_error == paramErr);
+    assert(ch(&mono) == 0 && CW(QDErr_H) == paramErr);
     assert(fraction(&mono) == INT16_MIN);
 
     GrafVars variables = {0};
@@ -1249,13 +1249,13 @@ static void quickdraw_record_accessors(void)
         } output = {0x1234, {0}, 0x5678};
 
         RGBColor* (*get)(GrafPtr, RGBColor*) = function(colors[i]);
-        ROMlib_qd_error = -177;
+        QDErr_H = CW(-177);
         assert(get(NULL, &output.color) == &output.color);
         assert(!memcmp(&output.color, expected_colors[i], sizeof(RGBColor)));
-        assert(output.before == 0x1234 && output.after == 0x5678 && ROMlib_qd_error == -177);
+        assert(output.before == 0x1234 && output.after == 0x5678 && CW(QDErr_H) == -177);
         RGBColor saved = output.color;
         get(&mono, &output.color);
-        assert(!memcmp(&output.color, &saved, sizeof saved) && ROMlib_qd_error == paramErr);
+        assert(!memcmp(&output.color, &saved, sizeof saved) && CW(QDErr_H) == paramErr);
         assert(!get((GrafPtr)&color, NULL));
     }
     HIDDEN_RAW_SET(variable_master, 0);
@@ -1282,14 +1282,14 @@ static void quickdraw_record_accessors(void)
     HIDDEN_RgnPtr master;
     HIDDEN_RAW_SET(master, RM(&region));
     Rect* (*region_bounds)(RgnHandle, Rect*) = function("GetRegionBounds");
-    ROMlib_qd_error = -177;
+    QDErr_H = CW(-177);
     assert(region_bounds(&master, &output) == &output && !memcmp(&output, &region.rgnBBox, sizeof output));
-    assert(ROMlib_qd_error == -177);
-    assert(region_bounds(NULL, &output) == &output && ROMlib_qd_error == paramErr);
+    assert(CW(QDErr_H) == -177);
+    assert(region_bounds(NULL, &output) == &output && CW(QDErr_H) == paramErr);
     assert(!region_bounds(&master, NULL));
     SET_THEPORT_RAW(0);
     INTEGER (*mode)(GrafPtr) = function("GetPortTextMode");
-    assert(mode(NULL) == 1 && ROMlib_qd_error == paramErr);
+    assert(mode(NULL) == 1 && CW(QDErr_H) == paramErr);
     assert(fraction(NULL) == INT16_MIN && ch(NULL) == 0);
 }
 
@@ -1308,7 +1308,7 @@ static void quickdraw_remaining_globals(void)
             worlds[world][i] = world * 71 + i;
         HIDDEN_RAW_SET(roots[world], RM(&worlds[world][126]));
         EM_A5 = US_TO_SYN68K(&roots[world]);
-        ROMlib_qd_error = -177;
+        QDErr_H = CW(-177);
         uint32 seed = CL(0x81234567 + world);
         memcpy(worlds[world], &seed, sizeof seed);
         assert((uint32)get_seed() == 0x81234567 + world);
@@ -1333,10 +1333,10 @@ static void quickdraw_remaining_globals(void)
         assert(bits.before == 0x1234 && bits.after == 0x5678);
         assert(get_arrow(&cursor.cursor) == &cursor.cursor);
         assert(!memcmp(&cursor.cursor, worlds[world] + 18, sizeof(Cursor)));
-        assert(cursor.before == 0x1234 && cursor.after == 0x5678 && ROMlib_qd_error == -177);
+        assert(cursor.before == 0x1234 && cursor.after == 0x5678 && CW(QDErr_H) == -177);
         memset(&bits.bits, 0, sizeof bits.bits);
         assert(memcmp(&bits.bits, worlds[world] + 4, sizeof bits.bits));
-        assert(!get_bits(NULL) && !get_arrow(NULL) && ROMlib_qd_error == paramErr);
+        assert(!get_bits(NULL) && !get_arrow(NULL) && CW(QDErr_H) == paramErr);
     }
     EM_A5 = saved_a5;
 }
@@ -1615,6 +1615,7 @@ int32 ROMlib_component_call(uint32 instance, const void* parameters)
 
 int main(void)
 {
+    ROMlib_offset = (uintptr_t)quickdraw_lowmemory;
     toolbox_vector_results();
     HIDDEN_GrafPtr current_port;
     HIDDEN_HIDDEN_GrafPtr_Ptr port_pointer;

@@ -3809,7 +3809,14 @@ PRIVATE uint32 ppc_set_emulator_register(uint32 selector, uint32 value)
     return (previous >> shift) & 1;
 }
 
+static void ppc_lm_set_qd_error(INTEGER error)
+{
+    QDErr_H = CW(error);
+}
+
 PRIVATE const ppc_native_import private_imports[] = {
+    {"LMGetQDErr", C_QDError, M0(2)},
+    {"LMSetQDErr", ppc_lm_set_qd_error, M1(0, 2)},
     {"GetNextHighLevelEvent", ppc_get_next_high_level_event, M3(1, 2, 5, 1)},
     {"SetEmulatorRegister", ppc_set_emulator_register, M2(4, 4, 4)},
     {"PBXGetVolInfoSync", ppc_PBXGetVolInfoSync, M1(2, 4)},

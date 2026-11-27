@@ -33,12 +33,9 @@
 #include "rsys/vdriver.h"
 #include "rsys/dirtyrect.h"
 
-INTEGER ROMlib_qd_error;
-
 P0(PUBLIC pascal trap, INTEGER, QDError)
 {
-    /* #warning "make QDError work for real" */
-    return ROMlib_qd_error;
+    return CW(QDErr_H);
 }
 
 P0(PUBLIC pascal trap, LONGINT, GetCTSeed)
@@ -789,7 +786,7 @@ P2(PUBLIC pascal trap, void, ReserveEntry, INTEGER, index, BOOLEAN, reserve)
     old_value = entry->value;
     if (reserve) {
         if (entry->value & CTAB_RESERVED_BIT_X) {
-            ROMlib_qd_error = cProtectErr;
+            QDErr_H = CWC(cProtectErr);
             return;
         }
 
@@ -804,7 +801,7 @@ P2(PUBLIC pascal trap, void, ReserveEntry, INTEGER, index, BOOLEAN, reserve)
     }
 
     /* success */
-    ROMlib_qd_error = noErr;
+    QDErr_H = CWC(noErr);
 
     /* Only change the seed when necessary. */
     if (old_value != entry->value)
@@ -974,7 +971,7 @@ P3(PUBLIC pascal trap, void, SaveEntries, CTabHandle, src, CTabHandle, result, R
     }
     if (req_error_p) {
         /* #### does SaveEntries return colReqErr if errors occured */
-        ROMlib_qd_error = colReqErr;
+        QDErr_H = CWC(colReqErr);
     }
 }
 
@@ -1002,6 +999,6 @@ P3(PUBLIC pascal trap, void, RestoreEntries, CTabHandle, src, CTabHandle, dst, R
     }
     if (req_error_p) {
         /* #warning does SaveEntries return colReqErr if errors occured */
-        ROMlib_qd_error = colReqErr;
+        QDErr_H = CWC(colReqErr);
     }
 }

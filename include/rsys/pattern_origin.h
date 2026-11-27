@@ -16,7 +16,6 @@
 #ifndef RSYS_PATTERN_ORIGIN_H
 #define RSYS_PATTERN_ORIGIN_H
 #include "QuickDraw.h"
-extern INTEGER ROMlib_qd_error;
 /* Native coordinates internally; Toolbox output records remain big endian. */
 Point ROMlib_pattern_origin(void);
 void ROMlib_QDGetPatternOrigin(Point* origin);

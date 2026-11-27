@@ -263,6 +263,7 @@
 #define JVBLTask_H (*(HIDDEN_ProcPtr*)(0xD28 + ROMlib_offset))
 #define WMgrCPort_H (*(HIDDEN_CGrafPtr*)(0xD2C + ROMlib_offset))
 #define ROMlib_qd_port_list_H (*(HIDDEN_Handle*)(0xD66 + ROMlib_offset))
+#define QDErr_H (*(INTEGER*)(0xD6E + ROMlib_offset))
 #define SynListHandle_H (*(HIDDEN_Handle*)(0xD32 + ROMlib_offset))
 #define MenuCInfo_H (*(HIDDEN_MCTableHandle*)(0xD50 + ROMlib_offset))
 #define DTQueue (*(QHdr*)(0xD92 + ROMlib_offset))

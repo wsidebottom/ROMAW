@@ -55,7 +55,7 @@
 
 void ROMlib_carbon_set_qd_error(INTEGER error)
 {
-    ROMlib_qd_error = error;
+    QDErr_H = CW(error);
 }
 
 int ROMlib_carbon_convert_region_handle(ROMlib_carbon_ppc_frame* call)
@@ -1057,7 +1057,7 @@ void ROMlib_carbon_set_qd_arrow(const Cursor* cursor)
 
 static void nqd_put_pic_number(const void* bytes, uint16_t length)
 {
-    if (ROMlib_qd_error || !thePort)
+    if (CW(QDErr_H) || !thePort)
         return;
     if (PORT_GRAF_PROCS(thePort)) {
         // Custom picture procedures must receive an address in guest memory.
@@ -1097,7 +1097,7 @@ int ROMlib_carbon_nqd_put_pic_long(ROMlib_carbon_ppc_frame* call)
 
 int ROMlib_carbon_nqd_put_pic_data(ROMlib_carbon_ppc_frame* call)
 {
-    if (ROMlib_qd_error || !thePort)
+    if (CW(QDErr_H) || !thePort)
         return 1;
     const int16_t length = call->words[1];
     if (!length)

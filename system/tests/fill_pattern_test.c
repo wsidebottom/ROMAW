@@ -40,7 +40,6 @@ intptr_t CToPascalCall(void* proc, unsigned long magic, ...)
 #include "guest_test_memory.h"
 
 uint64 ROMlib_offset;
-INTEGER ROMlib_qd_error;
 
 Size GetHandleSize(Handle handle)
 {
@@ -94,9 +93,9 @@ int main(void)
     Point origin, expected_origin = {-3, 5};
     memset(test_port, 0, sizeof(CGrafPort));
     ROMlib_QDGetPatternOrigin(&origin);
-    assert(!origin.h && !origin.v && !ROMlib_qd_error);
+    assert(!origin.h && !origin.v && !CW(QDErr_H));
     ROMlib_QDGetPatternOrigin(NULL);
-    assert(ROMlib_qd_error == paramErr);
+    assert(CW(QDErr_H) == paramErr);
     ROMlib_QDSetPatternOrigin(expected_origin);
     ROMlib_QDGetPatternOrigin(&origin);
     assert(CW(origin.v) == -3 && CW(origin.h) == 5);

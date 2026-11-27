@@ -186,20 +186,21 @@ Point ROMlib_pattern_origin(void)
 
 void ROMlib_QDGetPatternOrigin(Point* origin)
 {
-    ROMlib_qd_error = origin ? noErr : paramErr;
+    QDErr_H = CW(origin ? noErr : paramErr);
     if (origin && thePort)
         *origin = *port_pattern_origin();
 }
 
 void ROMlib_QDSetPatternOrigin(Point origin)
 {
-    ROMlib_qd_error = noErr;
+    QDErr_H = CWC(noErr);
     if (thePort)
         *port_pattern_origin() = (Point){CW(origin.v), CW(origin.h)};
 }
 
 P1(PUBLIC pascal trap, void, InitGraf, Ptr, gp)
 {
+    QDErr_H = CWC(noErr);
     PixMapHandle main_gd_pixmap;
 
     global_pattern_origin = (Point){0, 0};
