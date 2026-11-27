@@ -82,7 +82,7 @@ typedef struct {
     unsigned frame_header;
     Syn68kNative040Restore restore;
     Syn68kNative040RTE rte;
-    Syn68kNative040MOVEM movem;
+    Syn68kNative040IntegerEA integer_ea;
 } FPUInvocation;
 
 enum {
@@ -100,7 +100,7 @@ enum {
     FPU_EXIT_EXCEPTION,
     FPU_EXIT_FRAME,
     NATIVE_EXIT_RTE,
-    NATIVE_EXIT_MOVEM,
+    NATIVE_EXIT_INTEGER_EA,
 };
 
 /* Unmanaged register arithmetic cannot call guest code. Managed invocations
@@ -3253,38 +3253,38 @@ static uint32 flat_native_run(uint32 pc, unsigned opcode)
     return step.vector ? trap_exception(step.vector, step.exception_pc, step.fault_address, step.format) : step.next;
 }
 
-static int mapped_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, unsigned resuming, uint32 address,
+static int mapped_integer_ea(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, unsigned resuming, uint32 address,
                         Syn68kIntegerStep* result)
 {
-    if ((pc & 1) || !movem040_opcode(opcode) || !memory || !memory->mmu || !result)
+    if ((pc & 1) || !(movem040_opcode(opcode) || (!resuming && moves040_opcode(opcode))) || !memory || !memory->mmu || !result)
         return 0;
     void* code = mapped_code(pc, opcode);
     if (!code)
         return 0;
-    FPUInvocation packet = {.movem = {.ea = {.cpu = &cpu_state, .context = {.memory = memory}},
+    FPUInvocation packet = {.integer_ea = {.ea = {.cpu = &cpu_state, .context = {.memory = memory}},
                                        .pc = pc, .resume_address = address, .opcode = opcode, .resuming = resuming}};
     if (memory->native)
-        packet.movem.ea.ram = memory->native->ram;
+        packet.integer_ea.ea.ram = memory->native->ram;
     ++syn68k_x64_executions;
     execute_managed_packet(code, &packet);
     if (packet.exit == FPU_EXIT_UNFETCHED)
         return 0;
-    if (packet.exit != NATIVE_EXIT_MOVEM)
+    if (packet.exit != NATIVE_EXIT_INTEGER_EA)
         return -1;
-    *result = packet.movem.step;
+    *result = packet.integer_ea.step;
     return 1;
 }
 
 int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, uint32 address,
                             Syn68kIntegerStep* result)
 {
-    return mapped_movem(pc, opcode, memory, 1, address, result);
+    return mapped_integer_ea(pc, opcode, memory, 1, address, result);
 }
 
 int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result)
 {
-    if (movem040_opcode(opcode))
-        return mapped_movem(pc, opcode, memory, 0, 0, result);
+    if (movem040_opcode(opcode) || moves040_opcode(opcode))
+        return mapped_integer_ea(pc, opcode, memory, 0, 0, result);
     if ((pc & 1) || !mapped_mmu_opcode(opcode) || !memory || !memory->mmu || !result)
         return 0;
     if ((opcode & 0xff00) == 0xf400 && (opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory->cache)

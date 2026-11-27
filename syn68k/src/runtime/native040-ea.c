@@ -57,10 +57,12 @@ static inline uint32 integer_exception(Syn68kIntegerStep* step, const Syn68kEACo
 #define write_checked_memory syn68k_ea_write_memory
 #include "movem040.h"
 #undef write_checked_memory
+#include "integer-store040.h"
+#include "moves040.h"
 
-__attribute__((used, noinline)) void native040_movem_body(void)
+__attribute__((used, noinline)) void native040_integer_ea_body(void)
 {
-    Syn68kNative040MOVEM* packet = (Syn68kNative040MOVEM*)native_ea;
+    Syn68kNative040IntegerEA* packet = (Syn68kNative040IntegerEA*)native_ea;
     Syn68kEAContext* context = &native_ea->context;
     Syn68kMMU040Memory* original = context->memory;
     Syn68kNative040MMU frame = {.memory = original, .ram = native_ea->ram};
@@ -69,7 +71,9 @@ __attribute__((used, noinline)) void native040_movem_body(void)
     context->pc = packet->pc + 2;
     if (packet->resuming)
         context->resume_ea = &packet->resume_address;
-    packet->step.next = move_multiple(packet->pc, packet->opcode, context, &packet->step);
+    packet->step.next = moves040_opcode(packet->opcode)
+                            ? move_alternate(packet->pc, packet->opcode, context, &packet->step)
+                            : move_multiple(packet->pc, packet->opcode, context, &packet->step);
     if (packet->resuming && packet->step.vector == 2) {
         packet->step.movem_state = 1;
         packet->step.movem_ea = packet->resume_address;
@@ -87,5 +91,5 @@ __attribute__((used, noinline)) void native040_movem_body(void)
 #endif
 __asm__(".text\n.p2align 4\n.globl native040_ea\nnative040_ea:\n"
         "endbr64\n" ROOT_ENTER "call native040_ea_body\n" ROOT_LEAVE);
-__asm__(".text\n.p2align 4\n.globl native040_movem\nnative040_movem:\n"
-        "endbr64\n" ROOT_ENTER "call native040_movem_body\n" ROOT_LEAVE);
+__asm__(".text\n.p2align 4\n.globl native040_integer_ea\nnative040_integer_ea:\n"
+        "endbr64\n" ROOT_ENTER "call native040_integer_ea_body\n" ROOT_LEAVE);

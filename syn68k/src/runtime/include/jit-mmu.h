@@ -25,7 +25,7 @@ static int mapped_mmu_opcode(unsigned opcode)
 {
     return opcode <= 65535 &&
            ((opcode & 0xff00) == 0xf400 || mmu_translation_opcode(opcode) || (opcode & 0xfffe) == 0x4e7a ||
-            opcode == 0x4e72 || opcode == 0x4e73 || movem040_opcode(opcode));
+            opcode == 0x4e72 || opcode == 0x4e73 || movem040_opcode(opcode) || moves040_opcode(opcode));
 }
 
 static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
@@ -37,10 +37,10 @@ static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)
     unsigned failures[8], count = 0;
     out->managed = out->dynamic = 1;
     ++out->guards;
-    if (movem040_opcode(opcode)) {
+    if (movem040_opcode(opcode) || moves040_opcode(opcode)) {
         pointer_r8(out, RELOC_FPU_FRAME);
-        fpu_call_packet(out, NATIVE040_MOVEM, offsetof(FPUInvocation, movem), failures, &count);
-        fpu_constant(out, offsetof(FPUInvocation, exit), NATIVE_EXIT_MOVEM, 0);
+        fpu_call_packet(out, NATIVE040_INTEGER_EA, offsetof(FPUInvocation, integer_ea), failures, &count);
+        fpu_constant(out, offsetof(FPUInvocation, exit), NATIVE_EXIT_INTEGER_EA, 0);
         for (unsigned i = 0; i < count; ++i)
             patch(out, failures[i], out->size);
         instruction_end(out, pc, 0);

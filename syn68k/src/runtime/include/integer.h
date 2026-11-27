@@ -105,6 +105,11 @@ typedef struct {
 int syn68k_integer_step(uint32_t pc, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result);
 /* Same dispatch after an opcode fetched by the mapped stream romaw. */
 int syn68k_integer_step_decoded(uint32_t pc, unsigned opcode, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result);
+static inline int moves040_opcode(unsigned opcode)
+{
+    return (opcode & 0xff00) == 0x0e00 && (opcode & 0xc0) != 0xc0;
+}
+
 static inline int movem040_opcode(unsigned opcode)
 {
     unsigned mode = opcode >> 3 & 7, reg = opcode & 7, load = !!(opcode & 0x400);

@@ -33,5 +33,5 @@ typedef struct {
     uint32 pc, resume_address;
     unsigned opcode, resuming;
     Syn68kIntegerStep step;
-} Syn68kNative040MOVEM;
+} Syn68kNative040IntegerEA;
 #endif
