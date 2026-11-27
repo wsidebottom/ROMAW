@@ -45,6 +45,7 @@ Bytes metadata(const Bytes& finder_info, const Bytes& resource);
 Bytes metadata_part(const Bytes& bytes, uint32_t id);
 Bytes macbinary(const Item& item, const std::function<bool()>& cancelled = {});
 Bytes zip(const std::vector<Item>& items, const std::function<bool()>& cancelled = {});
-std::vector<Item> expand(const Bytes& bytes, const std::function<bool()>& cancelled = {});
+enum class Format { zip, stuffit, stuffit5, macbinary, binhex };
+std::vector<Item> expand(const Bytes& bytes, const std::function<bool()>& cancelled = {}, Format* format = nullptr);
 }
 #endif

@@ -519,7 +519,9 @@ def main():
                 if operation in expected_failures:
                     continue
                 status = caption(get_item(operation, 10))
-                assert status not in ("Move failed", "Copy failed"), [caption(x) for x in windows_of(operation)]
+                assert status not in ("Move failed", "Copy failed", "Extraction failed"), [
+                    caption(x) for x in windows_of(operation)
+                ]
                 if status not in ("Complete", "Stopped"):
                     return False
             return True
@@ -707,12 +709,21 @@ def main():
             }
             (ROOT / f"build/windows-import-{args.import_format}.json").write_text(json.dumps(report, indent=2))
             return
-        for name, payload in (
-            ("Zip Here", "ZipPayload/Test"),
-            ("By Type", "TypePayload/Test"),
-            ("BinHex", "Test"),
-            ("MacBinary", "Test"),
-            ("StuffIt", "Test"),
+        def check_extraction_progress(destination, archive_name, archive_format):
+            title = f"Extracting to \u201c{destination}\u201d"
+            window = wait(lambda: named(desktop, "FinderOperation", title), title)
+            assert caption(get_item(window, 1)) == "Items remaining to be extracted:"
+            assert caption(get_item(window, 21)) == "Extracting:"
+            assert caption(get_item(window, 24)) == "Bytes Extracted:"
+            assert caption(get_item(window, 25)) == f"Format: {archive_format}"
+            assert caption(get_item(window, 12)) == archive_name
+
+        for name, payload, archive_format in (
+            ("Zip Here", "ZipPayload/Test", "ZIP"),
+            ("By Type", "TypePayload/Test", "ZIP"),
+            ("BinHex", "Test", "BinHex"),
+            ("MacBinary", "Test", "MacBinary"),
+            ("StuffIt", "Test", "StuffIt"),
         ):
             folder, archive = cases[name]
             command(
@@ -721,6 +732,7 @@ def main():
                 "open_command" if name in ("Zip Here", "By Type") else "extract_here_command",
             )
             verify_file(folder / payload, name in ("Zip Here", "By Type"))
+            check_extraction_progress(name, archive.name, archive_format)
             assert archive.exists()
         print("PASS native ZIP, StuffIt, BinHex and MacBinary Extract Here with exact forks", flush=True)
         check_nearby(folders["Zip Here"], cases["Zip Here"][1].name, ["ZipPayload"])
@@ -901,6 +913,14 @@ def main():
             "PASS cross-drive ZIP/StuffIt packaging, successful move removal and failed move source preservation",
             flush=True,
         )
+        command(win_folder, "PackageSit.sit", "copy_command")
+        time.sleep(0.15)
+        assert post(check_folder, 0x111, commands["paste_command"], 0)
+        wait(lambda: "PackageSit.sit" in rows(check_folder)[1], "copy StuffIt 5 archive to the verification folder")
+        command(check_folder, "PackageSit.sit", "extract_here_command")
+        verify_file(verify / "PackageSit/Test", full=False)
+        check_extraction_progress("Verify", "PackageSit.sit", "StuffIt 5")
+        print("PASS extraction progress labels and content-detected formats, including StuffIt 5", flush=True)
         image_folder_name = "Desktop Metadata"
         command(desktop, image_folder_name, "open_command")
         mounted = wait(lambda: named(desktop, "FinderFolder", image_folder_name), "writable mounted image")

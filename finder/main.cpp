@@ -222,6 +222,7 @@ struct DropPlacement {
 struct Extraction {
     ArchiveDestination destination;
     std::vector<ArchiveSource> sources;
+    std::wstring formats;
 };
 
 struct Operation {
@@ -2467,8 +2468,9 @@ void extract_items(HWND owner, const std::vector<Item>& items, ArchiveDestinatio
         destination = *picked;
     }
     classic::WaitingCursor waiting;
-    if (auto job = extract_archives(copies, sources, destination))
-        show_operation(job, 0, {}, {}, Extraction{std::move(destination), std::move(sources)});
+    Extraction extraction{std::move(destination), std::move(sources), {}};
+    if (auto job = extract_archives(copies, extraction.sources, extraction.destination, extraction.formats))
+        show_operation(job, 0, {}, {}, std::move(extraction));
 }
 
 void open_item(HWND owner, Item item)
@@ -6557,7 +6559,10 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(w, msg, wp, lp);
 }
 
-// Poll atomic copy progress and locked text fields; Stop sets only this job's
+// Leave room for the longer extraction labels and one additional detail row.
+constexpr int extraction_extra_width = 32, extraction_extra_height = 22;
+
+// Poll atomic transfer progress and locked text fields; Stop sets only this job's
 // cancellation flag, leaving other operations usable.
 LRESULT CALLBACK operation_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -6571,29 +6576,62 @@ LRESULT CALLBACK operation_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         auto view = [&](const wchar_t* type, const wchar_t* text, DWORD style, int id, FinderCopyBounds r) {
             return control(w, type, text, style, id, r.x, r.y, r.width, r.height);
         };
+        bool extracting = op->extraction.has_value();
         bool moving = moving_transfer(op->job->kind);
-        auto heading = view(L"STATIC", moving ? L"Items remaining to be moved:" : L"Items remaining to be copied:",
-                            SS_LEFT, 1, copy_rect_8805);
+        auto heading_rect = copy_rect_8805, count_rect = copy_rect_8800, stop_rect = copy_rect_3063;
+        if (extracting) {
+            heading_rect.width += extraction_extra_width;
+            count_rect.x += extraction_extra_width;
+            stop_rect.x += extraction_extra_width;
+        }
+        auto heading = view(L"STATIC", extracting ? L"Items remaining to be extracted:"
+                                       : moving   ? L"Items remaining to be moved:"
+                                                  : L"Items remaining to be copied:",
+                            SS_LEFT, 1, heading_rect);
         SendMessageW(heading, WM_SETFONT, reinterpret_cast<WPARAM>(classic::system_font()), TRUE);
-        auto count = view(L"STATIC", L"", SS_RIGHT, 9, copy_rect_8800);
+        auto count = view(L"STATIC", L"", SS_RIGHT, 9, count_rect);
         SendMessageW(count, WM_SETFONT, reinterpret_cast<WPARAM>(classic::system_font()), TRUE);
         op->bar = view(PROGRESS_CLASSW, L"", PBS_SMOOTH, 2, copy_rect_8803);
         classic::style_progress(op->bar);
         SendMessageW(op->bar, PBM_SETRANGE32, 0, 10000);
-        op->stop = view(L"BUTTON", L"Stop", BS_PUSHBUTTON, 3, copy_rect_3063);
+        op->stop = view(L"BUTTON", L"Stop", BS_PUSHBUTTON, 3, stop_rect);
         view(L"STATIC", L"Time remaining:", SS_LEFT, 20, copy_rect_8830);
-        view(L"STATIC", moving ? L"Moving:" : L"Copying:", SS_LEFT, 21, copy_rect_8801);
+        auto action_rect = copy_rect_8801, bytes_rect = copy_rect_8834;
+        if (extracting) {
+            action_rect.x -= 10;
+            action_rect.width += 10;
+            bytes_rect.width += 16;
+        }
+        view(L"STATIC", extracting ? L"Extracting:" : moving ? L"Moving:" : L"Copying:", SS_LEFT, 21, action_rect);
         view(L"STATIC", L"From:", SS_LEFT, 22, copy_rect_8832);
         view(L"STATIC", L"To:", SS_LEFT, 23, copy_rect_8833);
-        view(L"STATIC", moving ? L"Bytes Moved:" : L"Bytes Copied:", SS_LEFT, 24, copy_rect_8834);
+        view(L"STATIC", extracting ? L"Bytes Extracted:" : moving ? L"Bytes Moved:" : L"Bytes Copied:", SS_LEFT, 24,
+             bytes_rect);
         const FinderCopyBounds rows[] = {copy_rect_8830, copy_rect_8802, copy_rect_8832, copy_rect_8833,
                                          copy_rect_8834};
-        for (unsigned i = 0; i < 5; ++i)
-            op->fields[i] = control(w, L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 10 + i,
-                                    i ? copy_rect_8802.x : copy_rect_8830.x + copy_rect_8830.width + 2, rows[i].y,
-                                    i ? copy_rect_8802.width : copy_width - copy_rect_8830.x - copy_rect_8830.width - 8,
+        for (unsigned i = 0; i < 5; ++i) {
+            int x = i ? copy_rect_8802.x : copy_rect_8830.x + copy_rect_8830.width + 2;
+            int right = i ? copy_rect_8802.x + copy_rect_8802.width : copy_width - 6;
+            if (extracting) {
+                right += extraction_extra_width;
+                if (i == 4)
+                    x = bytes_rect.x + bytes_rect.width + 3;
+            }
+            op->fields[i] = control(w, L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 10 + i, x, rows[i].y, right - x,
                                     rows[i].height);
-        for (int id = 10; id <= 24; ++id)
+        }
+        if (extracting) {
+            auto text = L"Format: " + op->extraction->formats;
+            view(L"STATIC", text.c_str(), SS_LEFT | SS_ENDELLIPSIS, 25,
+                 {bytes_rect.x, bytes_rect.y + extraction_extra_height, copy_width + extraction_extra_width - 15,
+                  bytes_rect.height});
+            const auto& sources = op->extraction->sources;
+            auto source = sources.size() > 1 ? std::to_wstring(sources.size()) + L" archives"
+                          : sources.front().volume ? image_text(sources.front().name.c_str())
+                                                   : sources.front().path.filename().wstring();
+            SetWindowTextW(op->fields[2], source.c_str());
+        }
+        for (int id = 10; id <= 25; ++id)
             if (auto text = GetDlgItem(w, id))
                 SendMessageW(text, WM_SETFONT, reinterpret_cast<WPARAM>(classic::small_font()), TRUE);
         SetTimer(w, 1, 100, nullptr);
@@ -6639,12 +6677,13 @@ LRESULT CALLBACK operation_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (state == CopyJob::cancelled)
             remaining = L"Stopped";
         if (state == CopyJob::failed)
-            remaining = moving_transfer(job.kind) ? L"Move failed" : L"Copy failed";
+            remaining = op->extraction ? L"Extraction failed" : moving_transfer(job.kind) ? L"Move failed" : L"Copy failed";
         SetWindowTextW(op->fields[0], remaining.c_str());
         {
             std::lock_guard<std::mutex> guard(job.mutex);
             SetWindowTextW(op->fields[1], job.current.c_str());
-            SetWindowTextW(op->fields[2], job.from.c_str());
+            if (!op->extraction)
+                SetWindowTextW(op->fields[2], job.from.c_str());
             SetWindowTextW(op->fields[3], job.to.c_str());
         }
         auto bytes = format_bytes(done) + L" of " + format_bytes(total);
@@ -6680,8 +6719,18 @@ void show_operation(std::shared_ptr<CopyJob> job, DWORD clipboard_sequence,
     op->on_complete = std::move(on_complete);
     op->drop = std::move(drop);
     op->extraction = std::move(extraction);
-    auto title = std::wstring(moving_transfer(op->job->kind) ? L"Move to \x201c" : L"Copy to \x201c") +
-                 op->job->destinations[0].parent_path().filename().wstring() + L"\x201d";
+    bool extracting = op->extraction.has_value();
+    auto destination = op->job->destinations[0].parent_path();
+    auto destination_name = destination.has_filename() ? destination.filename().wstring() : destination.wstring();
+    if (extracting && op->extraction->destination.volume) {
+        const auto& target = op->extraction->destination;
+        FinderImageEntry directory{};
+        if (!ROMlib_finder_image_entry(target.volume, target.directory, -1, &directory))
+            destination_name = image_text(directory.name);
+    }
+    auto title = std::wstring(extracting ? L"Extracting to \x201c"
+                              : moving_transfer(op->job->kind) ? L"Move to \x201c" : L"Copy to \x201c") +
+                 destination_name + L"\x201d";
     unsigned slot = 0;
     for (const auto& o : operations)
         if (o->job->state <= CopyJob::copying)
@@ -6689,7 +6738,9 @@ void show_operation(std::shared_ptr<CopyJob> job, DWORD clipboard_sequence,
     HWND w =
         CreateWindowExW(WS_EX_TOOLWINDOW, L"FinderOperation", title.c_str(),
                         WS_CHILD | WS_CLIPSIBLINGS | WS_CAPTION | WS_SYSMENU, 140 + (slot % 6) * 26,
-                        160 + (slot % 6) * 26, copy_width + 4, copy_height + 21, desktop, nullptr, instance, op.get());
+                        160 + (slot % 6) * 26, copy_width + 4 + (extracting ? extraction_extra_width : 0),
+                        copy_height + 21 + (extracting ? extraction_extra_height : 0), desktop, nullptr, instance,
+                        op.get());
     if (!w)
         throw std::runtime_error("Cannot create a copy window");
     operations.push_back(std::move(op));

@@ -36,6 +36,6 @@ std::optional<ArchiveDestination> pick_archive_destination(HWND owner, const Arc
 // 0: cancel, 1: StuffIt 5, 2: ditto-compatible ZIP.
 int pick_folder_archive_format(HWND owner);
 std::shared_ptr<CopyJob> extract_archives(Copies& copies, const std::vector<ArchiveSource>& sources,
-                                          const ArchiveDestination& destination);
+                                          const ArchiveDestination& destination, std::wstring& formats);
 }
 #endif

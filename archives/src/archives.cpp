@@ -654,23 +654,34 @@ std::vector<Item> canonicalize(std::vector<Item> osx_layout)
     return logical;
 }
 
-std::vector<Item> expand(const Bytes& bytes, const std::function<bool()>& cancelled)
+std::vector<Item> expand(const Bytes& bytes, const std::function<bool()>& cancelled, Format* format)
 {
     poll(cancelled);
     require(bytes.size() <= byte_limit, "Archive exceeds 256 MiB");
     std::vector<Item> out;
-    if (bytes.size() >= 4 && bytes[0] == 'P' && bytes[1] == 'K')
+    Format detected;
+    if (bytes.size() >= 4 && bytes[0] == 'P' && bytes[1] == 'K') {
+        detected = Format::zip;
         out = unzip(bytes, cancelled);
+    }
     else if (bytes.size() >= 7 &&
              (std::memcmp(bytes.data(), "StuffIt", 7) == 0 || std::memcmp(bytes.data(), "SIT!", 4) == 0 ||
-              std::memcmp(bytes.data(), "STi4", 4) == 0))
+              std::memcmp(bytes.data(), "STi4", 4) == 0)) {
+        detected = std::memcmp(bytes.data(), "StuffIt", 7) == 0 ? Format::stuffit5 : Format::stuffit;
         out = unstuff(bytes, cancelled);
-    else if (!bytes.empty() && bytes.front() == 0)
+    }
+    else if (!bytes.empty() && bytes.front() == 0) {
+        detected = Format::macbinary;
         out = unbinary(bytes);
-    else
+    }
+    else {
+        detected = Format::binhex;
         out = unhex(bytes);
+    }
     out = canonicalize(std::move(out));
     poll(cancelled);
+    if (format)
+        *format = detected;
     return out;
 }
 }

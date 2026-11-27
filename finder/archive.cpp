@@ -70,14 +70,17 @@ bool archive_destination_allowed(const ArchiveDestination& destination)
 }
 
 std::shared_ptr<CopyJob> extract_archives(Copies& copies, const std::vector<ArchiveSource>& sources,
-                                          const ArchiveDestination& destination)
+                                          const ArchiveDestination& destination, std::wstring& formats)
 {
     if (!archive_destination_allowed(destination))
         throw std::runtime_error("Archives can only be extracted to a writable Mac-compatible drive or image");
     std::vector<romaw::archives::Item> items;
+    std::set<romaw::archives::Format> detected;
     size_t total = 0;
     for (const auto& source : sources) {
-        auto expanded = romaw::archives::expand(source_bytes(source));
+        romaw::archives::Format format;
+        auto expanded = romaw::archives::expand(source_bytes(source), {}, &format);
+        detected.insert(format);
         for (auto& item : expanded) {
             for (size_t size : {item.data.size(), item.metadata.size(), item.name.size(), size_t(256)}) {
                 if (size > romaw::archives::byte_limit - total)
@@ -85,6 +88,18 @@ std::shared_ptr<CopyJob> extract_archives(Copies& copies, const std::vector<Arch
                 total += size;
             }
             items.push_back(std::move(item));
+        }
+    }
+    using Format = romaw::archives::Format;
+    for (auto format : detected) {
+        if (!formats.empty())
+            formats += L", ";
+        switch (format) {
+        case Format::zip: formats += L"ZIP"; break;
+        case Format::stuffit: formats += L"StuffIt"; break;
+        case Format::stuffit5: formats += L"StuffIt 5"; break;
+        case Format::macbinary: formats += L"MacBinary"; break;
+        case Format::binhex: formats += L"BinHex"; break;
         }
     }
     romaw::archives::validate(items);
