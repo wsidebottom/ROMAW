@@ -20,6 +20,7 @@
 #include "ea.h"
 #include "integer.h"
 #include "jit-x64.h"
+#include "native040.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -386,6 +387,39 @@ static void fetch_and_indirection(void)
     }
 }
 
+#ifdef GENERATE_X64_CODE
+static void direct_ram_transfers(void)
+{
+    const unsigned spaces[] = {1, 2, 5, 6};
+    Syn68kMMU040Native native;
+    assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){ram, 0, sizeof ram}));
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned i = 0; i < sizeof spaces / sizeof *spaces; ++i)
+            for (unsigned size = 1; size <= 4; size *= 2)
+                for (unsigned writing = 0; writing < 2; ++writing) {
+                    unsigned fc = spaces[i];
+                    fixture(page8k, 1);
+                    map_data(fc);
+                    instruction(size, 0, writing, 2);
+                    cpu_state.sfc = cpu_state.dfc = fc;
+                    EM_A0 = 0x20000;
+                    EM_D0 = 0x12345678;
+                    uint32_t data = data_physical(EM_A0, fc);
+                    put32(data, 0x89abcdef);
+                    unsigned opcode = 0x0e10 | (size == 4 ? 0x80 : size == 2 ? 0x40 : 0);
+                    Syn68kIntegerStep result;
+                    assert(syn68k_x64_mapped_mmu(0x10000, opcode, &memory, &result) == 1);
+                    assert(!result.vector && result.next == 0x10004 && !reads && !writes);
+                    if (writing)
+                        for (unsigned byte = 0; byte < size; ++byte)
+                            assert(ram[data + byte] == (0x12345678u >> ((size - byte - 1) * 8) & 255));
+                    else
+                        assert(EM_D0 == (size == 4 ? 0x89abcdef : size == 2 ? 0x123489ab : 0x12345689));
+                }
+    memory.native = NULL;
+    puts("48 native MOVES RAM-only cases passed.");
+}
+#endif
 int main(int argc, char** argv)
 {
 #ifdef GENERATE_X64_CODE
@@ -401,6 +435,7 @@ int main(int argc, char** argv)
     fetch_and_indirection();
 #ifdef GENERATE_X64_CODE
     if (run_native) {
+        direct_ram_transfers();
         emits = syn68k_native_compile_count() - emits;
         hits = syn68k_aot_hit_count() - hits;
         printf("MOVES generated entries emitted=%llu hits=%llu.\n", (unsigned long long)emits,
