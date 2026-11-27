@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      afp_host_test.c
 
-  Summary:   Verify a native AFP guest login and volume open over TCP.
+  Summary:   Verify native AFP login, catalog enumeration and file data over TCP.
 
   Classes:   None.
 
@@ -37,9 +37,16 @@ int main(void)
     }
     if (!error) {
         romaw_afp_entry entry;
+        int read_data = 0;
         for (uint32_t index = 1; index <= 64; ++index) {
             error = romaw_afp_enumerate(session, volume, 2, index, &entry);
-            if (error || entry.directory)
+            if (error)
+                break;
+            if (!entry.node_id || !entry.name[0]) {
+                error = ROMAW_AFP_TRANSPORT_ERROR;
+                break;
+            }
+            if (entry.directory)
                 continue;
             uint16_t fork;
             error = romaw_afp_open_read_fork(session, volume, 2, entry.name, 0, &fork);
@@ -53,8 +60,16 @@ int main(void)
             int32_t closed = romaw_afp_close_fork(session, fork);
             if (!error)
                 error = closed;
-            break;
+            if (error)
+                break;
+            if (received == 1) {
+                printf("PASS read a file byte from root catalog entry %lu\n", (unsigned long)index);
+                read_data = 1;
+                break;
+            }
         }
+        if (!error && !read_data)
+            error = ROMAW_AFP_TRANSPORT_ERROR;
         int32_t closed = romaw_afp_close_volume(session, volume);
         if (!error)
             error = closed;
