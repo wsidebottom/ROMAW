@@ -564,6 +564,9 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             result->reason = result->interrupt_level ? SYN68K_MAPPED_INTERRUPT : SYN68K_MAPPED_STOPPED;
             return 1;
         }
+        int first_error_fetch = cpu->error_handler_pending && cpu->error_handler_pc == cpu->pc;
+        if (!first_error_fetch)
+            cpu->error_handler_pending = 0;
         if (cpu->pc & 1) {
             result->step.vector = 3;
             result->step.format = 2;
@@ -572,7 +575,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             exception(cpu, result);
             return 1;
         }
-        result->interrupt_level = cpu->movem_pending ? 0 : pending_interrupt();
+        result->interrupt_level = cpu->movem_pending || first_error_fetch ? 0 : pending_interrupt();
         if (result->interrupt_level) {
             result->reason = SYN68K_MAPPED_INTERRUPT;
             return 1;
@@ -619,6 +622,7 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             memory.instruction_word_count = cpu->prefetch_valid;
         unsigned opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
         cpu->prefetch_valid = 0;
+        cpu->error_handler_pending = 0;
         result->opcode = opcode;
         if (context.error) {
             result->step.vector = 2;
@@ -626,6 +630,11 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             result->step.exception_pc = cpu->pc;
             result->step.fault_address = context.fault_address;
             result->step.access = context.access;
+            if (first_error_fetch && !descriptor_lockup(&context.access)) {
+                halt_cpu(cpu, SYN68K_HALT_DOUBLE_FAULT);
+                result->reason = SYN68K_MAPPED_HALTED;
+                return 1;
+            }
             if (cpu->movem_pending) {
                 /* Preserve the saved effective address across another handler.
                    Exception entry suspends it; the new CM frame restores it. */
@@ -1198,6 +1207,7 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         return 1;
     }
     cpu->prefetch_valid = 0;
+    cpu->error_handler_pending = 0;
     cpu->stopped = 0; // Accepted exception entry resumes a stopped processor.
     uint16 old_sr = COMPUTE_SR_FROM_CPU_STATE();
     uint16 next_sr = (old_sr & 0x3FFF) | SR_SUPERVISOR_BIT;
@@ -1233,6 +1243,10 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         return 1;
     }
     cpu->pc = target;
+    if (record->vector == 2 || record->vector == 3) {
+        cpu->error_handler_pc = target;
+        cpu->error_handler_pending = 1;
+    }
     cpu->movem_pending = 0; // Continuation now belongs to the guest CM frame.
     if (interrupt_level)
         cpu_state.interrupt_pending[interrupt_level] = 0;

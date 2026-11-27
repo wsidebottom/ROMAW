@@ -50,6 +50,9 @@ typedef struct {
     /* The selected branch word or its access fault survives budget stops. */
     unsigned prefetch_valid;
     Syn68kMMU040Access prefetch_access[2];
+    /* Access/address-error entry remains active through its first opcode fetch. */
+    uint32_t error_handler_pc;
+    unsigned error_handler_pending;
     /* Sticky until the embedding performs a CPU reset and reinitializes this
        instance. IRQs and exception entry cannot release a hardware halt. */
     enum Syn68kMappedHalt halted;
@@ -118,7 +121,10 @@ typedef struct {
    descriptor lockup latches the CPU halt and reports HALTED. A double fault
    retains DOUBLE_FAULT and latches the halt as well. For an odd handler PC
    during access/address-error delivery, access describes the rejected prefetch
-   without a completed bus cycle. Further exception entries
+   without a completed bus cycle. An aligned handler's first opcode is fetched
+   by the stream runner before it recognizes another interrupt. An access fault
+   on that fetch reports HALTED with the failing access in the run record.
+   Further exception entries
    report HALTED without touching state or buses; only embedding reset releases
    either halt. Format 7 accepts opcode-fetch faults
    and reads certified by the stream runner to have unchanged data/CCR/SR/FPU
