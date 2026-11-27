@@ -41,7 +41,25 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: short FRESTORE and first handler fetch (2026-11-27)
+## Latest validated bundle: flat busy frames and nonfinite comparisons (2026-11-27)
+
+Commit 5881afae generates flat-memory busy FSAVE and FRESTORE transfers
+with whole-frame bounds checks. The differential suite passed 23,824 flat
+cases and separate cold and warm AOT busy-frame runs. Commit 6ac8f5ba
+generates FCMP and FTST results for infinities and quiet NaNs. The mapped
+suite passed 51,762 cases and cold and warm AOT runs.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT and saved-state checks passed.
+Both x64 ABIs passed all 22 generated kernel groups. The audited 66-file
+ROMAW bundle passed help, Browser and 68K Speedometer startup and is current
+at build/68040-current/bin. The previous bundle is retained at
+build/68040-pre-compare1-bin-20261127.
+
+CPU build ID 8523c04c4237d1517f08c73e54f33c9a381a01ed883b5635dbe13550347b4cda
+Archive SHA256 c02a9b3f6daef4b9dce7238641084d6992292cd7df78fc2914d52b2f090b29ef
+Audit build/68040-compare1-output/68040-compare1-source-audit.json
+
+## Previous validated bundle: short FRESTORE and first handler fetch (2026-11-27)
 
 Commit e7a50f03 lowers mapped short FRESTORE state commits while preserving
 checked handling of pending software frames. The restore fixture passed
