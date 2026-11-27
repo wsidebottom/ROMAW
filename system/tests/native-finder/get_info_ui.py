@@ -92,16 +92,17 @@ def icon_clipboard_reader(api, user, kernel):
     return copied
 
 
-def check_get_info(root, runtime, icons=False, redraw=False, resize_scroll=False, zoom=False):
+def check_get_info(root, runtime, icons=False, redraw=False, resize_scroll=False, zoom=False, font_previews=False):
     if icons:
         with private_desktop() as (desktop_handle, process):
             _check_get_info(root, runtime, icons, redraw, desktop_handle, process)
     else:
-        _check_get_info(root, runtime, icons, redraw, resize_scroll=resize_scroll, zoom=zoom)
+        _check_get_info(root, runtime, icons, redraw, resize_scroll=resize_scroll, zoom=zoom, font_previews=font_previews)
 
 
 def _check_get_info(
-    root, runtime, icons, redraw, desktop_handle=None, process=subprocess.Popen, resize_scroll=False, zoom=False
+    root, runtime, icons, redraw, desktop_handle=None, process=subprocess.Popen, resize_scroll=False, zoom=False,
+    font_previews=False,
 ):
     """Exercise Finder with a private profile and a writable copy of the HFS fixture."""
     base = Path(tempfile.mkdtemp(prefix="get-info-ui-", dir=root / "build"))
@@ -213,10 +214,12 @@ def _check_get_info(
             5 + row_words * strike_height + len(locations) // 2, 7, 2, 0, row_words,
         )
         family = bytes(52) + struct.pack(">HHHh", 0, 9, 0, 2569)
+        scalable_family = bytes(52) + struct.pack(">HHHhHHh", 1, 0, 0, 21, 9, 0, 2569)
         outline = (root / "fonts" / "Chicago.ttf").read_bytes()
         preview_fork = resources.build_fork(
             [
                 (b"FOND", 20, 0, b"Preview Family", family),
+                (b"FOND", 22, 0, b"Scalable Family", scalable_family),
                 (b"NFNT", 2569, 0, None, header + bitmap + locations + widths),
                 (b"sfnt", 21, 0, b"Preview Outline", outline),
             ]
@@ -624,6 +627,7 @@ def _check_get_info(
         print("PASS release coordinates for completed drops onto the desktop, a host folder, and HFS", flush=True)
 
     def check_font_previews():
+        get_rect = api(u, "GetWindowRect", w.BOOL, w.HWND, c.POINTER(w.RECT))
         get_dc = api(u, "GetDC", w.HDC, w.HWND)
         release_dc = api(u, "ReleaseDC", c.c_int, w.HWND, w.HDC)
         client_to_screen = api(u, "ClientToScreen", w.BOOL, w.HWND, c.POINTER(w.POINT))
@@ -636,8 +640,11 @@ def _check_get_info(
         delete = api(gdi, "DeleteObject", w.BOOL, w.HANDLE)
         blit = api(gdi, "BitBlt", w.BOOL, w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD)
 
-        def check_window(title, samples):
+        def check_window(title, samples, size):
             window = wait(lambda: named(desktop, "FinderFontPreview", title), f"preview {title}")
+            bounds = w.RECT()
+            assert get_rect(window, c.byref(bounds))
+            assert (bounds.right - bounds.left, bounds.bottom - bounds.top) == size
             origin = w.POINT()
             assert client_to_screen(window, c.byref(origin))
 
@@ -667,15 +674,17 @@ def _check_get_info(
         command(desktop, "Preview Fonts", FINDER_OPEN)
         suitcase = wait(lambda: named(desktop, "FinderSuitcase", "Preview Fonts"), "open preview fonts")
         double_click_item(suitcase, "Preview Family")
-        check_window("Preview Family", ((17, 26), (67, 79), (135, 153)))
+        check_window("Preview Family 9", ((17, 26),), (244, 225))
         double_click_item(suitcase, "Bitmap font #2569")
-        check_window("Preview Family 9", ((17, 26),))
+        check_window("Preview Family 9", ((17, 26),), (244, 225))
+        double_click_item(suitcase, "Scalable Family")
+        check_window("Scalable Family", ((17, 26), (67, 79), (135, 153)), (248, 288))
         double_click_item(suitcase, "Preview Outline")
-        check_window("Preview Outline", ((17, 35),))
+        check_window("Preview Outline", ((17, 35),), (248, 216))
         assert post(suitcase, WM_CLOSE, 0, 0)
         wait(lambda: suitcase not in windows(desktop, "FinderSuitcase"), "close Preview Fonts")
         command(desktop, "Outline File", FINDER_OPEN)
-        check_window("Outline File", ((17, 35),))
+        check_window("Outline File", ((17, 35),), (248, 216))
         print("PASS font family, bitmap strike, and embedded and standalone outline previews", flush=True)
 
     def check_sound_previews():
@@ -1480,6 +1489,9 @@ def _check_get_info(
             return
         if zoom:
             check_zoom()
+            return
+        if font_previews:
+            check_font_previews()
             return
         check_memory_panel()
         check_suitcases()

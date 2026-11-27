@@ -274,6 +274,8 @@ struct Outline {
 struct Preview {
     std::wstring identity;
     std::vector<Panel> panels;
+    bool bitmap_only = false;
+    unsigned family_strike_size = 0;
 };
 
 std::wstring preview_title(const SuitcaseFork& fork, const SuitcaseResource& selected, const std::wstring& fallback)
@@ -323,10 +325,26 @@ void render_preview(Preview& preview, const SuitcaseFork& fork, const SuitcaseRe
                     Strike(entry.payload).count)
                     bitmaps.emplace_back(entry.key.second % 128, &entry);
     }
-    else if (!outline)
-        bitmaps.emplace_back(0, &selected);
     const Bytes empty;
     Outline outline_font(outline ? outline->payload : empty);
+    // A bitmap-only family previews one actual strike at its native size.
+    // An individual FONT or NFNT always uses the same single-sample layout.
+    if (!outline_font.face.ptr && (family || selected.key.first == font || selected.key.first == nfnt)) {
+        const SuitcaseResource* strike = &selected;
+        if (family && !bitmaps.empty()) {
+            auto nearest = std::min_element(bitmaps.begin(), bitmaps.end(), [](const auto& a, const auto& b) {
+                return std::abs(int(a.first) - 12) < std::abs(int(b.first) - 12);
+            });
+            strike = nearest->second;
+            preview.family_strike_size = nearest->first;
+        }
+        Panel panel(L"Sample", 163);
+        if ((family && bitmaps.empty()) || !render_bitmap(panel, strike->payload, 1))
+            throw std::runtime_error("This font does not contain a usable bitmap or outline.");
+        preview.bitmap_only = true;
+        preview.panels.push_back(std::move(panel));
+        return;
+    }
     auto add_panel = [&](unsigned size, int height) {
         auto label = family ? std::to_wstring(size) + L" point" : std::wstring(L"Sample");
         Panel panel(std::move(label), height);
@@ -456,9 +474,12 @@ void show_font_preview(HWND desktop, HINSTANCE instance, const std::wstring& ide
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&type);
     constexpr DWORD style = WS_CHILD | WS_CAPTION | WS_SYSMENU | WS_CLIPSIBLINGS;
-    int height = key.first == fond ? 288 : 216;
+    int height = preview->panels.size() > 1 ? 288 : preview->bitmap_only ? 225 : 216;
+    int width = preview->bitmap_only ? 244 : 248;
     auto title = preview_title(fork, *selected, name);
-    HWND window = CreateWindowW(window_class, title.c_str(), style, 116, 88, 248, height, desktop, nullptr,
+    if (preview->family_strike_size)
+        title += L" " + std::to_wstring(preview->family_strike_size);
+    HWND window = CreateWindowW(window_class, title.c_str(), style, 116, 88, width, height, desktop, nullptr,
                                 instance, preview.get());
     if (!window || !SetPropW(window, L"FinderPreviewOwned", reinterpret_cast<HANDLE>(1))) {
         if (window)
