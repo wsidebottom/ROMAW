@@ -156,3 +156,14 @@ localhost resolution, nested resolver lifetimes, real loopback ICMP payloads
 of four sizes, invalid lengths/options and cancellation. It does not require
 administrator privileges or alter the firewall. Test MacTCP Ping's Start/Stop,
 packet options and summary display separately through the staged application.
+
+
+The same MacTCP host suite now covers nonblocking TCP and UDP port ranges.
+`bash system/tests/check-runtime.sh mactcp-guest /absolute/path/to/ROMAW.exe`
+builds and runs two Retro68 applications on Windows. The driver/ICMP/DNR probe
+checks public parameter-block and callback ABIs; the stream probe checks TCP and
+UDP controls, real destination metadata, no-copy ownership, Pascal notifications,
+orderly close/abort, status tables and four queued maximum-length TCP sends.
+The launcher waits for the final report across application-partition relaunches.
+These are loopback API regressions, not proof of complete physical network-stack
+or Open Transport compatibility.

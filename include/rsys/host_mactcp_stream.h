@@ -23,7 +23,7 @@ typedef struct {
     uint64_t bytes_sent, bytes_received;
     uint32_t retransmitted, duplicate_acks, timeout_episodes;
     uint16_t local_port, remote_port;
-    unsigned state, urgent;
+    unsigned state, urgent, readable;
 } host_mactcp_stream_status;
 
 typedef struct {

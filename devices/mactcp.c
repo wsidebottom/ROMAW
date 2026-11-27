@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset, ROMlib_mactcp_resolver_definition.
+  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset, ROMlib_mactcp_resolver_definition,
+             ROMlib_mactcp_memory, ROMlib_mactcp_complete.
 
   Origin:    ROMAW implementation; ABI follows the local MacTCP.h and MiscIPPB.h interface references.
 
@@ -57,7 +58,7 @@ static void write16(void* p, uint16 value)
     memcpy(p, &value, 2);
 }
 
-static void* guest_memory(uint32 address, uint32 length)
+void* ROMlib_mactcp_memory(uint32 address, uint32 length, int write)
 {
     address &= syn68k_address_mask;
     if (!address || (uint64)address + length > UINT64_C(0x100000000))
@@ -70,7 +71,12 @@ static void* guest_memory(uint32 address, uint32 length)
     else if ((uint64)address + length > ROMlib_guest_memory_size)
         return NULL;
     void* pointer = SYN68K_TO_US(address);
-    return ROMlib_win_accessible_span(pointer, length, FALSE) ? pointer : NULL;
+    return ROMlib_win_accessible_span(pointer, length, write) ? pointer : NULL;
+}
+
+static void* guest_memory(uint32 address, uint32 length)
+{
+    return ROMlib_mactcp_memory(address, length, FALSE);
 }
 
 /* MacTCP uses a caller-cleaned C stack argument. Retain Device Manager's
@@ -84,8 +90,17 @@ static void call_completion(uint32 callback, ParmBlkPtr pb, OSErr error)
     EM_A7 = saved_stack;
 }
 
+void ROMlib_mactcp_complete(ParmBlkPtr pb, BOOLEAN async, OSErr error)
+{
+    pb->ioParam.ioResult = CW(error);
+    uint32 completion = read32((unsigned char*)pb + 12);
+    if (async && completion)
+        call_completion(completion, pb, error);
+}
+
 void ROMlib_mactcp_reset(void)
 {
+    ROMlib_mactcp_stream_reset();
     while (resolver_users) {
         host_mactcp_resolver_close();
         --resolver_users;
@@ -103,6 +118,7 @@ void ROMlib_mactcp_poll(void)
     if (polling)
         return;
     polling = TRUE;
+    ROMlib_mactcp_stream_poll();
     for (unsigned i = 0; i < NELEM(requests); ++i) {
         echo_request* request = &requests[i];
         if (!request->host)
@@ -154,6 +170,8 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
 {
     OSErr error = noErr;
     unsigned char* bytes = (unsigned char*)pb;
+    if (routine == Ctl && CW(pb->cntrlParam.csCode) != 15 && CW(pb->cntrlParam.csCode) != 17)
+        return ROMlib_mactcp_stream_control(pb, async);
     if (routine == Close)
         ROMlib_mactcp_reset();
     else if (routine != Open) {

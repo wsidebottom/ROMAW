@@ -17,10 +17,13 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <mswsock.h>
 #include <stdlib.h>
 #include <string.h>
 #include "rsys/host_mactcp.h"
 #include "rsys/host_mactcp_stream.h"
+
+static LPFN_WSARECVMSG receive_message;
 
 struct host_mactcp_stream {
     SOCKET* sockets;
@@ -79,8 +82,19 @@ static SOCKET new_socket(int udp)
         WSASetLastError(error);
         return INVALID_SOCKET;
     }
-    if (udp)
+    if (udp) {
         setsockopt(socket_handle, SOL_SOCKET, SO_BROADCAST, (const char*)&exclusive, sizeof exclusive);
+        DWORD returned;
+        GUID identifier = WSAID_WSARECVMSG;
+        if (setsockopt(socket_handle, IPPROTO_IP, IP_PKTINFO, (const char*)&exclusive, sizeof exclusive) ||
+            WSAIoctl(socket_handle, SIO_GET_EXTENSION_FUNCTION_POINTER, &identifier, sizeof identifier,
+                     &receive_message, sizeof receive_message, &returned, NULL, NULL)) {
+            int error = WSAGetLastError();
+            closesocket(socket_handle);
+            WSASetLastError(error);
+            return INVALID_SOCKET;
+        }
+    }
     return socket_handle;
 }
 
@@ -290,8 +304,29 @@ int host_mactcp_stream_receive(host_mactcp_stream* stream, void* data, uint32_t 
         SOCKET socket_handle = stream->sockets[i];
         struct sockaddr_in remote, local;
         int size = sizeof remote, result;
-        if (stream->udp)
-            result = recvfrom(socket_handle, data, capacity, 0, (struct sockaddr*)&remote, &size);
+        uint32_t packet_destination = 0;
+        if (stream->udp) {
+            unsigned char control[WSA_CMSG_SPACE(sizeof(IN_PKTINFO))];
+            WSABUF buffer = {capacity, data};
+            WSAMSG message;
+            memset(&message, 0, sizeof message);
+            message.name = (struct sockaddr*)&remote;
+            message.namelen = size;
+            message.lpBuffers = &buffer;
+            message.dwBufferCount = 1;
+            message.Control.buf = (char*)control;
+            message.Control.len = sizeof control;
+            DWORD bytes = 0;
+            result = receive_message(socket_handle, &message, &bytes, NULL, NULL);
+            if (result != SOCKET_ERROR) {
+                result = bytes;
+                for (WSACMSGHDR* entry = WSA_CMSG_FIRSTHDR(&message); entry; entry = WSA_CMSG_NXTHDR(&message, entry))
+                    if (entry->cmsg_level == IPPROTO_IP && entry->cmsg_type == IP_PKTINFO) {
+                        const IN_PKTINFO* info = (const IN_PKTINFO*)WSA_CMSG_DATA(entry);
+                        packet_destination = ntohl(info->ipi_addr.s_addr);
+                    }
+            }
+        }
         else {
             WSAPOLLFD fd = {socket_handle, POLLRDBAND, 0};
             if (WSAPoll(&fd, 1, 0) > 0 && (fd.revents & POLLRDBAND))
@@ -314,7 +349,7 @@ int host_mactcp_stream_receive(host_mactcp_stream* stream, void* data, uint32_t 
         *received = result;
         *address = ntohl(remote.sin_addr.s_addr);
         *port = ntohs(remote.sin_port);
-        *destination = ntohl(local.sin_addr.s_addr);
+        *destination = stream->udp ? packet_destination : ntohl(local.sin_addr.s_addr);
         *local_port = ntohs(local.sin_port);
         stream->bytes_received += result;
         return 0;
@@ -373,6 +408,11 @@ int host_mactcp_stream_status_get(host_mactcp_stream* stream, host_mactcp_stream
     if (stream->opening)
         status->state = stream->passive ? 2 : 4;
     for (unsigned i = 0; i < stream->count; ++i) {
+        if (stream->udp) {
+            WSAPOLLFD fd = {stream->sockets[i], POLLRDNORM, 0};
+            if (WSAPoll(&fd, 1, 0) > 0 && (fd.revents & POLLRDNORM))
+                status->readable = 1;
+        }
         u_long available = 0;
         if (!ioctlsocket(stream->sockets[i], FIONREAD, &available))
             status->available += available;

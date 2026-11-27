@@ -17,7 +17,41 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'mactcp-guest' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    ;;
+  mactcp-guest)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      romaw=$(realpath "${1:-${ROMAW_TEST_EXE:-$root/windows-binaries/bin/ROMAW.exe}}")
+      retro68=${RETRO68_PREFIX:-/home/william/retro68-toolchain}
+      out="$root/build/mactcp"
+      mkdir -p "$out"
+      cd "$root"
+      for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt; do
+        IFS=: read -r source name report <<<"$entry"
+        "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "system/tests/$source.c" -o "$out/$name.code.bin"
+        "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
+          -I"$retro68/m68k-apple-macos/RIncludes" --copy "$out/$name.code.bin" \
+          -o "$out/$name.bin" -t APPL -c MTPr --cc "$out/%$name"
+        rm -f -- "$out/._$name"
+        python3 tools/normalize-appledouble.py "$out/%$name" "$out/._$name"
+        touch "$out/$name"
+        rm -f -- "$out/$report"
+        (
+          cd "$out"
+          "$romaw" -debug trace "$(wslpath -w "$out/$name")" >"$name-launch.log" 2>&1
+        )
+        # A partition relaunch can outlive the original GUI launcher.
+        for ((attempt = 0; attempt < 450; ++attempt)); do
+          if grep -q '^failures=' "$out/$report" 2>/dev/null; then break; fi
+          sleep 0.1
+        done
+        cat "$out/$report"
+        grep -q '^failures=0 checks=' "$out/$report"
+        if grep -s 'win_exception' "$out/stdout.txt" "$out/stderr.txt" "$out/$name-launch.log"; then exit 1; fi
+      done
+    )
     ;;
   mactcp)
     (

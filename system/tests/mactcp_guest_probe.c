@@ -110,7 +110,7 @@ int main(void)
     put16(query + 26, 15);
     check(!control(query, 0) && get32(query + 28) && get32(query + 32), "real local address and mask");
     put16(query + 26, 30);
-    check(control(query, 0) == -17, "unsupported TCP controls report controlErr");
+    check(control(query, 0) == -23006, "TCPCreate rejects a missing receive buffer");
 
     Handle resolver = GetIndResource('dnrp', 1);
     check(resolver && GetHandleSize(resolver) == 10, "DNR loads through Resource Manager");
