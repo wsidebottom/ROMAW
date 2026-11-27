@@ -41,7 +41,27 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: conditional branch prefetch (2026-11-27)
+## Latest validated bundle: sequential instruction prefetch (2026-11-27)
+
+Commits f05d59ad and 78008a66 retain sequential opcode and extension words
+across budget stops. Checked and emitted logical reads share the retained
+words and faults. The guest regression covers a changed backing FPU command
+and a long displacement assembled from a queued word and a demand read.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16 and cold/warm AOT checks passed.
+The warm sequential fixture reused one compiled body with zero compilation.
+Help, Browser and 68K Speedometer startup passed. The audited 66-file ROMAW
+bundle is promoted to build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-sequential3-bin-20261127.
+
+CPU build ID: 53fc8e00e3761dfaee3e1d2fb0f50c9a38129f17de0e17f4a16b0ec9ddbf7536
+Archive SHA256: 9201f5d5384709b8a357610caa1fc7e5826b21516d4d170a482c3d5b6ea02bab
+Audit: build/68040-sequential3-output/68040-sequential3-source-audit.json
+
+Further bus scheduling and restart integration, and the
+remaining FPU busy frame and special-value audits are open.
+
+## Previous validated bundle: conditional branch prefetch (2026-11-27)
 
 Commit 835e379f retains the selected Bcc or DBcc word or access fault across
 budget stops. Accepted exception entry flushes it. The 51-case regression
