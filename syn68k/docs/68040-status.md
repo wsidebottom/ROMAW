@@ -41,7 +41,26 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: sequential instruction prefetch (2026-11-27)
+## Latest validated bundle: floating-point branch prefetch (2026-11-27)
+
+Commit 73138da1 prefetches both paths of mapped FBcc and FDBcc. The selected
+word or access fault survives a budget stop. The 39-case matrix covers
+both branch paths, RTE recovery, counter updates and interrupt entry.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16 and cold/warm AOT checks passed.
+Warm AOT reused all 15 floating-branch bodies with zero recompilations.
+Help, Browser and 68K Speedometer startup passed. The audited 66-file ROMAW
+bundle is promoted to build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-floating2-bin-20261127.
+
+CPU build ID: da06bcab0fbf5fb9bf3b7303a14ebfb14ef03c3f0b055a7f8a0ca70bb0d80a42
+Archive SHA256: 89c0418b760bee24f15059ad8e13cb68c9ec2ff539df89a57df55b317f04d3e3
+Audit: build/68040-floating2-output/68040-floating2-source-audit.json
+
+Further bus scheduling and restart integration, and the
+remaining FPU busy frame and special-value audits are open.
+
+## Previous validated bundle: sequential instruction prefetch (2026-11-27)
 
 Commits f05d59ad and 78008a66 retain sequential opcode and extension words
 across budget stops. Checked and emitted logical reads share the retained
