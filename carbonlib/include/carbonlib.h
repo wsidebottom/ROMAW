@@ -148,6 +148,7 @@ int ROMlib_carbon_frame_word(const ROMlib_carbon_ppc_frame* call_frame, unsigned
    This synchronous operation requires a suspended native PPC caller. It does
    not fabricate a varargs home area or truncate arguments at eleven words.
    Failed calls preserve frame contents and the first active diagnostic. */
+int ROMlib_carbon_avl_dispatch(uint32_t selector, const ROMlib_carbon_ppc_frame* call, uint32_t* result);
 int ROMlib_carbon_invoke_frame(void* procedure, ROMlib_carbon_ppc_frame* call_frame);
 
 /* Reuse ROMAW's typed native service ABI for a CarbonLib re-export. */

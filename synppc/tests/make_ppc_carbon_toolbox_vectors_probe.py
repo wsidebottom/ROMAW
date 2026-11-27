@@ -716,6 +716,63 @@ def selector_descriptors(probe, rows):
             p.expect(0x12345678, f"D0 {width} dispatcher omits the supplied word selector")
 
 
+def avl_tree_operations(probe):
+    p = probe.p
+    storage = 0x1B00  # Reuse the preceding selector checks' scratch storage.
+    tree = probe.slot(storage)
+    callback_word = probe.ptr(storage + 4)
+    output, size, hits = (probe.ptr(storage + offset) for offset in (8, 12, 16))
+
+    def descriptor(instructions, info, offset):
+        callback = probe.far_raw(bytes(8))
+        p.routines.append((callback[1], instructions))
+        probe.call("NewRoutineDescriptor", [callback, info, 1])
+        p.nonzero("allocate an AVL guest callback descriptor")
+        p.emit(0x907E0000 | (storage + offset))
+        return probe.slot(storage + offset)
+
+    compare = descriptor([0x80840000, 0x80A50000, 0x7C652050, 0x4E800020], 0x2FF0, 20)
+    item_size = descriptor([0x38600004, 0x4E800020], 0x3F0, 24)
+    visit = descriptor([0x80890000, 0x38840001, 0x90890000, 0x38600000, 0x4E800020], 0xFEBE0, 28)
+    values = [probe.far_raw(struct.pack(">I", number)) for number in (8, 4, 2, 6, 10)]
+
+    def checked(name, arguments, status=0):
+        probe.call(name, arguments)
+        p.expect(status, name + " returns the expected AVL status")
+
+    for flags in (0, 1):
+        checked("AVLInit", [flags, compare, item_size, 0, 0x41564C21, probe.ptr(storage)])
+        for value in values:
+            checked("AVLInsert", [tree, value])
+        checked("AVLInsert", [tree, values[0]], -960)
+        checked("AVLCount", [tree, size])
+        p.emit(0x807E0000 | (storage + 12))
+        p.expect(5, "AVL count includes each distinct value")
+        checked("AVLGetRefcon", [tree, callback_word])
+        p.emit(0x807E0000 | (storage + 4))
+        p.expect(0x41564C21, "AVL preserves the initialization refcon")
+        for index, number in enumerate((2, 4, 6, 8, 10), 1):
+            checked("AVLGetIndItem", [tree, index, output, size])
+            p.emit(0x807E0000 | (storage + 8))
+            p.expect(number, "AVL indexed lookup follows sorted order")
+        p.emit(0x38000000, 0x901E0000 | (storage + 16))
+        checked("AVLWalk", [tree, visit, 0, hits])
+        p.emit(0x807E0000 | (storage + 16))
+        p.expect(15, "AVL walk visits each of five items at all three stages")
+        checked("AVLRemove", [tree, values[1], output, size])
+        p.emit(0x807E0000 | (storage + 8))
+        p.expect(4, "AVL remove returns the data it removed")
+        checked("AVLFind", [tree, values[1], output, size], -962)
+        checked("AVLFind", [tree, values[4], output, size])
+        p.emit(0x807E0000 | (storage + 8))
+        p.expect(10, "AVL removal preserves lookup of the remaining branches")
+        checked("AVLDispose", [probe.ptr(storage), 1])
+        p.emit(0x807E0000 | storage)
+        p.expect(0, "AVL disposal clears the caller reference")
+    for upp in (visit, item_size, compare):
+        probe.call("DisposeRoutineDescriptor", [upp])
+
+
 def upp_cases():
     source = (ROOT / "carbonlib/src/upp_entries.h").read_text()
     constructors = {
@@ -1025,6 +1082,8 @@ def toolbox_sections(probe, rows, registers, constructors, disposers, invocation
     probe.section("Installed graphics and resource traps", lambda: graphics_and_resources(probe))
     probe.section("Selector-specific routine descriptors", lambda: selector_descriptors(probe, rows))
     probe.section("Installed selector dispatch", lambda: selector_operations(probe))
+    if not probe.original_only:
+        probe.section("AVL Tree Manager lifecycle", lambda: avl_tree_operations(probe))
     probe.section("UPP allocation and disposal", lambda: routine_descriptors(probe, constructors, disposers))
     probe.section("Pascal UPP invocation", lambda: upp_invocations(probe, invocations))
     probe.section("C and register-based UPP invocation", lambda: mixed_upp_invocations(probe, mixed))

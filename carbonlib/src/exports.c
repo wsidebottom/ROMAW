@@ -142,6 +142,7 @@ CARBON_TEXTENSION(TXNPrintPage, txn_print_page)
 #include "color_sync.h"
 #include "component_messages.h"
 #include "control_access.h"
+#include "avl_tree.h"
 #include "data_browser.h"
 #include "cfw_internal.h"
 #include "cfx_entries.h"
