@@ -403,6 +403,12 @@ static void operand_frame(FPUContext* context, unsigned extension, floatx80 sour
 
 static void unimplemented_instruction(FPUContext* context, unsigned extension, floatx80 source)
 {
+    const Syn68kMMU040Prefetch* boundary = context->memory ? context->memory->prefetch : NULL;
+    if (!context->restoring && boundary && context->start == boundary->pc && boundary->page_fault &&
+        boundary->page_fault(boundary->opaque, context->pc, &context->access)) {
+        context->fault_address = context->access.logical;
+        fault(context, 2);
+    }
     operand_frame(context, extension, source);
     /* In an unimplemented-instruction frame E1 identifies a packed operand;
      the frame header/command retain the pending instruction without E1. */

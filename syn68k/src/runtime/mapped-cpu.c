@@ -27,6 +27,8 @@
 
 typedef struct {
     Syn68kMMU040Memory* original;
+    Syn68kMMU040Memory* executing;
+    unsigned instruction_fc;
     unsigned write_attempted;
     /* Separate callback An/null effects from instruction-owned EA/entry changes. */
     unsigned callback_state_changed;
@@ -325,21 +327,19 @@ static int move16_push_fault(const Syn68kIntegerStep* record, int candidate)
         record->store_link_displacement || record->fpu_vector || record->fpu_ea || record->movem_state ||
         record->movem_ea || record->restartable_read || record->stopped || record->forced_trace ||
         record->forced_trace_pc || record->prefetch_address || record->flow_changed || record->interrupt_level ||
-        (record->exception_pc & 1) || record->next != record->exception_pc || line->trace_pc ||
-        (line->address & 3) || access->writing != 1 || access->rmw || access->size != 4 || access->completed ||
-        access->bus_error || access->cache_table != 1 || access->cache_exception != 1 ||
+        (record->exception_pc & 1) || record->next != record->exception_pc || line->trace_pc || (line->address & 3) ||
+        access->writing != 1 || access->rmw || access->size != 4 || access->completed || access->bus_error ||
+        access->cache_table != 1 || access->cache_exception != 1 ||
         access->translation.fault != MMU040_PHYSICAL_ABORT || access->cache.fault != CACHE040_PUSH_FAULT ||
-        access->cache.completed || access->cache.cycle.traffic != CACHE040_LOCKED ||
-        access->request != line->address || access->logical != access->request ||
-        record->fault_address != access->logical || (access->fc != 1 && access->fc != 5) ||
-        access->value != line->data[(access->request >> 2) & 3] ||
+        access->cache.completed || access->cache.cycle.traffic != CACHE040_LOCKED || access->request != line->address ||
+        access->logical != access->request || record->fault_address != access->logical ||
+        (access->fc != 1 && access->fc != 5) || access->value != line->data[(access->request >> 2) & 3] ||
         !syn68k_mmu040_cache_push_ssw(access, &push_ssw))
         return 0;
     if (candidate) {
         unsigned mode = (line->command >> 3) & 7;
         return line->state == 7 && line->command < 512 && mode <= 4 && (mode == 4 || !(line->command >> 6)) &&
-               line->address == (line->destination & ~3u) &&
-               line->next - record->exception_pc == (mode == 4 ? 4u : 6u);
+               line->address == (line->destination & ~3u) && line->next - record->exception_pc == (mode == 4 ? 4u : 6u);
     }
     return line->state == 8 && !line->source && !line->destination && !line->command &&
            (line->next - record->exception_pc == 4 || line->next - record->exception_pc == 6);
@@ -465,6 +465,36 @@ static int descriptor_lockup(const Syn68kMMU040Access* access)
            access->translation.fault == MMU040_PHYSICAL_ABORT;
 }
 
+/* UMAD item 15: a nonresident page following the end of certain forced
+   exceptions faults at the original opcode before that exception is posted.
+   This checks the instruction translation boundary; physical speculative line
+   fills and the ordinary pending-prefetch queue remain separate work. */
+static int exception_page_fault(void* opaque, uint32_t next, Syn68kMMU040Access* access)
+{
+    InstructionBus* bus = opaque;
+    Syn68kMMU040Memory* memory = bus->executing;
+    unsigned mask = memory->mmu->tc & 0x4000 ? 0x1fff : 0xfff;
+    if (!(memory->mmu->tc & 0x8000) || (next & mask))
+        return 0;
+#ifdef GENERATE_X64_CODE
+    Syn68kNative040Entry entry =
+        memory->native && memory->native->read ? syn68k_native040_entry(NATIVE040_TRANSLATE) : NULL;
+    if (entry) {
+        Syn68kNative040MMU packet = {
+            .memory = memory, .address = next, .fc = bus->instruction_fc, .ram = memory->native->ram};
+        entry(&packet);
+        *access = packet.access;
+    }
+    else
+#endif
+        *access = syn68k_mmu040_memory_translate(memory, next, bus->instruction_fc, 0, 0);
+    access->size = 2;
+    /* As with diagnostic translation, a physical table/cache abort must not
+       be swallowed. Other instruction-access priorities are not generalized
+       from this nonresident-page erratum. */
+    return access->translation.fault == MMU040_INVALID || access->translation.fault == MMU040_PHYSICAL_ABORT;
+}
+
 static void halt_cpu(Syn68kMappedCPU* cpu, enum Syn68kMappedHalt reason)
 {
     cpu->halted = reason;
@@ -578,6 +608,10 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             memory.native = &native;
         }
         ReadCheckpoint before = read_checkpoint();
+        Syn68kMMU040Prefetch prefetch = {.pc = cpu->pc, .opaque = &bus, .page_fault = exception_page_fault};
+        bus.executing = &memory;
+        bus.instruction_fc = before.sr & SR_SUPERVISOR_BIT ? 6 : 2;
+        memory.prefetch = &prefetch;
         Syn68kEAContext context = {.pc = cpu->pc, .memory = &memory};
         unsigned opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
         result->opcode = opcode;
@@ -723,6 +757,19 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
                                                    .format = format,
                                                    .fault_address = format ? cpu->pc : 0};
             }
+        }
+        /* Literal ILLEGAL and A-line are selected by the stream dispatcher,
+           outside the operand exception factories. They consume one word. */
+        if (result->step.format == 0 &&
+            ((opcode == 0x4afc && result->step.vector == 4) || ((opcode >> 12) == 10 && result->step.vector == 10))) {
+            Syn68kMMU040Access prefetch_access;
+            if (exception_page_fault(&bus, cpu->pc + 2, &prefetch_access))
+                result->step = (Syn68kIntegerStep){.next = cpu->pc,
+                                                   .exception_pc = cpu->pc,
+                                                   .fault_address = prefetch_access.logical,
+                                                   .vector = 2,
+                                                   .format = 7,
+                                                   .access = prefetch_access};
         }
         if (!result->step.vector && ((result->step.prefetch_address | result->step.next) & 1)) {
             /* Address errors precede trace. A conditional branch can prefetch
@@ -997,8 +1044,8 @@ static int push_frame(Syn68kMappedCPU* cpu, const Syn68kIntegerStep* record, uin
                     value =
                         offset == 12   ? (uint32)(push_ssw | (ssw & 0xf000)) << 16 | (operand && tail ? tail_status : 0)
                         : offset == 16 ? (operand || line_pending ? wb_status
-                                          : tail  ? tail_status
-                                                  : 0)
+                                          : tail                  ? tail_status
+                                                                  : 0)
                                              << 16
                         : offset == 20 || offset == 40 ? push->push_address
                         : offset == 32 && line_pending ? record->move16.address

@@ -238,6 +238,17 @@ static uint32 integer_exception(Syn68kIntegerStep* step, const Syn68kEAContext* 
 {
     if (!step)
         return vector == 5 ? trap_direct(vector, pc, address) : trap_exception(vector, pc, address, format);
+    Syn68kMMU040Access prefetch;
+    const Syn68kMMU040Prefetch* boundary = context->memory ? context->memory->prefetch : NULL;
+    if (boundary && boundary->page_fault && format == 2 && vector == 6 &&
+        boundary->page_fault(boundary->opaque, context->pc, &prefetch)) {
+        step->vector = 2;
+        step->format = 7;
+        step->exception_pc = boundary->pc;
+        step->fault_address = prefetch.logical;
+        step->access = prefetch;
+        return boundary->pc;
+    }
     step->vector = vector;
     step->exception_pc = pc;
     step->fault_address = address;
@@ -1117,6 +1128,12 @@ static uint32 checked_bounds(uint32 pc, unsigned opcode, Syn68kEAContext* contex
         int32 upper = size == 2 ? (int16)bound : (int32)bound;
         // Fetch the bound even for a negative Dn; access errors precede CHK.
         // X is preserved; the undefined Z/V/C retain their incoming values.
+        if ((value < 0 || value > upper) && step) {
+            uint32 next = integer_exception(step, context, 6, context->pc, pc, 2);
+            if (step->vector == 6)
+                cpu_state.ccn = value < 0;
+            return next;
+        }
         cpu_state.ccn = value < 0;
         if (value < 0 || value > upper)
             return integer_exception(step, context, 6, context->pc, pc, 2);
@@ -1154,9 +1171,19 @@ static uint32 checked_bounds(uint32 pc, unsigned opcode, Syn68kEAContext* contex
         else if (size < 4)
             value &= size == 1 ? 0xff : 0xffff;
         uint32 mask = reg & 8 || size == 4 ? ~(uint32)0 : size == 1 ? 0xff : 0xffff;
-        cpu_state.ccnz = value != lower && value != upper;
-        cpu_state.ccc = ((value - lower) & mask) > ((upper - lower) & mask);
-        if ((extension & 0x0800) && cpu_state.ccc)
+        unsigned nonzero = value != lower && value != upper;
+        unsigned outside = ((value - lower) & mask) > ((upper - lower) & mask);
+        if ((extension & 0x0800) && outside && step) {
+            uint32 next = integer_exception(step, context, 6, context->pc, pc, 2);
+            if (step->vector == 6) {
+                cpu_state.ccnz = nonzero;
+                cpu_state.ccc = outside;
+            }
+            return next;
+        }
+        cpu_state.ccnz = nonzero;
+        cpu_state.ccc = outside;
+        if ((extension & 0x0800) && outside)
             return integer_exception(step, context, 6, context->pc, pc, 2);
         return context->pc;
     }

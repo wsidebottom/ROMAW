@@ -33,6 +33,18 @@ typedef struct {
     Syn68kCache040Interrupt interrupt;
 } Syn68kMMU040Cache;
 
+typedef struct Syn68kMMU040Access Syn68kMMU040Access;
+
+/* Optional CPU-owned exception boundary. Component buses leave this NULL.
+   The live callback checks the instruction-end page before posting a new
+   forced exception. A nonzero return replaces it with the supplied access
+   fault at pc. Neither this object nor its opaque pointer may escape the step. */
+typedef struct {
+    uint32_t pc;
+    void* opaque;
+    int (*page_fault)(void*, uint32_t next, Syn68kMMU040Access*);
+} Syn68kMMU040Prefetch;
+
 /* Operand boundary with an optional physical cache binding. Raw callbacks
    transfer big-endian bytes and receive translation attributes and the request's
    function code, including bypass spaces. They must
@@ -52,9 +64,10 @@ typedef struct {
        cache binding owns physical decomposition when present. */
     unsigned aligned_transfers;
     const Syn68kMMU040Cache* cache;
+    const Syn68kMMU040Prefetch* prefetch;
 } Syn68kMMU040Memory;
 
-typedef struct {
+struct Syn68kMMU040Access {
     Syn68kMMU040Result translation;
     /* Address of the current chunk, including a failed translation or transfer.
        completed counts successful operand bytes of the current pass, excluding
@@ -76,7 +89,7 @@ typedef struct {
     /* Unlike an ordinary failed table callback, this cannot be swallowed by
        diagnostic PTEST. Operand bus failures also set this flag. */
     unsigned cache_exception;
-} Syn68kMMU040Access;
+};
 
 /* Optional permanent, nonwrapping ordinary physical RAM. The owner retains
    both this storage and the native dispatch table throughout a bus invocation. */
