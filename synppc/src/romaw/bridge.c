@@ -2435,6 +2435,29 @@ PRIVATE OSErr ppc_dm_get_display_id(GDHandle requested, uint32* id, Boolean fall
     return noErr;
 }
 
+PRIVATE OSErr ppc_dm_get_device_by_display_id(uint32 id, HIDDEN_GDHandle* output, Boolean fall_back_to_main)
+{
+    if (!output)
+        return paramErr;
+    HIDDEN_RAW_SET(*output, NULL);
+    ppc_context* ctx = ppc_active_context;
+    if (!ctx)
+        return dm_sw_not_initialized;
+    const OSErr status = ppc_dm_refresh_devices(ctx);
+    if (status)
+        return status;
+    GDHandle device = NULL;
+    for (unsigned i = 0; i < ctx->display_count; ++i)
+        if (ctx->displays[i].id == id) {
+            device = ctx->displays[i].device;
+            break;
+        }
+    if (!device && fall_back_to_main)
+        device = MR(MainDevice);
+    HIDDEN_RAW_SET(*output, RM(device));
+    return device ? noErr : dm_display_not_found;
+}
+
 PRIVATE Handle ppc_top_resource_map(void)
 {
     return (Handle)MR(TopMapHndl);
@@ -3673,6 +3696,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"DMGetFirstScreenDevice", ppc_dm_first_screen_device, M1(5, 1)},
     {"DMGetNextScreenDevice", ppc_dm_next_screen_device, M2(5, 5, 1)},
     {"DMGetDisplayIDByGDevice", ppc_dm_get_display_id, M3(2, 5, 5, 1)},
+    {"DMGetGDeviceByDisplayID", ppc_dm_get_device_by_display_id, M3(2, 4, 5, 1)},
     {"LMGetDeskPattern", ppc_lm_get_desk_pattern, M1(0, 5)},
     {"LMSetDeskPattern", ppc_lm_set_desk_pattern, M1(0, 5)},
     {"LMGetDragPattern", ppc_lm_get_drag_pattern, M1(0, 5)},
@@ -6237,22 +6261,7 @@ PUBLIC OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4])
     }
     if (selector == 0x520) {
         HIDDEN_GDHandle* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
-        if (!output)
-            return paramErr;
-        HIDDEN_RAW_SET(*output, NULL);
-        const OSErr status = ppc_dm_refresh_devices(ctx);
-        if (status)
-            return status;
-        GDHandle device = NULL;
-        for (unsigned i = 0; i < ctx->display_count; ++i)
-            if (ctx->displays[i].id == args[0]) {
-                device = ctx->displays[i].device;
-                break;
-            }
-        if (!device && (Boolean)args[2])
-            device = MR(MainDevice);
-        HIDDEN_RAW_SET(*output, RM(device));
-        return device ? noErr : dm_display_not_found;
+        return ppc_dm_get_device_by_display_id(args[0], output, (Boolean)args[2]);
     }
     if (selector == 2 || selector == 3) {
         /* InterfaceLib also exports these calls without loading DisplayLib's
