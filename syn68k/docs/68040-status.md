@@ -5,6 +5,41 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
+## Descriptor placement audit follow-up (2026-11-27)
+
+[MC68040UMAD](https://www.nxp.com/docs/en/reference-manual/MC68040UMAD.pdf),
+item 13, prohibits copyback mappings for table/page descriptors. The earlier
+descriptor-push fixture inherited a copyback TTR and manually injected dirty
+descriptor cache lines. Correcting its U/M bits did not establish a permitted
+descriptor placement. Its 74,496 cases validate the engine's injected-state
+continuation and rejection guards; they do not establish architectural behavior
+for a supported software configuration. The six source-miss unsupported-delivery
+observations used that same injected configuration. They do not justify changing
+MOVE16's architectural source/destination ordering.
+
+The new write-through descriptor matrix passes 201,603 cases in optimized and
+separate cold/warm AOT processes. It constructs tables through WT memory writes,
+optionally warms clean descriptor cache lines, and checks ancestor U updates,
+all permitted U/M combinations, protected U-only updates, both page sizes, all
+five MOVE16 forms, privilege, normal trace and source cache modes/hits. Native
+memory variants cover callback-backed descriptors and directly lowered RAM
+table reads, writes and locked ORs, with no checked semantic-helper calls.
+
+For write-protected destinations, a guest handler drains captured PD, advances
+the stacked PC and postincrements, and returns through RTE. Changing peripheral
+source data makes an unintended second read observable; cleanup consumes the
+first sample without retouching the source. Two persistent instruction-view
+bodies are emitted cold and both load warm with zero compilation. The matrix is
+registered in the MMU and AOT groups.
+
+This is a regression/documentation follow-up. The 179 CPU inputs, four archives
+and all 66 staged/current binary hashes remain identical to the accepted
+buffered-victim bundle. The new audit is
+`build/68040-wt-descriptor-output/source-audit.json`. Dirty-descriptor injected
+states remain engine stress tests and need separate hardware evidence before
+being used as a required architectural ordering case. Physical prefetch,
+further restart/delivery integration and the remaining FPU audits remain open.
+
 ## Latest validated bundle: buffered-victim arbitration (2026-11-27)
 
 Source checkpoints `2a0ed97f` and `db140772` expose a dirty replacement
@@ -42,8 +77,8 @@ with 30,944/77,161 native entries and null checkpoints;
 Speedometer makes one FPU query. These are startup smokes, not broad application
 compatibility tests.
 
-The goal remains active. Source-miss compound descriptor pushes, further
-locked/active-stack/double-fault continuations, physical instruction prefetch,
+The goal remains active. Further locked/active-stack/double-fault continuations,
+physical instruction prefetch,
 partial external transactions, and remaining FPU busy/FPSP, encoding and
 special-value audits remain open. This grant boundary does not implement
 preemption within a line burst or pin-level timing. Full 68040 and ROMAW-wide

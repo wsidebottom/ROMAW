@@ -110,3 +110,15 @@ identity recorded in `build/68040-victim-output/68040-victim-source-audit.json`.
 The two cache-state changes produce a new identity; previous cache entries
 cannot be reused as code for this layout. See the latest
 [68040 checkpoint](68040-status.md) for the remaining CPU integration work.
+
+## WT descriptor regression follow-up (2026-11-27)
+
+The WT descriptor/MOVE16 matrix passes 201,603 cases per cold/warm process with
+callback-backed and directly lowered native RAM descriptor paths. Guest hard
+cleanup drains captured PD and skips a faulted MOVE16 without rereading its
+changing peripheral source. Its instruction-view sentinel emits two bodies cold
+and loads both warm with zero compilation. It is registered in the MMU and AOT
+groups. This follow-up changes regression coverage and descriptor-placement
+claims; CPU sources, build identity, archives and staged binaries are unchanged.
+See [the placement audit](68040-status.md) before using the older dirty-descriptor
+injection as architectural evidence.

@@ -575,6 +575,12 @@ EOF
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16 -o "$fixture/move16-descriptor-test.exe"
       "$fixture/move16-descriptor-test.exe" "$(wslpath -m "$fixture/move16-descriptor")" 0
       "$fixture/move16-descriptor-test.exe" "$(wslpath -m "$fixture/move16-descriptor")" 1
+      mkdir -p "$fixture/move16-wt-descriptor"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-move16-wt-descriptor-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16,--wrap=syn68k_cache040_transfer -o "$fixture/move16-wt-descriptor-test.exe"
+      "$fixture/move16-wt-descriptor-test.exe" "$(wslpath -m "$fixture/move16-wt-descriptor")" 0
+      "$fixture/move16-wt-descriptor-test.exe" "$(wslpath -m "$fixture/move16-wt-descriptor")" 1
       "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-cas040-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_transfer -o "$fixture/cas-test.exe"
@@ -1120,6 +1126,11 @@ EOF
         syn68k/tests/mapped-move16-descriptor-push-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16 -o "$output/move16-descriptor-test.exe"
       "$output/move16-descriptor-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-move16-wt-descriptor-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_mmu040_translate,--wrap=syn68k_cache040_move16,--wrap=syn68k_cache040_transfer -o "$output/move16-wt-descriptor-test.exe"
+      "$output/move16-wt-descriptor-test.exe"
       "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
         -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
         syn68k/tests/mapped-cas040-test.c syn68k/obj/src/runtime/libsyn68k.a \
