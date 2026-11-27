@@ -372,6 +372,63 @@ static void native_transfer(unsigned resuming)
                     }
     printf("%u native MOVEM %s mask and fault cases passed.\n", count, resuming ? "restart" : "initial");
 }
+static void native_indirect_transfer(void)
+{
+    const uint32_t pointer = 0x20020, saved = 0x20040, target = 0x20080;
+    const unsigned opcode = 0x4cf0; /* MOVEM.L ([A0],D2.L),D0. */
+    unsigned count = 0;
+    for (unsigned page = 0; page < 2; ++page)
+        for (unsigned privileged = 0; privileged < 2; ++privileged)
+            for (unsigned resuming = 0; resuming < 2; ++resuming)
+                for (unsigned fault = 0; fault < 4; ++fault) {
+                    Syn68kIntegerStep expected = {0};
+                    uint32_t expected_d0 = 0;
+                    unsigned expected_reads = 0;
+                    for (unsigned native = 0; native < 2; ++native) {
+                        fixture(page, privileged);
+                        code_word(0x10000, opcode);
+                        code_word(0x10002, 1);
+                        code_word(0x10004, 0x2915);
+                        EM_A0 = pointer;
+                        EM_D0 = 0;
+                        EM_D2 = 0;
+                        put32(physical(pointer), target);
+                        put32(physical(target), 0x12345678);
+                        put32(physical(saved), 0xabcdef01);
+                        if (fault == 1)
+                            fail_physical = physical(0x10004);
+                        else if (fault == 2)
+                            fail_physical = physical(pointer);
+                        else if (fault == 3)
+                            fail_physical = physical(resuming ? saved : target);
+                        Syn68kIntegerStep result;
+                        if (!native) {
+                            if (resuming)
+                                assert(syn68k_integer_resume_movem(0x10000, opcode, &memory, saved, &expected));
+                            else
+                                assert(syn68k_integer_step_decoded(0x10000, opcode, &memory, &expected));
+                            expected_d0 = EM_D0;
+                            expected_reads = reads;
+                        }
+                        else {
+                            int handled = resuming
+                                              ? syn68k_x64_resume_movem(0x10000, opcode, &memory, saved, &result)
+                                              : syn68k_x64_mapped_mmu(0x10000, opcode, &memory, &result);
+                            assert(handled == 1);
+                            assert(result.next == expected.next && result.vector == expected.vector &&
+                                   result.format == expected.format && result.fault_address == expected.fault_address &&
+                                   result.movem_state == expected.movem_state && result.movem_ea == expected.movem_ea);
+                            assert(result.access.fc == expected.access.fc && EM_D0 == expected_d0 &&
+                                   reads == expected_reads && !writes && EM_A0 == pointer);
+                            if (resuming && fault == 2)
+                                assert(!result.vector && EM_D0 == 0xabcdef01);
+                            ++count;
+                        }
+                    }
+                }
+    printf("%u native MOVEM indirect pointer, extension, and saved-EA cases passed.\n", count);
+}
+
 #endif
 
 int main(int argc, char** argv)
@@ -390,6 +447,7 @@ int main(int argc, char** argv)
     fflush(stdout);
     if (argc > 1)
         assert(atoi(argv[1]) ? emits == 0 && hits >= 4 : emits == 4);
+    native_indirect_transfer();
 #endif
     printf("%u mapped MOVEM mask/page/update/partial-fault cases passed.\n", cases);
 }
