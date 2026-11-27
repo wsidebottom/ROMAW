@@ -214,7 +214,7 @@ make -C "$workspace/synppc" stage-romaw \
 finder_obj="$obj/native-finder/windows-x64"
 python3 "$workspace/tools/romaw/native_finder/build.py" --output-dir "$finder_obj"
 finder_dependencies="$finder_obj/libfinder.a $finder_obj/finder-integrated-res.o $finder_obj/archives/libromaw-archives.a $finder_obj/stuffit/libstuffit_ffi.a"
-finder_libs="$finder_dependencies $obj/finder-metadata/libromaw-finder-metadata.a -lcomctl32 -luxtheme -lshlwapi -lmpr -lpsapi -lws2_32 -liphlpapi -luserenv -lbcrypt -lntdll -lsynchronization"
+finder_libs="$finder_dependencies $obj/finder-metadata/libromaw-finder-metadata.a -lcomctl32 -luxtheme -lshlwapi -lmpr -lpsapi -lws2_32 -liphlpapi -ldnsapi -luserenv -lbcrypt -lntdll -lsynchronization"
 
 carbon_obj="$obj/carbonlib"
 make -C "$workspace/carbonlib" stage \

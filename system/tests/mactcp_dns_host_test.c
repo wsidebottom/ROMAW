@@ -28,6 +28,7 @@ static DNS_RECORDA* record(WORD type, const char* name)
     DNS_RECORDA* item = calloc(1, sizeof *item);
     assert(item);
     item->wType = type;
+    item->Flags.S.Section = DnsSectionAnswer;
     item->dwTtl = 300;
     item->pName = (char*)name;
     return item;

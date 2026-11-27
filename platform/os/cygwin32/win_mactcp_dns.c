@@ -76,7 +76,7 @@ static int dns_error(DNS_STATUS status)
 
 static void remember(host_mactcp_dns_reply* reply, const DNS_RECORDA* source)
 {
-    if (reply->record_count == HOST_MACTCP_DNS_RECORDS ||
+    if (source->Flags.S.Section == DnsSectionQuestion || reply->record_count == HOST_MACTCP_DNS_RECORDS ||
         (source->wType != DNS_TYPE_A && source->wType != DNS_TYPE_CNAME && source->wType != DNS_TYPE_PTR &&
          source->wType != DNS_TYPE_NS))
         return;
@@ -114,6 +114,8 @@ static int lookup(const char* name, uint16_t type, int cache_only, host_mactcp_d
     if (!status) {
         for (const DNS_RECORDA* item = records; item; item = item->pNext) {
             remember(reply, item);
+            if (item->Flags.S.Section != DnsSectionAnswer)
+                continue;
             if (item->wType == DNS_TYPE_CNAME && item->Data.CNAME.pNameHost)
                 copy_string(reply->canonical, sizeof reply->canonical, item->Data.CNAME.pNameHost);
             if (item->wType != type)
@@ -207,7 +209,8 @@ static DWORD WINAPI dns_worker(void* argument)
 host_mactcp_dns_request* host_mactcp_dns_start(const char* name, uint16_t type, int* error)
 {
     *error = -23041;
-    if (!valid_name(name))
+    if (!valid_name(name) ||
+        (type != DNS_TYPE_A && type != DNS_TYPE_PTR && type != DNS_TYPE_HINFO && type != DNS_TYPE_MX))
         return NULL;
     *error = host_mactcp_resolver_open();
     if (*error)
@@ -241,7 +244,8 @@ int host_mactcp_dns_result(host_mactcp_dns_request* request, host_mactcp_dns_rep
         return 1;
     if (status != WAIT_OBJECT_0)
         return -23047;
-    memcpy(reply, &request->reply, sizeof *reply);
+    if (reply)
+        memcpy(reply, &request->reply, sizeof *reply);
     return 0;
 }
 

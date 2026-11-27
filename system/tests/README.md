@@ -167,3 +167,11 @@ orderly close/abort, status tables and four queued maximum-length TCP sends.
 The launcher waits for the final report across application-partition relaunches.
 These are loopback API regressions, not proof of complete physical network-stack
 or Open Transport compatibility.
+
+
+The MacTCP host suite also runs real Windows DNS/lifetime checks and deterministic
+A/CNAME/PTR/HINFO/MX record, TTL, cache and error fixtures. The guest suite includes
+a DNR probe for every selector, wide and packed-short selector layouts, optional
+Hosts initialization, malformed inputs, CNAME cycles, reentrant cache enumeration,
+asynchronous result delivery and close/reopen with abandoned workers.
+Custom Hosts fixtures are generated from original text under build/mactcp.

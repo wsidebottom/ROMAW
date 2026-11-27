@@ -23,6 +23,8 @@ void ROMlib_mactcp_complete(ParmBlkPtr pb, BOOLEAN async, OSErr error);
 OSErr ROMlib_mactcp_stream_control(ParmBlkPtr pb, BOOLEAN async);
 void ROMlib_mactcp_stream_poll(void);
 void ROMlib_mactcp_stream_reset(void);
+void ROMlib_mactcp_resolver_poll(void);
+void ROMlib_mactcp_resolver_reset(void);
 void ROMlib_mactcp_poll(void);
 void ROMlib_mactcp_reset(void);
 #endif

@@ -211,7 +211,7 @@ event_sources = events/notify.c events/hle.c events/osevent.c events/toolevent.c
 service_sources = services/components.c services/systemnotify.c services/osutil.c services/pack.c services/scrap.c \
   services/toolutil.c services/time.c services/edition.c services/crc.c
 movie_sources = movies/qt.c
-device_sources = devices/mactcp_stream.c devices/mactcp.c devices/device.c devices/serial.c devices/commtool.c
+device_sources = devices/mactcp_resolver.c devices/mactcp_stream.c devices/mactcp.c devices/device.c devices/serial.c devices/commtool.c
 text_sources = text/font.c text/iu.c text/script.c text/string.c text/fontIMVI.c text/local_charset.c \
   text/intl_resource.c include/rsys/intl_resource.h
 host_sources = host/slash.c host/trash.c host/diskimages.c host/macinfo.c host/fauxdbm.c host/application_instance.c
@@ -301,6 +301,7 @@ include_sources = include/rsys/component.h \
                   include/rsys/mactcp.h \
                   include/rsys/host_mactcp.h \
                   include/rsys/host_mactcp_stream.h \
+                  include/rsys/host_mactcp_dns.h \
                   include/rsys/dial.h \
                   include/rsys/dirtyrect.h \
                   include/rsys/drive_flags.h \
@@ -566,6 +567,7 @@ os_sources = platform/os/cygwin32/cygwin32.c \
              platform/os/cygwin32/win_disk.c          \
              platform/os/cygwin32/win_stat.c          \
              platform/os/cygwin32/win_memory.c        \
+             platform/os/cygwin32/win_mactcp_dns.c \
              platform/os/cygwin32/win_mactcp_stream.c \
              platform/os/cygwin32/win_mactcp.c        \
              platform/os/cygwin32/win_serial.c        \

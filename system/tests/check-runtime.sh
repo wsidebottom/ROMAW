@@ -28,7 +28,8 @@ case "$check" in
       out="$root/build/mactcp"
       mkdir -p "$out"
       cd "$root"
-      for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt; do
+      python3 system/tests/mactcp_resolver_fixtures.py
+      for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt mactcp_resolver_guest_probe:MacTCPResolverProbe:resolver-guest-results.txt; do
         IFS=: read -r source name report <<<"$entry"
         "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "system/tests/$source.c" -o "$out/$name.code.bin"
         "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
@@ -66,6 +67,14 @@ case "$check" in
         "$root/system/tests/mactcp_stream_host_test.c" "$root/platform/os/cygwin32/win_mactcp_stream.c" \
         "$root/platform/os/cygwin32/win_mactcp.c" -o "$root/build/mactcp/stream-host-test.exe" -liphlpapi -lws2_32
       "$root/build/mactcp/stream-host-test.exe"
+      x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -Wall -Wextra -Werror -I"$root/include" \
+        "$root/system/tests/mactcp_dns_host_test.c" "$root/platform/os/cygwin32/win_mactcp_dns.c" \
+        "$root/platform/os/cygwin32/win_mactcp.c" -o "$root/build/mactcp/dns-host-test.exe" -ldnsapi -liphlpapi -lws2_32
+      "$root/build/mactcp/dns-host-test.exe"
+      x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -Wall -Wextra -Werror -DMACTCP_DNS_FIXTURE -I"$root/include" \
+        "$root/system/tests/mactcp_dns_host_test.c" "$root/platform/os/cygwin32/win_mactcp.c" \
+        -o "$root/build/mactcp/dns-record-test.exe" -ldnsapi -liphlpapi -lws2_32
+      "$root/build/mactcp/dns-record-test.exe"
     )
     ;;
   syserr)

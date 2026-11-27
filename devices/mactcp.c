@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset, ROMlib_mactcp_resolver_definition,
+  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset,
              ROMlib_mactcp_memory, ROMlib_mactcp_complete.
 
   Origin:    ROMAW implementation; ABI follows the local MacTCP.h and MiscIPPB.h interface references.
@@ -30,7 +30,6 @@ typedef struct {
 
 static echo_request requests[16];
 static boolean_t polling;
-static unsigned resolver_users;
 
 static uint32 read32(const void* p)
 {
@@ -101,10 +100,7 @@ void ROMlib_mactcp_complete(ParmBlkPtr pb, BOOLEAN async, OSErr error)
 void ROMlib_mactcp_reset(void)
 {
     ROMlib_mactcp_stream_reset();
-    while (resolver_users) {
-        host_mactcp_resolver_close();
-        --resolver_users;
-    }
+    ROMlib_mactcp_resolver_reset();
     for (unsigned i = 0; i < NELEM(requests); ++i) {
         host_mactcp_dispose(requests[i].host);
         if (requests[i].notification)
@@ -119,6 +115,7 @@ void ROMlib_mactcp_poll(void)
         return;
     polling = TRUE;
     ROMlib_mactcp_stream_poll();
+    ROMlib_mactcp_resolver_poll();
     for (unsigned i = 0; i < NELEM(requests); ++i) {
         echo_request* request = &requests[i];
         if (!request->host)
@@ -230,79 +227,4 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
     if (async && completion)
         call_completion(completion, pb, error);
     return error;
-}
-
-/* DNR's public C entry takes a long selector followed by selector-specific
-   arguments. Results may be returned synchronously; no resultProc is then due. */
-static syn68k_addr_t resolver_callback(syn68k_addr_t pc, void* unused)
-{
-    (void)pc;
-    (void)unused;
-    unsigned char* stack = guest_memory(EM_A7, 12);
-    OSErr error = paramErr;
-    if (stack) {
-        uint32 selector = read32(stack + 4);
-        uint32 argument = read32(stack + 8);
-        if (selector == 1) {
-            error = host_mactcp_resolver_open();
-            if (!error)
-                ++resolver_users;
-        }
-        else if (selector == 2) {
-            if (resolver_users) {
-                host_mactcp_resolver_close();
-                --resolver_users;
-            }
-            error = noErr;
-        }
-        else if (selector == 3 && resolver_users) {
-            unsigned char* arguments = guest_memory(EM_A7, 24);
-            unsigned char* info = arguments ? guest_memory(read32(arguments + 12), 276) : NULL;
-            char name[256] = {0};
-            unsigned length = 0;
-            for (; length < 255; ++length) {
-                const char* byte = guest_memory(argument + length, 1);
-                if (!byte) {
-                    length = 255;
-                    break;
-                }
-                name[length] = *byte;
-                if (!*byte)
-                    break;
-            }
-            if (info && ROMlib_win_accessible_span(info, 276, TRUE) && length < 255 && !name[length]) {
-                uint32 addresses[4];
-                char canonical[255];
-                error = length ? host_mactcp_resolve(name, addresses, canonical) : -23041;
-                memset(info, 0, 276);
-                write32(info, (int32)error);
-                if (!error) {
-                    memcpy(info + 4, canonical, 255);
-                    for (unsigned i = 0; i < 4; ++i)
-                        write32(info + 260 + i * 4, addresses[i]);
-                }
-            }
-        }
-        else if (selector == 4) {
-            unsigned char* arguments = guest_memory(EM_A7, 16);
-            char* output = arguments ? guest_memory(read32(arguments + 12), 16) : NULL;
-            if (output && ROMlib_win_accessible_span(output, 16, TRUE)) {
-                snprintf(output, 16, "%u.%u.%u.%u", argument >> 24, (argument >> 16) & 255, (argument >> 8) & 255,
-                         argument & 255);
-                error = noErr;
-            }
-        }
-        else
-            error = -23047;
-    }
-    EM_D0 = (int32)error;
-    return POPADDR();
-}
-
-ProcPtr ROMlib_mactcp_resolver_definition(void)
-{
-    static syn68k_addr_t entry;
-    if (!entry)
-        entry = callback_install(resolver_callback, NULL);
-    return (ProcPtr)SYN68K_TO_US(entry);
 }
