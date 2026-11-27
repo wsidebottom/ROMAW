@@ -85,6 +85,7 @@ typedef struct PACKED {
     uint32 progress_last_tick;
     Byte progress_phase;
     BOOLEAN progress_indeterminate, progress_animating;
+    boolean_t saved_range;
 } ROMlib_aux_control_data;
 
 #define ROMlib_aux_control_extra(aux) ((ROMlib_aux_control_data*)(STARH(aux) + 1))
@@ -158,6 +159,7 @@ extern LONGINT ROMlib_control_data(ControlHandle control, INTEGER part, ResType 
 extern CTabHandle default_ctl_ctab;
 extern HIDDEN_AuxCtlHandle* lookup_aux_ctl(ControlHandle ctl);
 extern AuxCtlHandle ROMlib_live_control_aux(ControlHandle control);
+extern boolean_t ROMlib_control_uses_saved_range(AuxCtlHandle aux);
 extern BOOLEAN ROMlib_ppc_control_in_saved_window(ControlHandle control);
 extern void ROMlib_ppc_sync_control_auxiliary_list(void);
 

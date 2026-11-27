@@ -321,6 +321,33 @@ PUBLIC void ROMlib_detach_control(ControlHandle control)
     child->parent = child->previous_sibling = child->next_sibling = 0;
 }
 
+PUBLIC boolean_t ROMlib_control_uses_saved_range(AuxCtlHandle aux)
+{
+    const INTEGER saved_error = MemErr;
+    const Size size = GetHandleSize((Handle)aux);
+    MemErr = saved_error;
+    return size < (Size)(sizeof(AuxCtlRec) + sizeof(ROMlib_aux_control_data)) ||
+           ROMlib_aux_control_extra(aux)->saved_range;
+}
+
+static OSErr extend_control_hierarchy_storage(AuxCtlHandle aux)
+{
+    const Size size = GetHandleSize((Handle)aux);
+    const Size full_size = sizeof(AuxCtlRec) + sizeof(ROMlib_aux_control_data);
+    if (size >= full_size)
+        return noErr;
+    if (size != sizeof(AuxCtlRec))
+        return paramErr;
+    SetHandleSize((Handle)aux, full_size);
+    const OSErr error = MemError();
+    if (error)
+        return error;
+    ROMlib_aux_control_data* extra = ROMlib_aux_control_extra(aux);
+    memset(extra, 0, sizeof *extra);
+    extra->saved_range = TRUE;
+    return noErr;
+}
+
 PUBLIC OSErr ROMlib_embed_control(ControlHandle control, ControlHandle parent)
 {
     WindowPeek window;
@@ -354,6 +381,11 @@ PUBLIC OSErr ROMlib_embed_control(ControlHandle control, ControlHandle parent)
     }
     if (Hx(child_aux, acReserved) == ROMlib_root_control_proc)
         return paramErr;
+    OSErr error = extend_control_hierarchy_storage(child_aux);
+    if (!error)
+        error = extend_control_hierarchy_storage(parent_aux);
+    if (error)
+        return error;
     for (candidate = parent; candidate;) {
         if (candidate == control)
             return paramErr;
