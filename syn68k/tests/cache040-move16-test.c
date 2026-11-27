@@ -266,8 +266,67 @@ static void invalid(void)
     }
 }
 
+static unsigned retry_index, retry_hits;
+
+static int retry_line_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size,
+                           const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    if (cycle->beat == retry_index && !retry_hits++)
+        return CACHE040_CYCLE_RETRY;
+    return read_cycle(opaque, address, bytes, size, cycle, inhibit);
+}
+
+static int retry_line_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
+                            const Syn68kCache040Cycle* cycle)
+{
+    if (cycle->beat == retry_index && !retry_hits++)
+        return CACHE040_CYCLE_RETRY;
+    return write_cycle(opaque, address, bytes, size, cycle);
+}
+
+static void line_cycle_retries(void)
+{
+    for (unsigned writing = 0; writing < 2; ++writing)
+        for (unsigned critical = 0; critical < 4; ++critical)
+            for (retry_index = 0; retry_index < 4; ++retry_index) {
+                setup(0, 0);
+                fail_at = 4;
+                retry_hits = 0;
+                unsigned char before[16];
+                memcpy(before, ram, sizeof before);
+                const Syn68kCache040Bus retry_bus = {
+                    .opaque = ram, .read_cycle = retry_line_read, .write_cycle = retry_line_write};
+                unsigned address = 0x1010 + critical * 4;
+                Syn68kCache040Access r = syn68k_cache040_move16(&cache, &retry_bus, address, 5, writing, data, 0x20, 0);
+                assert(calls == (retry_index ? retry_index : 4) && operand == calls && !push);
+                assert(retry_hits == (retry_index ? 1u : 2u));
+                assert(r.completed == (retry_index ? retry_index * 4 : 16));
+                if (retry_index) {
+                    unsigned failed_word = (critical + retry_index) & 3;
+                    assert(r.fault == CACHE040_OPERAND_FAULT && r.cycle.beat == retry_index &&
+                           r.bus_address == 0x1010 + failed_word * 4);
+                    if (writing)
+                        assert(r.push_word == failed_word && !memcmp(r.push_data, original, 16));
+                }
+                else
+                    assert(!r.fault);
+                if (writing || retry_index)
+                    assert(!memcmp(data, original, 16));
+                else
+                    assert(!memcmp(data, before, 16));
+                for (unsigned beat = 0; beat < 4; ++beat) {
+                    unsigned offset = ((critical + beat) & 3) * 4;
+                    const unsigned char* expected = writing && beat < calls ? original : before;
+                    assert(!memcmp(ram + offset, expected + offset, 4));
+                }
+                assert(!cache.active);
+                ++cases;
+            }
+    puts("32 MOVE16 first-beat retries and partial read/write aborts passed");
+}
 int main(void)
 {
+    line_cycle_retries();
     matrix();
     push_faults();
     snapshot_and_reentry();

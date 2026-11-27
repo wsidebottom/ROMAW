@@ -55,17 +55,28 @@ static Syn68kCache040Cycle cycle_for(const Syn68kCache040* cache, uint32_t attri
 static int read_bus(const Syn68kCache040Bus* bus, uint32_t address, unsigned char* bytes, unsigned size,
                     const Syn68kCache040Cycle* cycle, unsigned* inhibit)
 {
-    return bus->read_cycle ? bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit)
-                           : bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
-                                       cycle->beat, cycle->way, inhibit);
+    if (!bus->read_cycle)
+        return bus->read(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                         cycle->beat, cycle->way, inhibit);
+    int status;
+    do {
+        *inhibit = 0;
+        status = bus->read_cycle(bus->opaque, address, bytes, size, cycle, inhibit);
+    } while (status == CACHE040_CYCLE_RETRY && !(cycle->burst && cycle->beat));
+    return status != CACHE040_CYCLE_RETRY && status != 0;
 }
 
 static int write_bus(const Syn68kCache040Bus* bus, uint32_t address, const unsigned char* bytes, unsigned size,
                      const Syn68kCache040Cycle* cycle)
 {
-    return bus->write_cycle ? bus->write_cycle(bus->opaque, address, bytes, size, cycle)
-                            : bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
-                                         cycle->beat, cycle->way);
+    if (!bus->write_cycle)
+        return bus->write(bus->opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst,
+                          cycle->beat, cycle->way);
+    int status;
+    do
+        status = bus->write_cycle(bus->opaque, address, bytes, size, cycle);
+    while (status == CACHE040_CYCLE_RETRY && !(cycle->burst && cycle->beat));
+    return status != CACHE040_CYCLE_RETRY && status != 0;
 }
 
 static int push_line(Syn68kCache040* cache, Syn68kCache040Line* line, const Syn68kCache040Bus* bus, unsigned way,

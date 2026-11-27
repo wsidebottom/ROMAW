@@ -69,10 +69,15 @@ typedef struct Syn68kCache040 {
     void (*arbitrate)(void*, struct Syn68kCache040*);
 } Syn68kCache040;
 
+/* read_cycle/write_cycle may signal TA+TEA instead of completing a beat. */
+enum { CACHE040_CYCLE_RETRY = -1 };
 /* Whole-beat callbacks. burst is zero for scalar transfers, 16 for a line;
    beat is its transfer index and way identifies the selected data cache line.
    A first-read-beat inhibit response prevents allocation without truncating
    the burst. Later inhibit responses are ignored. Pushes use FC/TM zero.
+   CACHE040_CYCLE_RETRY repeats a scalar/first beat with identical metadata
+   and aborts a later line beat as a bus error. A retried attempt publishes
+   no bytes or inhibit decision. Legacy callbacks retain boolean results.
    Callbacks must not recursively execute this same cache object. */
 typedef struct {
     void* opaque;

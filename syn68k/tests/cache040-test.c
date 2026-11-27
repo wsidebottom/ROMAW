@@ -638,8 +638,98 @@ static void write_callback_order(void)
     }
 }
 
+static unsigned retry_beat, retries, retry_limit;
+static Syn68kCache040Cycle retry_cycle;
+static uint32_t retry_address;
+
+static int retry_pending(uint32_t address, const Syn68kCache040Cycle* cycle)
+{
+    if (cycle->beat != retry_beat)
+        return 0;
+    if (!retries) {
+        retry_cycle = *cycle;
+        retry_address = address;
+    }
+    else {
+        assert(!memcmp(&retry_cycle, cycle, sizeof retry_cycle));
+        assert(address == retry_address);
+    }
+    if (retries == retry_limit)
+        return 0;
+    ++retries;
+    return 1;
+}
+
+static int retry_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size,
+                      const Syn68kCache040Cycle* cycle, unsigned* inhibit)
+{
+    assert(!*inhibit);
+    if (retry_pending(address, cycle)) {
+        *inhibit = 1; // The retry's inhibit signal must be discarded.
+        return CACHE040_CYCLE_RETRY;
+    }
+    return physical_read(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
+                         cycle->way, inhibit);
+}
+
+static int retry_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size,
+                       const Syn68kCache040Cycle* cycle)
+{
+    if (retry_pending(address, cycle))
+        return CACHE040_CYCLE_RETRY;
+    return physical_write(opaque, address, bytes, size, cycle->attributes, cycle->fc, cycle->burst, cycle->beat,
+                          cycle->way);
+}
+
+static void cycle_retries(void)
+{
+    const unsigned base = 0x10040;
+    const Syn68kCache040Bus retry_bus = {.opaque = ram, .read_cycle = retry_read, .write_cycle = retry_write};
+    retry_limit = 2;
+    for (unsigned critical = 0; critical < 4; ++critical)
+        for (retry_beat = 0; retry_beat < 4; ++retry_beat) {
+            fixture();
+            retries = 0;
+            unsigned address = base + critical * 4;
+            Syn68kCache040Access r = syn68k_cache040_access(&cache, &retry_bus, address, 5, 4, 0, 0, 0,
+                                                           0x80000000, 0);
+            assert(!r.fault && r.completed == 4 && r.value == value_at(address, 4));
+            assert(retry_address == base + ((critical + retry_beat) & 3) * 4);
+            assert(retries == (retry_beat ? 1u : 2u) && reads == (retry_beat ? retry_beat : 4u));
+            assert(!!resident(0, address) == !retry_beat);
+            ++cases;
+        }
+    for (retry_beat = 0; retry_beat < 4; ++retry_beat) {
+        fixture();
+        retries = 0;
+        Syn68kCache040Line* line = &cache.lines[0][(base >> 4) & 63][0];
+        *line = (Syn68kCache040Line){.address = base, .valid = 1, .dirty = 3};
+        memset(line->bytes, 0x6b, sizeof line->bytes);
+        Syn68kCache040Access r = syn68k_cache040_maintain_traffic(&cache, &retry_bus, 1, 1, base, 12, 1, 0, CACHE040_NORMAL);
+        assert(retry_address == base + retry_beat * 4 && retries == (retry_beat ? 1u : 2u));
+        assert(writes == (retry_beat ? retry_beat : 4u));
+        for (unsigned beat = 0; beat < 4; ++beat)
+            assert((value_at(base + beat * 4, 4) == 0x6b6b6b6b) == (!retry_beat || beat < retry_beat));
+        if (retry_beat)
+            assert(r.fault == CACHE040_PUSH_FAULT && r.cycle.beat == retry_beat && r.bus_address == retry_address);
+        else
+            assert(!r.fault);
+        ++cases;
+    }
+    for (unsigned writing = 0; writing < 2; ++writing) {
+        fixture();
+        retry_beat = retries = 0;
+        Syn68kCache040Access r = syn68k_cache040_access(&cache, &retry_bus, base, 5, 4, writing, 0x12345678, 0, 0, 0);
+        assert(!r.fault && r.completed == 4 && retries == 2 && reads == !writing && writes == writing);
+        assert(!retry_cycle.burst && retry_address == base);
+        assert(r.value == value_at(base, 4));
+        ++cases;
+    }
+    puts("22 cache scalar/first-beat retries and aborted trailing beats passed");
+}
 int main(void)
 {
+    cycle_retries();
     hit_and_allocation();
     write_policies();
     fill_faults_and_inhibit();
