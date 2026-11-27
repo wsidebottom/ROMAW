@@ -7,6 +7,15 @@
 #include "native040.h"
 #include "jit-x64.h"
 #include <stdlib.h>
+#include "fpu-captured.h"
+
+static int require_direct_restore;
+int __real_syn68k_fpu_finish_frame(const Syn68kFPUFrame*, Syn68kMMU040Memory*, Syn68kFPUStep*);
+int __wrap_syn68k_fpu_finish_frame(const Syn68kFPUFrame* frame, Syn68kMMU040Memory* memory, Syn68kFPUStep* result)
+{
+    assert(!require_direct_restore);
+    return __real_syn68k_fpu_finish_frame(frame, memory, result);
+}
 
 static void completion_case(unsigned config, unsigned page, unsigned busy, unsigned post, unsigned precision,
                             unsigned rounding, unsigned mask, unsigned command_kind, unsigned flags_kind,
@@ -49,7 +58,9 @@ static void completion_case(unsigned config, unsigned page, unsigned busy, unsig
         assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
     Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = config & 1};
     Syn68kMappedRun run;
+    require_direct_restore = (config & 1) && flags_kind == 3;
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    require_direct_restore = 0;
     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
     assert(EM_A0 == 0x20040 + post * size && EM_A1 == 0x20100);
     assert(!memcmp(before.regs, cpu_state.fpu.regs, sizeof before.regs));

@@ -539,7 +539,7 @@ EOF
       "$fixture/restore-capture-test.exe" "$(wslpath -m "$fixture/restore-capture")" 1
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-fpsp-completion-test.c syn68k/obj/src/runtime/libsyn68k.a \
-        -o "$fixture/fpsp-completion-test.exe"
+        -Wl,--wrap=syn68k_fpu_finish_frame -o "$fixture/fpsp-completion-test.exe"
       mkdir "$fixture/fpsp-completion"
       "$fixture/fpsp-completion-test.exe" "$(wslpath -m "$fixture/fpsp-completion")" 0
       "$fixture/fpsp-completion-test.exe" "$(wslpath -m "$fixture/fpsp-completion")" 1
@@ -899,7 +899,7 @@ EOF
       syn68k/obj/tests/mapped-fpu-restore-capture-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
         syn68k/tests/mapped-fpsp-completion-test.c syn68k/obj/src/runtime/libsyn68k.a \
-        -o syn68k/obj/tests/mapped-fpsp-completion-test.exe
+        -Wl,--wrap=syn68k_fpu_finish_frame -o syn68k/obj/tests/mapped-fpsp-completion-test.exe
       syn68k/obj/tests/mapped-fpsp-completion-test.exe
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
         syn68k/tests/mapped-fpu-moveout-resume-test.c syn68k/obj/src/runtime/libsyn68k.a \

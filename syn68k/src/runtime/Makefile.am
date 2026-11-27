@@ -189,7 +189,7 @@ generated/native040.h: $(srcdir)/../../tools/build-native040.py \
                       $(srcdir)/include/ea.h $(srcdir)/include/blockinfo.h \
                       ../include/syn68k_private.h $(srcdir)/../include/syn68k_public.h \
                       $(srcdir)/include/mmu040-memory.h \
-                      $(srcdir)/include/fpu_arithmetic.h $(srcdir)/include/fpu_exception.h \
+                      $(srcdir)/include/fpu_arithmetic.h $(srcdir)/include/fpu_exception.h $(srcdir)/include/fpu-captured.h \
                       $(srcdir)/include/fpu_convert.h \
                       $(wildcard $(srcdir)/../../third_party/softfloat/softfloat*)
 	mkdir -p generated

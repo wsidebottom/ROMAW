@@ -16,6 +16,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "native040-control.h"
+#include "fpu-captured.h"
 
 /* Reserve an invocation base throughout the closed image. Entry trampolines
    save the caller's R12 and establish it before any arithmetic executes. No
@@ -146,8 +147,13 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     unsigned stages = image[size - 28] & 6;
     int moveout = command >> 13 == 3;
     int arithmetic = fpu_restore_arithmetic(command);
+    unsigned operation = command & 127;
+    int software_completed = stages == 4 && (command >> 13 == 0 || command >> 13 == 2) &&
+                             ((command & 0xfc00) == 0x5c00 ||
+                              (operation < 64 && ((SYN68K_FPU_FPSP_OPERATIONS >> operation) & 1))) &&
+                             (image[size - 28] & 1) && (image[size - 27] & 0x80);
     int conversion = size == 100 && image[8] == 0xfe;
-    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic) ||
+    if ((!stages && (!conversion || !arithmetic)) || ((stages & 4) && !moveout && !arithmetic && !software_completed) ||
         ((stages & 2) && size != 100))
         return;
     unsigned format = command >> 10 & 7;
