@@ -41,7 +41,26 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: floating-point branch prefetch (2026-11-27)
+## Latest validated bundle: native busy FPU frames (2026-11-27)
+
+Commits cb570d0e and 0b8b9ede emit mapped busy FSAVE writes and acquire
+complete busy FRESTORE images. The checked decoder receives the captured
+image for exceptional state and arithmetic restart.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16 and cold/warm AOT checks passed.
+Warm AOT reused 25 busy-save bodies and three FRESTORE bodies without recompiling.
+Help, Browser and 68K Speedometer startup passed. The audited 66-file ROMAW
+bundle is promoted to build/68040-current/bin. The preceding bundle is
+retained at build/68040-pre-frames1-bin-20261127.
+
+CPU build ID: 3c3ff30eb75cc48a7d5b0db55a33e5e5dd2c9ea4d73f6dcb07271faad412df5f
+Archive SHA256: 2138300d719d1abaa94d5b6f8fb61f28fc6c516c5aca425f389cd2033eb0da0d
+Audit: build/68040-frames1-output/68040-frames1-source-audit.json
+
+Further bus scheduling and restart integration, and the
+remaining FPU busy frame and special-value audits are open.
+
+## Previous validated bundle: floating-point branch prefetch (2026-11-27)
 
 Commit 73138da1 prefetches both paths of mapped FBcc and FDBcc. The selected
 word or access fault survives a budget stop. The 39-case matrix covers
