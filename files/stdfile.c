@@ -1439,19 +1439,28 @@ P3(PUBLIC, pascal INTEGER, ROMlib_stdffilt, DialogPeek, dp, EventRecord*, evt, I
         *ith = CW((CL(evt->message) & 0xFF) + keydownbit);
         switch (CL(evt->message) & 0xFF) {
         case NUMPAD_ENTER:
-        case '\r':
-            GetDItem((DialogPtr)dp, CW(dp->aDefItem), &i, (HIDDEN_Handle*)&h, &r);
-
-            if (Hx(HIDDEN_NATIVE(h), contrlVis) && U(Hx(HIDDEN_NATIVE(h), contrlHilite)) != 255) {
+        case '\r': {
+            HIDDEN_Handle item = {0};
+            INTEGER kind = 0;
+            ControlHandle button = fl->flch;
+            if (!fl->choice) {
+                GetDItem((DialogPtr)dp, CW(dp->aDefItem), &kind, &item, &r);
+                if ((CW(kind) & 0x7f) == (ctrlItem + btnCtrl))
+                    button = (ControlHandle)HIDDEN_NATIVE(item);
+                else
+                    button = NULL;
+            }
+            if (button && CTL_VIS(button) && U(CTL_HILITE(button)) != 255) {
                 prefix[0] = 0;
                 oldticks = -1000;
                 *ith = CW(opentoken);
                 retval = -1;
-                HiliteControl(HIDDEN_NATIVE(h), inButton);
+                HiliteControl(button, inButton);
                 Delay((LONGINT)5, (LONGINT*)0);
-                HiliteControl(HIDDEN_NATIVE(h), 0);
+                HiliteControl(button, 0);
             }
             break;
+        }
         case ASCIIUPARROW:
             if (CW(evt->modifiers) & cmdKey)
                 *ith = CWC(getDiskName); /* the same as putDiskName */
@@ -2558,7 +2567,10 @@ PRIVATE boolean_t do_new_folder(fltype* f)
         while (!done) {
             /* TODO: consider a filter that limits the length
            of the string to 31 letters */
-            ModalDialog(NULL, &ihit);
+            if (f->choice)
+                ROMlib_run_internal_modal_dialog(dp, NULL, &ihit);
+            else
+                ModalDialog(NULL, &ihit);
             switch (ihit) {
             default:
                 break;
@@ -3228,7 +3240,8 @@ PUBLIC OSErr spfcommon(Point p, StringPtr prompt, StringPtr name, dialog_hook_u 
                     sav = FALSE;
                 }
             }
-            if (WaitNextEvent(diskMask, &evt, 4, 0) && (evt.message & CLC(0xFFFF0000)) == 0) {
+            const BOOLEAN disk_event = choice ? GetOSEvent(diskMask, &evt) : WaitNextEvent(diskMask, &evt, 4, 0);
+            if (disk_event && (evt.message & CLC(0xFFFF0000)) == 0) {
                 FIELD_ASSIGN_RAW(pbr.volumeParam.ioNamePtr, 0);
                 pbr.volumeParam.ioVolIndex = 0;
                 pbr.volumeParam.ioVRefNum = CW(CL(evt.message) & 0xFFFF);
