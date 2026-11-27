@@ -2414,6 +2414,15 @@ static OSErr ppc_dm_refresh_devices(ppc_context* ctx)
     return noErr;
 }
 
+/* ROMAW presents independent QuickDraw devices without a mirroring facility. */
+PRIVATE OSErr ppc_dm_query_mirroring(Boolean* output)
+{
+    if (!output)
+        return paramErr;
+    *output = FALSE;
+    return noErr;
+}
+
 PRIVATE OSErr ppc_dm_get_display_id(GDHandle requested, uint32* id, Boolean fall_back_to_main)
 {
     if (!id)
@@ -3698,6 +3707,9 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetResourceSizeOnDisk", C_SizeResource, PTOC_SizeResource},
     {"ApplicationZone", ppc_application_zone, M0(5)},
     {"InitZone", ppc_init_zone, M4(0, 5, 2, 5, 5)},
+    {"DMQDIsMirroringCapable", ppc_dm_query_mirroring, M1(2, 5)},
+    {"DMCanMirrorNow", ppc_dm_query_mirroring, M1(2, 5)},
+    {"DMIsMirroringOn", ppc_dm_query_mirroring, M1(2, 5)},
     {"DMGetFirstScreenDevice", ppc_dm_first_screen_device, M1(5, 1)},
     {"DMGetNextScreenDevice", ppc_dm_next_screen_device, M2(5, 5, 1)},
     {"DMGetDisplayIDByGDevice", ppc_dm_get_display_id, M3(2, 5, 5, 1)},
@@ -6269,6 +6281,10 @@ PUBLIC OSErr ROMlib_ppc_display_dispatch(uint16 selector, const uint32 args[4])
         return dm_sw_not_initialized;
     if (selector == 0x414 || selector == 0x415 || selector == 0x7ef || selector == 0x726)
         return ppc_update_display_notifications(ctx, selector, args);
+    if (selector >= 0x216 && selector <= 0x218) {
+        Boolean* output = args[0] ? ppc_memory(ctx, args[0], sizeof *output, TRUE) : NULL;
+        return ppc_dm_query_mirroring(output);
+    }
     if (selector == 0x51f) {
         uint32* output = args[1] ? ppc_memory(ctx, args[1], sizeof *output, TRUE) : NULL;
         /* The Pascal trap has already decoded the stack words to host order. */
