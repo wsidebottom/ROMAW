@@ -41,7 +41,23 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: exact arithmetic replay (2026-11-27)
+## Latest validated bundle: masked inexact replay (2026-11-27)
+
+Commit ee135903 replays masked inexact results in generated FRESTORE code,
+including inexact status from older E3 writeback. The fixture passed
+410,120 cases per JIT and AOT run. Warm AOT loaded all five entries with
+zero recompilations. Enabled inexact delivery uses the checked path.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
+checks passed. The audited 66-file ROMAW bundle passed help, Browser and
+68K Speedometer startup. It is current at build/68040-current/bin and
+the prior bundle is retained at build/68040-pre-maskedreplay1-bin-20261127.
+
+CPU build ID 2277ea4eb46ba7f73c118a145b76fb5ad6c54e6ef380470ea2024382486c3ef9
+Archive SHA256 9fbb124f9e3c9f044dfc634ef6982add0652020a73c6272fe9a518d3c86ed1c8
+Audit build/68040-maskedreplay1-output/68040-maskedreplay1-source-audit.json
+
+## Previous validated bundle: exact arithmetic replay (2026-11-27)
 
 Commit e42b820b generates exact two-operand arithmetic replay from
 FRESTORE frames. The fixture passed 410,108 cases per run, including
@@ -50,8 +66,8 @@ all five entries with zero recompilations.
 
 Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
 checks passed. The audited 66-file ROMAW bundle passed help, Browser and
-68K Speedometer startup. It is current at build/68040-current/bin and
-the prior bundle is retained at build/68040-pre-exactreplay1-bin-20261127.
+68K Speedometer startup. Its preceding bundle is retained at
+build/68040-pre-exactreplay1-bin-20261127.
 
 CPU build ID 4abf24ae704df559dfe39a0adf15ca00e802abb25be97bf36be6f71df6f7f82b
 Archive SHA256 131299084b9b1533aa4a35edc2b7671f80a08f4c7d4ece61c61ac93e1b50940e
