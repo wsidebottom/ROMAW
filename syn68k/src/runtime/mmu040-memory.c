@@ -264,7 +264,7 @@ static Syn68kMMU040Access transfer(Syn68kMMU040Memory* memory, uint32_t logical,
             : 0;
     while (result.completed < size) {
         result.logical = logical + result.completed;
-        const Syn68kMMU040Access* pending = NULL;
+        const Syn68kMMU040Access* pending = 0;
         unsigned split = 0;
         for (unsigned i = 0; i < queued; ++i) {
             const Syn68kMMU040Access* word = &memory->instruction_word[i];
