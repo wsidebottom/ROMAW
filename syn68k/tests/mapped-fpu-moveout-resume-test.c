@@ -3,6 +3,15 @@
 #define main unused_mmu_fpu_main
 #include "mmu040-fpu-test.c"
 #undef main
+#include "fpu-captured.h"
+
+static int require_direct_restore;
+int __real_syn68k_fpu_finish_frame(const Syn68kFPUFrame*, Syn68kMMU040Memory*, Syn68kFPUStep*);
+int __wrap_syn68k_fpu_finish_frame(const Syn68kFPUFrame* frame, Syn68kMMU040Memory* memory, Syn68kFPUStep* result)
+{
+    assert(!require_direct_restore);
+    return __real_syn68k_fpu_finish_frame(frame, memory, result);
+}
 #include "mapped-cpu.h"
 #include "native040.h"
 #include "jit-x64.h"
@@ -14,16 +23,19 @@ static void resume_case(unsigned config, unsigned page, unsigned post, unsigned 
     memory.native = NULL;
     memory.cache = NULL;
     fixture(page, 1);
-    unsigned base = physical(0x20040), stages = stage == 0 ? 2 : stage == 1 ? 4 : 6;
-    memset(ram + base, 0, 100);
-    put32(base, 0x41600000);
-    put32(base + 0x18, 0x3fff0000);
-    put32(base + 0x1c, 0x80000000); /* Exact WBTEMP = 1. */
-    put32(base + 0x34, (0x12u | destination << 7) << 16); /* Older FADD. */
-    put32(base + 0x40, (0x6000u | format << 10) << 16); /* Younger move-out. */
-    put32(base + 0x48, stages << 24);
-    put32(base + 0x58, 0x3fff0000);
-    put32(base + 0x5c, 0x80000000);
+    unsigned base = physical(0x20040), stages = stage == 0 ? 2 : stage == 2 ? 6 : 4;
+    unsigned size = stage == 3 ? 52 : 100;
+    memset(ram + base, 0, size);
+    put32(base, size == 52 ? 0x41300000 : 0x41600000);
+    if (stages & 2) {
+        put32(base + 0x18, 0x3fff0000);
+        put32(base + 0x1c, 0x80000000); /* Exact WBTEMP = 1. */
+        put32(base + 0x34, (0x12u | destination << 7) << 16); /* Older FADD. */
+    }
+    put32(base + size - 36, (0x6000u | format << 10) << 16);
+    put32(base + size - 28, stages << 24);
+    put32(base + size - 12, 0x3fff0000);
+    put32(base + size - 8, 0x80000000);
     static const unsigned status[] = {0, 0x4000, 0x4000, 0x200, 0x1000};
     unsigned enables = status_kind == 1 ? 0x4000 : status_kind == 3 ? 0x200 : 0;
     cpu_state.fpu.fpcr = precision * 0x40 + rounding * 0x10 + enables;
@@ -46,16 +58,21 @@ static void resume_case(unsigned config, unsigned page, unsigned post, unsigned 
         assert(syn68k_native040_memory(&memory, &native, (Syn68kNative040RAM){0}));
     Syn68kMappedCPU cpu = {.pc=0x10000, .memory=&memory, .native=config & 1};
     Syn68kMappedRun run;
+    require_direct_restore = (config & 1) && stages == 4;
+    uint64 executions = syn68k_native_execution_count();
     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    if (require_direct_restore)
+        assert(syn68k_native_execution_count() > executions);
+    require_direct_restore = 0;
     assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
-    assert(EM_A0 == 0x20040 + 100 * post && EM_A1 == 0x20100);
-    unsigned packed = format == 3 || format == 7;
+    assert(EM_A0 == 0x20040 + size * post && EM_A1 == 0x20100);
+    unsigned packed = size == 100 && (format == 3 || format == 7);
     unsigned integer = format == 0 || format == 4 || format == 6;
     unsigned older_pending = (stages & 2) ? status_kind == 3 ? 49 : status_kind == 4 ? 53 : 0 : 0;
     unsigned conversion_pending = packed ? 55 : status_kind == 1 || (status_kind == 2 && integer) ? 54
                                                : status_kind == 3 ? 49 : status_kind == 4 ? 53 : 0;
     unsigned pending = older_pending ? older_pending : (stages & 4) ? conversion_pending : 0;
-    if (cpu_state.fpu.frame_size != (pending ? 100 : 0) || cpu_state.fpu.pending_vector != pending) {
+    if (cpu_state.fpu.frame_size != (pending ? size : 0) || cpu_state.fpu.pending_vector != pending) {
         fprintf(stderr, "Move-out resume config=%u page=%u post=%u precision=%u rounding=%u format=%u "
                         "destination=%u stages=%u null=%u status=%u frame=%u pending=%u\n",
                 config,page,post,precision,rounding,format,destination,stages,old_null,status_kind,
@@ -96,7 +113,7 @@ int main(int argc, char** argv)
                     for (unsigned rounding = 0; rounding < 4; ++rounding)
                         for (unsigned format = 0; format < 8; ++format)
                             for (unsigned destination = 0; destination < 8; ++destination)
-                                for (unsigned stage = 0; stage < 3; ++stage)
+                                for (unsigned stage = 0; stage < 4; ++stage)
                                     for (unsigned old_null = 0; old_null < 2; ++old_null)
                                         for (unsigned status = 0; status < 5; ++status) {
                                             resume_case(config,page,post,precision,rounding,format,destination,

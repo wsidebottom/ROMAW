@@ -15,7 +15,7 @@
 
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "native040.h"
+#include "native040-control.h"
 
 /* Reserve an invocation base throughout the closed image. Entry trampolines
    save the caller's R12 and establish it before any arithmetic executes. No
@@ -29,6 +29,36 @@ register Syn68kNative040FPU* native_fpu __asm__("r12");
 #include "../../third_party/softfloat/softfloat.c"
 #include "fpu_arithmetic.h"
 #include "fpu_convert.h"
+
+/* An E1 move-out has already performed its arithmetic and destination writes.
+   Restore its frame and deferred exception without replaying either. */
+__attribute__((used, noinline)) void native040_restore_moveout(Syn68kNative040Restore* packet)
+{
+    packet->applied = 0;
+    unsigned size = packet->size;
+    if (!packet->cpu || (size != 52 && size != 100))
+        return;
+    const uint8* image = packet->image;
+    unsigned command = image[size - 36] * 256u + image[size - 35];
+    if ((image[size - 28] & 6) != 4 || command >> 13 != 3)
+        return;
+    unsigned format = command >> 10 & 7;
+    unsigned nonmaskable = 0x1800; // Overflow and underflow.
+    if (format == 0 || format == 4 || format == 6)
+        nonmaskable |= 0x6000; // Integer move-outs also retain SNAN and OPERR.
+    Syn68kFPUState* fpu = &packet->cpu->fpu;
+    unsigned pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | nonmaskable));
+    if (size == 100 && ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || format == 3 || format == 7))
+        pending = 55; // Unsupported data takes priority over conversion status.
+    if (pending == 50)
+        return; // The checked decoder delivers the invalid-stage format fault.
+    for (unsigned i = 0; i < size; ++i)
+        fpu->frame[i] = image[i];
+    fpu->frame_size = pending ? size : 0;
+    fpu->pending_vector = pending;
+    fpu->null_state = 0;
+    packet->applied = 1;
+}
 
 static void calculate(unsigned operation)
 {

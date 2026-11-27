@@ -78,8 +78,8 @@ typedef struct {
     Syn68kFPUEntry entry;
     Syn68kNative040Registers registers;
     Syn68kFPUStep exception;
-    unsigned frame_header, frame_image_size;
-    uint8 frame_image[100];
+    unsigned frame_header;
+    Syn68kNative040Restore restore;
     Syn68kNative040RTE rte;
 } FPUInvocation;
 
@@ -2967,6 +2967,7 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
                             .ea = {.cpu = &cpu_state, .context = {.pc = pc + 4, .memory = memory}},
                             .next = pc + 4,
                             .original_null = cpu_state.fpu.null_state,
+                            .restore = {.cpu = &cpu_state},
                             .entry = {cpu_state.fpu.fpcr, cpu_state.fpu.null_state, cpu_state.fpu.frame_size == 0}};
     if (memory->native)
         packet.registers.ram = packet.ea.ram = packet.memory.ram = memory->native->ram;
@@ -2982,9 +2983,9 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         Syn68kFPUFrame captured = {.pc = pc,
                                    .next = packet.next,
                                    .ea = packet.ea.result.address,
-                                   .header = packet.frame_image_size ? packet.frame_header : packet.memory.value,
-                                   .image = packet.frame_image_size ? packet.frame_image : NULL,
-                                   .image_size = packet.frame_image_size,
+                                   .header = packet.restore.size ? packet.frame_header : packet.memory.value,
+                                   .image = packet.restore.size ? packet.restore.image : NULL,
+                                   .image_size = packet.restore.size,
                                    .opcode = opcode,
                                    .entry = packet.entry};
         return syn68k_fpu_finish_frame(&captured, checked_memory, result) ? 1 : -1;

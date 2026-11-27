@@ -32,4 +32,10 @@ typedef struct {
     uint32 pc;
     Syn68kIntegerStep step;
 } Syn68kNative040RTE;
+
+typedef struct {
+    CPUState* cpu;
+    unsigned size, applied;
+    uint8 image[100];
+} Syn68kNative040Restore;
 #endif
