@@ -18,6 +18,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,7 +82,7 @@ def binhex():
     return ("(This file must be converted with BinHex 4.0)\r\n:" + text + ":\r\n").encode()
 
 
-def stuffit_classic():
+def stuffit_classic(name=b"Test"):
     def crc(data):
         value = 0
         for byte in data:
@@ -91,7 +92,8 @@ def stuffit_classic():
         return value
 
     header = bytearray(112)
-    header[2:7] = b"\x04Test"
+    header[2] = len(name)
+    header[3 : 3 + len(name)] = name
     header[66:76] = FINDER[:10]
     struct.pack_into(
         ">IIIIHH", header, 84, len(RESOURCE), len(DATA), len(RESOURCE), len(DATA), crc(RESOURCE), crc(DATA)
@@ -136,6 +138,12 @@ def main():
         "stuffit-classic": stuffit_classic(),
         **{f"macbinary-{v}": macbinary(v) for v in (0, 129, 130)},
     }
+    carrier = OUT / "classic-icon-carrier.sit"
+    carrier.write_bytes(stuffit_classic(b"Icon\r"))
+    with tempfile.TemporaryDirectory(dir=OUT) as output:
+        run([probe, "decode", carrier, output])
+        assert (Path(output) / "Icon%0D").read_bytes() == DATA
+        assert (Path(output) / "._Icon%0D").read_bytes()[82:] == RESOURCE
     zipped = io.BytesIO()
     with zipfile.ZipFile(zipped, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("Folder/", b"")

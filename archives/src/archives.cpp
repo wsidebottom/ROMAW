@@ -221,6 +221,15 @@ std::vector<Item> unstuff(const Bytes& bytes, const std::function<bool()>& cance
         require(info.resource_len <= byte_limit - total, "Expanded archive exceeds 256 MiB");
         total += info.resource_len;
         Item item{info.name, info.is_folder != 0, {}, {}};
+        // Classic folder icon carriers have a literal carriage return in
+        // their leaf name. Use the host spelling recognized by Finder.
+        if (!item.directory) {
+            const size_t leaf = item.name.find_last_of('/') + 1;
+            if (item.name.compare(leaf, std::string::npos, MAC_STORAGE_CUSTOM_ICON_NAME) == 0)
+                item.name.replace(leaf, std::string::npos, MAC_STORAGE_ESCAPED_ICON_NAME);
+            else if (item.name.compare(leaf, std::string::npos, "._" MAC_STORAGE_CUSTOM_ICON_NAME) == 0)
+                item.name.replace(leaf, std::string::npos, "._" MAC_STORAGE_ESCAPED_ICON_NAME);
+        }
         StuffitBytes data{}, resource{};
         require(!stuffit_archive_entry_fork(archive.get(), i, 0, &data) &&
                     !stuffit_archive_entry_fork(archive.get(), i, 1, &resource),
