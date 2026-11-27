@@ -1425,8 +1425,8 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         patch(out, short_done, out->size);
         const unsigned cleared[] = {offsetof(CPUState, fpu.null_state), offsetof(CPUState, fpu.frame_size),
                                     offsetof(CPUState, fpu.pending_vector)};
-        /* A full frame without a live pipeline or resumed conversion can
-           commit directly. Other frames retain the captured restart decoder. */
+        /* A frame without a live arithmetic pipeline commits directly.
+           Short FPSP entry frames queue F-line delivery for the next FPU instruction. */
         fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_image_size), 0);
         byte(out, 100);
         unsigned short_capture = jump(out, 0x85);
@@ -1470,6 +1470,13 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         patch(out, other_class, out->size);
         patch(out, software_complete, out->size);
         patch(out, high_operation, out->size);
+        FP_BYTES(out, 0x31, 0xd2); // EDX = 0 for a quiescent frame.
+        unsigned ordinary_frame = fpu_jump(out);
+        patch(out, constant_instruction, out->size);
+        patch(out, software_instruction, out->size);
+        byte(out, 0xba);
+        word32(out, 52);
+        patch(out, ordinary_frame, out->size);
         unsigned short_commit = 0;
         for (unsigned i = 0; i < 100; i += 4) {
             if (i == 52) {
@@ -1481,10 +1488,11 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_cpu(out, 0x89, 0, offsetof(CPUState, fpu.frame) + i);
         }
         patch(out, short_commit, out->size);
-        for (unsigned i = 0; i < sizeof cleared / sizeof *cleared; ++i) {
-            fpu_cpu(out, 0xc7, 0, cleared[i]);
-            word32(out, 0);
-        }
+        fpu_cpu(out, 0xc7, 0, offsetof(CPUState, fpu.null_state));
+        word32(out, 0);
+        fpu_cpu(out, 0x89, 2, offsetof(CPUState, fpu.frame_size));
+        FP_BYTES(out, 0x85, 0xd2, 0x0f, 0x95, 0xc0, 0x0f, 0xb6, 0xc0, 0x6b, 0xc0, 11);
+        fpu_cpu(out, 0x89, 0, offsetof(CPUState, fpu.pending_vector));
         if (mode == 3) {
             fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, frame_image_size), 0);
             fpu_cpu(out, 0x01, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
@@ -1493,8 +1501,6 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         patch(out, full_stage, out->size);
         patch(out, conversion, out->size);
         patch(out, short_stage, out->size);
-        patch(out, constant_instruction, out->size);
-        patch(out, software_instruction, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         failures[count++] = fpu_jump(out);
         patch(out, null_frame, out->size);

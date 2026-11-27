@@ -391,13 +391,13 @@ static void short_frame_command_matrix(void)
             CPUState before = cpu_state;
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
             unsigned captures = complete_captures;
-            expect_direct_restore = !expected.frame_size;
+            expect_direct_restore = 1;
 #endif
             callback_mode = 2;
             assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
             expect_direct_restore = 0;
-            assert(complete_captures - captures == (expected.frame_size != 0));
+            assert(complete_captures == captures);
 #endif
             assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
             assert(!memcmp(&cpu_state.fpu, &expected, sizeof expected));
