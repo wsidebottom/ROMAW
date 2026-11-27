@@ -124,6 +124,37 @@ static void instruction_view(unsigned mode)
     ++cases;
 }
 
+static unsigned trailing_attempts;
+
+static int trailing_read(void* opaque, uint32_t address, unsigned char* bytes, unsigned size, uint32_t attributes,
+                         unsigned fc)
+{
+    if (address == 0x8010 && fc == 6 && !trailing_attempts++)
+        return 0;
+    return physical_read(opaque, address, bytes, size, attributes, fc);
+}
+
+static void trailing_instruction_fault(unsigned mode)
+{
+    Syn68kMappedCPU cpu = setup(mode);
+    cpu.pc = 0x801e;
+    memory.read = trailing_read;
+    trailing_attempts = 0;
+    put(0x801e, 2, 0x7002); /* MOVEQ #2,D0, in the critical beat. */
+    put(0x8010, 2, 0x7001); /* MOVEQ #1,D0, in the failed beat. */
+    Syn68kMappedRun run;
+    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1 && EM_D0 == 2);
+    assert(trailing_attempts == 1 && !resident(1, 0x8010));
+
+    /* A new instruction stream requesting the missing word must retry it. */
+    cpu = (Syn68kMappedCPU){.pc = 0x8010, .memory = &memory, .native = mode};
+    assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+    assert(run.reason == SYN68K_MAPPED_BUDGET && run.completed == 1 && EM_D0 == 1);
+    assert(trailing_attempts == 2 && resident(1, 0x8010));
+    ++cases;
+}
+
 static void exception_traffic(unsigned mode, unsigned hit)
 {
     Syn68kMappedCPU cpu = setup(mode);
@@ -157,6 +188,8 @@ int main(int argc, char** argv)
     uint64_t compiled = syn68k_native_compile_count(), hits = syn68k_aot_hit_count();
     for (unsigned mode = 0; mode < 3; ++mode) {
         instruction_view(mode);
+        if (mode < 2)
+            trailing_instruction_fault(mode);
         exception_traffic(mode, 0);
         exception_traffic(mode, 1);
     }
