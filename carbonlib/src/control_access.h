@@ -61,8 +61,11 @@ static int carbon_cycle_keyboard_focus(ROMlib_carbon_ppc_frame* call, bool rever
         return 0;
     if (vector && vector != (uint32_t)(uintptr_t)toolstuff[0x273].orig) {
         uint32_t result;
-        return ROMlib_carbon_call_toolbox_vector(address, 0x3a8, reverse ? 0x10 : 0x0f, call, &result) &&
-               carbon_control_result(call, (int16_t)result);
+        if (!ROMlib_carbon_call_toolbox_vector(address, 0x3a8, reverse ? 0x10 : 0x0f, call, &result))
+            return 0;
+        /* The saved manager cannot see root controls owned by ROMAW. */
+        if ((int16_t)result != -30586) /* errNoRootControl */
+            return carbon_control_result(call, (int16_t)result);
     }
     WindowPtr window = call->words[0] ? ROMlib_carbon_try_guest_memory(call->words[0], sizeof(WindowRecord), 0) : NULL;
     return carbon_control_result(call, ROMlib_control_cycle_focus(window, reverse));
