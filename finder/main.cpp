@@ -109,8 +109,7 @@ enum Command {
     put_away_command,
     find_command,
     find_again_command,
-    sharing_command,
-    print_command,
+    print_command = 130,
     page_setup_command,
     print_window_command,
     empty_trash_command,
@@ -1879,7 +1878,6 @@ constexpr unsigned unavailable_suitcase_commands[] = {open_command,
                                                       parent_command,
                                                       extract_here_command,
                                                       extract_to_command,
-                                                      sharing_command,
                                                       print_command,
                                                       print_window_command,
                                                       eject_command,
@@ -3629,7 +3627,7 @@ menu()
             {"undo", undo_command},         {"cut ", cut_command},
             {"cler", clear_command},        {"sali", alias_command},
             {"sput", put_away_command},     {"find", find_command},
-            {"finn", find_again_command},   {"sprv", sharing_command},
+            {"finn", find_again_command},
             {"spri", print_command},        {"pgsu", page_setup_command},
             {"pwin", print_window_command}, {"empt", empty_trash_command},
             {"seje", eject_command},        {"sera", erase_command}};
@@ -4493,11 +4491,6 @@ void command(FolderWindow& f, unsigned id)
     case find_command:
     case find_again_command:
         find_items(f, id == find_again_command);
-        break;
-    case sharing_command:
-        if (paths.size() == 1 && fs::is_directory(paths[0]))
-            if (!SHObjectProperties(f.window, SHOP_FILEPATH, paths[0].c_str(), L"Sharing"))
-                throw std::runtime_error("Windows could not open sharing settings for this folder.");
         break;
     case empty_trash_command:
         empty_recycle_bin(f.window);
@@ -5962,9 +5955,6 @@ LRESULT CALLBACK folder_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 EnableMenuItem(bar, undo_command, MF_BYCOMMAND | (history.available() ? MF_ENABLED : MF_GRAYED));
                 EnableMenuItem(bar, find_again_command,
                                MF_BYCOMMAND | (last_search_roots.empty() ? MF_GRAYED : MF_ENABLED));
-                EnableMenuItem(bar, sharing_command,
-                               MF_BYCOMMAND |
-                                   (paths.size() == 1 && fs::is_directory(paths[0]) ? MF_ENABLED : MF_GRAYED));
                 bool removable = image_root || (paths.size() == 1 && can_eject(paths[0]));
                 EnableMenuItem(bar, eject_command, MF_BYCOMMAND | (removable ? MF_ENABLED : MF_GRAYED));
                 EnableMenuItem(bar, erase_command,

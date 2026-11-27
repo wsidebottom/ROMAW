@@ -214,10 +214,10 @@ assets retain their existing native compositing path.
 - Page Setup and Print Window use the Windows printer system with classic frames,
   fonts and controls. Print dispatches native documents through installed Windows
   print handlers. Classic documents without a native handler remain ineligible.
-  Sharing opens Windows folder-sharing properties. Eject disconnects mapped drives
+  Eject disconnects mapped drives
   or asks an eject-capable removable device to release its media. Erase Disk opens
   Windows formatting after confirmation, for removable volumes only; the system,
-  program and preferences volumes are excluded. Sharing, formatting and printer
+  program and preferences volumes are excluded. Formatting and printer
   driver property pages remain Windows-owned dialogs.
 - Embedded classic icons, application/custom icons from resource forks and
   Finder label colors. The Label menu uses the supplied classic reference's

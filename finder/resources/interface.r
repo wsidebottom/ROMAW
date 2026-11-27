@@ -387,7 +387,6 @@ resource 'fmnu' (1252, preload) {
         'clos', 0xC006, 87, 0, "Close Window";
         'xxx0', 0x0000, 0, 0, "-";
         'sinf', 0x1002, 73, 0, "Get Info";
-        'sprv', 0x1002, 0, 0, "Sharing\0xC9";
         'sdup', 0x1002, 68, 0, "Duplicate";
         'sali', 0x1002, 77, 0, "Make Alias";
         'sput', 0x1002, 89, 0, "Put Away";
