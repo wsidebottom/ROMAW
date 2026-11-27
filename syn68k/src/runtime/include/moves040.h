@@ -24,14 +24,16 @@ static uint32 move_alternate(uint32 pc, unsigned opcode, Syn68kEAContext* contex
          MC68040UM 3.2.5 merges instruction FC 2/6 into data FC 1/5. */
         if (fc == 2 || fc == 6)
             --fc;
-#ifndef SYN68K_NATIVE040_TEMPLATE
-        if (!context->memory && fc != 1 && fc != 5) {
+#ifdef SYN68K_NATIVE040_TEMPLATE
+        int flat = context->memory->native && context->memory->native->flat;
+#else
+        int flat = !context->memory;
+#endif
+        if (flat && fc != 1 && fc != 5) {
             context->error = 2;
             context->fault_address = ea.address;
         }
-        else
-#endif
-        if (writing) {
+        else if (writing) {
             /* For An,(An)+ and An,-(An), the 68040 stores the updated
              address register (M68000PRM MOVES implementation note). */
             syn68k_ea_write_memory_fc(context, ea.address, size, cpu_state.regs[reg].ul.n, fc);

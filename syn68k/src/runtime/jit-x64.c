@@ -2179,7 +2179,8 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         trap_tail(out, pc, 0, 8, RELOC_TRAP_EXCEPTION);
         return 1;
     }
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A ||
+        moves040_opcode(op)) {
         /* Reserve the guard and the largest following inline FPU body before
            emitting either path, so a full buffer cannot leave a partial guard. */
         if (out->size + 4192 > sizeof out->bytes)
@@ -2197,7 +2198,8 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
         fpu = fpu_register(out, op, pc);
     if (fpu)
         return fpu > 0;
-    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A) {
+    if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A ||
+        moves040_opcode(op)) {
         if (out->size + 64 > sizeof out->bytes)
             return 0;
         flat_native_tail(out, pc, op);
@@ -2813,7 +2815,7 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
                   (op & 0xF1C0) == 0x41C0 || ((op & 0xFFC0) == 0x4840 && (op & 0x30)) ||
                   ((op & 0xFB80) == 0x4880 && (op & 0x38) >= 0x10) || (op & 0xF138) == 0x0108 ||
                   (op & 0xFFF8) == 0x4E50 || (op & 0xFFF8) == 0x4808 || (op & 0xFFF8) == 0x4E58 || op == 0x4E70 ||
-                  ((op & 0xFF00) == 0x0E00 && (op & 0xC0) != 0xC0) || (op & 0xFFF0) == 0x4E60 ||
+                  (op & 0xFFF0) == 0x4E60 ||
                   (op & 0xFFC0) == 0x40C0 || (op & 0xFFC0) == 0x42C0 || (op & 0xFFC0) == 0x44C0 ||
                   (op & 0xFFC0) == 0x46C0 || op == 0x007C || op == 0x027C || op == 0x0A7C;
     if ((op & 0xF000) != 0x6000 && (op & 0xF0F8) != 0x50C8 && (op & 0xFF80) != 0x4E80 && op != 0x4E75 && op != 0x4E74 &&
@@ -3240,7 +3242,7 @@ static uint32 flat_native_run(uint32 pc, unsigned opcode)
         destroy_blocks(0, -1);
         return pc + 2;
     }
-    if (opcode == 0x4e73 || (opcode & 0xfffe) == 0x4e7a)
+    if (opcode == 0x4e73 || (opcode & 0xfffe) == 0x4e7a || moves040_opcode(opcode))
         return flat_control_run(pc, opcode);
     uint16 entry_sr = cpu_state.sr;
     Syn68kFPUStep step;
