@@ -63,6 +63,17 @@ static FPUdivision fpu_intermediate(unsigned sign, int exponent, uint64 high, ui
     return value;
 }
 
+static inline int fpu_restore_arithmetic(unsigned command)
+{
+    unsigned operation = command & 127, simple = operation & ~4u;
+    return (command >> 13 == 0 || command >> 13 == 2) && (command & 0xfc00) != 0x5c00 &&
+           (operation == 0 || operation == 4 || operation == 5 || operation == 0x18 || operation == 0x1a ||
+            operation == 0x20 || operation == 0x22 || operation == 0x23 || operation == 0x28 ||
+            operation == 0x24 || operation == 0x27 || operation == 0x38 || operation == 0x3a || simple == 0x40 ||
+            simple == 0x41 || simple == 0x58 || simple == 0x5a || simple == 0x60 || simple == 0x62 ||
+            simple == 0x63 || simple == 0x68);
+}
+
 static inline unsigned fpu_writeback_operation(unsigned command)
 {
     return (command & 0x43) | ((command & 0x20) >> 3) | ((command & 0x1c) << 1);

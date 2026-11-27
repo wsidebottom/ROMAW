@@ -972,14 +972,7 @@ static void state_frame(FPUContext* context)
             if (unsupported)
                 pending = 55, recognized = 1;
             unsigned operation = command & 127;
-            unsigned simple = operation & ~4u;
-            int valid_arithmetic =
-                (command >> 13 == 0 || command >> 13 == 2) && (command & 0xfc00) != 0x5c00 &&
-                (operation == 0 || operation == 4 || operation == 5 || operation == 0x18 || operation == 0x1a ||
-                 operation == 0x20 || operation == 0x22 || operation == 0x23 || operation == 0x28 ||
-                 operation == 0x24 || operation == 0x27 || operation == 0x38 || operation == 0x3a || simple == 0x40 ||
-                 simple == 0x41 || simple == 0x58 || simple == 0x5a || simple == 0x60 || simple == 0x62 ||
-                 simple == 0x63 || simple == 0x68);
+            int valid_arithmetic = fpu_restore_arithmetic(command);
             if (!recognized && valid_arithmetic &&
                 ((stages == 4 && (pending == 0 || pending == 49 || pending == 50 || pending == 51 || pending == 52 ||
                                   pending == 53 || pending == 54)) ||

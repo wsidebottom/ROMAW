@@ -42,17 +42,19 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     unsigned command = image[size - 36] * 256u + image[size - 35];
     unsigned stages = image[size - 28] & 6;
     int moveout = command >> 13 == 3;
-    if (!stages || ((stages & 4) && !moveout) || ((stages & 2) && size != 100) ||
+    int arithmetic = fpu_restore_arithmetic(command);
+    if (!stages || ((stages & 4) && !moveout && !arithmetic) || ((stages & 2) && size != 100) ||
         (size == 100 && image[8] == 0xfe && !moveout))
         return;
     unsigned format = command >> 10 & 7;
     unsigned nonmaskable = 0x1800; // Overflow and underflow.
-    if (format == 0 || format == 4 || format == 6)
+    if (moveout && (format == 0 || format == 4 || format == 6))
         nonmaskable |= 0x6000; // Integer move-outs also retain SNAN and OPERR.
     Syn68kFPUState* fpu = &packet->cpu->fpu;
     unsigned pending = fpu_exception_vector(fpu->fpsr & (fpu->fpcr | nonmaskable));
     if ((stages & 4) && size == 100 &&
-        ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || format == 3 || format == 7))
+        ((image[0x3c] & 0x80) || (image[0x44] & 0x80) || (command >> 13 == 2 && format == 3) ||
+         (moveout && (format == 3 || format == 7))))
         pending = 55; // Unsupported data takes priority over conversion status.
     int wrote_back = 0;
     if (stages & 2) {
@@ -64,6 +66,8 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         if (older_pending)
             pending = older_pending;
         else {
+            if ((stages & 4) && arithmetic && !pending)
+                return; // E1 arithmetic must resume after the older writeback.
             unsigned precision = packet->entry_fpcr >> 6 & 3;
             native_fpu->precision = precision == 1 ? 32 : precision == 2 ? 64 : 80;
             native_fpu->rounding = packet->entry_fpcr >> 4 & 3;
@@ -75,8 +79,9 @@ static void restore_writeback(Syn68kNative040Restore* packet)
             wrote_back = 1;
         }
     }
-    else if (pending == 50)
-        return; // The checked decoder delivers the invalid-stage format fault.
+    else if ((moveout && pending == 50) ||
+             (arithmetic && (pending < 49 || pending > 55)))
+        return; // Arithmetic replay and invalid stages retain checked continuations.
     for (unsigned i = 0; i < size; ++i)
         fpu->frame[i] = image[i];
     if (wrote_back)
