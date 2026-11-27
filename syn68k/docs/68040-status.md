@@ -41,7 +41,28 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: direct full-frame FRESTORE commits (2026-11-27)
+## Latest validated bundle: short FRESTORE and first handler fetch (2026-11-27)
+
+Commit e7a50f03 lowers mapped short FRESTORE state commits while preserving
+checked handling of pending software frames. The restore fixture passed
+410,048 cases each in JIT, cold AOT and warm AOT. The warm run loaded all
+three bodies with no recompilation.
+
+Commits 11365715 and ebd76716 latch the double fault if an access-error or
+address-error handler begins at an odd address or if its first opcode
+fetch faults. The grouped MMU stream passed 8,107,296 cases. Grouped cache,
+FPU, RTE, flat MOVE16, AOT and saved-state checks passed, along with all 22
+generated kernel groups on Windows and Linux x64.
+
+Help, Browser and 68K Speedometer startup passed. The audited 66-file
+ROMAW bundle is current at build/68040-current/bin. The previous bundle is
+retained at build/68040-pre-entry1-bin-20261127.
+
+CPU build ID cc62dda23e7aca6c79e082c072302d7a0d6835f053bbd2b97f998cbb8ddb4769
+Archive SHA256 22c236ca20aa008654dc366832f615e213c1a0e37834ffcd6bf7497bb0782c46
+Audit build/68040-entry1-output/68040-entry1-source-audit.json
+
+## Previous validated bundle: direct full-frame FRESTORE commits (2026-11-27)
 
 Commit 937299e3 emits the mapped FRESTORE state update for full frames
 without a live pipeline stage or resumed conversion. Guest read faults
