@@ -41,7 +41,22 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: generated mapped RTE (2026-11-27)
+## Latest validated bundle: generated flat RTE (2026-11-27)
+
+Commit 4ee803e2 runs flat RTE through the native frame kernel. Cold AOT
+emitted both entries and warm AOT loaded both without recompilation.
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and native
+kernel checks passed.
+
+The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
+startup. The current bundle is at build/68040-current/bin and the prior
+bundle is retained at build/68040-pre-flatrte1-bin-20261127.
+
+CPU build ID 49bef268f03ba939c8a572ec087230dae2199fd4fc67703d4e186a867a0015ad
+Archive SHA256 935a6558a20026aaedd5f4321ab71cd77bce160ce1b00433da1d6705961eda14
+Audit build/68040-flatrte1-output/68040-flatrte1-source-audit.json
+
+## Previous validated bundle: generated mapped RTE (2026-11-27)
 
 Commit 5d964cb0 generates mapped RTE frame validation and stack-bank
 restoration. Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT and saved-state
@@ -50,8 +65,8 @@ uses the regression-only signedness correction in fce571c3. Windows and
 Linux passed the 48-root image check and all 22 kernel groups.
 
 The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
-startup and is current at build/68040-current/bin. The previous bundle is
-retained at build/68040-pre-nativerte1-bin-20261127.
+startup. Its preceding bundle is retained at
+build/68040-pre-nativerte1-bin-20261127.
 
 CPU build ID 043afba74df8097646a65c0fe10766402b82383c6905d315bc1dd350d54771b6
 Archive SHA256 dc1c3aef812bf451fd98726a0ad1b078f24e4973985c66ace864a2cdcb8fcb5b
