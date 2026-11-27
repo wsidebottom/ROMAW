@@ -32,35 +32,47 @@ struct host_mactcp_request {
 };
 
 static unsigned resolver_users;
+static SRWLOCK resolver_lock = SRWLOCK_INIT;
 
 int host_mactcp_resolver_open(void)
 {
+    AcquireSRWLockExclusive(&resolver_lock);
     if (!resolver_users) {
         WSADATA data;
-        if (WSAStartup(MAKEWORD(2, 2), &data))
+        if (WSAStartup(MAKEWORD(2, 2), &data)) {
+            ReleaseSRWLockExclusive(&resolver_lock);
             return -23044;
+        }
     }
     ++resolver_users;
+    ReleaseSRWLockExclusive(&resolver_lock);
     return 0;
 }
 
 void host_mactcp_resolver_close(void)
 {
+    AcquireSRWLockExclusive(&resolver_lock);
     if (resolver_users && !--resolver_users)
         WSACleanup();
+    ReleaseSRWLockExclusive(&resolver_lock);
 }
 
 int host_mactcp_resolve(const char* name, uint32_t addresses[4], char canonical[255])
 {
-    if (!resolver_users)
+    AcquireSRWLockShared(&resolver_lock);
+    if (!resolver_users) {
+        ReleaseSRWLockShared(&resolver_lock);
         return -23047;
+    }
     struct addrinfo hints = {0}, *answer = NULL;
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_CANONNAME;
     int status = getaddrinfo(name, NULL, &hints, &answer);
-    if (status)
+    if (status) {
+        ReleaseSRWLockShared(&resolver_lock);
         return status == EAI_NONAME ? -23045 : -23046;
+    }
     unsigned count = 0;
     memset(addresses, 0, sizeof(uint32_t) * 4);
     memset(canonical, 0, 255);
@@ -76,6 +88,7 @@ int host_mactcp_resolve(const char* name, uint32_t addresses[4], char canonical[
     const char* text = answer && answer->ai_canonname ? answer->ai_canonname : name;
     strncpy(canonical, text, 254);
     freeaddrinfo(answer);
+    ReleaseSRWLockShared(&resolver_lock);
     return count ? 0 : -23046;
 }
 
