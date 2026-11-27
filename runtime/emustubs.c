@@ -27,6 +27,7 @@
 #include "rsys/layers.h"
 #include "rsys/typeselect.h"
 #include "rsys/process.h"
+#include "rsys/ecf.h"
 #include "DeviceMgr.h"
 #include "rsys/device.h"
 
@@ -1148,6 +1149,8 @@ PRIVATE selectorblock_t osdispatch_block[] = {
 PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
+    if (selector == 0x10)
+        return ROMlib_creator == TICK("MACS") && !(size_info.size_flags & SZisHighLevelEventAware);
     if (selector == 0x01 || selector == 0x02 || selector == 0x04 || selector == 0x08 || selector == 0x13 ||
         selector == 0x14 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
         selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x74 || selector == 0x75 ||
@@ -1222,6 +1225,26 @@ STUB(OSDispatch)
 
     retaddr = POPADDR();
     uw = POPUW();
+    if (uw == 0x10 && ROMlib_creator == TICK("MACS") && !(size_info.size_flags & SZisHighLevelEventAware)) {
+        /* Finder 6 CODE 4:317a uses the older five-argument KernelLaunch,
+           not System 7's InternalLaunchPB pointer. The stack contains stack
+           size, SIZE task flags, working-directory reference, partition size
+           and Pascal application name, followed by a short result slot. */
+        uint32 stack_size = POPUL();
+        POPUL(); /* The child selects task flags from the actual SIZE resource. */
+        INTEGER volume = POPUW();
+        uint32 partition_size = POPUL(), name = POPUL();
+        FSSpec application;
+        OSErr error = !name || !partition_size || partition_size > 0x7fffffff || stack_size > partition_size
+                          ? paramErr
+                          : C_FSMakeFSSpec(volume, 0, SYN68K_TO_US(name), &application);
+        if (!error)
+            error = ROMlib_launch_continue(&application, NULL);
+        /* The application runs in a real separate host process. Return its
+           launch status, rather than inventing a guest scheduler task ID. */
+        WRITEUW(EM_A7, error);
+        return retaddr;
+    }
     if (uw == 0x13) {
         WRITEUW(EM_A7, ROMlib_current_process_id());
         return retaddr;

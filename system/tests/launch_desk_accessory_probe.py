@@ -200,6 +200,47 @@ try:
     assert value(f"(int)GetPtrSize((void *){layer})") >= 156
     assert value("(void *)ROMlib_layer_application()") == layer
     print("DESKTOP_OWNER_LEGACY_AND_MODERN_ABI_OK")
+    creator = value("ROMlib_creator")
+    flags = value("size_info.size_flags")
+    try:
+        gdb.execute("set ROMlib_creator=0x4d414353", to_string=True)
+        gdb.execute(f"set size_info.size_flags={flags & ~0x40}", to_string=True)
+        assert value("(int)ROMlib_osdispatch_available(0x10)")
+        missing = pascal(".MissingKernelLaunchApplication")
+        volume = value("ROMlib_exevrefnum")
+        for name, partition, stack_size, expected in (
+            (0, 1048576, 8192, -50),
+            (missing, 0, 8192, -50),
+            (missing, 4096, 8192, -50),
+            (missing, 0x80000000, 8192, -50),
+            (missing, 1048576, 8192, -43),
+        ):
+            frame = (
+                struct.pack(
+                    ">IHIIhIIH",
+                    0x1234ABCD,
+                    0x10,
+                    stack_size,
+                    0xF8D0,
+                    volume,
+                    partition,
+                    name - base if name else 0,
+                    0xA55A,
+                )
+                + b"guard"
+            )
+            memory.write_memory(stack, frame)
+            gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+            assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+            assert value("cpu_state.regs[15].ul.n") == stack - base + 24
+            assert int.from_bytes(memory.read_memory(stack + 24, 2), "big", signed=True) == expected
+            assert bytes(memory.read_memory(stack + 26, 5)) == b"guard"
+        gdb.execute(f"set size_info.size_flags={flags | 0x40}", to_string=True)
+        assert not value("(int)ROMlib_osdispatch_available(0x10)")
+    finally:
+        gdb.execute(f"set ROMlib_creator={creator}", to_string=True)
+        gdb.execute(f"set size_info.size_flags={flags}", to_string=True)
+    print("KERNEL_LAUNCH_LEGACY_STACK_AND_ERRORS_OK")
     dispatch(0, 0, -50)
     dispatch(0, pascal(".Missing"), -192)
     current = value("(int)C_CurResFile()")
