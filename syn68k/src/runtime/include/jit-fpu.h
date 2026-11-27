@@ -1401,6 +1401,35 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, frame_image) + i, 0);
         }
         patch(out, short_done, out->size);
+        const unsigned cleared[] = {offsetof(CPUState, fpu.null_state), offsetof(CPUState, fpu.frame_size),
+                                    offsetof(CPUState, fpu.pending_vector)};
+        /* A full frame without a live pipeline or resumed conversion can
+           commit directly. Other frames retain the captured restart decoder. */
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, frame_image_size), 0);
+        byte(out, 100);
+        unsigned short_capture = jump(out, 0x85);
+        fpu_packet(out, 0xf6, 0, offsetof(FPUInvocation, frame_image) + 0x48, 0);
+        byte(out, 6);
+        unsigned active = jump(out, 0x85);
+        fpu_packet(out, 0x80, 7, offsetof(FPUInvocation, frame_image) + 8, 0);
+        byte(out, 0xfe);
+        unsigned conversion = jump(out, 0x84);
+        for (unsigned i = 0; i < 100; i += 4) {
+            fpu_packet(out, 0x8b, 0, offsetof(FPUInvocation, frame_image) + i, 0);
+            fpu_cpu(out, 0x89, 0, offsetof(CPUState, fpu.frame) + i);
+        }
+        for (unsigned i = 0; i < sizeof cleared / sizeof *cleared; ++i) {
+            fpu_cpu(out, 0xc7, 0, cleared[i]);
+            word32(out, 0);
+        }
+        if (mode == 3) {
+            fpu_cpu(out, 0x83, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
+            byte(out, 100);
+        }
+        unsigned quiescent_done = fpu_jump(out);
+        patch(out, short_capture, out->size);
+        patch(out, active, out->size);
+        patch(out, conversion, out->size);
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         failures[count++] = fpu_jump(out);
         patch(out, null_frame, out->size);
@@ -1423,8 +1452,6 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         }
         unsigned reset = fpu_jump(out);
         patch(out, idle, out->size);
-        const unsigned cleared[] = {offsetof(CPUState, fpu.null_state), offsetof(CPUState, fpu.frame_size),
-                                    offsetof(CPUState, fpu.pending_vector)};
         for (unsigned i = 0; i < sizeof cleared / sizeof *cleared; ++i) {
             fpu_cpu(out, 0xc7, 0, cleared[i]);
             word32(out, 0);
@@ -1434,6 +1461,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_cpu(out, 0x83, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
             byte(out, 4);
         }
+        patch(out, quiescent_done, out->size);
     }
     completed = fpu_jump(out);
 finish:

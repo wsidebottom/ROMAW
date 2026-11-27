@@ -11,9 +11,11 @@
 #include "fpu-captured.h"
 
 static unsigned complete_captures;
+static int expect_direct_restore;
 int __real_syn68k_fpu_finish_frame(const Syn68kFPUFrame*, Syn68kMMU040Memory*, Syn68kFPUStep*);
 int __wrap_syn68k_fpu_finish_frame(const Syn68kFPUFrame* captured, Syn68kMMU040Memory* memory, Syn68kFPUStep* result)
 {
+    assert(!expect_direct_restore);
     if ((captured->opcode & 0xffc0) == 0xf340 &&
         (captured->header == 0x41300000 || captured->header == 0x41600000)) {
         unsigned expected = captured->header == 0x41300000 ? 52 : 100;
@@ -320,6 +322,49 @@ static void guest_roundtrips(void)
                             }
 }
 
+static void quiescent_frame_matrix(void)
+{
+    for (unsigned page = 0; page < 2; ++page)
+        for (unsigned post = 0; post < 2; ++post)
+            for (unsigned old = 0; old < 2; ++old)
+                for (unsigned split = 0; split <= 25; ++split) {
+                    unsigned frame = 0x20000 + (page ? 8192 : 4096) - split * 4;
+                    for (unsigned count = 0; count <= 25; ++count) {
+                        Syn68kMappedCPU cpu = setup(0, page, 4, frame, post, old, 0xa0);
+                        ram[physical(frame + 0x48)] = 0;
+                        fail_word = count;
+                        Syn68kMappedRun expected;
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &expected));
+                        Syn68kFPUState expected_fpu = cpu_state.fpu;
+                        for (unsigned config = 1; config < 4; config += 2) {
+                            cpu = setup(config, page, 4, frame, post, old, 0xa0);
+                            ram[physical(frame + 0x48)] = 0;
+                            CPUState before = cpu_state;
+                            fail_word = count;
+                            callback_mode = 2;
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                            expect_direct_restore = count == 25;
+#endif
+                            Syn68kMappedRun actual;
+                            assert(syn68k_mapped_cpu_run(&cpu, 1, &actual));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                            expect_direct_restore = 0;
+#endif
+                            assert(actual.reason == expected.reason && actual.completed == expected.completed);
+                            assert(!memcmp(&cpu_state.fpu, &expected_fpu, sizeof expected_fpu));
+                            expect_registers(&before, frame, 100, post && count == 25);
+                            expect_once(count == 25 ? 25 : count + 1);
+                            if (count < 25)
+                                assert(actual.step.vector == 2 && cpu.pc == 0x10000 &&
+                                       actual.step.access.logical == frame + count * 4);
+                            else
+                                assert(actual.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
+                            ++cases;
+                        }
+                    }
+                }
+}
+
 #ifndef CAPTURE_TEST_ENTRY
 #define CAPTURE_TEST_ENTRY main
 #endif
@@ -334,6 +379,7 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     capture_matrix();
     fault_matrix();
     guest_roundtrips();
+    quiescent_frame_matrix();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
