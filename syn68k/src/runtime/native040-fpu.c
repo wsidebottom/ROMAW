@@ -40,11 +40,13 @@ static floatx80 restore_operand(const uint8* bytes)
     return (floatx80){restore_long(bytes) >> 16, (uint64)restore_long(bytes + 4) << 32 | restore_long(bytes + 8)};
 }
 
-static int restore_finite(floatx80 operand, unsigned exponent_tag)
+static int restore_supported_operand(floatx80 operand, unsigned exponent_tag)
 {
     unsigned exponent = operand.high & 0x7fff;
     if (!exponent && !operand.low)
         return 1;
+    if (exponent == 0x7fff && !(exponent_tag & 0x10))
+        return !floatx80_is_signaling_nan(operand);
     return exponent && exponent != 0x7fff && (operand.low >> 63) &&
            !((exponent_tag & 0x10) && (exponent & 0x4000));
 }
@@ -53,7 +55,8 @@ static FPUdivision restore_compare(floatx80 target, floatx80 source)
 {
     FPUdivision result = {0};
     int both_zero = !((target.high | source.high) & 0x7fff) && !(target.low | source.low);
-    if (!both_zero && (target.high != source.high || target.low != source.low)) {
+    int equal = target.high == source.high && (target.low == source.low || (target.high & 0x7fff) == 0x7fff);
+    if (!both_zero && !equal) {
         int less = (target.high & 0x7fff) < (source.high & 0x7fff) ||
                    (target.high == source.high && target.low < source.low);
         if ((target.high ^ source.high) & 0x8000)
@@ -89,11 +92,17 @@ static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operat
     floatx80 source = restore_operand(frame + size - 12), target = restore_operand(frame + size - 24);
     int uses_target = base == 0x20 || base == 0x22 || base == 0x23 || base == 0x28 ||
                       base == 0x24 || base == 0x27 || base == 0x38;
-    if (!restore_finite(source, frame[size - 40]) ||
-        (uses_target && !restore_finite(target, frame[size - 32])))
+    if (!restore_supported_operand(source, frame[size - 40]) ||
+        (uses_target && !restore_supported_operand(target, frame[size - 32])))
         return 0;
-    if (base == 0x38)
+    int source_nan = (source.high & 0x7fff) == 0x7fff && (source.low << 1);
+    int target_nan = uses_target && (target.high & 0x7fff) == 0x7fff && (target.low << 1);
+    if (base == 0x38 && (source_nan || target_nan))
+        *result = (FPUdivision){.result = {0x7fff, UINT64_MAX}};
+    else if (base == 0x38)
         *result = restore_compare(target, source);
+    else if (base != 0x3a && (source_nan || target_nan))
+        *result = (FPUdivision){.result = target_nan ? target : source};
     else if (base == 0x3a)
         *result = (FPUdivision){.result = source};
     else
@@ -179,7 +188,9 @@ static void restore_writeback(Syn68kNative040Restore* packet)
             fpu->fpiar = restore_long(image + 0x28);
         floatx80 condition = result.finite ? result.condition : result.result;
         unsigned flags = condition.high & 0x8000 ? 0x08000000 : 0;
-        if (!(condition.high & 0x7fff) && !condition.low)
+        if ((condition.high & 0x7fff) == 0x7fff)
+            flags |= (condition.low << 1) ? 0x01000000 : 0x02000000;
+        else if (!(condition.high & 0x7fff) && !condition.low)
             flags |= 0x04000000;
         fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags | replay_status;
     }
