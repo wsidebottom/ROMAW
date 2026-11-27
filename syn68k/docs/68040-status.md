@@ -41,7 +41,22 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: generated flat RTE (2026-11-27)
+## Latest validated bundle: generated flat MOVEC (2026-11-27)
+
+Commit faeec512 generates flat MOVEC privilege checks, instruction
+extension reads and control-register transfers. Warm AOT reported 8,491
+hits and zero compilations. Grouped cache, FPU, MMU, RTE, flat MOVE16,
+AOT, saved-state and native kernel checks passed.
+
+The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
+startup. The current bundle is at build/68040-current/bin. The preceding
+bundle is retained at build/68040-pre-flatmovec1-bin-20261127.
+
+CPU build ID 8f2747c8c0475b99d9bc3a4e3693c76ebf2ce866193d33cd86e46f11c37a7cf0
+Archive SHA256 54ba052afc7a0b53ddd2c779ae0ab56f264dc294007d3ee65398ae3e5e7d72e1
+Audit build/68040-flatmovec1-output/68040-flatmovec1-source-audit.json
+
+## Previous validated bundle: generated flat RTE (2026-11-27)
 
 Commit 4ee803e2 runs flat RTE through the native frame kernel. Cold AOT
 emitted both entries and warm AOT loaded both without recompilation.
@@ -49,8 +64,8 @@ Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and native
 kernel checks passed.
 
 The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
-startup. The current bundle is at build/68040-current/bin and the prior
-bundle is retained at build/68040-pre-flatrte1-bin-20261127.
+startup. Its preceding bundle is retained at
+build/68040-pre-flatrte1-bin-20261127.
 
 CPU build ID 49bef268f03ba939c8a572ec087230dae2199fd4fc67703d4e186a867a0015ad
 Archive SHA256 935a6558a20026aaedd5f4321ab71cd77bce160ce1b00433da1d6705961eda14
