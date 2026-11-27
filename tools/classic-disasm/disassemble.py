@@ -487,7 +487,11 @@ def analyze_file(input_directory, output, name):
                 continue
         if b"Joy!peffpwpc" in payload:
             containers.append((f"resource-{stem}", payload, {}))
-        elif kind in CODE_TYPES:
+        elif (
+            kind in CODE_TYPES
+            or re.fullmatch(rb"c[dD][0-9A-Fa-f]{2}", kind)
+            or kind in {b"otgl", b"dnrp", b"cdev", b"task", b"AINI"}
+        ):
             code_directory = directory / "m68k"
             code_directory.mkdir(exist_ok=True)
             (code_directory / (stem + ".bin")).write_bytes(payload)
@@ -536,17 +540,33 @@ def main():
         help="Folder containing System, Finder and their ._ forks",
     )
     parser.add_argument("--output", type=Path, default=ROOT / "disasm/system9")
+    parser.add_argument(
+        "--all-files", action="store_true", help="Analyze every file with an AppleDouble companion in --source"
+    )
     args = parser.parse_args()
+    if args.all_files and not args.source:
+        parser.error("--all-files requires --source")
     output = args.output.resolve()
     sys.path.insert(0, str(output / "python-packages"))
     inputs = output / "input"
     inputs.mkdir(parents=True, exist_ok=True)
+    names = ("Finder", "System")
+    if args.all_files:
+        names = tuple(
+            sorted(
+                p.name
+                for p in args.source.iterdir()
+                if p.is_file() and not p.name.startswith("._") and p.with_name("._" + p.name).is_file()
+            )
+        )
+        if not names:
+            parser.error("No files with AppleDouble companions in --source")
     if args.source:
-        for name in ("System", "Finder", "._System", "._Finder"):
+        for name in [item for name in names for item in (name, "._" + name)]:
             source, target = args.source / name, inputs / name
             if source.resolve() != target.resolve():
                 shutil.copy2(source, target)
-    manifests = [analyze_file(inputs, output, name) for name in ("Finder", "System")]
+    manifests = [analyze_file(inputs, output, name) for name in names]
     write_json(output / "index.json", manifests)
     for item in manifests:
         print(

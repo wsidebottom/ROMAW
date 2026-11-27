@@ -38,3 +38,34 @@ resources. All detected PowerPC PEF containers decode without warnings.
 
 Apple inputs and generated listings are local, ignored analysis assets. Commit
 the tool, its synthetic tests and the findings, rather than the Apple binaries.
+
+
+For folders such as the local Open Transport reference set, analyze every
+file that has an AppleDouble companion:
+
+```bash
+build/format-venv/bin/python tools/classic-disasm/disassemble.py --all-files \
+  --source "references/Open Transport Files" --output build/mactcp/open-transport-disasm
+```
+
+This also lists ASLM code resources (cDxx/cdxx), Open Transport glue,
+control-panel entry points and dnrp resolver entries. Headers, relocation
+records and inline data can decode as instructions; restart decoding at a
+verified entry offset when following a function.
+
+The supplied Open Transport files contain 21 paired files and 72 detected
+PowerPC PEF fragments. TCP%2FIP CDEV contains DRVR 22 named .ipp and dnrp 0
+named DNR; both delegate into the Open Transport/ASLM libraries.
+Open Tpt Inet 68K Library carries the ot:Shim$IPLib interface in libr 66
+and its code in cD66 1/2. Its DNR module is libr 75 with cd75 1/2.
+The manifests retain source hashes and resource names for checking these
+identities against the local inputs.
+
+The user's MacTCP Ping CODE 1 independently establishes the application ABI:
+SendIcmpEcho sets control 17, an asynchronous PBControl and a separate echo
+callback; its completion reads the result at +16, timestamps at +50/+54,
+echoed length at +58 and user data at +68. It subtracts eight bytes from
+the echoed length. WaitTillPingComplete yields with SystemTask. OpenResolver
+loads the first dnrp and calls a C selector entry (1=open, 2=close,
+3=StrToAddr). These observations guide ROMAW's native MacTCP adapter;
+they do not establish compatibility with the full Open Transport stack.
