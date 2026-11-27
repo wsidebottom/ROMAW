@@ -2570,6 +2570,11 @@ void open_item(HWND owner, Item item)
         message(owner, L"Printer files are not compatible with ROMAW.", MB_ICONERROR);
         return;
     }
+    if (!item.folder && item.mac.type == 0x52444556) { // 'RDEV'
+        message(owner, L"Chooser files need to be put into the Extensions folder and may not work with ROMAW.",
+                MB_ICONWARNING);
+        return;
+    }
     if (archive_kind(item)) {
         extract_items(owner, {item}, {item.path.parent_path(), item.image_volume, item.image_parent}, false);
         return;
