@@ -90,7 +90,7 @@ end
     parent = (
         common
         + f"""break C_ExitToShell
-run "{root}/.romaw/Apps/Probe"
+run -32bit -syszone 2m -applzone 7m -system 7.1.1 "{root}/.romaw/Apps/Probe"
 delete breakpoints
 set $fixture_path="{root}/.romaw/Apps/Accessory"
 source {script.as_posix()}

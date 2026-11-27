@@ -45,6 +45,7 @@ int main(void)
     process_info_t process = {0};
     ProcessSerialNumber serial;
     assert(ROMlib_get_active_task_info(NULL, 0) == 0);
+    assert(ROMlib_current_process_id() == 0);
     assert(C_GetCurrentProcess(NULL) == paramErr);
     assert(C_GetCurrentProcess(&serial) == procNotFound);
     assert(ROMlib_tsm_use_input_window());
@@ -64,6 +65,7 @@ int main(void)
         unsigned char guarded[sizeof(ROMlib_task_info) + 4];
         memset(guarded, 0xa5, sizeof guarded);
         process.identity.pid = CWC(4);
+        assert(ROMlib_current_process_id() == 4);
         process.identity.signature = CLC(0x54455354);
         process.identity.version = CLC(0x06188000);
         process.next = &other;

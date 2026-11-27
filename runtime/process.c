@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_get_legacy_process_info, ROMlib_get_active_task_info, ROMlib_begin_system_mode,
+  Functions: ROMlib_current_process_id, ROMlib_get_legacy_process_info, ROMlib_get_active_task_info, ROMlib_begin_system_mode,
              ROMlib_end_system_mode, ROMlib_get_system_client_process,
              ROMlib_process_identity, ROMlib_process_enable_scripts, ROMlib_process_take_wakeup, ROMlib_tsm_registration, ROMlib_tsm_use_input_window,
              ROMlib_tsm_new_document, ROMlib_tsm_delete_document, ROMlib_tsm_set_active, ROMlib_tsm_active_document,
@@ -107,6 +107,11 @@ static const int default_process_mode_flags;
 
 static ProcessSerialNumber no_process = {0, CLC(kNoProcess)};
 static ProcessSerialNumber current_process = {0, CLC(kCurrentProcess)};
+
+INTEGER ROMlib_current_process_id(void)
+{
+    return current_process_info ? CW(current_process_info->identity.pid) : 0;
+}
 
 LONGINT ROMlib_get_legacy_process_info(INTEGER descriptor, ROMlib_legacy_process_info* result)
 {

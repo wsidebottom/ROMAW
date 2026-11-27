@@ -86,6 +86,13 @@ try:
             assert actual == b"\xa5" * 24
     print("GET_ACTIVE_TASK_INFO_STACK_AND_BOUNDS_OK")
     descriptor = int.from_bytes(actual[2:4], "big")
+    assert value("(int)ROMlib_osdispatch_available(0x13)")
+    memory.write_memory(stack, struct.pack(">IHH", 0x1234ABCD, 0x13, 0xA55A) + b"guard")
+    gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+    assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+    assert value("cpu_state.regs[15].ul.n") == stack - base + 6
+    assert int.from_bytes(memory.read_memory(stack + 6, 2), "big") == descriptor
+    assert bytes(memory.read_memory(stack + 8, 5)) == b"guard"
     process_info = allocate(84)
     saved_zone = bytes(memory.read_memory(base + 0x118, 4))
     for pid, output, expected in (
@@ -127,6 +134,21 @@ try:
         expected = b"\xa5" * 4 + b"\0" * 8 + b"\xa5" * 4 if output else b"\xa5" * 16
         assert bytes(memory.read_memory(switch_info, 16)) == expected
     print("GET_SWITCH_INFO_STACK_AND_BOUNDS_OK")
+    assert value("(int)ROMlib_osdispatch_available(8)")
+    # The tiny probe initializes QuickDraw only; layer clipping also requires
+    # Window Manager ports and its gray region in the application's context.
+    gdb.execute("call C_InitWindows()", to_string=True)
+    saved_layer = value("(void *)ROMlib_layer_current()")
+    for expression in ("ROMlib_layer_root()", "ROMlib_layer_application()", "0"):
+        layer = value(f"(void *){expression}")
+        frame = struct.pack(">IHII", 0x1234ABCD, 8, 0, layer - base if layer else 0) + b"guard"
+        memory.write_memory(stack, frame)
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 14
+        assert bytes(memory.read_memory(stack + 14, 5)) == b"guard"
+        assert value("(void *)ROMlib_layer_current()") == saved_layer
+    print("LCLIP_ABOVE_STACK_AND_LAYER_OK")
     dispatch(0, 0, -50)
     dispatch(0, pascal(".Missing"), -192)
     current = value("(int)C_CurResFile()")

@@ -42,6 +42,7 @@ typedef struct PACKED {
 } ROMlib_legacy_process_info;
 
 extern LONGINT ROMlib_get_legacy_process_info(INTEGER descriptor, ROMlib_legacy_process_info* result);
+extern INTEGER ROMlib_current_process_id(void);
 extern INTEGER ROMlib_get_active_task_info(ROMlib_task_info* tasks, INTEGER slots);
 extern void* ROMlib_process_identity(void);
 extern void ROMlib_process_enable_scripts(uint32 mask, BOOLEAN unicode);
