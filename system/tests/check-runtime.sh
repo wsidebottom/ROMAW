@@ -28,6 +28,10 @@ case "$check" in
         "$root/system/tests/mactcp_host_test.c" "$root/platform/os/cygwin32/win_mactcp.c" \
         -o "$root/build/mactcp/host-test.exe" -liphlpapi -lws2_32
       "$root/build/mactcp/host-test.exe"
+      x86_64-w64-mingw32-gcc -std=gnu17 -g -O0 -Wall -Wextra -Werror -I"$root/include" \
+        "$root/system/tests/mactcp_stream_host_test.c" "$root/platform/os/cygwin32/win_mactcp_stream.c" \
+        "$root/platform/os/cygwin32/win_mactcp.c" -o "$root/build/mactcp/stream-host-test.exe" -liphlpapi -lws2_32
+      "$root/build/mactcp/stream-host-test.exe"
     )
     ;;
   syserr)
