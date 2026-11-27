@@ -26,6 +26,8 @@ static int failures, checks;
 static unsigned char blocks[2][54], payload[56];
 static volatile unsigned accepted, completed;
 static unsigned callback_failures;
+static volatile unsigned cancelled;
+static unsigned cancel_failures;
 
 static void check(int passed, const char* name)
 {
@@ -86,6 +88,21 @@ static void echo_done(unsigned char* pb)
     ++completed;
 }
 
+static void cancelled_echo(unsigned char* pb)
+{
+    if ((short)get16(pb + 16) != -27 || get16(pb + 58))
+        ++cancel_failures;
+    ++cancelled;
+}
+
+static short kill_io(unsigned char* pb)
+{
+    register void* a0 __asm__("a0") = pb;
+    register long d0 __asm__("d0");
+    __asm__ volatile(".word 0xa006" : "=d"(d0), "+a"(a0) : : "d1", "a1", "cc", "memory");
+    return d0;
+}
+
 static short control(unsigned char* pb, int async)
 {
     register void* a0 __asm__("a0") = pb;
@@ -132,6 +149,10 @@ int main(void)
               "StrToAddr uses C stack ABI and packed hostInfo");
         char text[16];
         check(!dnr(4, (uint32_t)0x7f000001, text) && !strcmp(text, "127.0.0.1"), "AddrToStr");
+        check(!CloseDriver(driver), "close transport while resolver remains open");
+        check(!dnr(3, "127.0.0.1", info, (void*)0, (void*)0) && get32(info + 260) == 0x7f000001,
+              "transport close preserves independent resolver ownership");
+        check(!OpenDriver("\p.IPP", &driver), "reopen transport while resolver remains open");
         check(!dnr(2), "DNR close");
         HUnlock(resolver);
     }
@@ -157,6 +178,18 @@ int main(void)
     check(completed == 2 && !callback_failures, "SystemTask delivers exact echo data, ICMP headers and user data");
     SystemTask();
     check(completed == 2, "echo notifications delivered exactly once");
+    unsigned char cancelpb[54] = {0};
+    put16(cancelpb + 24, driver);
+    put16(cancelpb + 26, 17);
+    put32(cancelpb + 28, 0x7f000001);
+    put16(cancelpb + 38, 2);
+    put32(cancelpb + 46, (uint32_t)cancelled_echo);
+    check(!control(cancelpb, 0), "accept echo before cancellation");
+    check(!kill_io(query), "KillIO cancels accepted echo");
+    SystemTask();
+    check(cancelled == 1 && !cancel_failures, "cancelled echo notifies abortErr exactly once");
+    SystemTask();
+    check(cancelled == 1, "cancelled host result cannot notify again");
     check(!CloseDriver(driver), "close .IPP");
     check(control(query, 0) == -28, "closed driver rejects controls");
     check(!OpenDriver("\p.IPP", &driver) && driver_entry(driver), "reopen native driver");

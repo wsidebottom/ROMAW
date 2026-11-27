@@ -7,7 +7,8 @@
 
   Functions: host_mactcp_stream_create, host_mactcp_stream_dispose, host_mactcp_stream_open,
              host_mactcp_stream_open_result, host_mactcp_stream_send, host_mactcp_stream_receive,
-             host_mactcp_stream_shutdown, host_mactcp_stream_status_get, host_mactcp_interface_get.
+             host_mactcp_stream_shutdown, host_mactcp_stream_status_get, host_mactcp_interface_get,
+             host_mactcp_stream_udp_checksum, host_mactcp_udp_mtu, host_mactcp_tcp_parameters.
 
   Origin:    ROMAW backend using public Winsock and Windows IP Helper interfaces.
 
@@ -17,6 +18,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <tcpestats.h>
 #include <mswsock.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +30,7 @@ static LPFN_WSARECVMSG receive_message;
 struct host_mactcp_stream {
     SOCKET* sockets;
     unsigned count;
-    int udp, opening, passive, bound, aborted;
+    int udp, opening, passive, bound, aborted, statistics_attempted;
     uint32_t filter_address;
     uint16_t filter_port;
     uint64_t bytes_sent, bytes_received;
@@ -385,6 +387,55 @@ typedef struct {
     UCHAR syn_retransmits;
 } tcp_info_v0;
 
+/* EStats exposes genuine wire sequence numbers and packet counters. Collection
+   can be denied by Windows policy; unavailable fields remain zero. */
+static void tcp_statistics(host_mactcp_stream* stream, host_mactcp_stream_status* status)
+{
+    struct sockaddr_in local, remote;
+    int size = sizeof local;
+    SOCKET socket_handle = stream->sockets[0];
+    if (getsockname(socket_handle, (struct sockaddr*)&local, &size))
+        return;
+    size = sizeof remote;
+    if (getpeername(socket_handle, (struct sockaddr*)&remote, &size))
+        return;
+    MIB_TCPROW row = {0};
+    row.dwLocalAddr = local.sin_addr.s_addr;
+    row.dwLocalPort = local.sin_port;
+    row.dwRemoteAddr = remote.sin_addr.s_addr;
+    row.dwRemotePort = remote.sin_port;
+    TCP_ESTATS_DATA_RW_v0 data_rw = {TRUE};
+    TCP_ESTATS_PATH_RW_v0 path_rw = {TRUE};
+    if (!stream->statistics_attempted) {
+        stream->statistics_attempted = TRUE;
+        SetPerTcpConnectionEStats(&row, TcpConnectionEstatsData, (PUCHAR)&data_rw, 0, sizeof data_rw, 0);
+        SetPerTcpConnectionEStats(&row, TcpConnectionEstatsPath, (PUCHAR)&path_rw, 0, sizeof path_rw, 0);
+    }
+    TCP_ESTATS_DATA_ROD_v0 data;
+    memset(&data, 0, sizeof data);
+    if (!GetPerTcpConnectionEStats(&row, TcpConnectionEstatsData, (PUCHAR)&data_rw, 0, sizeof data_rw, NULL, 0, 0,
+                                   (PUCHAR)&data, 0, sizeof data) &&
+        data_rw.EnableCollection) {
+        status->send_unacked = data.SndUna;
+        status->send_next = data.SndNxt;
+        status->receive_next = data.RcvNxt;
+        status->segments_sent = data.DataSegsOut;
+        status->segments_received = data.DataSegsIn;
+    }
+    TCP_ESTATS_PATH_ROD_v0 path;
+    memset(&path, 0, sizeof path);
+    if (!GetPerTcpConnectionEStats(&row, TcpConnectionEstatsPath, (PUCHAR)&path_rw, 0, sizeof path_rw, NULL, 0, 0,
+                                   (PUCHAR)&path, 0, sizeof path) &&
+        path_rw.EnableCollection) {
+        status->retransmitted_segments = path.PktsRetrans;
+        status->retry_count = path.CurTimeoutCount;
+        status->last_round_trip_ms = path.SampleRtt;
+        status->variance_ms = path.RttVar;
+        status->retransmit_ms = path.CurRto;
+        status->quenches = path.QuenchRcvd;
+    }
+}
+
 int host_mactcp_stream_status_get(host_mactcp_stream* stream, host_mactcp_stream_status* status)
 {
     memset(status, 0, sizeof *status);
@@ -455,6 +506,8 @@ int host_mactcp_stream_status_get(host_mactcp_stream* stream, host_mactcp_stream
             }
         }
     }
+    if (!stream->udp)
+        tcp_statistics(stream, status);
     return 0;
 }
 
@@ -493,5 +546,58 @@ int host_mactcp_interface_get(uint32_t destination, host_mactcp_interface_info* 
             free(table);
         }
     }
+    return 0;
+}
+
+/* UDP checksum policy belongs to each MacTCP write, including range sends. */
+int host_mactcp_stream_udp_checksum(host_mactcp_stream* stream, int enabled)
+{
+    if (!stream || !stream->udp)
+        return -50;
+    DWORD disabled = !enabled;
+    for (unsigned i = 0; i < stream->count; ++i)
+        if (setsockopt(stream->sockets[i], IPPROTO_UDP, UDP_NOCHECKSUM, (const char*)&disabled, sizeof disabled))
+            return socket_error(WSAGetLastError());
+    return 0;
+}
+
+int host_mactcp_udp_mtu(uint32_t destination, uint16_t* maximum)
+{
+    int error = host_mactcp_resolver_open();
+    if (error)
+        return error;
+    SOCKET socket_handle = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_handle == INVALID_SOCKET) {
+        error = socket_error(WSAGetLastError());
+        host_mactcp_resolver_close();
+        return error;
+    }
+    struct sockaddr_in remote = endpoint(destination, 9);
+    DWORD mtu = 0;
+    int length = sizeof mtu;
+    /* Connecting a UDP socket selects the route without sending a packet.
+       IP_MTU (73) is absent in older MinGW headers. */
+    if (connect(socket_handle, (const struct sockaddr*)&remote, sizeof remote) ||
+        getsockopt(socket_handle, IPPROTO_IP, 73, (char*)&mtu, &length) || mtu <= 28) {
+        host_mactcp_interface_info info;
+        error = host_mactcp_interface_get(destination, &info);
+        if (!error)
+            mtu = info.mtu;
+    }
+    closesocket(socket_handle);
+    host_mactcp_resolver_close();
+    if (!error)
+        *maximum = mtu > 65535 ? 65507 : mtu > 28 ? mtu - 28 : 0;
+    return error;
+}
+
+int host_mactcp_tcp_parameters(uint32_t* algorithm, uint32_t* minimum_ms, uint32_t* maximum_ms)
+{
+    MIB_TCPSTATS statistics;
+    if (GetTcpStatistics(&statistics))
+        return -23000;
+    *algorithm = statistics.dwRtoAlgorithm;
+    *minimum_ms = statistics.dwRtoMin;
+    *maximum_ms = statistics.dwRtoMax;
     return 0;
 }

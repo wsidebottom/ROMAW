@@ -28,6 +28,7 @@ typedef struct {
     host_mactcp_request* host;
     Ptr notification;
     uint32 callback, saved_world, started, user;
+    unsigned cancelled;
 } echo_request;
 
 static echo_request requests[16];
@@ -99,16 +100,21 @@ void ROMlib_mactcp_complete(ParmBlkPtr pb, BOOLEAN async, OSErr error)
         call_completion(completion, pb, error);
 }
 
-void ROMlib_mactcp_reset(void)
+static void reset_transport(void)
 {
     ROMlib_mactcp_stream_reset();
-    ROMlib_mactcp_resolver_reset();
     for (unsigned i = 0; i < NELEM(requests); ++i) {
         host_mactcp_dispose(requests[i].host);
         if (requests[i].notification)
             DisposPtr(requests[i].notification);
         memset(&requests[i], 0, sizeof requests[i]);
     }
+}
+
+void ROMlib_mactcp_reset(void)
+{
+    reset_transport();
+    ROMlib_mactcp_resolver_reset();
 }
 
 void ROMlib_mactcp_poll(void)
@@ -125,7 +131,7 @@ void ROMlib_mactcp_poll(void)
         const void* data = NULL;
         uint16 length = 0;
         uint32 milliseconds = 0;
-        int error = host_mactcp_result(request->host, &data, &length, &milliseconds);
+        int error = request->cancelled ? abortErr : host_mactcp_result(request->host, &data, &length, &milliseconds);
         if (error == 1)
             continue;
         Ptr notification = request->notification;
@@ -142,6 +148,12 @@ void ROMlib_mactcp_poll(void)
                Windows owns identifier/sequence, so normalize those fields to zero. */
             if (length)
                 memcpy(notification + 80, data, length);
+            uint16 option_length;
+            const void* options = host_mactcp_echo_options(request->host, &option_length);
+            if (option_length) {
+                memcpy(notification + 80 + length, options, option_length);
+                write32(notification + 64, US_TO_SYN68K(notification + 80 + length));
+            }
             unsigned checksum = 0;
             for (unsigned at = 0; at < length + 8U; at += 2) {
                 checksum += (unsigned char)notification[72 + at] << 8;
@@ -169,10 +181,14 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
 {
     OSErr error = noErr;
     unsigned char* bytes = (unsigned char*)pb;
+    if (routine == Ctl && CW(pb->cntrlParam.csCode) == 1)
+        for (unsigned i = 0; i < NELEM(requests); ++i)
+            if (requests[i].host)
+                requests[i].cancelled = TRUE;
     if (routine == Ctl && CW(pb->cntrlParam.csCode) != 15 && CW(pb->cntrlParam.csCode) != 17)
         return ROMlib_mactcp_stream_control(pb, async);
     if (routine == Close)
-        ROMlib_mactcp_reset();
+        reset_transport();
     else if (routine != Open) {
         error = routine == Stat    ? statusErr
                 : routine == Prime ? ((CW(pb->ioParam.ioTrap) & 0xff) == 3 ? writErr : readErr)
@@ -200,11 +216,12 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
                     }
                 error = -23009;
                 if (request) {
-                    Ptr notification = NewPtrSysClear(80 + length);
+                    Ptr notification = NewPtrSysClear(120 + length);
                     if (notification) {
                         memcpy(notification, bytes, 50);
                         memset(notification + 72, 0, 8);
                         int host_error;
+                        uint32 started = TickCount();
                         host_mactcp_request* host =
                             host_mactcp_echo(read32(bytes + 28), data, length, MAX(1, read16(bytes + 38)) * 1000U,
                                              options, option_length, &host_error);
@@ -215,7 +232,7 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
                             request->callback = read32(bytes + 46);
                             request->user = read32(bytes + 50);
                             request->saved_world = EM_A5;
-                            request->started = TickCount();
+                            request->started = started;
                         }
                         else
                             DisposPtr(notification);

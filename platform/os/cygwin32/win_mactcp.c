@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: host_mactcp_address, host_mactcp_echo, host_mactcp_result, host_mactcp_dispose,
-             host_mactcp_resolver_open, host_mactcp_resolver_close, host_mactcp_resolve.
+             host_mactcp_resolver_open, host_mactcp_resolver_close, host_mactcp_resolve, host_mactcp_echo_options.
 
   Origin:    ROMAW Windows networking backend; uses the public Windows IP Helper API.
 
@@ -154,7 +154,7 @@ host_mactcp_request* host_mactcp_echo(uint32_t destination, const void* data, ui
         return NULL;
     request->icmp = IcmpCreateFile();
     request->event = CreateEventW(NULL, TRUE, FALSE, NULL);
-    request->reply_size = sizeof(ICMP_ECHO_REPLY) + length + 8;
+    request->reply_size = sizeof(ICMP_ECHO_REPLY) + length + 8 + 40;
     request->reply = calloc(1, request->reply_size);
     request->payload = malloc(length ? length : 1);
     if (request->icmp == INVALID_HANDLE_VALUE || !request->event || !request->reply || !request->payload) {
@@ -183,6 +183,13 @@ host_mactcp_request* host_mactcp_echo(uint32_t destination, const void* data, ui
     return request;
 }
 
+static int reply_span(host_mactcp_request* request, const void* pointer, unsigned length)
+{
+    uintptr_t start = (uintptr_t)request->reply, address = (uintptr_t)pointer;
+    return !length || (address >= start && address - start <= request->reply_size &&
+                       length <= request->reply_size - (address - start));
+}
+
 int host_mactcp_result(host_mactcp_request* request, const void** data, uint16_t* length, uint32_t* milliseconds)
 {
     if (!request->ready && WaitForSingleObject(request->event, 0) != WAIT_OBJECT_0)
@@ -194,7 +201,9 @@ int host_mactcp_result(host_mactcp_request* request, const void** data, uint16_t
     }
     ICMP_ECHO_REPLY* reply = request->reply;
     int error = map_error(reply->Status);
-    if (!error && reply->DataSize > request->payload_length)
+    if (!error && (reply->DataSize > request->payload_length || !reply_span(request, reply->Data, reply->DataSize) ||
+                   reply->Options.OptionsSize > 40 ||
+                   !reply_span(request, reply->Options.OptionsData, reply->Options.OptionsSize)))
         return -23006;
     if (!error) {
         *data = reply->Data;
@@ -202,6 +211,19 @@ int host_mactcp_result(host_mactcp_request* request, const void** data, uint16_t
         *milliseconds = reply->RoundTripTime;
     }
     return error;
+}
+
+const void* host_mactcp_echo_options(host_mactcp_request* request, uint16_t* length)
+{
+    *length = 0;
+    if (!request || !request->ready)
+        return NULL;
+    ICMP_ECHO_REPLY* reply = request->reply;
+    if (reply->Status || reply->Options.OptionsSize > 40 ||
+        !reply_span(request, reply->Options.OptionsData, reply->Options.OptionsSize))
+        return NULL;
+    *length = reply->Options.OptionsSize;
+    return *length ? reply->Options.OptionsData : NULL;
 }
 
 void host_mactcp_dispose(host_mactcp_request* request)

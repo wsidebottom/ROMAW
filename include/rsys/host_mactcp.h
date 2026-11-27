@@ -22,5 +22,6 @@ int host_mactcp_address(uint32_t* address, uint32_t* mask);
 host_mactcp_request* host_mactcp_echo(uint32_t destination, const void* data, uint16_t length, uint32_t timeout,
                                       const void* options, uint16_t option_length, int* error);
 int host_mactcp_result(host_mactcp_request* request, const void** data, uint16_t* length, uint32_t* milliseconds);
+const void* host_mactcp_echo_options(host_mactcp_request* request, uint16_t* length);
 void host_mactcp_dispose(host_mactcp_request* request);
 #endif

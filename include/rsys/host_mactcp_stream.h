@@ -22,6 +22,8 @@ typedef struct {
     uint32_t maximum_segment, round_trip_us, minimum_round_trip_us, in_flight, congestion_window;
     uint64_t bytes_sent, bytes_received;
     uint32_t retransmitted, duplicate_acks, timeout_episodes;
+    uint32_t send_unacked, send_next, receive_next, segments_sent, segments_received;
+    uint32_t retransmitted_segments, retry_count, last_round_trip_ms, variance_ms, retransmit_ms, quenches;
     uint16_t local_port, remote_port;
     unsigned state, urgent, readable;
 } host_mactcp_stream_status;
@@ -52,5 +54,8 @@ int host_mactcp_stream_receive(host_mactcp_stream* stream, void* data, uint32_t 
                                unsigned* urgent);
 int host_mactcp_stream_shutdown(host_mactcp_stream* stream, int abort);
 int host_mactcp_stream_status_get(host_mactcp_stream* stream, host_mactcp_stream_status* status);
+int host_mactcp_stream_udp_checksum(host_mactcp_stream* stream, int enabled);
+int host_mactcp_tcp_parameters(uint32_t* algorithm, uint32_t* minimum_ms, uint32_t* maximum_ms);
+int host_mactcp_udp_mtu(uint32_t destination, uint16_t* maximum);
 int host_mactcp_interface_get(uint32_t destination, host_mactcp_interface_info* info);
 #endif

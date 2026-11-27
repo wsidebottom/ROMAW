@@ -53,6 +53,9 @@ int main(void)
         } while (error == 1 && (LONG)(deadline - GetTickCount()) > 0);
         assert(!error && length == lengths[i]);
         assert(!length || !memcmp(reply, payload, length));
+        uint16_t option_length = 999;
+        const void* options = host_mactcp_echo_options(request, &option_length);
+        assert(option_length <= 40 && (!option_length || options));
         host_mactcp_dispose(request);
     }
     int error;

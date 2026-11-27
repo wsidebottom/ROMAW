@@ -108,6 +108,8 @@ int main(void)
             port += 2;
     }
     assert(range);
+    assert(!host_mactcp_stream_udp_checksum(sender, 0));
+    assert(!host_mactcp_stream_udp_checksum(range, 1));
     assert(!host_mactcp_stream_send(sender, payload, 8, 0, 0, 0x7f000001, port + 1, 0, &sent));
     assert(!receive(range, received, sizeof received, &count, &source, &source_port, &local_port));
     assert(count == 8 && local_port == port + 1);
@@ -117,6 +119,11 @@ int main(void)
     host_mactcp_stream_dispose(sender);
     host_mactcp_stream_dispose(range);
 
+    uint32_t algorithm, minimum_ms, maximum_ms;
+    assert(!host_mactcp_tcp_parameters(&algorithm, &minimum_ms, &maximum_ms));
+    assert(algorithm && maximum_ms >= minimum_ms && maximum_ms);
+    uint16_t maximum;
+    assert(!host_mactcp_udp_mtu(0x7f000001, &maximum) && maximum >= 512 && maximum <= 65507);
     host_mactcp_interface_info network_info;
     assert(!host_mactcp_interface_get(0x7f000001, &network_info) && network_info.mtu);
     puts(

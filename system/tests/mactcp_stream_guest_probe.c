@@ -24,6 +24,9 @@ static short report, driver;
 static unsigned checks, failures;
 static volatile unsigned completions, udp_events, tcp_closing, tcp_terminated;
 static unsigned callback_failures;
+static unsigned ulp_testing, ulp_timeouts, ulp_terminations;
+static uint32_t ulp_client;
+static unsigned char timeout_sends[96][128], timeout_lists[96][12];
 static unsigned char udp_buffers[3][8192], tcp_buffers[2][8192], payload[513];
 static unsigned char udp_create[3][128], tcp_create[2][128];
 static unsigned char bulk_payload[4][65535];
@@ -90,6 +93,17 @@ static pascal void tcp_notify(uint32_t stream, unsigned short event, Ptr user, u
 {
     if (!stream || (uint32_t)user != 0x2468ace0 || icmp)
         ++callback_failures;
+    if (ulp_testing) {
+        if (event == 2 && stream == ulp_client)
+            ++ulp_timeouts;
+        if (event == 3) {
+            if (stream == ulp_client && reason == 5)
+                ++ulp_terminations;
+            else if (reason != 2 && reason != 3 && reason != 6)
+                ++callback_failures;
+        }
+        return;
+    }
     if (event == 1)
         ++tcp_closing;
     if (event == 3) {
@@ -130,6 +144,83 @@ static void wds(unsigned char* list, const void* bytes, unsigned length)
     memset(list, 0, 12);
     put16(list, length);
     put32(list + 2, (uint32_t)bytes);
+}
+
+/* A peer which never reads creates real socket backpressure. Each send has
+   a one-second ULP deadline; the two actions must preserve or abort the socket. */
+static void timeout_policy(unsigned action)
+{
+    unsigned char pb[128], listener_pb[128], client_pb[128], scratch[8192];
+    check(!create(tcp_create[0], tcp_buffers[0], 0) && !create(tcp_create[1], tcp_buffers[1], 0),
+          "create timeout-policy TCP pair");
+    uint32_t listener = get32(tcp_create[0] + 28);
+    uint32_t client = get32(tcp_create[1] + 28);
+    ulp_testing = 1;
+    ulp_client = client;
+    ulp_timeouts = ulp_terminations = 0;
+    prepare(listener_pb, 31, listener);
+    put32(listener_pb + 42, 0x7f000001);
+    put32(listener_pb + 94, 0x2468ace0);
+    listener_pb[35] = 2;
+    control(listener_pb, 1);
+    prepare(pb, 40, listener);
+    control(pb, 0);
+    prepare(client_pb, 32, client);
+    put32(client_pb + 36, 0x7f000001);
+    put16(client_pb + 40, get16(pb + 48));
+    put32(client_pb + 42, 0x7f000001);
+    put32(client_pb + 94, 0x2468ace0);
+    client_pb[35] = 2;
+    check(!control(client_pb, 1) && !wait_result(client_pb) && !wait_result(listener_pb),
+          "open timeout-policy loopback pair");
+    for (unsigned i = 0; i < 96; ++i) {
+        prepare(timeout_sends[i], 34, client);
+        wds(timeout_lists[i], bulk_payload[0], 65535);
+        put32(timeout_sends[i] + 38, (uint32_t)timeout_lists[i]);
+        put32(timeout_sends[i] + 12, (uint32_t)io_done);
+        timeout_sends[i][32] = 1;
+        timeout_sends[i][33] = action;
+        timeout_sends[i][34] = 0xc0;
+        timeout_sends[i][35] = 1;
+        control(timeout_sends[i], 1);
+    }
+    uint32_t deadline = TickCount() + 180;
+    unsigned pending, expired;
+    do {
+        SystemTask();
+        pending = expired = 0;
+        for (unsigned i = 0; i < 96; ++i) {
+            short result = get16(timeout_sends[i] + 16);
+            pending += result == 1;
+            expired += result == -23016;
+        }
+    } while (pending && (int32_t)(deadline - TickCount()) > 0);
+    check(!pending && expired, "backpressure expires queued TCP sends without hanging");
+    prepare(pb, 40, client);
+    short status = control(pb, 0);
+    if (action) {
+        check(!status && pb[52] == 8 && pb[32] == 1 && pb[33] == 1 && ulp_timeouts && !ulp_terminations,
+              "ULP notify action reports timeout and retains established connection");
+        prepare(pb, 40, listener);
+        control(pb, 0);
+        if (get16(pb + 60)) {
+            prepare(pb, 37, listener);
+            pb[32] = 1;
+            put32(pb + 36, (uint32_t)scratch);
+            put16(pb + 40, sizeof scratch);
+            check(!control(pb, 0) && get16(pb + 40), "peer can still read after notify-only timeout");
+        }
+        prepare(pb, 39, client);
+        control(pb, 0);
+    }
+    else
+        check(ulp_terminations == 1 && !ulp_timeouts && (status || pb[52] != 8),
+              "ULP abort action terminates connection and notifies exactly once");
+    for (unsigned i = 0; i < 2; ++i) {
+        prepare(pb, 42, get32(tcp_create[i] + 28));
+        control(pb, 0);
+    }
+    ulp_testing = 0;
 }
 
 int main(void)
@@ -325,6 +416,10 @@ int main(void)
     put32(pb + 42, (uint32_t)rds);
     check(!control(pb, 0), "TCPRcvBfrReturn");
 
+    prepare(pb, 41, client);
+    put32(pb + 94, (uint32_t)stats);
+    check(!control(pb, 0) && get32(stats + 24) >= 513 && !get32(stats + 20),
+          "TCPConnectionStats packs byte counters separately from unavailable measurements");
     prepare(pb, 43, 0);
     check(!control(pb, 0) && get32(pb + 32) && get32(pb + 36) && get32(pb + 40) && get16(pb + 48) >= 2,
           "TCPGlobalInfo returns live parameter/statistics/connection tables");
@@ -347,6 +442,8 @@ int main(void)
         prepare(pb, 24, get32(udp_create[i] + 28));
         check(!control(pb, 0) && get32(pb + 32) == (uint32_t)udp_buffers[i], "UDPRelease returns original buffer");
     }
+    timeout_policy(1);
+    timeout_policy(0);
     check(!callback_failures, "callback arguments and opaque user data remain valid");
     check(!CloseDriver(driver), "close driver after all streams released");
     char line[80];

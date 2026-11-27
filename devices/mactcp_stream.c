@@ -28,12 +28,12 @@ typedef struct {
     uint32 buffer, capacity, notify, user, saved_world, borrowed_rds;
     uint32 sent, received;
     unsigned udp, borrowed, data_notified, closing_notified, terminate_notified, opened;
-    unsigned tos, precedence;
+    unsigned tos, precedence, ulp_timeout, ulp_action;
 } mac_stream;
 
 typedef struct {
     uint64 serial, stream_serial;
-    unsigned stream_index, code, async, urgent, push;
+    unsigned stream_index, code, async, urgent, push, ulp_action;
     uint32 pb, saved_world, deadline, length, position;
     unsigned char* data;
 } mac_operation;
@@ -101,26 +101,50 @@ static void notify(mac_stream* stream, unsigned event, unsigned reason)
     EM_A5 = saved_world;
 }
 
+static void cancel_operations(mac_stream* stream, int error);
+
 static void finish(mac_operation* operation, int error)
 {
     uint32 address = operation->pb, saved_world = EM_A5, callback_world = operation->saved_world;
     BOOLEAN async = operation->async;
+    uint64 stream_serial = operation->stream_serial;
+    mac_stream* stream = &streams[operation->stream_index];
+    unsigned code = operation->code, action = operation->ulp_action;
+    uint32 transferred = operation->position;
+    int ulp_expired = error == -23016 && (code == 34 || code == 38);
+    if (ulp_expired && !action && stream->host && stream->serial == stream_serial) {
+        host_mactcp_stream_shutdown(stream->host, TRUE);
+        stream->opened = FALSE;
+        stream->terminate_notified = TRUE;
+        ++aborted_count;
+    }
     free(operation->data);
     memset(operation, 0, sizeof *operation);
     ParmBlkPtr pb = memory(address, 28, TRUE);
     if (pb) {
+        if (code == 34) {
+            unsigned char* send = memory(address, 48, TRUE);
+            if (send)
+                write16(send + 46, transferred);
+        }
         EM_A5 = callback_world;
         ROMlib_mactcp_complete(pb, async, error);
         EM_A5 = saved_world;
+    }
+    if (ulp_expired && stream->host && stream->serial == stream_serial) {
+        if (!action)
+            cancel_operations(stream, abortErr);
+        if (stream->host && stream->serial == stream_serial)
+            notify(stream, action ? 2 : 3, action ? 0 : 5);
     }
 }
 
 static void cancel_operations(mac_stream* stream, int error)
 {
-    uint64 serial = stream->serial;
+    uint64 serial = stream->serial, submitted = next_serial;
     /* Detach each operation before its completion can release or reuse a stream. */
     for (unsigned i = 0; i < operation_limit; ++i)
-        if (operations[i].serial && operations[i].stream_serial == serial)
+        if (operations[i].serial && operations[i].serial <= submitted && operations[i].stream_serial == serial)
             finish(&operations[i], error);
 }
 
@@ -238,6 +262,11 @@ static int operation_progress(mac_operation* operation)
         int urgent = operation->urgent && remaining == 1;
         if (operation->urgent && remaining > 1)
             --remaining;
+        if (stream->udp) {
+            error = host_mactcp_stream_udp_checksum(stream->host, pb[44] != 0);
+            if (error)
+                return error;
+        }
         error = host_mactcp_stream_send(stream->host, operation->data + operation->position, remaining, operation->push,
                                         urgent, stream->udp ? read32(pb + 34) : 0, stream->udp ? read16(pb + 38) : 0,
                                         operation->code == 28 ? read16(pb + 52) : 0, &transferred);
@@ -245,7 +274,8 @@ static int operation_progress(mac_operation* operation)
             return error;
         operation->position += transferred;
         stream->sent += transferred;
-        total_sent += transferred;
+        if (!stream->udp)
+            total_sent += transferred;
         if (operation->position < operation->length)
             return 1;
         write16(pb + 46, operation->length);
@@ -282,7 +312,8 @@ static int operation_progress(mac_operation* operation)
     if (error)
         return error;
     stream->received += received;
-    total_received += received;
+    if (!stream->udp)
+        total_received += received;
     stream->data_notified = FALSE;
     if (stream->udp) {
         write32(pb + 34, address);
@@ -397,6 +428,8 @@ static int stream_status(mac_stream* stream, unsigned char* pb)
         write32(pb + 46, stream->user);
         return 0;
     }
+    pb[32] = stream->ulp_timeout;
+    pb[33] = stream->ulp_action;
     write32(pb + 38, status.remote_address);
     write16(pb + 42, status.remote_port);
     write32(pb + 44, status.local_address);
@@ -409,12 +442,12 @@ static int stream_status(mac_stream* stream, unsigned char* pb)
     write16(pb + 58, MIN(status.in_flight, 65535));
     write16(pb + 60, MIN(status.available, 65535));
     write32(pb + 62, 0);
-    write32(pb + 66, (uint32)status.bytes_sent - status.in_flight);
-    write32(pb + 70, status.bytes_sent);
+    write32(pb + 66, status.send_unacked);
+    write32(pb + 70, status.send_next);
     write32(pb + 74, status.congestion_window);
-    write32(pb + 78, status.bytes_received);
+    write32(pb + 78, status.receive_next);
     write32(pb + 82, ((uint64)status.round_trip_us * 60 + 999999) / 1000000);
-    write32(pb + 86, 0); /* Windows TCP_INFO does not expose the last RTT sample. */
+    write32(pb + 86, ((uint64)status.last_round_trip_ms * 60 + 999) / 1000);
     write32(pb + 90, status.maximum_segment);
     uint32 statistics_address = read32(pb + 94);
     if (statistics_address) {
@@ -424,8 +457,15 @@ static int stream_status(mac_stream* stream, unsigned char* pb)
         memset(statistics, 0, 86);
         write32(statistics + 12, status.bytes_received);
         write32(statistics + 24, status.bytes_sent);
+        write32(statistics + 0, status.segments_received);
+        write32(statistics + 4, status.segments_sent);
+        write32(statistics + 8, status.retransmitted_segments);
         write32(statistics + 28, status.retransmitted);
-        write16(statistics + 76, MIN(((uint64)status.minimum_round_trip_us * 60 + 999999) / 1000000, 65535));
+        write16(statistics + 76, MIN(((uint64)status.last_round_trip_ms * 60 + 999) / 1000, 65535));
+        write16(statistics + 80, MIN(((uint64)status.variance_ms * 60 + 999) / 1000, 65535));
+        write16(statistics + 82, MIN(((uint64)status.retransmit_ms * 60 + 999) / 1000, 65535));
+        statistics[84] = MIN(status.retry_count, 255);
+        statistics[85] = MIN(status.quenches, 255);
         write16(statistics + 78, MIN(((uint64)status.round_trip_us * 60 + 999999) / 1000000, 65535));
     }
     return 0;
@@ -438,6 +478,12 @@ static int global_info(unsigned char* pb)
     if (!global_data)
         return -23009;
     memset(global_data, 0, 24 + 52 + stream_limit * 4);
+    uint32 algorithm, minimum_ms, maximum_ms;
+    if (!host_mactcp_tcp_parameters(&algorithm, &minimum_ms, &maximum_ms)) {
+        write32(global_data, algorithm);
+        write32(global_data + 4, ((uint64)minimum_ms * 60 + 999) / 1000);
+        write32(global_data + 8, ((uint64)maximum_ms * 60 + 999) / 1000);
+    }
     write32(global_data + 16, stream_limit);
     uint64 sent = total_sent, received = total_received;
     unsigned used = 0;
@@ -509,9 +555,13 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
     unsigned code = read16(pb + 26);
     int error = noErr;
     if (code == 1) {
+        uint64 submitted = next_serial;
         for (unsigned i = 0; i < operation_limit; ++i)
-            if (operations[i].serial)
+            if (operations[i].serial && operations[i].serial <= submitted) {
+                if (operations[i].code == 31 || operations[i].code == 32)
+                    host_mactcp_stream_shutdown(streams[operations[i].stream_index].host, TRUE);
                 finish(&operations[i], abortErr);
+            }
         ROMlib_mactcp_complete(parameter_block, async, noErr);
         return noErr;
     }
@@ -521,10 +571,10 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
         else if (code == 43)
             error = global_info(pb);
         else {
-            host_mactcp_interface_info info;
-            error = host_mactcp_interface_get(read32(pb + 34), &info);
+            uint16 maximum;
+            error = host_mactcp_udp_mtu(read32(pb + 34), &maximum);
             if (!error)
-                write16(pb + 32, info.mtu > 28 ? info.mtu - 28 : 0);
+                write16(pb + 32, maximum);
         }
         ROMlib_mactcp_complete(parameter_block, async, error);
         return error;
@@ -556,6 +606,7 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
                     stream->udp = udp;
                     stream->buffer = buffer;
                     stream->capacity = capacity;
+                    stream->ulp_timeout = 60;
                     stream->notify = read32(pb + 40);
                     stream->user = read32(pb + (udp ? 46 : 44));
                     stream->saved_world = EM_A5;
@@ -661,6 +712,17 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
     operation->pb = US_TO_SYN68K(pb);
     operation->saved_world = EM_A5;
     unsigned timeout = 0;
+    if (!stream->udp && (code == 31 || code == 32 || code == 34 || code == 38)) {
+        if ((pb[34] & 0x40) && pb[33] > 1) {
+            finish(operation, paramErr);
+            return paramErr;
+        }
+        if (pb[34] & 0x80)
+            stream->ulp_timeout = pb[32];
+        if (pb[34] & 0x40)
+            stream->ulp_action = pb[33];
+        operation->ulp_action = stream->ulp_action;
+    }
     if (code == 31 || code == 32) {
         ++attempt_count;
         timeout = pb[35];
@@ -671,8 +733,8 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
         else {
             stream->tos = (pb[34] & 0x20) ? pb[48] : 0;
             stream->precedence = (pb[34] & 0x10) ? pb[49] : 0;
-            unsigned tos =
-                ((pb[48] & 1) ? 16 : 0) | ((pb[48] & 2) ? 8 : 0) | ((pb[48] & 4) ? 4 : 0) | ((pb[49] & 7) << 5);
+            unsigned tos = ((stream->tos & 1) ? 16 : 0) | ((stream->tos & 2) ? 8 : 0) | ((stream->tos & 4) ? 4 : 0) |
+                           ((stream->precedence & 7) << 5);
             error = host_mactcp_stream_open(stream->host, code == 31, read32(pb + 42), read16(pb + 46), read32(pb + 36),
                                             read16(pb + 40), pb[51], tos, pb[50], pb + 54, pb[53]);
             if (!error || error == 1) {
@@ -682,12 +744,12 @@ OSErr ROMlib_mactcp_stream_control(ParmBlkPtr parameter_block, BOOLEAN async)
         }
     }
     else if (code == 38) {
-        timeout = (pb[34] & 0x80) ? pb[32] : 60;
+        timeout = stream->ulp_timeout;
     }
     else if (code == 34 || code == 23 || code == 28) {
         operation->push = !stream->udp && pb[35];
         operation->urgent = !stream->udp && pb[36];
-        timeout = stream->udp ? 60 : (pb[34] & 0x80) ? pb[32] : 60;
+        timeout = stream->udp ? 60 : stream->ulp_timeout;
         error = scatter_data(read32(pb + (stream->udp ? 40 : 38)), &operation->data, &operation->length);
         if (!error && stream->udp && operation->length > 65507)
             error = -23006;
