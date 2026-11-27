@@ -370,17 +370,6 @@ static unsigned operand_tag(floatx80 value)
     return exponent <= 0x3fff ? 0x10 : 0;
 }
 
-static int operand_frame_exponent(floatx80 value, unsigned tag)
-{
-    int exponent = value.high & 0x7fff;
-    /* FPSP sets ETE15/FPTE15 for ordinary exponents <= $3fff as well
-     as normalized denormals. Sign-extend only the wrapped negative
-     range: res_func extracts those exponents as signed 15-bit fields. */
-    if ((tag & 0x10) && (exponent & 0x4000))
-        exponent -= 0x8000;
-    return exponent;
-}
-
 static void operand_frame(FPUContext* context, unsigned extension, floatx80 source)
 {
     /* MC68040 rev $41, section 9.8 / figure 9-10. Offsets are architectural,

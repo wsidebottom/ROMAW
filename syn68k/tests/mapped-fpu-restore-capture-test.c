@@ -522,6 +522,43 @@ static void arithmetic_replay_operations(void)
         }
 }
 
+static void tagged_exponent_replay(void)
+{
+    const unsigned operations[] = {0x20, 0x38, 0x3a};
+    for (unsigned i = 0; i < sizeof operations / sizeof *operations; ++i)
+        for (unsigned negative = 0; negative < 2; ++negative) {
+            Syn68kFPUState expected;
+            for (unsigned config = 0; config < 2; ++config) {
+                unsigned frame = 0x20040;
+                Syn68kMappedCPU cpu = setup(config, 0, 5, frame, 1, 0, 0);
+                ram[physical(frame + 0x41)] = operations[i];
+                ram[physical(frame + 0x3c)] = 0x10;
+                ram[physical(frame + 0x58)] = negative ? 0xff : 0x7f;
+                ram[physical(frame + 0x59)] = 0xff; /* ETEMP exponent -1. */
+                if (operations[i] == 0x20) {
+                    ram[physical(frame + 0x44)] = 0x10;
+                    ram[physical(frame + 0x4c)] = 0x7f;
+                    ram[physical(frame + 0x4d)] = 0xff; /* FPTEMP exponent -1. */
+                }
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                expect_direct_restore = config;
+#endif
+                Syn68kMappedRun run;
+                assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+                expect_direct_restore = 0;
+#endif
+                assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002 && EM_A0 == frame + 100);
+                assert(!cpu_state.fpu.frame_size && !cpu_state.fpu.pending_vector);
+                if (!config)
+                    expected = cpu_state.fpu;
+                else
+                    assert(!memcmp(&cpu_state.fpu, &expected, sizeof expected));
+                ++cases;
+            }
+        }
+}
+
 int CAPTURE_TEST_ENTRY(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -537,6 +574,7 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     short_frame_command_matrix();
     pending_arithmetic_frames();
     arithmetic_replay_operations();
+    tagged_exponent_replay();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
