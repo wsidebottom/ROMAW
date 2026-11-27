@@ -781,6 +781,12 @@ def main():
         assert [caption(button) for button in windows_of(notice, "Button")] == ["OK"]
         assert post(notice, 0x100, 13, 0)
         wait(lambda: not is_window(notice) and enabled(desktop), "Return dismisses the keyboard alert")
+        assert post(desktop, 0x111, commands["register_images_command"], 0)
+        notice = wait(lambda: next(iter(windows_of(None, "FinderNotice")), None), "disk image registration prompt")
+        assert caption(get_item(notice, 6)) == "Register"  # IDYES
+        assert caption(get_item(notice, 7)) == "Cancel"  # IDNO
+        assert post(notice, 0x111, 7, 0)
+        wait(lambda: not is_window(notice) and enabled(desktop), "cancel disk image registration")
         command(win_folder, "OrdinaryWindows", "copy_command")
         time.sleep(0.15)
         assert post(win_copy_folder, 0x111, commands["paste_command"], 0)

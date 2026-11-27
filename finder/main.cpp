@@ -4634,10 +4634,10 @@ void command(FolderWindow& f, unsigned id)
                 ShowWindow(o->window, SW_SHOWNORMAL);
         break;
     case register_images_command:
-        if (classic::message_box(f.window,
-                                 L"Register ROMAW for disk image files for this Windows user?\n\n"
-                                 L"Existing Windows default-app choices will be preserved.",
-                                 MB_YESNO | MB_ICONQUESTION) == IDYES) {
+        if (classic::confirm(f.window,
+                             L"Register ROMAW for disk image files for this Windows user?\n\n"
+                             L"Existing Windows default-app choices will be preserved.",
+                             L"Register")) {
             register_disk_image_types();
             message(f.window, L"Disk image types registered.\n\n"
                               L"To change an existing default, choose ROMAW in Windows Open with or Default apps.");
