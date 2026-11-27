@@ -3253,8 +3253,8 @@ static uint32 flat_native_run(uint32 pc, unsigned opcode)
     return step.vector ? trap_exception(step.vector, step.exception_pc, step.fault_address, step.format) : step.next;
 }
 
-int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, uint32 address,
-                            Syn68kIntegerStep* result)
+static int mapped_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, unsigned resuming, uint32 address,
+                        Syn68kIntegerStep* result)
 {
     if ((pc & 1) || !movem040_opcode(opcode) || !memory || !memory->mmu || !result)
         return 0;
@@ -3262,7 +3262,7 @@ int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memo
     if (!code)
         return 0;
     FPUInvocation packet = {.movem = {.ea = {.cpu = &cpu_state, .context = {.memory = memory}},
-                                       .pc = pc, .resume_address = address, .opcode = opcode, .resuming = 1}};
+                                       .pc = pc, .resume_address = address, .opcode = opcode, .resuming = resuming}};
     if (memory->native)
         packet.movem.ea.ram = memory->native->ram;
     ++syn68k_x64_executions;
@@ -3275,9 +3275,17 @@ int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memo
     return 1;
 }
 
+int syn68k_x64_resume_movem(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, uint32 address,
+                            Syn68kIntegerStep* result)
+{
+    return mapped_movem(pc, opcode, memory, 1, address, result);
+}
+
 int syn68k_x64_mapped_mmu(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory, Syn68kIntegerStep* result)
 {
-    if ((pc & 1) || !mapped_mmu_opcode(opcode) || movem040_opcode(opcode) || !memory || !memory->mmu || !result)
+    if (movem040_opcode(opcode))
+        return mapped_movem(pc, opcode, memory, 0, 0, result);
+    if ((pc & 1) || !mapped_mmu_opcode(opcode) || !memory || !memory->mmu || !result)
         return 0;
     if ((opcode & 0xff00) == 0xf400 && (opcode & 0x18) && (cpu_state.sr & SR_SUPERVISOR_BIT) && !memory->cache)
         return 0;

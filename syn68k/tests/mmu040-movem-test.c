@@ -21,6 +21,7 @@
 #include "jit-x64.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static unsigned char ram[0x20000];
@@ -321,7 +322,7 @@ static void fetch_and_code(void)
 }
 
 #ifdef GENERATE_X64_CODE
-static void native_restart(void)
+static void native_transfer(unsigned resuming)
 {
     unsigned count = 0;
     for (unsigned page = 0; page < 2; ++page)
@@ -337,7 +338,7 @@ static void native_restart(void)
                         for (unsigned native = 0; native < 2; ++native) {
                             fixture(page, privileged);
                             instruction(load ? 3 : 4, width, load, 1);
-                            EM_A0 = 0xdead0000;
+                            EM_A0 = resuming ? 0xdead0000 : saved;
                             EM_D0 = 0x12345678;
                             uint32_t operand = load ? saved : saved - width;
                             put32(physical(operand), 0xabcdef01);
@@ -347,14 +348,19 @@ static void native_restart(void)
                                 fail_physical = physical(operand);
                             Syn68kIntegerStep result;
                             if (!native) {
-                                assert(syn68k_integer_resume_movem(0x10000, opcode, &memory, saved, &expected));
+                                if (resuming)
+                                    assert(syn68k_integer_resume_movem(0x10000, opcode, &memory, saved, &expected));
+                                else
+                                    assert(syn68k_integer_step_decoded(0x10000, opcode, &memory, &expected));
                                 expected_d0 = EM_D0;
                                 expected_a0 = EM_A0;
                                 expected_reads = reads;
                                 expected_writes = writes;
                             }
                             else {
-                                assert(syn68k_x64_resume_movem(0x10000, opcode, &memory, saved, &result) == 1);
+                                int handled = resuming ? syn68k_x64_resume_movem(0x10000, opcode, &memory, saved, &result)
+                                                       : syn68k_x64_mapped_mmu(0x10000, opcode, &memory, &result);
+                                assert(handled == 1);
                                 assert(result.next == expected.next && result.vector == expected.vector &&
                                        result.format == expected.format && result.fault_address == expected.fault_address &&
                                        result.movem_state == expected.movem_state && result.movem_ea == expected.movem_ea);
@@ -364,17 +370,26 @@ static void native_restart(void)
                             }
                         }
                     }
-    printf("%u native MOVEM restart mask and repeat-fault cases passed.\n", count);
+    printf("%u native MOVEM %s mask and fault cases passed.\n", count, resuming ? "restart" : "initial");
 }
 #endif
 
-int main(void)
+int main(int argc, char** argv)
 {
     masks_and_pages();
     faults();
     fetch_and_code();
 #ifdef GENERATE_X64_CODE
-    native_restart();
+    uint64 emits = syn68k_native_compile_count(), hits = syn68k_aot_hit_count();
+    native_transfer(0);
+    native_transfer(1);
+    emits = syn68k_native_compile_count() - emits;
+    hits = syn68k_aot_hit_count() - hits;
+    printf("MOVEM generated entries emitted=%llu hits=%llu.\n", (unsigned long long)emits,
+           (unsigned long long)hits);
+    fflush(stdout);
+    if (argc > 1)
+        assert(atoi(argv[1]) ? emits == 0 && hits >= 4 : emits == 4);
 #endif
     printf("%u mapped MOVEM mask/page/update/partial-fault cases passed.\n", cases);
 }
