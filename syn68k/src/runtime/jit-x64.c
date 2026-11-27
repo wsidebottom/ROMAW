@@ -64,6 +64,7 @@ enum {
     RELOC_FPU_FRAME,
     RELOC_FPU_ROOTS,
     RELOC_NATIVE_FLAT,
+    RELOC_TRAP_EXCEPTION,
     RELOC_COUNT
 };
 
@@ -170,7 +171,8 @@ static uintptr_t relocation_address(unsigned symbol)
                                    (uintptr_t)syn68k_x64_complex_run,
                                    (uintptr_t)&fpu_invocation,
                                    (uintptr_t)fpu_roots,
-                                   (uintptr_t)flat_native_run};
+                                   (uintptr_t)flat_native_run,
+                                   (uintptr_t)trap_exception};
     return symbol < RELOC_COUNT ? addresses[symbol] : 0;
 }
 
@@ -488,7 +490,7 @@ static void instruction_end(emitter* out, uint32 pc, unsigned length)
     }
 }
 
-static void exception_tail(emitter* out, uint32 pc, uint32 address, unsigned selector)
+static void trap_tail(emitter* out, uint32 pc, uint32 address, unsigned selector, unsigned relocation)
 {
     ++out->guards;
     byte(out, 0xB9);
@@ -500,9 +502,14 @@ static void exception_tail(emitter* out, uint32 pc, uint32 address, unsigned sel
     word32(out, address);
     byte(out, 0x48);
     byte(out, 0xB8);
-    pointer_value(out, RELOC_TRAP);
+    pointer_value(out, relocation);
     byte(out, 0xFF);
     byte(out, 0xE0);
+}
+
+static void exception_tail(emitter* out, uint32 pc, uint32 address, unsigned selector)
+{
+    trap_tail(out, pc, address, selector, RELOC_TRAP);
 }
 
 static void decoder_tail(emitter* out, uint32 pc, unsigned selector)
@@ -2135,6 +2142,7 @@ static unsigned terminal_length(unsigned op, unsigned words)
 }
 
 #include "jit-fpu.h"
+#include "control040.h"
 #include "jit-mmu.h"
 
 static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc)
@@ -2142,6 +2150,21 @@ static int branch(emitter* out, const uint16* source, unsigned length, uint32 pc
     unsigned op = SWAPUW_IFLE(source[0]);
     unsigned cc = (op >> 8) & 15;
     out->variable_ea = 1;
+    if (mmu_translation_opcode(op)) {
+        if (out->size + 96 > sizeof out->bytes)
+            return 0;
+        byte(out, 0x45); // XOR R9D,R9D. Exception frame format zero.
+        byte(out, 0x31);
+        byte(out, 0xc9);
+        fpu_cpu(out, 0xf7, 0, offsetof(CPUState, sr));
+        word32(out, SR_SUPERVISOR_BIT);
+        unsigned user = jump(out, 0x84);
+        // The flat bus has no guest MMU or ATC. Both exceptions use format zero.
+        trap_tail(out, pc, 0, 11, RELOC_TRAP_EXCEPTION);
+        patch(out, user, out->size);
+        trap_tail(out, pc, 0, 8, RELOC_TRAP_EXCEPTION);
+        return 1;
+    }
     if ((op & ~255u) == 0xf200 || mapped_frame_opcode(op) || op == 0x4E73 || (op & 0xFFFE) == 0x4E7A) {
         /* Reserve the guard and the largest following inline FPU body before
            emitting either path, so a full buffer cannot leave a partial guard. */

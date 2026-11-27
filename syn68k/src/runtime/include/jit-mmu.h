@@ -20,11 +20,12 @@
         (out)->size += sizeof data;                            \
     } while (0)
 
+
 static int mapped_mmu_opcode(unsigned opcode)
 {
     return opcode <= 65535 &&
-           ((opcode & 0xff00) == 0xf400 || (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 ||
-            (opcode & 0xffd8) == 0xf548 || (opcode & 0xfffe) == 0x4e7a || opcode == 0x4e72 || opcode == 0x4e73);
+           ((opcode & 0xff00) == 0xf400 || mmu_translation_opcode(opcode) || (opcode & 0xfffe) == 0x4e7a ||
+            opcode == 0x4e72 || opcode == 0x4e73);
 }
 
 static int mapped_mmu(emitter* out, unsigned opcode, uint32 pc)

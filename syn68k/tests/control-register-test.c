@@ -30,6 +30,7 @@ extern syn68k_addr_t __real_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 
 syn68k_addr_t __wrap_trap_direct(uint32 vector, syn68k_addr_t pc, uint32 argument)
 {
     assert(!require_native_movec || vector != 4 || (pc != 0x1000 && pc != 0x1004));
+    assert(!require_native_movec || vector != 11 || pc != 0x1000 || (READUW(pc) & 0xff00) != 0xf500);
     return __real_trap_direct(vector, pc, argument);
 }
 
@@ -102,6 +103,26 @@ static void control_masks_and_privilege(void)
         }
 }
 
+static void flat_mmu_privilege(void)
+{
+    const unsigned families[] = {0xf500, 0xf508, 0xf510, 0xf518, 0xf548, 0xf568};
+    for (unsigned i = 0; i < sizeof families / sizeof *families; ++i)
+        for (unsigned reg = 0; reg < (i == 2 || i == 3 ? 1u : 8u); ++reg)
+            for (unsigned supervisor = 0; supervisor < 2; ++supervisor) {
+                destroy_blocks(0x1000, 32);
+                WRITEUW(0x1000, families[i] | reg);
+                cpu_state.sr = supervisor ? 0x2000 : 0;
+                cpu_state.isp = 0xfe000;
+                EM_A7 = 0xff000;
+                EM_A0 = 0xdeadbeef;
+                cpu_state.dfc = 5;
+                trapped = 0;
+                CALL_EMULATOR(0x1000);
+                assert(trapped == (supervisor ? 11 : 8));
+                assert(EM_A0 == 0xdeadbeef && cpu_state.dfc == 5);
+            }
+}
+
 int main(int argc, char** argv)
 {
     const uint32 size = 1024 * 1024;
@@ -119,6 +140,7 @@ int main(int argc, char** argv)
     uint32 initial_vbr = cpu_state.vbr;
     trap_install_handler(4, unexpected_trap, (void*)(uintptr_t)4);
     trap_install_handler(8, unexpected_trap, (void*)(uintptr_t)8);
+    trap_install_handler(11, unexpected_trap, (void*)(uintptr_t)11);
     for (unsigned reg = 0; reg < 15; ++reg)
         for (unsigned value = 0; value < 4; ++value) {
             const uint32 values[] = {0x2000, 0x3000, 0x4000, 0x5000};
@@ -147,6 +169,7 @@ int main(int argc, char** argv)
         }
     cpu_state.vbr = initial_vbr;
     control_masks_and_privilege();
+    flat_mmu_privilege();
     uint64 hits = syn68k_aot_hit_count() - hits_before;
     uint64 emits = syn68k_native_compile_count() - emits_before;
     if (aot_run == 1)

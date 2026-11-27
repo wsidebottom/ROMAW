@@ -763,7 +763,7 @@ static uint32 execute_cache(uint32 pc, unsigned opcode, Syn68kEAContext* context
 
 static int control_opcode(unsigned opcode)
 {
-    return (opcode & 0xFFF0) == 0xF500 || opcode == 0xF510 || opcode == 0xF518 || (opcode & 0xFFD8) == 0xF548 ||
+    return mmu_translation_opcode(opcode) ||
            (opcode & 0xFFFE) == 0x4E7A || (opcode >> 12) == 6 || (opcode & 0xF0F8) == 0x50C8 ||
            (opcode & 0xFFF8) == 0x4E50 || (opcode & 0xFFF8) == 0x4808 || (opcode & 0xFFF8) == 0x4E58 ||
            opcode == 0x4E75 || opcode == 0x4E74 || opcode == 0x4E77 || opcode == 0x4E73 || opcode == 0x4E70 ||
@@ -1271,6 +1271,8 @@ uint32 trap_direct(uint32 trap_number, uint32 exception_pc, uint32 exception_add
             destroy_blocks(0, -1);
         return exception_pc + 2;
     }
+    if (trap_number == 11 && syn68k_memory_span(exception_pc, 2) && mmu_translation_opcode(READUW(exception_pc)))
+        return trap_exception(cpu_state.sr & SR_SUPERVISOR_BIT ? 11 : 8, exception_pc, 0, 0);
     uint32 fpu_next;
     if (trap_number == 11 && syn68k_fpu_execute(exception_pc, &fpu_next))
         return fpu_next;

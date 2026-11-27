@@ -18,6 +18,11 @@
 #include "trap.h"
 #include "mmu040-memory.h"
 
+static inline int mmu_translation_opcode(unsigned opcode)
+{
+    return (opcode & 0xfff0) == 0xf500 || opcode == 0xf510 || opcode == 0xf518 || (opcode & 0xffd8) == 0xf548;
+}
+
 static inline uint32 syn68k_control040_bank(CPUState* cpu, unsigned selector, int writing, uint32 value)
 {
     uint32* bank;
