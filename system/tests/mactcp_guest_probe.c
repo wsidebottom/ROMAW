@@ -97,6 +97,14 @@ static short control(unsigned char* pb, int async)
     return d0;
 }
 
+/* GetDCtlEntry is an SDK library routine; inspect its documented low-memory
+   unit table directly because the standalone Retro68 runtime does not ship it. */
+static void* driver_entry(short reference)
+{
+    void** table = *(void***)0x11c;
+    return table && reference < 0 ? table[-reference - 1] : 0;
+}
+
 int main(void)
 {
     Str255 path = "\pD:Source:ROMAW:build:mactcp:guest-results.txt";
@@ -105,6 +113,7 @@ int main(void)
         return 1;
     SetEOF(report, 0);
     check(!OpenDriver("\p.IPP", &driver), "open .IPP through Device Manager");
+    check(driver_entry(driver) != 0, "native driver has a real Device Control Entry");
     unsigned char query[64] = {0};
     put16(query + 24, driver);
     put16(query + 26, 15);
@@ -149,6 +158,12 @@ int main(void)
     SystemTask();
     check(completed == 2, "echo notifications delivered exactly once");
     check(!CloseDriver(driver), "close .IPP");
+    check(control(query, 0) == -28, "closed driver rejects controls");
+    check(!OpenDriver("\p.IPP", &driver) && driver_entry(driver), "reopen native driver");
+    put16(query + 24, driver);
+    put16(query + 26, 15);
+    check(!control(query, 0), "reopened driver accepts controls");
+    check(!CloseDriver(driver), "close reopened driver");
     long length;
     char line[80];
     length = sprintf(line, "failures=%d checks=%d\n", failures, checks);

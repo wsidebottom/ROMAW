@@ -17,6 +17,11 @@
 #include "FileMgr.h"
 #define ROMAW_MACTCP_REFNUM (-23)
 OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType routine);
+OSErr ROMlib_mactcp_driver_open(ParmBlkPtr pb, DCtlPtr dce);
+OSErr ROMlib_mactcp_driver_prime(ParmBlkPtr pb, DCtlPtr dce);
+OSErr ROMlib_mactcp_driver_control(ParmBlkPtr pb, DCtlPtr dce);
+OSErr ROMlib_mactcp_driver_status(ParmBlkPtr pb, DCtlPtr dce);
+OSErr ROMlib_mactcp_driver_close(ParmBlkPtr pb, DCtlPtr dce);
 ProcPtr ROMlib_mactcp_resolver_definition(void);
 void* ROMlib_mactcp_memory(uint32 address, uint32 length, int write);
 void ROMlib_mactcp_complete(ParmBlkPtr pb, BOOLEAN async, OSErr error);

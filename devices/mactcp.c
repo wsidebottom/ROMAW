@@ -5,8 +5,9 @@
 
   Classes:   None.
 
-  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset,
-             ROMlib_mactcp_memory, ROMlib_mactcp_complete.
+  Functions: ROMlib_mactcp_dispatch, ROMlib_mactcp_poll, ROMlib_mactcp_reset, ROMlib_mactcp_memory,
+             ROMlib_mactcp_complete, ROMlib_mactcp_driver_open, ROMlib_mactcp_driver_prime,
+             ROMlib_mactcp_driver_control, ROMlib_mactcp_driver_status, ROMlib_mactcp_driver_close.
 
   Origin:    ROMAW implementation; ABI follows the local MacTCP.h and MiscIPPB.h interface references.
 
@@ -14,6 +15,7 @@
 ===================================================================+*/
 #include "rsys/common.h"
 #include "rsys/mactcp.h"
+#include "rsys/device.h"
 #include "rsys/host_mactcp.h"
 #include "rsys/mman.h"
 #include "rsys/file.h"
@@ -172,7 +174,9 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
     if (routine == Close)
         ROMlib_mactcp_reset();
     else if (routine != Open) {
-        error = controlErr;
+        error = routine == Stat    ? statusErr
+                : routine == Prime ? ((CW(pb->ioParam.ioTrap) & 0xff) == 3 ? writErr : readErr)
+                                   : controlErr;
         if (routine == Ctl && CW(pb->cntrlParam.csCode) == 15) {
             uint32 address, mask;
             error = host_mactcp_address(&address, &mask);
@@ -227,4 +231,53 @@ OSErr ROMlib_mactcp_dispatch(ParmBlkPtr pb, BOOLEAN async, DriverRoutineType rou
     if (async && completion)
         call_completion(completion, pb, error);
     return error;
+}
+
+/* Use the Device Manager's ordinary native-driver table. Guest-installed and
+   resource-backed .IPP drivers keep their normal precedence and initialization. */
+static BOOLEAN driver_async(ParmBlkPtr pb)
+{
+    return !!(CW(pb->ioParam.ioTrap) & asyncTrpBit);
+}
+
+static OSErr require_open(ParmBlkPtr pb, DCtlPtr dce, DriverRoutineType routine)
+{
+    if (!(dce->dCtlFlags & CWC(DRIVEROPENBIT))) {
+        ROMlib_mactcp_complete(pb, driver_async(pb), notOpenErr);
+        return notOpenErr;
+    }
+    return ROMlib_mactcp_dispatch(pb, driver_async(pb), routine);
+}
+
+OSErr ROMlib_mactcp_driver_open(ParmBlkPtr pb, DCtlPtr dce)
+{
+    dce->dCtlRefNum = CW(ROMAW_MACTCP_REFNUM);
+    dce->dCtlFlags |= CWC(DRIVEROPENBIT);
+    return ROMlib_mactcp_dispatch(pb, driver_async(pb), Open);
+}
+
+OSErr ROMlib_mactcp_driver_prime(ParmBlkPtr pb, DCtlPtr dce)
+{
+    pb->ioParam.ioActCount = 0;
+    return require_open(pb, dce, Prime);
+}
+
+OSErr ROMlib_mactcp_driver_control(ParmBlkPtr pb, DCtlPtr dce)
+{
+    return require_open(pb, dce, Ctl);
+}
+
+OSErr ROMlib_mactcp_driver_status(ParmBlkPtr pb, DCtlPtr dce)
+{
+    return require_open(pb, dce, Stat);
+}
+
+OSErr ROMlib_mactcp_driver_close(ParmBlkPtr pb, DCtlPtr dce)
+{
+    if (!(dce->dCtlFlags & CWC(DRIVEROPENBIT))) {
+        ROMlib_mactcp_complete(pb, driver_async(pb), notOpenErr);
+        return notOpenErr;
+    }
+    dce->dCtlFlags &= ~CWC(DRIVEROPENBIT);
+    return ROMlib_mactcp_dispatch(pb, driver_async(pb), Close);
 }

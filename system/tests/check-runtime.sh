@@ -17,7 +17,7 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'mactcp-guest' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'mactcp-guest' 'mactcp-ppc' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
     ;;
   mactcp-guest)
     (
@@ -29,12 +29,15 @@ case "$check" in
       mkdir -p "$out"
       cd "$root"
       python3 system/tests/mactcp_resolver_fixtures.py
-      for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt mactcp_resolver_guest_probe:MacTCPResolverProbe:resolver-guest-results.txt; do
+      for entry in mactcp_guest_probe:MacTCPProbe:guest-results.txt mactcp_stream_guest_probe:MacTCPStreamProbe:stream-guest-results.txt mactcp_resolver_guest_probe:MacTCPResolverProbe:resolver-guest-results.txt mactcp_driver_guest_probe:MacTCPDriverProbe:driver-results.txt; do
         IFS=: read -r source name report <<<"$entry"
         "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "system/tests/$source.c" -o "$out/$name.code.bin"
         "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
           -I"$retro68/m68k-apple-macos/RIncludes" --copy "$out/$name.code.bin" \
           -o "$out/$name.bin" -t APPL -c MTPr --cc "$out/%$name"
+        if [ "$source" = mactcp_driver_guest_probe ]; then
+          "$retro68/bin/Rez" "system/tests/$source.r" --append -o "$out/%$name" -t APPL -c MTPr
+        fi
         rm -f -- "$out/._$name"
         python3 tools/normalize-appledouble.py "$out/%$name" "$out/._$name"
         touch "$out/$name"
@@ -51,6 +54,31 @@ case "$check" in
         cat "$out/$report"
         grep -q '^failures=0 checks=' "$out/$report"
         if grep -s 'win_exception' "$out/stdout.txt" "$out/stderr.txt" "$out/$name-launch.log"; then exit 1; fi
+      done
+    )
+    ;;
+  mactcp-ppc)
+    (
+      set -euo pipefail
+      root=$(cd "$(dirname "$0")/../.." && pwd)
+      romaw=$(realpath "${1:-${ROMAW_TEST_EXE:-$root/windows-binaries/bin/ROMAW.exe}}")
+      out="$root/build/mactcp/ppc-probe"
+      cd "$root"
+      python3 system/tests/make_mactcp_ppc_probe.py "$out"
+      for mode in no-ppc-jit ppc-jit; do
+        mkdir -p "$out/$mode"
+        (
+          cd "$out/$mode"
+          rm -f -- stdout.txt stderr.txt
+          "$romaw" "-$mode" -syszone 8m -applzone 64m -sdlaudio test -debug trace "$(wslpath -w "$out/PPC MacTCP Probe")" >launch.log 2>&1
+          for ((attempt = 0; attempt < 450; ++attempt)); do
+            if grep -qs 'PPC MacTCP Probe passed' stdout.txt stderr.txt; then break; fi
+            sleep 0.1
+          done
+          grep -s 'PPC MacTCP Probe passed' stdout.txt stderr.txt
+          if grep -sE 'win_exception|PPC MacTCP Probe failed' stdout.txt stderr.txt launch.log; then exit 1; fi
+          echo "PASS PowerPC MacTCP $mode"
+        )
       done
     )
     ;;

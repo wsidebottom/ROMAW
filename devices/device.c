@@ -151,8 +151,6 @@ A4(PUBLIC, OSErr, ROMlib_dispatch, ParmBlkPtr, p, /* INTERNAL */
     typedef OSErr (*devfp_t)(ParmBlkPtr, DCtlPtr);
     devfp_t procp;
 
-    if (CW(p->cntrlParam.ioCRefNum) == ROMAW_MACTCP_REFNUM)
-        return ROMlib_mactcp_dispatch(p, async, routine);
     if (CW(p->cntrlParam.ioCRefNum) == -4) {
         if (routine == Ctl)
             return ROMlib_legacy_sound_control(p, async);
@@ -501,6 +499,15 @@ A1(PUBLIC, DCtlHandle, GetDCtlEntry, INTEGER, rn)
 PUBLIC driverinfo* ROMlib_otherdrivers = 0; /* for extensibility */
 
 PRIVATE driverinfo knowndrivers[] = {
+    {
+        ROMlib_mactcp_driver_open,
+        ROMlib_mactcp_driver_prime,
+        ROMlib_mactcp_driver_control,
+        ROMlib_mactcp_driver_status,
+        ROMlib_mactcp_driver_close,
+        (StringPtr) "\004.IPP",
+        ROMAW_MACTCP_REFNUM,
+    },
 #if defined(LINUX) || defined(CYGWIN32)
     {
         ROMlib_serialopen,
@@ -583,11 +590,6 @@ A2(PUBLIC, OSErr, ROMlib_driveropen, ParmBlkPtr, pbp, /* INTERNAL */
         EqualString(PPR(pbp->ioParam.ioNamePtr), (StringPtr) "\006.Sound", FALSE, TRUE)) {
         pbp->ioParam.ioRefNum = CWC(-4);
         FAKEASYNC(pbp, a, noErr);
-    }
-    if (PP_RAW(pbp->ioParam.ioNamePtr) &&
-        EqualString(PPR(pbp->ioParam.ioNamePtr), (StringPtr) "\004.IPP", FALSE, TRUE)) {
-        pbp->ioParam.ioRefNum = CW(ROMAW_MACTCP_REFNUM);
-        return ROMlib_mactcp_dispatch(pbp, a, Open);
     }
     ZONE_SAVE_EXCURSION(SysZone, {
         err = noErr;

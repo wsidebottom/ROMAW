@@ -1990,7 +1990,7 @@ PRIVATE OSErrRET ppc_sys_environs(INTEGER version, uint32 address)
 
 /* Device Manager parameter blocks share a packed 50-byte Control/Status ABI.
    Call the installed OS vector so RAM drivers and guest patches remain live. */
-static OSErr ppc_device_sync(uint32 address, unsigned trap_index)
+static OSErr ppc_device_call(uint32 address, unsigned trap_index, BOOLEAN async)
 {
     ppc_context* ctx = ppc_active_context;
     if (!address || !ppc_memory(ctx, address, sizeof(cntrlParam), TRUE))
@@ -1999,7 +1999,7 @@ static OSErr ppc_device_sync(uint32 address, unsigned trap_index)
     memcpy(saved, cpu_state.regs, sizeof saved);
     EM_A0 = address;
     EM_D0 = 0;
-    EM_D1 = 0xa000 | trap_index; /* Synchronous call: ASYNCBIT is clear. */
+    EM_D1 = 0xa000 | trap_index | (async ? 0x400 : 0);
     CALL_EMULATOR(CL(ctx->os_vectors[trap_index]));
     const OSErr result = EM_D0;
     memcpy(cpu_state.regs, saved, sizeof saved);
@@ -2008,12 +2008,32 @@ static OSErr ppc_device_sync(uint32 address, unsigned trap_index)
 
 static OSErr ppc_PBControlSync(uint32 address)
 {
-    return ppc_device_sync(address, 4);
+    return ppc_device_call(address, 4, FALSE);
 }
 
 static OSErr ppc_PBStatusSync(uint32 address)
 {
-    return ppc_device_sync(address, 5);
+    return ppc_device_call(address, 5, FALSE);
+}
+
+static OSErr ppc_PBControlAsync(uint32 address)
+{
+    return ppc_device_call(address, 4, TRUE);
+}
+
+static OSErr ppc_PBStatusAsync(uint32 address)
+{
+    return ppc_device_call(address, 5, TRUE);
+}
+
+static OSErr ppc_PBKillIOSync(uint32 address)
+{
+    return ppc_device_call(address, 6, FALSE);
+}
+
+static OSErr ppc_PBKillIOAsync(uint32 address)
+{
+    return ppc_device_call(address, 6, TRUE);
 }
 
 PRIVATE OSErr ppc_PBReadSync(void* pb)
@@ -3397,6 +3417,7 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMGetDrvQHdr", GetDrvQHdr, M0(5)},
     {"OpenDriver", OpenDriver, M2(2, 5, 5)},
     {"CloseDriver", CloseDriver, M1(2, 2)},
+    {"KillIO", KillIO, M1(2, 2)},
     {"GetDCtlEntry", GetDCtlEntry, M1(5, 2)},
     {"NGetTrapAddress", ppc_n_get_trap, M2(4, 2, 2)},
     {"NSetTrapAddress", ppc_n_set_trap, M3(0, 4, 2, 2)},
@@ -3654,7 +3675,11 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"LMSetIntlSpec", ppc_set_intl_spec, M1(0, 4)},
     {"TempInsertROMMap", ppc_temp_insert_rom_map, M1(0, 1)},
     {"PBControlSync", ppc_PBControlSync, M1(2, 4)},
+    {"PBControlAsync", ppc_PBControlAsync, M1(2, 4)},
     {"PBStatusSync", ppc_PBStatusSync, M1(2, 4)},
+    {"PBStatusAsync", ppc_PBStatusAsync, M1(2, 4)},
+    {"PBKillIOSync", ppc_PBKillIOSync, M1(2, 4)},
+    {"PBKillIOAsync", ppc_PBKillIOAsync, M1(2, 4)},
     {"PBReadSync", ppc_PBReadSync, M1(2, 5)},
     {"PBReadAsync", ppc_PBReadAsync, M1(2, 5)},
     {"PBWriteSync", ppc_PBWriteSync, M1(2, 5)},
