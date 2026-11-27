@@ -13451,6 +13451,9 @@ def color_profile_operations(probe):
             p.emit(0x907E0000 | base + 16 + side * 16)
         compare(16, 32, name + " handles an unwritable location like the saved library")
 
+    # Start the lifetime checks with a fresh profile after exercising the setters.
+    checked("CMCloseProfile", [profile_ref])
+    checked("CMOpenProfile", [profile, location])
     cprt = int.from_bytes(b"cprt", "big")
     for original in (True, False):
         checked("CMGetProfileRefCount", [profile_ref, size], original=original)
