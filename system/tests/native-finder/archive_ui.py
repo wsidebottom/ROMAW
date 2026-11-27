@@ -143,6 +143,11 @@ def main():
         (windows / "%FormatMarker").write_bytes(ad)
     verify = desktop_path / "Verify"
     verify.mkdir()
+    keyboard = verify / "Keyboard Layout"
+    keyboard.touch()
+    keyboard.with_name("._" + keyboard.name).write_bytes(
+        struct.pack(">II16xHIII", 0x51607, 0x20000, 1, 9, 38, 32) + b"kfilMACS" + bytes(24)
+    )
     windows_copy = base / "Windows Copy"
     windows_copy.mkdir()
     (windows / "OrdinaryWindows").mkdir()
@@ -757,6 +762,13 @@ def main():
         wait(lambda: not is_window(notice) and enabled(desktop), "dismiss alert and re-enable Finder")
         assert not (windows / "ForbiddenPayload").exists()
         print("PASS classic picker and titleless modal alert frame, focus and Return dismissal", flush=True)
+        command(check_folder, keyboard.name, "open_command")
+        notice = wait(lambda: next(iter(windows_of(None, "FinderNotice")), None), "unsupported keyboard file alert")
+        wait(lambda: not enabled(desktop), "keyboard alert blocks Finder")
+        assert named(notice, "Static", "Keyboard files are not compatible with ROMAW.")
+        assert [caption(button) for button in windows_of(notice, "Button")] == ["OK"]
+        assert post(notice, 0x100, 13, 0)
+        wait(lambda: not is_window(notice) and enabled(desktop), "Return dismisses the keyboard alert")
         command(win_folder, "OrdinaryWindows", "copy_command")
         time.sleep(0.15)
         assert post(win_copy_folder, 0x111, commands["paste_command"], 0)

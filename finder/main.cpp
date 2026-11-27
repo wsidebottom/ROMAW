@@ -2473,6 +2473,10 @@ void extract_items(HWND owner, const std::vector<Item>& items, ArchiveDestinatio
 
 void open_item(HWND owner, Item item)
 {
+    if (!item.folder && item.mac.type == 0x6b66696c) { // 'kfil'
+        message(owner, L"Keyboard files are not compatible with ROMAW.", MB_ICONERROR);
+        return;
+    }
     if (archive_kind(item)) {
         extract_items(owner, {item}, {item.path.parent_path(), item.image_volume, item.image_parent}, false);
         return;
