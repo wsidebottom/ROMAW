@@ -1175,7 +1175,11 @@ P2(PUBLIC pascal trap, void, AddResMenu, MenuHandle, mh, ResType, restype)
      */
 
         if (restype == TICK("DRVR") && about_box_menu_name_pstr[0]) {
-            app((StringPtr)"\001-", 0, 0, 0, 0, TRUE, &endinf);
+            if (endinf.menitem > 0) {
+                GetItem(mh, endinf.menitem, str);
+                if (!str[0] || str[1] != '-')
+                    app((StringPtr)"\001-", 0, 0, 0, 0, TRUE, &endinf);
+            }
             app(about_box_menu_name_pstr, 0, 0, 0, 0, FALSE, &endinf);
         }
         if (restype == TICK("DRVR") && !(ROMlib_options & ROMLIB_NOPREFS_BIT)) {
