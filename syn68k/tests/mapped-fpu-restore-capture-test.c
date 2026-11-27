@@ -571,6 +571,34 @@ static void tagged_exponent_replay(void)
         }
 }
 
+static void malformed_frame_exits(void)
+{
+    const uint32_t headers[] = {0x40000000, 0x41000001, 0x41100000, 0x41300000};
+    for (unsigned config = 0; config < 4; ++config)
+        for (unsigned i = 0; i < sizeof headers / sizeof *headers; ++i) {
+            unsigned frame = 0x20040;
+            Syn68kMappedCPU cpu = setup(config, 0, 2, frame, 1, 1, 0);
+            put32(physical(frame), headers[i]);
+            if (i == 3)
+                ram[physical(frame + 24)] = 2; /* E3 needs the full frame. */
+            CPUState before = cpu_state;
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+            expect_direct_restore = config & 1;
+#endif
+            Syn68kMappedRun run;
+            assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+#ifdef VERIFY_NATIVE_RESTORE_IMAGE
+            expect_direct_restore = 0;
+#endif
+            assert(run.reason == SYN68K_MAPPED_EXCEPTION && run.step.vector == 14 &&
+                   run.step.exception_pc == 0x10000 && run.step.format == 0 && !run.step.fault_address);
+            assert(!memcmp(&cpu_state.fpu, &before.fpu, sizeof before.fpu));
+            expect_registers(&before, frame, 0, 0);
+            expect_once(i == 3 ? 13 : 1);
+            ++cases;
+        }
+}
+
 int CAPTURE_TEST_ENTRY(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -587,6 +615,7 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     pending_arithmetic_frames();
     arithmetic_replay_operations();
     tagged_exponent_replay();
+    malformed_frame_exits();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);

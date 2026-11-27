@@ -1074,7 +1074,7 @@ static int mapped_conditional_opcode(unsigned opcode)
     return (opcode & 0xffc0) == 0xf240 || (opcode & 0xff80) == 0xf280;
 }
 
-static void fpu_predicate_exception(emitter* out, uint32 pc, unsigned vector, uint32 exception_pc, unsigned format,
+static void fpu_emit_exception(emitter* out, uint32 pc, unsigned vector, uint32 exception_pc, unsigned format,
                                     unsigned failures[], unsigned* count)
 {
     if (vector == 11) {
@@ -1126,7 +1126,7 @@ static void fpu_mapped_signal_condition(emitter* out, uint32 pc, unsigned code, 
     fpu_cpu(out, 0xf7, 0, offsetof(CPUState, fpu.fpcr));
     word32(out, 0x8000);
     unsigned masked = jump(out, 0x84);
-    fpu_predicate_exception(out, pc, 48, pc, 0, failures, count);
+    fpu_emit_exception(out, pc, 48, pc, 0, failures, count);
     patch(out, masked, out->size);
     patch(out, ordered, out->size);
     if (quiet)
@@ -1151,7 +1151,7 @@ static int fpu_mapped_conditional(emitter* out, unsigned opcode, uint32 pc)
     failures[count++] = jump(out, 0x85);
     pointer_r8(out, RELOC_FPU_FRAME);
     if (branch && (opcode & 0x20)) {
-        fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
+        fpu_emit_exception(out, pc, 11, pc, 0, failures, &count);
         goto finish;
     }
     unsigned extra = branch               ? (opcode & 0x40 ? 4 : 2)
@@ -1167,10 +1167,10 @@ static int fpu_mapped_conditional(emitter* out, unsigned opcode, uint32 pc)
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, command), 0);
         FP_BYTES(out, 0x83, 0xf8, 31);
         unsigned valid = jump(out, 0x86);
-        fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
+        fpu_emit_exception(out, pc, 11, pc, 0, failures, &count);
         patch(out, valid, out->size);
         if (ea > 0x3c) {
-            fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
+            fpu_emit_exception(out, pc, 11, pc, 0, failures, &count);
             goto finish;
         }
     }
@@ -1213,7 +1213,7 @@ static int fpu_mapped_conditional(emitter* out, unsigned opcode, uint32 pc)
     else if (ea >= 0x3a) {
         FP_BYTES(out, 0x85, 0xc0);
         unsigned not_taken = jump(out, 0x84);
-        fpu_predicate_exception(out, pc, 7, pc + next, 2, failures, &count);
+        fpu_emit_exception(out, pc, 7, pc + next, 2, failures, &count);
         patch(out, not_taken, out->size);
     }
     else {
@@ -1314,10 +1314,10 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
     fpu_cpu(out, 0xf7, 0, offsetof(CPUState, sr));
     word32(out, SR_SUPERVISOR_BIT);
     unsigned supervisor = jump(out, 0x85);
-    fpu_predicate_exception(out, pc, 8, pc, 0, failures, &count);
+    fpu_emit_exception(out, pc, 8, pc, 0, failures, &count);
     patch(out, supervisor, out->size);
     if (!syn68k_fpu_frame_ea_valid(opcode)) {
-        fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
+        fpu_emit_exception(out, pc, 11, pc, 0, failures, &count);
         goto finish;
     }
     if (writing)
@@ -1398,7 +1398,7 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         unsigned short_frame = jump(out, 0x84);
         FP_BYTES(out, 0x3d);
         word32(out, 0x41600000);
-        failures[count++] = jump(out, 0x85); // Malformed header remains a checked format exit.
+        unsigned malformed_header = jump(out, 0x85);
         fpu_constant(out, offsetof(FPUInvocation, restore.size), 100, 0);
         unsigned image_size = fpu_jump(out);
         patch(out, short_frame, out->size);
@@ -1441,7 +1441,10 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         patch(out, short_capture, out->size);
         unsigned image = offsetof(FPUInvocation, restore.image);
         fpu_packet(out, 0xf6, 0, image + 24, 0);
-        byte(out, 6);
+        byte(out, 2);
+        unsigned short_e3 = jump(out, 0x85);
+        fpu_packet(out, 0xf6, 0, image + 24, 0);
+        byte(out, 4);
         unsigned short_stage = jump(out, 0x85);
         fpu_packet(out, 0x0fb7, 0, image + 16, 0);
         FP_BYTES(out, 0x66, 0xc1, 0xc0, 8, 0xa9); // Byte-swap command; TEST EAX, imm32.
@@ -1511,6 +1514,9 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
             fpu_cpu(out, 0x01, 0, offsetof(CPUState, regs) + (8 + (ea & 7)) * sizeof cpu_state.regs[0]);
         }
         unsigned writeback_done = fpu_jump(out);
+        patch(out, malformed_header, out->size);
+        patch(out, short_e3, out->size);
+        fpu_emit_exception(out, pc, 14, pc, 0, failures, &count);
         patch(out, null_frame, out->size);
         // Exact architectural null reset, including padding and saved frame bytes.
         FP_BYTES(out, 0x57, 0x51, 0x48, 0x8d, 0xb9);
