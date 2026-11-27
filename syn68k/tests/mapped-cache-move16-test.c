@@ -5,6 +5,7 @@
 #undef main
 
 static unsigned source_count, dest_count, push_count, fail_direction, fail_index, model_calls;
+static unsigned retry_first, retry_fault;
 static unsigned observed[2][4], functions[2][4];
 static Syn68kCache040Bus physical;
 
@@ -33,12 +34,16 @@ static int cycle_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
 {
     *inhibit = 0;
     if (c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND) {
+        if (!c->beat && (retry_first & 1)) {
+            retry_first &= ~1u;
+            return CACHE040_CYCLE_RETRY;
+        }
         assert(size == 4 && c->burst == 16 && c->beat == source_count && source_count < 4);
         observed[0][source_count] = address;
         functions[0][source_count++] = c->fc;
         if (fail_direction == 1 && c->beat == fail_index) {
             fail_direction = 0;
-            return 0;
+            return retry_fault ? CACHE040_CYCLE_RETRY : 0;
         }
     }
     return physical_read(opaque, address, bytes, size, c->attributes, c->fc);
@@ -55,12 +60,16 @@ static int cycle_write(void* opaque, uint32_t address, const unsigned char* byte
         }
     }
     if (c->traffic == CACHE040_MOVE16 && c->kind == CACHE040_OPERAND) {
+        if (!c->beat && (retry_first & 2)) {
+            retry_first &= ~2u;
+            return CACHE040_CYCLE_RETRY;
+        }
         assert(size == 4 && c->burst == 16 && c->beat == dest_count && dest_count < 4);
         observed[1][dest_count] = address;
         functions[1][dest_count++] = c->fc;
         if (fail_direction == 2 && c->beat == fail_index) {
             fail_direction = 0;
-            return 0;
+            return retry_fault ? CACHE040_CYCLE_RETRY : 0;
         }
     }
     return physical_write(opaque, address, bytes, size, c->attributes, c->fc);
@@ -141,7 +150,7 @@ static void cleanup(void)
     put(end, 2, 0x4e73);
 }
 
-static void exercise(unsigned mode)
+static void exercise(unsigned mode, int signal_retry)
 {
     for (unsigned cm = 0; cm < 4; ++cm)
         for (unsigned enabled = 0; enabled < 2; ++enabled)
@@ -151,6 +160,8 @@ static void exercise(unsigned mode)
                         for (unsigned dw = 0; dw < 4; ++dw)
                             for (unsigned user = 0; user < 2; ++user)
                                 for (unsigned fault = 0; fault < 9; ++fault) {
+                                    if (signal_retry && (hit || form != 4 || fault == 1 || fault == 5))
+                                        continue;
                                     unsigned cached = enabled && hit && cm < 2;
                                     if (cached && fault && fault < 5)
                                         continue;
@@ -171,9 +182,12 @@ static void exercise(unsigned mode)
                                     unsigned next = form == 4 ? 0x8004 : 0x8006;
                                     fail_direction = fault ? fault < 5 ? 1 : 2 : 0;
                                     fail_index = (fault - 1) & 3;
+                                    retry_first = signal_retry && !fault ? 3 : 0;
+                                    retry_fault = signal_retry && fault;
                                     Syn68kMappedRun run;
                                     unsigned called = model_calls;
                                     assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
+                                    assert(!retry_first);
                                     assert(mode ? model_calls == called : model_calls > called);
                                     assert(source_count == (cached ? 0 : fault && fault < 5 ? fault : 4));
                                     assert(dest_count == (fault && fault < 5 ? 0 : fault ? fault - 4 : 4));
@@ -252,6 +266,7 @@ static void exercise(unsigned mode)
                                     }
                                     ++cases;
                                 }
+    retry_first = retry_fault = 0;
 }
 
 static void protection_and_erratum(unsigned mode)
@@ -440,7 +455,8 @@ int main(int argc, char** argv)
     assert(!_putenv_s("SYN68K_AOT_CACHE", argc == 2 ? argv[1] : ""));
     uint64_t compiled = syn68k_native_compile_count(), hits = syn68k_aot_hit_count();
     for (unsigned mode = 0; mode < 3; ++mode) {
-        exercise(mode);
+        exercise(mode, 0);
+        exercise(mode, 1);
         protection_and_erratum(mode);
         source_push_recovery(mode);
         record_guards(mode);
