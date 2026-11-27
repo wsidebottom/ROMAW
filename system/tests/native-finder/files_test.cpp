@@ -19,11 +19,13 @@
 // cancellation.
 
 #include "finder/files.h"
+#include "finder/shortcut_icon.h"
 #include <winioctl.h>
 #include <cassert>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <shellapi.h>
 #include <objbase.h>
 
@@ -99,6 +101,102 @@ void write(const fs::path& p, const Bytes& b)
     assert(f);
     f.write(reinterpret_cast<const char*>(b.data()), b.size());
     assert(f);
+}
+
+void check_shortcut_icons(const fs::path& root)
+{
+    SuitcaseFork fork;
+    fork.resources.push_back({{0x46524546, 128}, 0, {}, {'A', 'P', 'P', 'L', 0, 0}});
+    fork.resources.push_back({{0x424e444c, 128}, 0, {},
+                             {'T', 'E', 'S', 'T', 0, 0, 0, 0, 'I', 'C', 'N', '#', 0, 0, 0, 0, 0, 128}});
+    for (unsigned i = 0; i < 6; ++i)
+        fork.resources.push_back({{finder_icon_types[i], 128}, 0, {}, Bytes(finder_icon_sizes[i], 0x80)});
+    fork.resources.push_back({{0x69636823, 128}, 0, {}, Bytes(576, 0x80)}); // ich#
+    fork.resources.push_back({{0x69636838, 128}, 0, {}, Bytes(2304, 0x7f)}); // ich8
+    fork.resources.push_back({{0x696c3332, 128}, 0, {}, Bytes(4096, 0x40)}); // il32
+    fork.resources.push_back({{0x6c386d6b, 128}, 0, {}, Bytes(1024, 0xa0)}); // l8mk
+    // A document icon in the same fork must not become a shortcut representation.
+    fork.resources.push_back({{0x69636d23, 149}, 0, {}, Bytes(48, 0xff)});
+    MacFile application;
+    application.type = 0x4150504c;
+    application.creator = 0x54455354;
+    application.fork = encode_suitcase_fork(fork);
+    auto path = root / L"Macintosh Application.ico";
+    assert(save_application_icon(application, path));
+    assert(!save_application_icon(application, path)); // Existing artwork remains intact.
+    auto ico = read_bytes(path);
+    auto word = [&](size_t at) { return unsigned(ico.at(at)) | unsigned(ico.at(at + 1)) << 8; };
+    auto dword = [&](size_t at) { return word(at) | word(at + 2) << 16; };
+    assert(word(0) == 0 && word(2) == 1 && word(4) == 9);
+    std::set<std::pair<unsigned, unsigned>> formats;
+    for (unsigned i = 0; i < word(4); ++i) {
+        const size_t entry = 6 + 16 * i;
+        unsigned width = ico.at(entry), depth = word(entry + 6);
+        size_t image = dword(entry + 12), length = dword(entry + 8);
+        assert(image >= 6 + 16 * word(4) && image + length <= ico.size());
+        assert(dword(image) == 40 && dword(image + 4) == width && dword(image + 8) == 2 * width);
+        assert(word(image + 14) == depth);
+        formats.emplace(width, depth);
+        if (width == 32 && depth == 32)
+            assert(ico.at(image + 43) == 0xa0);
+        if (width == 16 && depth == 4) {
+            // The first color index and the first two opacity bits survive.
+            assert(ico.at(image + 40 + 64) == 0x80);
+            assert((ico.at(image + 40 + 64 + 8 * 16) & 0xc0) == 0x40);
+        }
+    }
+    const std::set<std::pair<unsigned, unsigned>> expected{
+        {16, 1}, {16, 4}, {16, 8}, {32, 1}, {32, 4}, {32, 8}, {32, 32}, {48, 1}, {48, 8}};
+    assert(formats == expected);
+    std::cout << "PASS shortcut ICO preserves Macintosh icon dimensions, depths, masks and alpha\n";
+
+    // Modern-only bundles can map icns directly and have no ICN# resource.
+    Bytes family(8 + 8 + 10 + 6 + 12 * 16 + 3 * 16, 0xff);
+    put32(family, 0, 0x69636e73);
+    put32(family, 4, family.size());
+    put32(family, 8, 0x65786672); // exfr
+    put32(family, 12, family.size() - 8);
+    put16(family, 16, 24);
+    put16(family, 18, 16);
+    put16(family, 20, 4);
+    put16(family, 22, 2);
+    put16(family, 24, 1);
+    std::fill(family.begin() + 32, family.end() - 3 * 16, 0x10);
+    fork.resources.resize(2);
+    put32(fork.resources[1].payload, 8, 0x69636e73);
+    fork.resources.push_back({{0x69636e73, 128}, 0, {}, std::move(family)});
+    application.fork = encode_suitcase_fork(fork);
+    auto modern = root / L"Modern Application.ico";
+    assert(save_application_icon(application, modern));
+    ico = read_bytes(modern);
+    assert(word(4) == 1 && ico.at(6) == 24 && ico.at(7) == 16 && word(12) == 4);
+    std::cout << "PASS shortcut ICO includes an icns-only application bundle\n";
+
+    auto module = GetModuleHandleW(nullptr);
+    const auto embedded = [&](LPCWSTR type, unsigned id) {
+        auto resource = FindResourceW(module, MAKEINTRESOURCEW(id), type);
+        assert(resource);
+        auto* data = static_cast<const unsigned char*>(LockResource(LoadResource(module, resource)));
+        assert(data);
+        return Bytes(data, data + SizeofResource(module, resource));
+    };
+    wchar_t executable[32768];
+    assert(GetModuleFileNameW(module, executable, std::size(executable)));
+    auto native = root / L"Windows Application.ico";
+    assert(save_native_application_icon(executable, native));
+    ico = read_bytes(native);
+    auto group = embedded(RT_GROUP_ICON, 101); // The first group in the shared icon resource fixture.
+    assert(word(4) > 1 && group.size() == 6 + 14 * word(4));
+    for (unsigned i = 0; i < word(4); ++i) {
+        const size_t entry = 6 + 16 * i;
+        auto* original = group.data() + 6 + i * 14;
+        assert(std::equal(original, original + 8, ico.begin() + entry));
+        auto data = embedded(RT_ICON, original[12] | unsigned(original[13]) << 8);
+        size_t offset = dword(entry + 12);
+        assert(data.size() == dword(entry + 8) && data.size() + offset <= ico.size());
+        assert(std::equal(data.begin(), data.end(), ico.begin() + offset));
+    }
+    std::cout << "PASS shortcut ICO preserves every payload in the default Windows icon group\n";
 }
 
 Bytes metadata(unsigned marker)
@@ -1085,6 +1183,7 @@ int main()
         }
         for (const auto& entry : fs::directory_iterator(root))
             assert(entry.path().filename().wstring().rfind(L".Finder-copy-", 0) != 0);
+        check_shortcut_icons(root);
         fs::remove_all(root);
         std::cout
             << "PASS: native concurrent copies/moves, verified source removal, changed-source protection, forks, independent Stop, reuse, nested folders, same-name Trash/state/Put Away, Unicode rename, labels, bounds and Windows quoting\n";

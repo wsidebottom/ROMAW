@@ -43,6 +43,9 @@ typedef struct FinderIcon {
 extern const uint32_t finder_icon_types[6];
 extern const size_t finder_icon_sizes[6];
 int finder_parse_icon(const unsigned char* fork, size_t size, uint32_t creator, uint32_t file_type, FinderIcon* icon);
+/* Resolve the application family even when it consists only of an icns resource. */
+int finder_icon_resource_id(const unsigned char* fork, size_t size, uint32_t creator, uint32_t file_type, int* id);
+void finder_icon_palette_rgb(unsigned depth, unsigned index, unsigned char rgb[3]);
 int finder_bundle_icon_id(const unsigned char* bundle, size_t size, uint32_t creator, unsigned local, int* id);
 size_t finder_bundle_file_types(const unsigned char* fork, size_t size, uint32_t creator, uint32_t* types,
                                 size_t capacity);

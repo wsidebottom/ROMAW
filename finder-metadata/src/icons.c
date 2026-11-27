@@ -83,30 +83,39 @@ static const unsigned char* resource(const Fork* f, uint32_t type, int indexed, 
 int finder_bundle_icon_id(const unsigned char* p, size_t size, uint32_t creator, unsigned local, int* id)
 {
     size_t offset = 8, i, count;
+    int modern = 0, modern_id = 0;
     if (size < 8 || longword(p) != creator)
         return 0;
     count = (size_t)word(p + 6) + 1;
     for (i = 0; i < count; ++i) {
         size_t n, j;
-        int icons;
+        uint32_t type;
         if (!extent(size, offset, 6))
             return 0;
-        icons = longword(p + offset) == finder_icon_types[0];
+        type = longword(p + offset);
         n = (size_t)word(p + offset + 4) + 1;
         offset += 6;
         if (n > (size - offset) / 4)
             return 0;
         for (j = 0; j < n; ++j, offset += 4)
-            if (icons && word(p + offset) == local) {
-                *id = (int16_t)word(p + offset + 2);
-                return 1;
+            if (word(p + offset) == local) {
+                if (type == finder_icon_types[0]) {
+                    *id = (int16_t)word(p + offset + 2);
+                    return 1;
+                }
+                if (type == 0x69636e73) {
+                    modern = 1;
+                    modern_id = (int16_t)word(p + offset + 2);
+                }
             }
     }
-    return 0;
+    if (modern)
+        *id = modern_id;
+    return modern;
 }
 
 static int parse_icon(const unsigned char* bytes, size_t size, uint32_t creator, uint32_t file_type, int custom,
-                      FinderIcon* icon)
+                      FinderIcon* icon, int* family_id)
 {
     Fork f;
     size_t n, i, j;
@@ -170,6 +179,10 @@ static int parse_icon(const unsigned char* bytes, size_t size, uint32_t creator,
                 break;
             }
         }
+    }
+    if (family_id) {
+        *family_id = id;
+        return 1;
     }
     for (i = 0; i < 6; ++i) {
         p = resource(&f, finder_icon_types[i], 0, id, &n);
@@ -235,12 +248,18 @@ size_t finder_bundle_file_types(const unsigned char* bytes, size_t size, uint32_
 
 int finder_parse_icon(const unsigned char* bytes, size_t size, uint32_t creator, uint32_t file_type, FinderIcon* icon)
 {
-    return parse_icon(bytes, size, creator, file_type, 0, icon);
+    return parse_icon(bytes, size, creator, file_type, 0, icon, NULL);
+}
+
+int finder_icon_resource_id(const unsigned char* bytes, size_t size, uint32_t creator, uint32_t file_type, int* id)
+{
+    FinderIcon unused;
+    return id && parse_icon(bytes, size, creator, file_type, 0, &unused, id);
 }
 
 int finder_parse_custom_icon(const unsigned char* bytes, size_t size, FinderIcon* icon)
 {
-    return parse_icon(bytes, size, 0, 0, 1, icon);
+    return parse_icon(bytes, size, 0, 0, 1, icon, NULL);
 }
 
 enum { custom_icon_id = -16455, fork_header_size = 256, resource_data_limit = 0x1000000 };
@@ -459,6 +478,16 @@ static void color8(unsigned index, unsigned char* rgb)
     }
     else
         rgb[0] = rgb[1] = rgb[2] = 0;
+}
+
+void finder_icon_palette_rgb(unsigned depth, unsigned index, unsigned char rgb[3])
+{
+    if (depth == 8)
+        color8(index & 255, rgb);
+    else if (depth == 4)
+        memcpy(rgb, palette4[index & 15], 3);
+    else
+        memset(rgb, index & 1 ? 0 : 255, 3);
 }
 
 void finder_icon_rgba(const FinderIcon* icon, unsigned char rgba[4096])

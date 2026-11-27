@@ -22,6 +22,7 @@
 #include "finder/files.h"
 #include "finder/font_preview.h"
 #include "finder/sound_preview.h"
+#include "finder/shortcut_icon.h"
 #include "finder/stuffit.h"
 #include "finder/archive.h"
 #include "rsys/archive_types.h"
@@ -1553,6 +1554,8 @@ const Item* shortcut_application(FolderWindow& folder)
 
 // Publish a Windows link on the shell Desktop. Keep the ICO in Finder's profile
 // so moving the link elsewhere in Windows does not break its artwork.
+bool save_shortcut_artwork(Item& item, const fs::path& path);
+
 void make_windows_shortcut(Item item)
 {
     if (!fs::is_directory(windows_desktop_path))
@@ -1585,7 +1588,7 @@ void make_windows_shortcut(Item item)
     auto icons = preferences.parent_path() / L"Shortcut Icons";
     fs::create_directories(icons);
     auto artwork = unique_item(icons, name + L".ico");
-    if (!classic::save_icon_file(item_icon(item), artwork.c_str()))
+    if (!save_shortcut_artwork(item, artwork))
         throw std::runtime_error("The application's Windows shortcut icon could not be saved.");
     try {
         create_shortcut(target, link, arguments, artwork);
@@ -1996,6 +1999,39 @@ SuitcaseSnapshot read_suitcase(const Item& item, bool data_only = false)
     if (error)
         throw std::runtime_error("Cannot read the file's fork (Macintosh error " + std::to_string(error) + ").");
     return {std::move(bytes), !resource};
+}
+
+bool save_shortcut_artwork(Item& item, const fs::path& path)
+{
+    if (!item.mac.kind && !item.image_volume) {
+        if (save_native_application_icon(item.path, path))
+            return true;
+    }
+    else {
+        try {
+            // Window rows release their forks after icon decoding. Reload the
+            // resource data to retain sizes and depths absent from the display cache.
+            auto application = item.image_volume ? item.mac : mac_file(item.path);
+            if (item.image_volume) {
+                auto contents = read_suitcase(item);
+                if (!contents.data_fork)
+                    application.fork = std::move(contents.bytes);
+            }
+            if (save_application_icon(application, path))
+                return true;
+        }
+        catch (...) {
+            // A damaged resource fork can still use the desktop database or generic artwork.
+        }
+        FinderIcon family{};
+        bool found = item.image_volume ? ROMlib_finder_image_icon(
+                                             item.image_volume, item.image_parent, item.image_name.c_str(), false,
+                                             item.mac.flags, item.mac.type, item.mac.creator, &family)
+                                       : desktop_icons && desktop_icons->lookup(item.path, item.mac, family);
+        if ((found || finder_type_icon(item.mac.type, &family)) && save_application_icon(family, path))
+            return true;
+    }
+    return classic::save_icon_file(item_icon(item), path.c_str());
 }
 
 void preview_suitcase_member(const Item& item, const SuitcaseMember& member)
