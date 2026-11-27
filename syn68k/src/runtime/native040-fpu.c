@@ -45,7 +45,7 @@ static int restore_supported_operand(floatx80 operand, int exponent)
     if (!exponent && !operand.low)
         return 1;
     if (exponent == 0x7fff)
-        return !floatx80_is_signaling_nan(operand);
+        return 1;
     return operand.low >> 63;
 }
 
@@ -65,7 +65,8 @@ static FPUdivision restore_compare(floatx80 target, floatx80 source, int te, int
     return result;
 }
 
-static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operation, FPUdivision* result)
+static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operation, FPUdivision* result,
+                              unsigned* status, unsigned* accrued)
 {
     unsigned precision = native_fpu->precision, base = operation;
     if (operation & 0x40) {
@@ -95,12 +96,18 @@ static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operat
         return 0;
     int source_nan = se == 0x7fff && (source.low << 1);
     int target_nan = uses_target && te == 0x7fff && (target.low << 1);
+    int signaling = (source_nan && floatx80_is_signaling_nan(source)) ||
+                    (target_nan && floatx80_is_signaling_nan(target));
+    if (signaling)
+        native_fpu->flags |= float_flag_invalid;
     if (base == 0x38 && (source_nan || target_nan))
         *result = (FPUdivision){.result = {0x7fff, UINT64_MAX}};
     else if (base == 0x38)
         *result = restore_compare(target, source, te, se);
-    else if (base != 0x3a && (source_nan || target_nan))
+    else if (base != 0x3a && (source_nan || target_nan)) {
         *result = (FPUdivision){.result = target_nan ? target : source};
+        result->result.low |= UINT64_C(0x4000000000000000);
+    }
     else if (base == 0x3a) {
         if (se < 0)
             source.high = (source.high & 0x8000) | 0x3fff;
@@ -108,7 +115,22 @@ static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operat
     }
     else
         *result = fpu_calculate_ex(target, source, base, precision, te, se);
-    return !(native_fpu->flags & ~float_flag_inexact) && !result->status;
+    unsigned flags = native_fpu->flags;
+    if ((flags & ~(float_flag_inexact | float_flag_invalid | float_flag_divbyzero)) || result->status)
+        return 0;
+    if (flags & float_flag_invalid) {
+        *status |= signaling ? 0x4000 : 0x2000; // SNAN or OPERR.
+        *accrued |= 0x80;
+    }
+    if (flags & float_flag_divbyzero) {
+        *status |= 0x0400;
+        *accrued |= 0x10;
+    }
+    if (flags & float_flag_inexact) {
+        *status |= 0x0200;
+        *accrued |= 0x08;
+    }
+    return 1;
 }
 
 /* The E3 writeback is older than E1. An E1 move-out can retain an
@@ -161,16 +183,10 @@ static void restore_writeback(Syn68kNative040Restore* packet)
         return; // Invalid stages use the checked format exception.
     int replay = arithmetic && !pending && ((stages & 4) || conversion);
     FPUdivision result;
-    unsigned replay_status = 0;
-    if (replay) {
-        if (!restore_arithmetic(image, size, command & 127, &result))
-            return;
-        if (native_fpu->flags & float_flag_inexact) {
-            if (fpu->fpcr & 0x0200)
-                return; // The enabled exception needs a deferred writeback frame.
-            replay_status = 0x0208; // INEX2 status and accrued INEX.
-        }
-    }
+    unsigned replay_status = 0, replay_accrued = 0;
+    if (replay && (!restore_arithmetic(image, size, command & 127, &result, &replay_status, &replay_accrued) ||
+                   (replay_status & fpu->fpcr)))
+        return; // Enabled exceptions need a deferred frame.
     for (unsigned i = 0; i < size; ++i)
         fpu->frame[i] = image[i];
     if (writeback_reg < 8) {
@@ -193,7 +209,7 @@ static void restore_writeback(Syn68kNative040Restore* packet)
             flags |= (condition.low << 1) ? 0x01000000 : 0x02000000;
         else if (!(condition.high & 0x7fff) && !condition.low)
             flags |= 0x04000000;
-        fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags | replay_status;
+        fpu->fpsr = (fpu->fpsr & 0x00ff00ff) | flags | replay_status | replay_accrued;
     }
     fpu->frame_size = stages && pending ? size : 0;
     fpu->pending_vector = stages ? pending : 0;
