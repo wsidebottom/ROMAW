@@ -41,7 +41,25 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: masked inexact replay (2026-11-27)
+## Latest validated bundle: flat cache control and FRESTORE reservation (2026-11-27)
+
+Commit 8c118b3d reserves 7,168 bytes for generated FRESTORE bodies. The
+allocation fixture checked all 128 frame encodings and verified the
+reservation boundary. This bundle also includes direct flat PFLUSH,
+PTEST, CINV and CPUSH paths. Warm AOT loaded 892 flat cache entries
+without recompilation. The mapped FRESTORE fixture passed 411,024 cases
+per AOT run, including malformed frame exits.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
+checks passed. The 66-file bundle passed help, Browser and 68K Speedometer
+startup and is current at build/68040-current/bin. The preceding bundle
+is retained at build/68040-pre-flatcache1-bin-20261127.
+
+CPU build ID f5d61d29313c3f6757f71ba9290c49b9a049bea7da8677d60066eda4373a89d0
+Archive SHA256 e5a801ce00eb3a64ba39fd6535d9100c37c2410d1821ee5122fd57a5fe077483
+Audit build/68040-flatcachefix1-output/68040-flatcachefix1-source-audit.json
+
+## Previous validated bundle: masked inexact replay (2026-11-27)
 
 Commit ee135903 replays masked inexact results in generated FRESTORE code,
 including inexact status from older E3 writeback. The fixture passed
@@ -50,8 +68,8 @@ zero recompilations. Enabled inexact delivery uses the checked path.
 
 Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
 checks passed. The audited 66-file ROMAW bundle passed help, Browser and
-68K Speedometer startup. It is current at build/68040-current/bin and
-the prior bundle is retained at build/68040-pre-maskedreplay1-bin-20261127.
+68K Speedometer startup. Its preceding bundle is retained at
+build/68040-pre-maskedreplay1-bin-20261127.
 
 CPU build ID 2277ea4eb46ba7f73c118a145b76fb5ad6c54e6ef380470ea2024382486c3ef9
 Archive SHA256 9fbb124f9e3c9f044dfc634ef6982add0652020a73c6272fe9a518d3c86ed1c8
