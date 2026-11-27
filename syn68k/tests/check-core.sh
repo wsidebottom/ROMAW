@@ -490,6 +490,13 @@ EOF
       SYN68K_AOT_CACHE=$(wslpath -m "$fixture/flat-cache")
       "$fixture/flat-cache-test.exe" 1 1
       "$fixture/flat-cache-test.exe" 1 2
+      mkdir "$fixture/mapped-movem"
+      "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mmu040-movem-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -o "$fixture/mapped-movem-test.exe"
+      SYN68K_AOT_CACHE=$(wslpath -m "$fixture/mapped-movem")
+      "$fixture/mapped-movem-test.exe" 0
+      "$fixture/mapped-movem-test.exe" 1
       "$cc" -std=gnu17 -g -O2 -Isyn68k/obj/src/include -Isyn68k/src/include \
         -Isyn68k/src/runtime/include syn68k/tests/mapped-fpu-native-test.c \
         syn68k/obj/src/runtime/libsyn68k.a -Wl,--wrap=syn68k_fpu_step_decoded,--wrap=syn68k_fpu_finish_command,--wrap=syn68k_fpu_finish_command_at,--wrap=syn68k_mmu040_translate \
