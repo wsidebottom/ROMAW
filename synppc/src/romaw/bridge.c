@@ -37,6 +37,7 @@
 #include "BinaryDecimal.h"
 #include "StdFilePkg.h"
 #include "OSUtil.h"
+#include "DeviceMgr.h"
 #include "rsys/mman.h"
 #include "synppc/ppc.h"
 #include "synppc/bus750.h"
@@ -3379,6 +3380,9 @@ PRIVATE const ppc_native_import native_imports[] = {
     {"GetVCBQHdr", GetVCBQHdr, M0(5)},
     {"LMGetVCBQHdr", GetVCBQHdr, M0(5)},
     {"GetDrvQHdr", GetDrvQHdr, M0(5)},
+    {"OpenDriver", OpenDriver, M2(2, 5, 5)},
+    {"CloseDriver", CloseDriver, M1(2, 2)},
+    {"GetDCtlEntry", GetDCtlEntry, M1(5, 2)},
     {"NGetTrapAddress", ppc_n_get_trap, M2(4, 2, 2)},
     {"NSetTrapAddress", ppc_n_set_trap, M3(0, 4, 2, 2)},
     {"SetEventMask", SetEventMask, M1(0, 2)},
