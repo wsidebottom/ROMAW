@@ -359,6 +359,35 @@ static int carbon_SetControlReference(ROMlib_carbon_ppc_frame* call)
     return 1;
 }
 
+static int carbon_GetControlTitle(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = carbon_native_custom_control(call->words[0]);
+    if (!control)
+        return carbon_vector_GetControlTitle(call);
+    const Size length = CTL_TITLE(control)[0] + 1;
+    void* output = ROMlib_carbon_try_guest_memory(call->words[1], length, 1);
+    if (call->words[1] && output)
+        memmove(output, CTL_TITLE(control), length);
+    return 1;
+}
+
+static int carbon_SetControlTitle(ROMlib_carbon_ppc_frame* call)
+{
+    ControlHandle control = carbon_native_custom_control(call->words[0]);
+    if (!control)
+        return carbon_vector_SetControlTitle(call);
+    const uint32 address = call->words[1];
+    const Byte* length = address ? ROMlib_carbon_try_guest_memory(address, 1, 0) : NULL;
+    const Size size = length ? *length + 1 : 0;
+    const void* title = size ? ROMlib_carbon_try_guest_memory(address, size, 0) : NULL;
+    if (title) {
+        Str255 copy;
+        memcpy(copy, title, size);
+        C_SetCTitle(control, copy);
+    }
+    return 1;
+}
+
 static int carbon_dispose_saved_control(ControlHandle control, void* opaque)
 {
     ROMlib_carbon_ppc_frame saved_call = *(const ROMlib_carbon_ppc_frame*)opaque;
@@ -373,7 +402,7 @@ static int carbon_DisposeControl(ROMlib_carbon_ppc_frame* call)
                                 : NULL;
     if (ROMlib_live_control_aux(control)) {
         const ROMlib_aux_control_data* extra = ROMlib_control_hierarchy_storage(control);
-        if (extra && (extra->saved_range || extra->parent || extra->first_child ||
+        if (extra && (extra->custom_definition || extra->saved_range || extra->parent || extra->first_child ||
                       ROMlib_native_control_kind(control) == ROMlib_root_control_proc))
             return ROMlib_dispose_control_hierarchy(control, carbon_dispose_saved_control, call);
     }
@@ -3135,7 +3164,7 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"GetControlReference", carbon_GetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4c0, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
-    {"GetControlTitle", carbon_vector_GetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x505, "InterfaceLib",
+    {"GetControlTitle", carbon_GetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x505, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"GetControlValue", carbon_vector_GetControlValue, ROMLIB_CARBON_PPC_FRAME, 0x775, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
@@ -3149,7 +3178,7 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_ONLY},
     {"SetControlReference", carbon_SetControlReference, ROMLIB_CARBON_PPC_FRAME, 0x4f8, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
-    {"SetControlTitle", carbon_vector_SetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x4ee, "InterfaceLib",
+    {"SetControlTitle", carbon_SetControlTitle, ROMLIB_CARBON_PPC_FRAME, 0x4ee, "InterfaceLib",
      ROMLIB_CARBON_PPC_ONLY},
     {"SetControlTitleWithCFString", carbon_SetControlTitleWithCFString, ROMLIB_CARBON_PPC_FRAME, 0x6a1c4, NULL,
      ROMLIB_CARBON_PPC_ONLY},
