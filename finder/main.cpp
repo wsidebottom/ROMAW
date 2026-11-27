@@ -94,8 +94,7 @@ enum Command {
     icons_command,
     list_command,
     refresh_command,
-    operations_command,
-    about_command,
+    about_command = 114,
     about_system_command,
     about_romaw_command,
     parent_command,
@@ -3681,7 +3680,6 @@ menu()
     AppendMenuW(bar, MF_STRING, label_popup_command, L"&Label");
     HMENU special = resource_menu(L"&Special", finder_menu_1255);
     AppendMenuW(special, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(special, MF_STRING, operations_command, L"File Operations");
     AppendMenuW(special, MF_STRING, register_images_command, L"Register Disk Image Types...");
     classic::style_menu(bar);
     return bar;
@@ -4631,11 +4629,6 @@ void command(FolderWindow& f, unsigned id)
         break;
     case quit_command:
         SendMessageW(desktop, WM_CLOSE, 0, 0);
-        break;
-    case operations_command:
-        for (auto& o : operations)
-            if (IsWindow(o->window))
-                ShowWindow(o->window, SW_SHOWNORMAL);
         break;
     case register_images_command:
         if (classic::confirm(f.window,
