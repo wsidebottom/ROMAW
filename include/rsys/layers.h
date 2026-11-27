@@ -1,7 +1,7 @@
 /*+===================================================================
   File:      layers.h
 
-  Summary:   ifndef RSYS_LAYERS_H
+  Summary:   Declares layer ownership, window traversal and saved-window state interfaces.
 
   Classes:   None.
 
@@ -27,6 +27,7 @@ extern WindowPtr ROMlib_layer_children(void*);
 extern WindowPtr ROMlib_layer_front(void*);
 extern BOOLEAN ROMlib_layer_p(WindowPtr);
 extern OSErr ROMlib_new_desktop_layer_owner(HIDDEN_Ptr*);
+extern OSErr ROMlib_legacy_desktop_layer_owner(RgnHandle);
 extern WindowPtr ROMlib_desktop_window_at(Point);
 extern OSErr ROMlib_new_float_layer(HIDDEN_Ptr*);
 extern OSErr ROMlib_dispose_float_layer(HIDDEN_Ptr*);

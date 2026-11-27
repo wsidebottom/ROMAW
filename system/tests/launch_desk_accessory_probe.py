@@ -159,6 +159,47 @@ try:
         assert bytes(memory.read_memory(stack + 14, 5)) == b"guard"
         assert value("(void *)ROMlib_layer_current()") == saved_layer
     print("LCLIP_ABOVE_STACK_AND_LAYER_OK")
+    assert value("(int)ROMlib_osdispatch_available(0x14)")
+    region = value("(void *)C_NewRgn()")
+    gdb.execute(f"call C_SetRectRgn((void *){region},1,2,30,40)", to_string=True)
+    original_master = bytes(memory.read_memory(region, 4))
+    region_data = base + int.from_bytes(original_master, "big")
+    original_region = bytes(memory.read_memory(region_data, 10))
+    layer = value("(void *)ROMlib_layer_application()")
+    output = allocate(12)
+    creator = value("ROMlib_creator")
+    flags = value("size_info.size_flags")
+    try:
+        gdb.execute("set ROMlib_creator=0x4d414353", to_string=True)
+        gdb.execute(f"set size_info.size_flags={flags & ~0x40}", to_string=True)
+        memory.write_memory(stack, struct.pack(">IHI", 0x1234ABCD, 0x14, region - base) + b"guard")
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 10
+        assert bytes(memory.read_memory(stack + 10, 5)) == b"guard"
+        assert bytes(memory.read_memory(region, 4)) == original_master
+        assert bytes(memory.read_memory(region_data, 10)) == original_region
+        update = base + int.from_bytes(memory.read_memory(layer + 122, 4), "big")
+        assert value(f"(int)C_EqualRgn((void *){region},(void *){update})")
+        # The later contract has a pointer output and a two-byte status slot.
+        gdb.execute(f"set size_info.size_flags={flags | 0x40}", to_string=True)
+        memory.write_memory(output, b"\xa5" * 12)
+        memory.write_memory(stack, struct.pack(">IHIH", 0x1234ABCD, 0x14, output + 4 - base, 0xA55A) + b"guard")
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 10
+        assert bytes(memory.read_memory(stack + 10, 2)) == b"\0\0"
+        assert bytes(memory.read_memory(stack + 12, 5)) == b"guard"
+        assert bytes(memory.read_memory(output, 4)) == b"\xa5" * 4
+        assert bytes(memory.read_memory(output + 4, 4)) == (layer - base).to_bytes(4, "big")
+        assert bytes(memory.read_memory(output + 8, 4)) == b"\xa5" * 4
+    finally:
+        gdb.execute(f"set ROMlib_creator={creator}", to_string=True)
+        gdb.execute(f"set size_info.size_flags={flags}", to_string=True)
+    gdb.execute(f"call C_DisposeRgn((void *){region})", to_string=True)
+    assert value(f"(int)GetPtrSize((void *){layer})") >= 156
+    assert value("(void *)ROMlib_layer_application()") == layer
+    print("DESKTOP_OWNER_LEGACY_AND_MODERN_ABI_OK")
     dispatch(0, 0, -50)
     dispatch(0, pascal(".Missing"), -192)
     current = value("(int)C_CurResFile()")

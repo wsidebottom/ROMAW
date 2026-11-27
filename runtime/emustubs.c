@@ -1149,8 +1149,9 @@ PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
     if (selector == 0x01 || selector == 0x02 || selector == 0x04 || selector == 0x08 || selector == 0x13 ||
-        (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 || selector == 0x5a ||
-        selector == 0x5b || selector == 0x63 || selector == 0x74 || selector == 0x75 || selector == 0x7c)
+        selector == 0x14 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
+        selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x74 || selector == 0x75 ||
+        selector == 0x7c)
         return TRUE;
     for (block = osdispatch_block; block->descriptorp; ++block)
         if (selector >= block->first && selector <= block->last)
@@ -1296,6 +1297,16 @@ STUB(OSDispatch)
     }
     if (uw == 0x14) {
         uint32 output = POPUL();
+        /* Pre-AppleEvent Finder declares the old region-input procedure.
+           Later Finder releases advertise high-level events and use the
+           LayerPtr-output function. This is an ABI choice, not an OS-version
+           requirement; spoofing SysVersion must not change its stack shape. */
+        if (ROMlib_creator == TICK("MACS") && !(size_info.size_flags & SZisHighLevelEventAware)) {
+            OSErr error = ROMlib_legacy_desktop_layer_owner(output ? SYN68K_TO_US(output) : NULL);
+            if (error)
+                MemErr = CW(error);
+            return retaddr;
+        }
         WRITEUW(EM_A7, ROMlib_new_desktop_layer_owner(output ? SYN68K_TO_US(output) : NULL));
         return retaddr;
     }

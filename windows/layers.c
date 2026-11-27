@@ -10,7 +10,8 @@
              ROMlib_layer_application, ROMlib_layer_children,
              ROMlib_layer_current, ROMlib_layer_find, ROMlib_layer_front, ROMlib_layer_p, ROMlib_layer_parent,
              ROMlib_layer_root, ROMlib_layer_set, ROMlib_layer_swap, ROMlib_layers_reset,
-             ROMlib_new_desktop_layer_owner, ROMlib_new_float_layer, ROMlib_set_window_state, ROMlib_window_first_all,
+             ROMlib_legacy_desktop_layer_owner, ROMlib_new_desktop_layer_owner, ROMlib_new_float_layer,
+             ROMlib_set_window_state, ROMlib_window_first_all,
              ROMlib_window_next_all
 
   Origin:    Existing repository source in executor/src/windows; original attribution and provenance comments are
@@ -26,6 +27,7 @@
 #include "rsys/wind.h"
 #include "rsys/layers.h"
 #include "rsys/cquick.h"
+#include "rsys/region.h"
 
 typedef struct PACKED layer_record {
     GrafPort port;
@@ -215,6 +217,29 @@ PUBLIC OSErr ROMlib_new_desktop_layer_owner(HIDDEN_Ptr* output)
      its ordinary layer owns both desktop and folder windows. */
     desktop_layer_owned = TRUE;
     HIDDEN_RAW_SET(*(output), RM((Ptr)application_layer));
+    return noErr;
+}
+
+PUBLIC OSErr ROMlib_legacy_desktop_layer_owner(RgnHandle region)
+{
+    /* Finder 6 CODE 4:2706 captures its desktop drawing in a region, passes
+       that handle to selector 0x14 as a procedure, then disposes it. Retain
+       the drawing region in the real owner layer; never replace its master
+       pointer with a LayerPtr as the later output-parameter ABI requires. */
+    if (!region || !STARH(region))
+        return paramErr;
+    Size size = RGN_SIZE(region);
+    if (size < (Size)sizeof(Region) || size > GetHandleSize((Handle)region))
+        return paramErr;
+    if (!ensure_layers())
+        return memFullErr;
+    RgnHandle update = MR(HIDDEN_RAW(application_layer->update));
+    SetHandleSize((Handle)update, size);
+    OSErr error = MemError();
+    if (error)
+        return error;
+    memmove(STARH(update), STARH(region), size);
+    desktop_layer_owned = TRUE;
     return noErr;
 }
 
