@@ -1238,17 +1238,56 @@ static int mapped_frame_opcode(unsigned opcode)
     return (opcode & ~63u) == 0xf300 || (opcode & ~63u) == 0xf340;
 }
 
+/* Latch FSAVE size and source offset before an EA access can call the board.
+   A posted software E1 conversion saves its short tail, with a fresh header. */
+static void fpu_emit_save_shape(emitter* out, unsigned failures[], unsigned* count)
+{
+    fpu_cpu(out, 0x8b, 0, offsetof(CPUState, fpu.frame_size));
+    FP_BYTES(out, 0x85, 0xc0);
+    unsigned empty = jump(out, 0x84);
+    FP_BYTES(out, 0x83, 0xf8, 52);
+    unsigned short_frame = jump(out, 0x84);
+    FP_BYTES(out, 0x83, 0xf8, 100);
+    failures[(*count)++] = jump(out, 0x85);
+    fpu_cpu(out, 0x0fb6, 2, offsetof(CPUState, fpu.frame) + 0x48);
+    FP_BYTES(out, 0x83, 0xe2, 7, 0x83, 0xfa, 5);
+    unsigned ordinary = jump(out, 0x85);
+    fpu_cpu(out, 0xf6, 0, offsetof(CPUState, fpu.frame) + 0x49);
+    byte(out, 0x80);
+    unsigned not_posted = jump(out, 0x84);
+    fpu_cpu(out, 0x8b, 2, offsetof(CPUState, fpu.pending_vector));
+    FP_BYTES(out, 0x83, 0xfa, 50);
+    unsigned vector50 = jump(out, 0x84);
+    FP_BYTES(out, 0x83, 0xfa, 52);
+    unsigned vector52 = jump(out, 0x84);
+    FP_BYTES(out, 0x83, 0xfa, 54);
+    unsigned other_vector = jump(out, 0x85);
+    patch(out, vector50, out->size);
+    patch(out, vector52, out->size);
+    fpu_constant(out, offsetof(FPUInvocation, displacement), 48, 0);
+    FP_BYTES(out, 0xb8, 52, 0, 0, 0);
+    patch(out, ordinary, out->size);
+    patch(out, not_posted, out->size);
+    patch(out, other_vector, out->size);
+    patch(out, short_frame, out->size);
+    fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, ea.size), 0);
+    unsigned done = fpu_jump(out);
+    patch(out, empty, out->size);
+    fpu_constant(out, offsetof(FPUInvocation, ea.size), 4, 0);
+    patch(out, done, out->size);
+}
+
 static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
 {
     if (!mapped_frame_opcode(opcode))
         return 0;
-    if (out->size + 3072 > sizeof out->bytes)
+    if (out->size + 6144 > sizeof out->bytes)
         return -1;
     unsigned previous_selector = out->decoder_selector;
     out->decoder_selector = 11;
     out->managed = out->dynamic = 1;
     ++out->guards;
-    unsigned failures[32], count = 0, completed = 0;
+    unsigned failures[128], count = 0, completed = 0;
     unsigned ea = opcode & 63, mode = ea >> 3;
     int writing = !(opcode & 0x40);
     pointer_r8(out, RELOC_FPU_FRAME);
@@ -1261,15 +1300,12 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         fpu_predicate_exception(out, pc, 11, pc, 0, failures, &count);
         goto finish;
     }
-    if (writing) {
-        // A pre-existing busy frame is an exceptional checked exit before EA.
-        fpu_cpu(out, 0x83, 7, offsetof(CPUState, fpu.frame_size));
-        byte(out, 0);
-        failures[count++] = jump(out, 0x85);
-    }
+    if (writing)
+        fpu_emit_save_shape(out, failures, &count);
     fpu_constant(out, offsetof(FPUInvocation, ea.context.pc), pc + 2, 0);
     fpu_constant(out, offsetof(FPUInvocation, ea.code), !writing && mode == 3 ? ea - 8 : ea, 0);
-    fpu_constant(out, offsetof(FPUInvocation, ea.size), 4, 0);
+    if (!writing)
+        fpu_constant(out, offsetof(FPUInvocation, ea.size), 4, 0);
     fpu_constant(out, offsetof(FPUInvocation, ea.writing), writing, 0);
     fpu_constant(out, offsetof(FPUInvocation, ea.registers), 0, 0);
     fpu_call_packet(out, NATIVE040_EA, offsetof(FPUInvocation, ea), failures, &count);
@@ -1285,12 +1321,45 @@ static int fpu_mapped_frame(emitter* out, unsigned opcode, uint32 pc)
         fpu_constant(out, offsetof(FPUInvocation, exit), FPU_EXIT_FRAME, 0);
         fpu_cpu(out, 0x83, 7, offsetof(CPUState, fpu.frame_size));
         byte(out, 0);
-        failures[count++] = jump(out, 0x85); // An EA callback posted a busy frame.
+        unsigned null_or_idle = jump(out, 0x84);
+        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, ea.size), 0);
+        byte(out, 4);
+        failures[count++] = jump(out, 0x84); // An EA callback posted a busy frame.
+        fpu_constant(out, offsetof(FPUInvocation, operation), 1, 0);
+        unsigned short_done = 0;
+        for (unsigned i = 0; i < 100; i += 4) {
+            if (i == 52) {
+                fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, ea.size), 0);
+                byte(out, 52);
+                short_done = jump(out, 0x84);
+            }
+            fpu_packet(out, 0x8b, 2, offsetof(FPUInvocation, displacement), 0);
+            FP_BYTES(out, 0x8b, 0x84, 0x11); // MOV EAX,[RCX+RDX+frame+i].
+            word32(out, offsetof(CPUState, fpu.frame) + i);
+            FP_BYTES(out, 0x0f, 0xc8); // BSWAP EAX.
+            if (!i) {
+                FP_BYTES(out, 0x85, 0xd2);
+                unsigned ordinary_header = jump(out, 0x84);
+                byte(out, 0xb8);
+                word32(out, 0x41300000);
+                patch(out, ordinary_header, out->size);
+            }
+            fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, memory.value), 0);
+            fpu_mapped_transfer(out, i, 4, 1, failures, &count);
+        }
+        patch(out, short_done, out->size);
+        fpu_cpu(out, 0xc7, 0, offsetof(CPUState, fpu.frame_size));
+        word32(out, 0);
+        fpu_cpu(out, 0xc7, 0, offsetof(CPUState, fpu.pending_vector));
+        word32(out, 0);
+        unsigned busy_done = fpu_jump(out);
+        patch(out, null_or_idle, out->size);
         fpu_cpu(out, 0x83, 7, offsetof(CPUState, fpu.null_state));
         byte(out, 0);
         FP_BYTES(out, 0x0f, 0x94, 0xc0, 0x0f, 0xb6, 0xc0, 0xc1, 0xe0, 24, 0x6b, 0xc0, 0x41);
         fpu_packet(out, 0x89, 0, offsetof(FPUInvocation, memory.value), 0);
         fpu_mapped_transfer(out, 0, 4, 1, failures, &count);
+        patch(out, busy_done, out->size);
     }
     else {
         fpu_mapped_read(out, 0, 4, failures, &count);

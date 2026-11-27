@@ -2955,6 +2955,8 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         return 0;
     int flat = memory->native && memory->native->flat;
     Syn68kMMU040Memory* checked_memory = flat ? NULL : memory;
+    if (flat && (opcode & ~63u) == 0xf300 && cpu_state.fpu.frame_size)
+        return syn68k_fpu_step_decoded(pc, opcode, NULL, result) ? 1 : -1;
     void* code = mapped_code(pc, opcode);
     if (!code)
         return 0;
@@ -3069,9 +3071,28 @@ static int run_fpu_packet(uint32 pc, unsigned opcode, Syn68kMMU040Memory* memory
         if (!flat && (opcode & ~63u) == 0xf240 && packet.ea.result.reg < 0 && packet.ea.size == 1 &&
             packet.memory.address == packet.ea.result.address)
             syn68k_fpu_final_store_fault(result, packet.next);
-        if (!flat && (opcode & ~63u) == 0xf300 && packet.ea.result.reg < 0 && packet.ea.size == 4 &&
-            packet.memory.address == packet.ea.result.address)
-            syn68k_fpu_final_store_fault(result, packet.next);
+        if (!flat && (opcode & ~63u) == 0xf300 && packet.ea.result.reg < 0) {
+            unsigned size = packet.operation ? packet.ea.size : 4;
+            uint32 offset = packet.memory.address - packet.ea.result.address;
+            if (offset == size - 4 || (packet.operation && offset == size - 8)) {
+                syn68k_fpu_final_store_fault(result, packet.next);
+                if (result->store_state && packet.operation) {
+                    result->store_frame_clear = 1;
+                    if (offset == size - 8) {
+                        const uint8* tail = cpu_state.fpu.frame + packet.displacement + size - 4;
+                        result->store_tail_valid = 1;
+                        result->store_tail =
+                            (uint32)tail[0] << 24 | (uint32)tail[1] << 16 | (uint32)tail[2] << 8 | tail[3];
+                        result->store_tail_fc = (cpu_state.sr >> 11 & 4) | 1;
+                    }
+                }
+            }
+            if (packet.operation) {
+                syn68k_fpu_replay_store_fault(result);
+                if (result->store_state == 2 && (opcode >> 3 & 7) == 4)
+                    result->store_ea_size = size;
+            }
+        }
         if (!flat && packet.command >> 13 == 5 && packet.operation < 3 && packet.ea.result.reg < 0 &&
             packet.memory.address == packet.ea.result.address) {
             unsigned mask = packet.command >> 10 & 7, selected = 4u >> packet.operation;

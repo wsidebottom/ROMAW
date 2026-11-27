@@ -75,12 +75,20 @@ static int frame_read(void* opaque, uint32_t address, unsigned char* bytes, unsi
     return ok;
 }
 
+static unsigned mutate_save, software_e1, require_native_save;
+
 static int frame_write(void* opaque, uint32_t address, const unsigned char* bytes, unsigned size, uint32_t attrs,
                        unsigned fc)
 {
     assert(transfer_count < 64);
     pipeline[transfer_count] = cpu_state;
     int ok = control_write(opaque, address, bytes, size, attrs, fc);
+    if (mutate_save && transfer_count == mutate_save) {
+        cpu_state.fpu.frame[48] ^= 0xa5;
+        cpu_state.fpu.frame[96] ^= 0x5a;
+        cpu_state.fpu.frame_size ^= 52;
+        cpu_state.fpu.pending_vector = 54;
+    }
     frame_callback(address, ok);
     return ok;
 }
@@ -156,6 +164,11 @@ static void frame_setup(unsigned opcode, unsigned mode)
         cpu_state.fpu.frame[i] = i ^ 0xa5;
     cpu_state.fpu.frame_size = frame_pending;
     cpu_state.fpu.pending_vector = frame_pending ? 55 : 0;
+    if (software_e1) {
+        cpu_state.fpu.frame[0x48] = 5;
+        cpu_state.fpu.frame[0x49] = 0x80;
+        cpu_state.fpu.pending_vector = software_e1;
+    }
     memset(pipeline, 0, sizeof pipeline);
     transfer_count = 0;
     memset(transfers, 0, sizeof transfers);
@@ -205,7 +218,10 @@ static void compare_frame(unsigned opcode, unsigned mode)
     memcpy(expected_attributes, attributes_log, sizeof attributes_log);
     memcpy(expected_pipeline, pipeline, sizeof pipeline);
     frame_setup(opcode, mode);
-    native_active = frame_pending || frame_mutation == 3 || (frame_header >> 24 && frame_header != 0x41000000) ? 2 : 1;
+    native_active = !require_native_save &&
+                            (frame_pending || frame_mutation == 3 || (frame_header >> 24 && frame_header != 0x41000000))
+                        ? 2
+                        : 1;
     captures = command_exits = frame_exits = 0;
     frame_step(opcode, 1, &actual);
     native_active = 0;
@@ -227,6 +243,22 @@ static void compare_frame(unsigned opcode, unsigned mode)
     ++cases;
 }
 
+static void busy_save_checks(void)
+{
+    const unsigned opcodes[] = {0xf310, 0xf320, 0xf328, 0xf330, 0xf338, 0xf339};
+    require_native_save = 1;
+    for (unsigned kind = 0; kind < 5; ++kind) {
+        frame_pending = kind ? 100 : 52;
+        software_e1 = kind >= 2 ? 46 + kind * 2 : 0;
+        for (unsigned i = 0; i < sizeof opcodes / sizeof *opcodes; ++i)
+            for (crossing = 0; crossing < 2; ++crossing)
+                for (mutate_save = 0; mutate_save <= 2; ++mutate_save)
+                    for (fault_call = 0; fault_call <= 28; ++fault_call)
+                        compare_frame(opcodes[i], 1);
+    }
+    require_native_save = frame_pending = software_e1 = mutate_save = crossing = fault_call = 0;
+}
+
 int main(int argc, char** argv)
 {
     assert(argc == 1 || argc == 3);
@@ -240,9 +272,16 @@ int main(int argc, char** argv)
         }
         assert(syn68k_aot_hit_count() == (unsigned)atoi(argv[2]) * 2);
         assert(syn68k_native_compile_count() == (unsigned)!atoi(argv[2]) * 2);
-        puts("Mapped frame AOT consumed live idle/null headers and FPU state");
+        uint64_t before_emitted = syn68k_native_compile_count(), before_hits = syn68k_aot_hit_count();
+        busy_save_checks();
+        uint64_t emitted = syn68k_native_compile_count() - before_emitted;
+        uint64_t hits = syn68k_aot_hit_count() - before_hits;
+        assert(atoi(argv[2]) ? !emitted && hits : emitted > 0);
+        printf("%u mapped frame AOT cases passed; busy emitted=%llu hits=%llu\n", cases, (unsigned long long)emitted,
+               (unsigned long long)hits);
         return 0;
     }
+    busy_save_checks();
     for (unsigned h = 0; h < sizeof headers / sizeof *headers; ++h) {
         frame_header = headers[h];
         for (unsigned opcode = 0xf300; opcode < 0xf380; ++opcode)
