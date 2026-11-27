@@ -596,6 +596,12 @@ EOF
         -Wl,--wrap=syn68k_cache040_snoop -o "$fixture/snoop-test.exe"
       "$fixture/snoop-test.exe" "$(wslpath -m "$fixture/snoop")" 0
       "$fixture/snoop-test.exe" "$(wslpath -m "$fixture/snoop")" 1
+      mkdir -p "$fixture/snoop-buffer"
+      "$cc" -std=gnu17 -g -O0 -Isyn68k/obj/src/include -Isyn68k/src/include \
+        -Isyn68k/src/runtime/include syn68k/tests/mapped-snoop-buffer-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_cache040_snoop -o "$fixture/snoop-buffer-test.exe"
+      "$fixture/snoop-buffer-test.exe" "$(wslpath -m "$fixture/snoop-buffer")" 0
+      "$fixture/snoop-buffer-test.exe" "$(wslpath -m "$fixture/snoop-buffer")" 1
       cp syn68k/obj/src/runtime/generated/jit-build-id.h "$fixture/identity.h"
       # Rebuild identity stays stable when sources/configuration do not change.
       make -C syn68k/obj/src/runtime generated/jit-build-id.h
@@ -890,7 +896,7 @@ EOF
           -c syn68k/src/runtime/flat-memory.c -o "$obj/tests/runtime-flat-init.o"
         objects+=("$obj/tests/runtime-flat-init.o")
         objcopy=$("$cc" -print-prog-name=objcopy)
-        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross read_prefix cache_snoop; do
+        for group in math mmu memory fc ram ea convert bus control registers flat cache cache_ram cache_traffic mmu_cache mmu_cache_op cache_move16 mmu_move16 pagecross read_prefix cache_snoop cache_buffer; do
           fixture=native040-test
           extra=()
           case $group in
@@ -939,6 +945,10 @@ EOF
               ;;
             cache_snoop)
               fixture=cache040-snoop-test
+              extra=(-DCACHE040_NATIVE_TEST)
+              ;;
+            cache_buffer)
+              fixture=cache040-snoop-buffer-test
               extra=(-DCACHE040_NATIVE_TEST)
               ;;
           esac
@@ -1130,6 +1140,11 @@ EOF
         syn68k/tests/mapped-snoop-test.c syn68k/obj/src/runtime/libsyn68k.a \
         -Wl,--wrap=syn68k_cache040_snoop -o "$output/snoop-test.exe"
       "$output/snoop-test.exe"
+      "${CC:-${WINDOWS_TARGET:-x86_64-w64-mingw32}-gcc}" -std=gnu17 -g -O0 \
+        -Isyn68k/obj/src/include -Isyn68k/src/include -Isyn68k/src/runtime/include \
+        syn68k/tests/mapped-snoop-buffer-test.c syn68k/obj/src/runtime/libsyn68k.a \
+        -Wl,--wrap=syn68k_cache040_snoop -o "$output/snoop-buffer-test.exe"
+      "$output/snoop-buffer-test.exe"
     )
     ;;
   threaded-dispatch)

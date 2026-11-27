@@ -178,8 +178,21 @@ static void oracle(void)
     expected_hit = expected_invalidated = expected_intervention = 0;
     for (unsigned i = 0; i < 16; ++i)
         expected_response[i] = master_write ? 0xc0 + i : 0xa5;
-    unsigned first = length == 16 ? 0 : offset;
-    if (control == 1 || control == 2) {
+    unsigned first = current_target ? quarter * 4 : length == 16 ? 0 : offset;
+    unsigned base = current_target ? FRESH : OLD;
+    if (current_target) {
+        assert(control == 1 && master_write && length == 4);
+        expected_hit = CACHE040_SNOOP_DATA;
+        if (writing) {
+            expected_intervention = 1;
+            memcpy(fresh->bytes + first, expected_response, 4);
+        }
+        else {
+            expected_invalidated = CACHE040_SNOOP_DATA;
+            fresh->valid = 0;
+        }
+    }
+    else if (control == 1 || control == 2) {
         expected_hit = 4;
         if (master_write || control == 2) {
             expected_hit |= 2;
@@ -203,9 +216,9 @@ static void oracle(void)
         }
     }
     if (!master_write && !expected_intervention)
-        memcpy(expected_response, expected_ram + OLD + first, length);
+        memcpy(expected_response, expected_ram + base + first, length);
     if ((master_write && !expected_intervention) || (!master_write && expected_intervention && control == 2))
-        memcpy(expected_ram + OLD + first, expected_response, length);
+        memcpy(expected_ram + base + first, expected_response, length);
     unsigned dirty = expected_victim.dirty;
     expected_pushes = !expected_victim.valid ? 0 : (dirty & (dirty - 1)) ? 4 : 1;
     unsigned first_word = 0;
@@ -220,9 +233,10 @@ static void oracle(void)
     expected_cache.replacement[0] = (way + 1) & 3;
 }
 
-static void exercise(void)
+static void exercise(unsigned target)
 {
     seed();
+    current_target = target;
     oracle();
     unsigned should_fail = fail_push && expected_pushes && profile != 2;
     if (profile == 2) {
@@ -272,7 +286,7 @@ int main(void)
                                         offset = offsets[o];
                                         fail_push = 0;
                                         if (length == 16 || offset + length <= 16)
-                                            exercise();
+                                            exercise(0);
                                     }
     for (profile = 0; profile < profiles && profile < 2; ++profile)
         for (way = 0; way < 4; ++way)
@@ -289,9 +303,23 @@ int main(void)
                                 if (fail_beat >= expected_pushes)
                                     continue;
                                 fail_push = 1;
-                                exercise();
+                                exercise(0);
                             }
                         }
+    /* A CPU operand is acquired/precommitted before granting the bus. A
+       fresh clean line can be invalidated without changing the latched read;
+       a dirty CB line sinks the master's newer bytes without reapplying the
+       original CPU store after arbitration. */
+    for (profile = 0; profile < profiles; ++profile)
+        for (way = 0; way < 4; ++way)
+            for (mask = 1; mask < 16; ++mask)
+                for (writing = 0; writing < 2; ++writing)
+                    for (quarter = 0; quarter < 4; ++quarter) {
+                        control = master_write = 1;
+                        length = 4;
+                        offset = fail_push = 0;
+                        exercise(1);
+                    }
     printf("%u victim-buffer snoop/fill/writeback/sink/invalidate/fault/ownership cases passed\n", cases);
     return 0;
 }

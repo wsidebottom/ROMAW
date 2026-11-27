@@ -1,6 +1,20 @@
 /*+===================================================================
   File:      native040-runner.c
 
+  Summary:   Run all emitted 68040 kernel regression groups in one process.
+
+  Classes:   None.
+
+  Functions: main
+
+  Origin:    ROMAW grouped native 68040 regression runner.
+
+  Copyright and Legal notices: Applicable license: GPL-2.0-or-later; see SPDX below.
+===================================================================+*/
+
+/*+===================================================================
+  File:      native040-runner.c
+
   Summary:   Run emitted 68040 arithmetic, MMU, operand and function-code fixtures in one process.
 
   Classes:   None.
@@ -37,6 +51,7 @@ int native040_mmu_move16_check(void);
 int native040_pagecross_check(void);
 int native040_read_prefix_check(void);
 int native040_cache_snoop_check(void);
+int native040_cache_buffer_check(void);
 
 int main(void)
 {
@@ -50,8 +65,8 @@ int main(void)
         (status = native040_mmu_cache_check()) || (status = native040_mmu_cache_op_check()) ||
         (status = native040_cache_move16_check()) || (status = native040_mmu_move16_check()) ||
         (status = native040_pagecross_check()) || (status = native040_read_prefix_check()) ||
-        (status = native040_cache_snoop_check()))
+        (status = native040_cache_snoop_check()) || (status = native040_cache_buffer_check()))
         return status;
-    puts("All twenty-one emitted 68040 kernel groups passed");
+    puts("All twenty-two emitted 68040 kernel groups passed");
     return 0;
 }
