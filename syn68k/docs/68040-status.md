@@ -41,7 +41,23 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: E1 move-out restore (2026-11-27)
+## Latest validated bundle: native E3 writeback (2026-11-27)
+
+Commit ee65ad46 restores older E3 writebacks in generated code using the
+entry FPCR rounding context. The matrix passed 491,520 cases per AOT run,
+including deferred E3 priority over E1. The broader restore fixture passed
+410,048 cases, including checked continuations into resumed conversion.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
+checks passed. The 66-file ROMAW bundle passed help, Browser and 68K
+Speedometer startup and is current at build/68040-current/bin. The previous
+bundle is retained at build/68040-pre-e3writeback1-bin-20261127.
+
+CPU build ID 0fcc2d075a13c1e87ba436fa32c25df5110adf601fc251eccf585944c9b456e1
+Archive SHA256 8902e05dac3182f86bc514854251bc02014cac459f1ada7eb4e3b2ca7841adfe
+Audit build/68040-e3writeback1-output/68040-e3writeback1-source-audit.json
+
+## Previous validated bundle: E1 move-out restore (2026-11-27)
 
 Commit 755238e0 restores 52-byte and 100-byte E1 move-out frames in
 generated code. The replay matrix passed 491,520 cases in each AOT run,
@@ -49,8 +65,8 @@ including the precision, status, and E3 priority combinations. Grouped
 cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel checks passed.
 
 The audited 66-file ROMAW bundle passed help, Browser and 68K Speedometer
-startup. It is current at build/68040-current/bin. The preceding bundle is
-retained at build/68040-pre-e1moveout1-bin-20261127.
+startup. Its preceding bundle is retained at
+build/68040-pre-e1moveout1-bin-20261127.
 
 CPU build ID 0611a0b800f91168884db3c8b2d82862c50260c7d3695087d9d26782ee1cb63d
 Archive SHA256 a94afc48834683e871790fc8f4e53026be442141a087d1947f0f9da0901cc1e0
