@@ -82,14 +82,14 @@ static void fpu_operand(emitter* out, int source)
 }
 
 /* EAX/EDX contain the exponent/significand just copied to the packet. */
-static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count, int comparisons)
+static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count, int allow_nonfinite)
 {
     byte(out, 0x25);
     word32(out, 0x7fff);
     byte(out, 0x3d);
     word32(out, 0x7fff);
     unsigned special = jump(out, 0x84);
-    if (!comparisons)
+    if (!allow_nonfinite)
         failures[(*count)++] = special;
     FP_BYTES(out, 0x48, 0x85, 0xd2);
     unsigned zero = jump(out, 0x84);
@@ -98,15 +98,9 @@ static void fpu_normal_guard(emitter* out, unsigned failures[], unsigned* count,
     patch(out, zero, out->size);
     FP_BYTES(out, 0x85, 0xc0);
     failures[(*count)++] = jump(out, 0x85);
-    if (comparisons) {
-        unsigned ordinary = fpu_jump(out);
-        patch(out, special, out->size);
-        fpu_packet(out, 0x83, 7, offsetof(FPUInvocation, operation), 0);
-        byte(out, NATIVE040_FCMP);
-        failures[(*count)++] = jump(out, 0x82); // Only FCMP and FTST classify non-finite operands here.
-        patch(out, ordinary, out->size);
-    }
     patch(out, normal, out->size);
+    if (allow_nonfinite)
+        patch(out, special, out->size);
 }
 
 static void fpu_rounding(emitter* out, int mapped)

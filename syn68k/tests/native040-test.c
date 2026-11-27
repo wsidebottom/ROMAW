@@ -24,6 +24,26 @@ static int equal(Syn68kNative040Float a, floatx80 b)
     return a.high == b.high && a.low == b.low;
 }
 
+static FPUdivision expected_arithmetic(floatx80 target, floatx80 source, unsigned operation, unsigned precision)
+{
+    int uses_destination = operation == 0x22 || operation == 0x28 || operation == 0x23 || operation == 0x20 ||
+                           operation == 0x24 || operation == 0x27;
+    int source_nonfinite = (source.high & 0x7fff) == 0x7fff;
+    int source_nan = source_nonfinite && (source.low & UINT64_C(0x7fffffffffffffff));
+    int target_nan = uses_destination && (target.high & 0x7fff) == 0x7fff &&
+                     (target.low & UINT64_C(0x7fffffffffffffff));
+    if (source_nan || target_nan) {
+        if ((source_nan && !(source.low & UINT64_C(0x4000000000000000))) ||
+            (target_nan && !(target.low & UINT64_C(0x4000000000000000))))
+            float_exception_flags = float_flag_invalid;
+        floatx80 result = target_nan ? target : source;
+        result.low |= UINT64_C(0x4000000000000000);
+        return (FPUdivision){.result = result};
+    }
+    if (!operation && precision == 80 && source_nonfinite)
+        return (FPUdivision){.result = source};
+    return fpu_calculate(target, source, operation, precision);
+}
 int main(void)
 {
     static const unsigned operations[] = {0x22, 0x28, 0x23, 0x20, 4, 0, 0x18, 0x1a, 0x24, 0x27};
@@ -43,7 +63,10 @@ int main(void)
                                        {0x7ffe, UINT64_MAX},
                                        {0x7fff, UINT64_C(0x8000000000000000)},
                                        {0xffff, UINT64_C(0x8000000000000000)},
-                                       {0x7fff, UINT64_C(0xc0123456789abcde)}};
+                                       {0x7fff, UINT64_C(0xc0123456789abcde)},
+                                       {0xffff, UINT64_C(0x40123456789abcde)},
+                                       {0x7fff, UINT64_C(0x80123456789abcde)},
+                                       {0xffff, 0}};
     unsigned count = 0;
     for (unsigned op = 0; op < sizeof operations / sizeof *operations; ++op) {
         Syn68kNative040Entry entry = syn68k_native040_entry(op);
@@ -61,7 +84,7 @@ int main(void)
                         floatx80_rounding_precision = widths[precision];
                         float_detect_tininess = float_tininess_after_rounding;
                         float_exception_flags = 0;
-                        FPUdivision expected = fpu_calculate(vectors[b], vectors[a], operations[op], widths[precision]);
+                        FPUdivision expected = expected_arithmetic(vectors[b], vectors[a], operations[op], widths[precision]);
                         unsigned flags = float_exception_flags;
                         // Template-local state must not alter the compiled runtime's state.
                         float_exception_flags = 0x5a;

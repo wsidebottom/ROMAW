@@ -62,8 +62,24 @@ static void calculate(unsigned operation)
             }
         }
     }
-    else
-        result = fpu_calculate(target, source, operation, native_fpu->precision);
+    else {
+        int dyadic = operation == 0x20 || operation == 0x22 || operation == 0x23 || operation == 0x28 ||
+                     operation == 0x24 || operation == 0x27;
+        int source_special = (source.high & 0x7fff) == 0x7fff;
+        int source_nan = source_special && (source.low << 1);
+        int target_nan = dyadic && (target.high & 0x7fff) == 0x7fff && (target.low << 1);
+        if (source_nan || target_nan) {
+            /* The 68040 prefers the destination NaN, keeping its sign and J bit. */
+            result.result = target_nan ? target : source;
+            result.result.low |= UINT64_C(0x4000000000000000);
+            if ((source_nan && floatx80_is_signaling_nan(source)) || (target_nan && floatx80_is_signaling_nan(target)))
+                float_exception_flags |= float_flag_invalid;
+        }
+        else if (!operation && native_fpu->precision == 80 && source_special)
+            result.result = source; // Plain FMOVE retains either infinity encoding.
+        else
+            result = fpu_calculate(target, source, operation, native_fpu->precision);
+    }
     native_fpu->result = (Syn68kNative040Float){result.result.high, result.result.low};
     native_fpu->condition = (Syn68kNative040Float){result.condition.high, result.condition.low};
     native_fpu->writeback = (Syn68kNative040Float){result.writeback.high, result.writeback.low};
