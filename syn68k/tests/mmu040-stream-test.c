@@ -633,6 +633,45 @@ static void exception_roundtrips(void)
                     }
 }
 
+static void odd_error_handler_targets(void)
+{
+    for (unsigned page8k = 0; page8k < 2; ++page8k)
+        for (unsigned master = 0; master < 2; ++master)
+            for (unsigned vector = 2; vector <= 3; ++vector)
+                for (unsigned odd = 0; odd < 2; ++odd) {
+                    fixture(page8k, 1);
+                    cpu_state.sr |= master << 12;
+                    EM_A7 = 0x20080;
+                    cpu_state.vbr = 0x20000;
+                    unsigned target = 0x10020 + odd;
+                    put32(physical(cpu_state.vbr + vector * 4), target);
+                    Syn68kIntegerStep record = {
+                        .vector = vector, .format = 2, .exception_pc = 0x10000, .fault_address = 0x23456};
+                    Syn68kMappedCPU cpu = {.pc = 0x10000, .memory = &memory, .native = native_execution};
+                    Syn68kMappedDelivery delivery;
+                    unsigned before_reads = reads;
+                    uint16 old_sr = status();
+                    assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery));
+                    assert(reads == before_reads + 1 && EM_A7 == 0x20074);
+                    check_frame(EM_A7, 2, old_sr, &record);
+                    if (odd) {
+                        assert(delivery.reason == SYN68K_DELIVERY_DOUBLE_FAULT && !delivery.stacking &&
+                               cpu.halted == SYN68K_HALT_DOUBLE_FAULT && cpu.pc == 0x10000);
+                        assert(delivery.access.request == target && delivery.access.logical == target &&
+                               delivery.access.fc == 6 && delivery.access.size == 2 &&
+                               !delivery.access.completed && !delivery.access.bus_error);
+                        unsigned old_reads = reads, old_writes = writes;
+                        Syn68kMappedRun result;
+                        assert(syn68k_mapped_cpu_run(&cpu, 1, &result) && result.reason == SYN68K_MAPPED_HALTED);
+                        assert(syn68k_mapped_exception_enter(&cpu, &record, 0, &delivery) &&
+                               delivery.reason == SYN68K_DELIVERY_HALTED);
+                        assert(reads == old_reads && writes == old_writes && EM_A7 == 0x20074);
+                    }
+                    else
+                        assert(delivery.reason == SYN68K_DELIVERY_COMPLETE && !cpu.halted && cpu.pc == target);
+                    ++cases;
+                }
+}
 static void exception_delivery_failures(void)
 {
     const unsigned offsets[] = {0, 2, 6, 8};
@@ -7740,6 +7779,7 @@ int main(int argc, char** argv)
             stops_and_faults();
             exception_roundtrips();
             exception_delivery_failures();
+            odd_error_handler_targets();
             guest_exception_handlers();
             guest_page_fault_handlers();
             fetch_frame_guards();

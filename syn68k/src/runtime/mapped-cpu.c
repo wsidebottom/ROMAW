@@ -1225,6 +1225,13 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         delivery_fault(cpu, record, result, access, 0);
         return 1;
     }
+    if ((target & 1) && (record->vector == 2 || record->vector == 3)) {
+        /* The first handler prefetch would raise an address error during
+           access/address-error delivery. No instruction bus cycle occurs. */
+        Syn68kMMU040Access odd = {.logical = target, .request = target, .size = 2, .fc = 6};
+        delivery_fault(cpu, record, result, odd, 0);
+        return 1;
+    }
     cpu->pc = target;
     cpu->movem_pending = 0; // Continuation now belongs to the guest CM frame.
     if (interrupt_level)

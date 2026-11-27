@@ -116,7 +116,9 @@ typedef struct {
    format and FPU numeric/preinstruction exceptions do not use this marker.
    Access failures retain completed writes and report the failing transfer;
    descriptor lockup latches the CPU halt and reports HALTED. A double fault
-   retains DOUBLE_FAULT and latches the halt as well. Further exception entries
+   retains DOUBLE_FAULT and latches the halt as well. For an odd handler PC
+   during access/address-error delivery, access describes the rejected prefetch
+   without a completed bus cycle. Further exception entries
    report HALTED without touching state or buses; only embedding reset releases
    either halt. Format 7 accepts opcode-fetch faults
    and reads certified by the stream runner to have unchanged data/CCR/SR/FPU
