@@ -613,7 +613,19 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
         bus.instruction_fc = before.sr & SR_SUPERVISOR_BIT ? 6 : 2;
         memory.prefetch = &prefetch;
         Syn68kEAContext context = {.pc = cpu->pc, .memory = &memory};
-        unsigned opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
+        unsigned opcode;
+        if (cpu->prefetch_valid && cpu->prefetch_access.request == cpu->pc &&
+            cpu->prefetch_access.fc == bus.instruction_fc) {
+            opcode = cpu->prefetch_word;
+            context.access = cpu->prefetch_access;
+            if (context.access.bus_error || context.access.translation.fault != MMU040_OK) {
+                context.error = 2;
+                context.fault_address = context.access.logical;
+            }
+        }
+        else
+            opcode = syn68k_ea_fetch_memory(&context, cpu->pc, 2);
+        cpu->prefetch_valid = 0;
         result->opcode = opcode;
         if (context.error) {
             result->step.vector = 2;
@@ -915,6 +927,27 @@ int syn68k_mapped_cpu_run(Syn68kMappedCPU* cpu, unsigned budget, Syn68kMappedRun
             exception(cpu, result);
             return 1;
         }
+        /* Prefetch both conditional branch paths. Use the
+           decoded target so extension words are never read a second time. */
+        unsigned branch_class = (opcode >> 8) & 15, displacement = opcode & 255;
+        int dbcc = (opcode & 0xf0f8) == 0x50c8;
+        if (dbcc || ((opcode & 0xf000) == 0x6000 && branch_class >= 2)) {
+            unsigned extra = dbcc || displacement == 0 ? 2 : displacement == 255 ? 4 : 0;
+            uint32_t fallthrough = cpu->pc + 2 + extra;
+            uint32_t target = result->step.prefetch_address;
+            uint32_t paths[] = {fallthrough, target};
+            for (unsigned i = 0; i < 2; ++i) {
+                if ((paths[i] & 1) || (i && target == fallthrough))
+                    continue;
+                uint32_t word = 0;
+                Syn68kMMU040Access access = syn68k_mmu040_read(&memory, paths[i], bus.instruction_fc, 2, 0, &word);
+                if (result->step.next == paths[i]) {
+                    cpu->prefetch_access = access;
+                    cpu->prefetch_word = word;
+                    cpu->prefetch_valid = 1;
+                }
+            }
+        }
         cpu->pc = result->step.next;
         if (result->step.movem_state == 2) {
             cpu->movem_pc = cpu->pc;
@@ -1144,6 +1177,7 @@ int syn68k_mapped_exception_enter(Syn68kMappedCPU* cpu, const Syn68kIntegerStep*
         result->reason = SYN68K_DELIVERY_UNSUPPORTED;
         return 1;
     }
+    cpu->prefetch_valid = 0;
     cpu->stopped = 0; // Accepted exception entry resumes a stopped processor.
     uint16 old_sr = COMPUTE_SR_FROM_CPU_STATE();
     uint16 next_sr = (old_sr & 0x3FFF) | SR_SUPERVISOR_BIT;

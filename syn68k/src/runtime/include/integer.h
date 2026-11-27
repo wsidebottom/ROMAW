@@ -76,8 +76,8 @@ typedef struct {
        This host-step tail is not part of a native invocation packet. */
     uint32_t store_link_displacement;
     /* Instruction-local branch metadata, not an exception-frame encoding.
-       Capture an odd speculative branch target even when the branch is untaken;
-       no instruction prefetch bus cycle is performed at that address. */
+       Capture a conditional branch target even when untaken. Odd targets report
+       an address error without performing an instruction bus cycle. */
     uint32_t prefetch_address;
     unsigned flow_changed;
     /* STOP requests suspension only after successful, untraced retirement. */

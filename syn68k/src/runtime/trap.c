@@ -816,7 +816,7 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         if (context->error)
             return integer_exception(step, context, 2, pc, context->fault_address, 7);
         /* The conditional-branch prefetch rule also applies on fallthrough. */
-        if (step && (displacement & 1))
+        if (step)
             step->prefetch_address = integer_pc(context, pc + 2 + displacement);
         if (!condition_true((opcode >> 8) & 15)) {
             unsigned reg = opcode & 7;
@@ -847,8 +847,7 @@ static uint32 execute_control(uint32 pc, unsigned opcode, Syn68kEAContext* conte
         unsigned taken = condition_true((opcode >> 8) & 15);
         if (step) {
             step->flow_changed = taken;
-            if (target & 1)
-                step->prefetch_address = target;
+            step->prefetch_address = target;
         }
         return taken ? target : integer_pc(context, context->pc);
     }

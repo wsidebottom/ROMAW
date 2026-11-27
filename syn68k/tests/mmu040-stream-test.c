@@ -1100,7 +1100,8 @@ static void guest_control_branches(void)
                                 assert(run.reason == (vector ? SYN68K_MAPPED_EXCEPTION : SYN68K_MAPPED_BUDGET) &&
                                        run.step.vector == vector && cpu.pc == (odd ? 0x10000u : expected_pc) &&
                                        EM_D0 == expected_d0 && EM_A7 == 0x20100u - (call ? 4 : 0) && status() == sr);
-                                assert(reads == 1u + !!extension && writes == call);
+                                unsigned speculative = !vector && (dbcc || condition >= 2) ? 1 + (target != next) : 0;
+                                assert(reads == 1u + !!extension + speculative && writes == call);
                                 if (call)
                                     assert(mapped_value(0x200fc, 4) == next);
                                 if (vector)
