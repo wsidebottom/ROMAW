@@ -26,7 +26,7 @@ The embedded System and early-boot table generators run the same checks.
 | CDEF 0, 1, 63 | `controls/ctlStddef.c`, `controls/ctlArrows.c`, `controls/ctlPopup.c` |
 | WDEF 0, 1 | `windows/windDocdef.c` |
 | MDEF 0, MBDF 0 | `menus/stdmdef.c`, `menus/stdmbdf.c` |
-| LDEF 0 | `lists/listStdLDEF.c` |
+| LDEF 0 and 19 | `lists/listStdLDEF.c` |
 | snth 5 | `sound/snth5.c` |
 | dcmp 0 | `resources/resOpen.c`, bounded decoder in `include/rsys/dcomp0.h` |
 | CDEF 128, WDEF 128, gest 128, hcsl 0 | `finder/guest/`; real Memory Manager, QuickDraw and Gestalt adapters |

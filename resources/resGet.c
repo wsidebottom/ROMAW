@@ -208,7 +208,7 @@ A4(PUBLIC, OSErr, ROMlib_typidtop, ResType, typ, INTEGER, id, /* INTERNAL */
 
 #define MAELSTROM_HACK
 
-#define NUM_ROMLIB_DEFS 18
+#define NUM_ROMLIB_DEFS 19
 
 #if !defined(MAELSTROM_HACK)
 PRIVATE LONGINT ROMlib_defs[NUM_ROMLIB_DEFS];

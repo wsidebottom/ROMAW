@@ -1215,6 +1215,7 @@ toolstuff_t pstuff[] = {
     {{C_new_draw_scroll, PTOC_DeviceLoopDrawingProcTemplate}, (void*)0},
     {{C_new_pos_ctl, PTOC_DeviceLoopDrawingProcTemplate}, (void*)0},
     {{C_dcmp_template, PTOC_dcmp_template}, (void*)0},
+    {{C_ldef19, PTOC_ldef0}, (void*)0},
 };
 
 void* fsroutines[][2] = {

@@ -161,6 +161,12 @@ visible, and native PPC lookups retain the callable bridge vector. The staged
 decoder probe checks the classic lookup and patch behavior; the PPC Finder
 services suite checks the PPC vector and drag lifecycle.
 
+The System supplies icon list definition `LDEF` 19 for Chooser. Its cells
+carry a guest icon handle and may include a font and Pascal label. Chooser
+also needs an installed classic device driver, such as ImageWriter in
+System Folder/Extensions, to populate its device list. Use a local driver
+with its resource fork intact.
+
 The build verifies every instruction byte and generates the actual C dispatch
 assignments from these decoded stubs. Modified or new executable resources
 require review and stop generation. The original guest stubs remain for ABI

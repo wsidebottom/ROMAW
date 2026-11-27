@@ -30,6 +30,7 @@
 #include "rsys/pstuff.h"
 
 extern void C_ldef0(INTEGER, BOOLEAN, Rect*, Cell, INTEGER, INTEGER, ListHandle);
+extern void C_ldef19(INTEGER, BOOLEAN, Rect*, Cell, INTEGER, INTEGER, ListHandle);
 
 #define DODRAW 0x8 /* whether or not we should really draw */
 

@@ -22,6 +22,7 @@
 #define P_wdef16 12
 #define P_mdef0 16
 #define P_ldef0 20
+#define P_ldef19 72
 #define P_mbdf0 24
 #define P_snth5 28
 #define P_cdef1008 36

@@ -122,5 +122,6 @@ extern osstuff_t osstuff[];
 #define P_new_draw_scroll (pstuff[85].orig)
 #define P_new_pos_ctl (pstuff[86].orig)
 #define P_dcmp_template (pstuff[87].orig)
+#define P_ldef19 (pstuff[88].orig)
 
 #endif /* !defined(_PSTUFF_H_) */

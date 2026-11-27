@@ -39,6 +39,7 @@ CODE_HANDLERS = {
     (b"WDEF", 1): (3, "P_wdef16"),
     (b"MDEF", 0): (4, "P_mdef0"),
     (b"LDEF", 0): (5, "P_ldef0"),
+    (b"LDEF", 19): (18, "P_ldef19"),
     (b"MBDF", 0): (6, "P_mbdf0"),
     (b"snth", 5): (7, "P_snth5"),
     (b"CDEF", 63): (9, "P_cdef1008"),

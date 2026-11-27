@@ -3191,6 +3191,10 @@ resource 'LDEF' (0) {
     P_ldef0 /* native definition dispatch; byte offset in the guest table */
 };
 
+resource 'LDEF' (19) {
+    P_ldef19
+};
+
 resource 'MBDF' (0) {
     P_mbdf0 /* native definition dispatch; byte offset in the guest table */
 };
