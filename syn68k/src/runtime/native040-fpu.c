@@ -40,25 +40,61 @@ static floatx80 restore_operand(const uint8* bytes)
     return (floatx80){restore_long(bytes) >> 16, (uint64)restore_long(bytes + 4) << 32 | restore_long(bytes + 8)};
 }
 
-static int restore_dyadic(const uint8* frame, unsigned size, unsigned operation, FPUdivision* result)
+static int restore_normal(floatx80 operand, unsigned exponent_tag)
 {
-    switch (operation) {
-    case 0x20:
-    case 0x22:
-    case 0x23:
-    case 0x28:
-    case 0x24:
-    case 0x27:
-        break;
-    default:
-        return 0;
+    unsigned exponent = operand.high & 0x7fff;
+    return exponent && exponent != 0x7fff && (operand.low >> 63) &&
+           !((exponent_tag & 0x10) && (exponent & 0x4000));
+}
+
+static FPUdivision restore_compare(floatx80 target, floatx80 source)
+{
+    FPUdivision result = {0};
+    if (target.high != source.high || target.low != source.low) {
+        int less = (target.high & 0x7fff) < (source.high & 0x7fff) ||
+                   (target.high == source.high && target.low < source.low);
+        if ((target.high ^ source.high) & 0x8000)
+            less = !!(target.high & 0x8000);
+        else if (target.high & 0x8000)
+            less = !less;
+        result.result = (floatx80){less ? 0xbfff : 0x3fff, UINT64_C(0x8000000000000000)};
     }
+    return result;
+}
+
+static int restore_arithmetic(const uint8* frame, unsigned size, unsigned operation, FPUdivision* result)
+{
+    unsigned precision = native_fpu->precision, base = operation;
+    if (operation & 0x40) {
+        precision = operation & 4 ? 64 : 32;
+        switch (operation & ~4u) {
+        case 0x40: base = 0; break;
+        case 0x41: base = 4; break;
+        case 0x58: base = 0x18; break;
+        case 0x5a: base = 0x1a; break;
+        case 0x60: base = 0x20; break;
+        case 0x62: base = 0x22; break;
+        case 0x63: base = 0x23; break;
+        case 0x68: base = 0x28; break;
+        default: return 0;
+        }
+    }
+    else if (!operation)
+        precision = 80;
+    else if (operation == 5)
+        base = 4;
     floatx80 source = restore_operand(frame + size - 12), target = restore_operand(frame + size - 24);
-    unsigned se = source.high & 0x7fff, te = target.high & 0x7fff;
-    if (!se || !te || se == 0x7fff || te == 0x7fff || !(source.low >> 63) || !(target.low >> 63) ||
-        ((frame[size - 40] & 0x10) && (se & 0x4000)) || ((frame[size - 32] & 0x10) && (te & 0x4000)))
+    int uses_target = base == 0x20 || base == 0x22 || base == 0x23 || base == 0x28 ||
+                      base == 0x24 || base == 0x27 || base == 0x38;
+    if (!restore_normal(source, frame[size - 40]) ||
+        (uses_target && !restore_normal(target, frame[size - 32])))
         return 0;
-    *result = fpu_calculate_ex(target, source, operation, native_fpu->precision, te, se);
+    if (base == 0x38)
+        *result = restore_compare(target, source);
+    else if (base == 0x3a)
+        *result = (FPUdivision){.result = source};
+    else
+        *result = fpu_calculate_ex(target, source, base, precision, target.high & 0x7fff, source.high & 0x7fff);
     return !(native_fpu->flags & ~float_flag_inexact) && !result->status;
 }
 
@@ -114,7 +150,7 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     FPUdivision result;
     unsigned replay_status = 0;
     if (replay) {
-        if (!restore_dyadic(image, size, command & 127, &result))
+        if (!restore_arithmetic(image, size, command & 127, &result))
             return;
         if (native_fpu->flags & float_flag_inexact) {
             if (fpu->fpcr & 0x0200)
@@ -131,8 +167,11 @@ static void restore_writeback(Syn68kNative040Restore* packet)
     }
     if (replay) {
         unsigned reg = command >> 7 & 7;
-        fpu->regs[reg].exponent = result.result.high;
-        fpu->regs[reg].significand = result.result.low;
+        unsigned operation = command & 127;
+        if (operation != 0x38 && operation != 0x3a) {
+            fpu->regs[reg].exponent = result.result.high;
+            fpu->regs[reg].significand = result.result.low;
+        }
         if (size == 100)
             fpu->fpiar = restore_long(image + 0x28);
         floatx80 condition = result.finite ? result.condition : result.result;

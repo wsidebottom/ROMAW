@@ -446,13 +446,18 @@ static void pending_arithmetic_frames(void)
         }
 }
 
-static void dyadic_replay_operations(void)
+static void arithmetic_replay_operations(void)
 {
-    const unsigned operations[] = {0x20, 0x22, 0x23, 0x28, 0x24, 0x27};
+    const unsigned operations[] = {0, 4, 5, 0x18, 0x1a, 0x20, 0x22, 0x23, 0x24, 0x27, 0x28, 0x38, 0x3a,
+                                   0x40, 0x44, 0x41, 0x45, 0x58, 0x5c, 0x5a, 0x5e, 0x60, 0x64, 0x62, 0x66,
+                                   0x63, 0x67, 0x68, 0x6c};
     for (unsigned i = 0; i < sizeof operations / sizeof *operations; ++i)
         for (unsigned variant = 0; variant < 5; ++variant) {
             unsigned frame = 0x20040;
             int divide_inexact = (variant == 2 || variant == 4) && (operations[i] == 0x20 || operations[i] == 0x24);
+            int negative_sqrt = variant == 1 &&
+                                (operations[i] == 4 || operations[i] == 5 || (operations[i] & ~4u) == 0x41);
+            int exceptional = negative_sqrt || (variant == 4 && divide_inexact);
             Syn68kFPUState expected;
             for (unsigned config = 0; config < 2; ++config) {
                 Syn68kMappedCPU cpu = setup(config, 0, 6, frame, 1, 0, variant == 4 ? 0x0200 : 0);
@@ -468,13 +473,13 @@ static void dyadic_replay_operations(void)
                 }
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
                 unsigned captures = complete_captures;
-                expect_direct_restore = config && !(variant == 4 && divide_inexact);
+                expect_direct_restore = config && !exceptional;
 #endif
                 Syn68kMappedRun run;
                 assert(syn68k_mapped_cpu_run(&cpu, 1, &run));
 #ifdef VERIFY_NATIVE_RESTORE_IMAGE
                 expect_direct_restore = 0;
-                assert(complete_captures - captures == (unsigned)(config && variant == 4 && divide_inexact));
+                assert(complete_captures - captures == (unsigned)(config && exceptional));
 #endif
                 assert(run.reason == SYN68K_MAPPED_BUDGET && cpu.pc == 0x10002);
                 assert(EM_A0 == frame + 100);
@@ -505,7 +510,7 @@ int CAPTURE_TEST_ENTRY(int argc, char** argv)
     quiescent_frame_matrix();
     short_frame_command_matrix();
     pending_arithmetic_frames();
-    dyadic_replay_operations();
+    arithmetic_replay_operations();
     uint64_t emitted = syn68k_native_compile_count() - compiled, loaded = syn68k_aot_hit_count() - hits;
     if (argc == 3)
         assert(atoi(argv[2]) ? !emitted && loaded : emitted);
