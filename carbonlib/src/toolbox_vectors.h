@@ -434,6 +434,7 @@ TOOLBOX_SELECTOR(FolderManagerUnregisterNotificationProc, 0x0e8c, 0xfa8, 0x430, 
 TOOLBOX_SELECTOR(FolderManagerRegisterCallNotificationProcs, 0x0e8c, 0x3fb8, 0x631, uint32_t)
 TOOLBOX_SELECTOR(FolderManagerRemoveAllEntriesForProcess, 0x0e8c, 0x3c8, 0x32, uint32_t)
 TOOLBOX_SELECTOR(InitializeFolderManager, 0x0e8c, 0xc8, 0x33, uint32_t)
+TOOLBOX_SELECTOR(AVLInit, 0x1800, 0xfffa8, 0xc01, int16_t)
 TOOLBOX_SELECTOR(AVLDispose, 0x1800, 0xba8, 0x302, int16_t)
 TOOLBOX_SELECTOR(AVLWalk, 0x1800, 0xefa8, 0x703, int16_t)
 TOOLBOX_SELECTOR(AVLCount, 0x1800, 0xfa8, 0x804, int16_t)

@@ -4307,6 +4307,7 @@ PRIVATE int ppc_resolve(void* opaque, const char* library, const char* name, uns
         }
         if (!native && !strcmp(library, "InterfaceLib")) {
             static const char* const carbon_reexports[] = {
+                "AVLInit",
                 "BlockZero",
                 "DeleteGestaltValue",
                 "DMDrawDesktopRect",
@@ -8276,7 +8277,11 @@ PUBLIC int ROMlib_carbon_call_toolbox_vector(uint32_t address, uint32_t info, ui
             return 1;
         }
     }
-    return ppc_carbon_pascal_call(ctx, CL(*slot), info, selector, call_frame, result);
+    const uint32 procedure = CL(*slot);
+    /* A classic System without AVL leaves this slot on the unimplemented trap. */
+    if (address == 0x1800 && (!procedure || procedure == (uint32)(uintptr_t)toolstuff[0x9f].orig))
+        return ROMlib_carbon_report_failure("The System AVL dispatch vector is not installed");
+    return ppc_carbon_pascal_call(ctx, procedure, info, selector, call_frame, result);
 }
 
 PUBLIC int ROMlib_carbon_call_original_toolbox_trap(uint16_t trap_index, uint32_t info, uint32_t selector,

@@ -7018,6 +7018,7 @@ static const ROMlib_carbon_export exports[] = {
      ROMLIB_CARBON_PPC_FRAME, 0xaff14, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"InitializeFolderManager", carbon_vector_InitializeFolderManager, ROMLIB_CARBON_PPC_FRAME, 0xaff48, NULL,
      ROMLIB_CARBON_PPC_ONLY},
+    {"AVLInit", carbon_vector_AVLInit, ROMLIB_CARBON_PPC_FRAME, 0xaff78, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"AVLDispose", carbon_vector_AVLDispose, ROMLIB_CARBON_PPC_FRAME, 0xaffcc, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"AVLWalk", carbon_vector_AVLWalk, ROMLIB_CARBON_PPC_FRAME, 0xb000c, NULL, ROMLIB_CARBON_PPC_ONLY},
     {"AVLCount", carbon_vector_AVLCount, ROMLIB_CARBON_PPC_FRAME, 0xb0058, NULL, ROMLIB_CARBON_PPC_ONLY},

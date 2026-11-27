@@ -350,7 +350,7 @@ TEXTENSION_SUPPORT = (
 )
 
 
-def vector_cases(header="toolbox_vectors.h", count=399):
+def vector_cases(header="toolbox_vectors.h", count=400):
     source = (ROOT / "carbonlib/src" / header).read_text()
     rows = []
     for name, address, info, result in re.findall(
