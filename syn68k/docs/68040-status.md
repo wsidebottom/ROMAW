@@ -41,7 +41,25 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: native busy FPU frames (2026-11-27)
+## Latest validated bundle: direct full-frame FRESTORE commits (2026-11-27)
+
+Commit 937299e3 emits the mapped FRESTORE state update for full frames
+without a live pipeline stage or resumed conversion. Guest read faults
+leave the old frame and postincrement register intact. The grouped restore
+fixture passed 147,904 cases in JIT, cold AOT and warm AOT. Warm AOT loaded
+all three bodies with no recompilation.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16 and AOT checks passed. All 22
+generated kernel groups passed on Windows and Linux x64. The 66-file
+bundle passed help, Browser and 68K Speedometer startup checks and was
+promoted to build/68040-current/bin. The preceding bundle is retained at
+build/68040-pre-restore2-bin-20261127.
+
+CPU build ID a834913ea0f8b2e728d4b1f39de2bdb790707e26b916734e7411861c7fcfb53d
+Archive SHA256 62eafb02af27a48c974da061fad75aa15f161433b457645e0cef9995f7229709
+Audit build/68040-restore2-output/68040-restore2-source-audit.json
+
+## Previous validated bundle: native busy FPU frames (2026-11-27)
 
 Commits cb570d0e and 0b8b9ede emit mapped busy FSAVE writes and acquire
 complete busy FRESTORE images. The checked decoder receives the captured
