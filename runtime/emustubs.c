@@ -1148,9 +1148,9 @@ PRIVATE selectorblock_t osdispatch_block[] = {
 PUBLIC boolean_t ROMlib_osdispatch_available(uint32 selector)
 {
     const selectorblock_t* block;
-    if (selector == 0x04 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 || selector == 0x47 ||
-        selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x74 || selector == 0x75 ||
-        selector == 0x7c)
+    if (selector == 0x02 || selector == 0x04 || (selector >= 0x3f && selector <= 0x43) || selector == 0x36 ||
+        selector == 0x47 || selector == 0x5a || selector == 0x5b || selector == 0x63 || selector == 0x74 ||
+        selector == 0x75 || selector == 0x7c)
         return TRUE;
     for (block = osdispatch_block; block->descriptorp; ++block)
         if (selector >= block->first && selector <= block->last)
@@ -1221,6 +1221,18 @@ STUB(OSDispatch)
 
     retaddr = POPADDR();
     uw = POPUW();
+    if (uw == 0x02) {
+        /* GetSwitchInfo is a procedure with one eight-byte output record and
+           no result slot (ProcessMgr/Puppet.h and Puppet.c). ROMAW has no
+           Switcher/MultiFinder scheduler; report its absence so callers use
+           their single-application path instead of assuming SWIT services. */
+        uint32 info = POPUL();
+        if (info) {
+            WRITEUL(info, 0);
+            WRITEUL(info + 4, 0);
+        }
+        return retaddr;
+    }
     if (uw == 0x36) {
         uint32 name = POPUL(), file = POPUL();
         WRITEUW(EM_A7, C_LaunchDeskAccessory(file ? SYN68K_TO_US(file) : NULL, name ? SYN68K_TO_US(name) : NULL));

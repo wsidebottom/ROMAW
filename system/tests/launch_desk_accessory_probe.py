@@ -38,7 +38,9 @@ def pascal(text):
 
 
 assert value("(int)ROMlib_osdispatch_available(0x36)")
-stack = allocate(32)
+# Native calls made between dispatches can reenter guest code. Reserve room
+# below the synthetic Pascal frame for that downward-growing guest stack.
+stack = allocate(8192) + 4096
 saved = [value(f"cpu_state.regs[{i}].ul.n") for i in range(16)]
 
 
@@ -65,6 +67,19 @@ def dispatch(file, name, expected):
 
 
 try:
+    assert value("(int)ROMlib_osdispatch_available(2)")
+    switch_info = allocate(16)
+    for output in (switch_info + 4, 0):
+        memory.write_memory(switch_info, b"\xa5" * 16)
+        frame = struct.pack(">IHI", 0x1234ABCD, 2, output - base if output else 0) + b"guard"
+        memory.write_memory(stack, frame)
+        gdb.execute(f"set cpu_state.regs[15].ul.n={stack - base}", to_string=True)
+        assert value("(unsigned)_OSDispatch(0,0)") == 0x1234ABCD
+        assert value("cpu_state.regs[15].ul.n") == stack - base + 10
+        assert bytes(memory.read_memory(stack + 10, 5)) == b"guard"
+        expected = b"\xa5" * 4 + b"\0" * 8 + b"\xa5" * 4 if output else b"\xa5" * 16
+        assert bytes(memory.read_memory(switch_info, 16)) == expected
+    print("GET_SWITCH_INFO_STACK_AND_BOUNDS_OK")
     dispatch(0, 0, -50)
     dispatch(0, pascal(".Missing"), -192)
     current = value("(int)C_CurResFile()")
