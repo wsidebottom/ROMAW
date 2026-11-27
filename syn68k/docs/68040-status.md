@@ -41,7 +41,23 @@ states remain engine stress tests and need separate hardware evidence before
 being used as a required architectural ordering case. Physical prefetch,
 further restart/delivery integration and the remaining FPU audits remain open.
 
-## Latest validated bundle: native E3 writeback (2026-11-27)
+## Latest validated bundle: exact arithmetic replay (2026-11-27)
+
+Commit e42b820b generates exact two-operand arithmetic replay from
+FRESTORE frames. The fixture passed 410,108 cases per run, including
+preservation of rounding status from older E3 writebacks. Warm AOT loaded
+all five entries with zero recompilations.
+
+Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
+checks passed. The audited 66-file ROMAW bundle passed help, Browser and
+68K Speedometer startup. It is current at build/68040-current/bin and
+the prior bundle is retained at build/68040-pre-exactreplay1-bin-20261127.
+
+CPU build ID 4abf24ae704df559dfe39a0adf15ca00e802abb25be97bf36be6f71df6f7f82b
+Archive SHA256 131299084b9b1533aa4a35edc2b7671f80a08f4c7d4ece61c61ac93e1b50940e
+Audit build/68040-exactreplay1-output/68040-exactreplay1-source-audit.json
+
+## Previous validated bundle: native E3 writeback (2026-11-27)
 
 Commit ee65ad46 restores older E3 writebacks in generated code using the
 entry FPCR rounding context. The matrix passed 491,520 cases per AOT run,
@@ -50,8 +66,8 @@ including deferred E3 priority over E1. The broader restore fixture passed
 
 Grouped cache, FPU, MMU, RTE, flat MOVE16, AOT, saved-state and kernel
 checks passed. The 66-file ROMAW bundle passed help, Browser and 68K
-Speedometer startup and is current at build/68040-current/bin. The previous
-bundle is retained at build/68040-pre-e3writeback1-bin-20261127.
+Speedometer startup. Its preceding bundle is retained at
+build/68040-pre-e3writeback1-bin-20261127.
 
 CPU build ID 0fcc2d075a13c1e87ba436fa32c25df5110adf601fc251eccf585944c9b456e1
 Archive SHA256 8902e05dac3182f86bc514854251bc02014cac459f1ada7eb4e3b2ca7841adfe
