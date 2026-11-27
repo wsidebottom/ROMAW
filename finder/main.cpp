@@ -127,6 +127,7 @@ enum Command {
     windows_shortcut_command,
     register_images_command,
     configure_app_command,
+    afp_chooser_command,
     label_command = 200,
     sort_command = 300
 };
@@ -3355,7 +3356,9 @@ void show_info(Item item)
             text = item.name;
             break;
         case 3051:
-            if (item.special == 4)
+            if (item.special == 4 && std::strncmp(volume.source, "afp://", 6) == 0)
+                text = L"AFP volume (read-only)";
+            else if (item.special == 4)
                 text = volume.read_only ? L"disk image (read-only)" : L"disk image";
             else {
                 DocumentKinds kinds;
@@ -3650,6 +3653,8 @@ menu()
             return _wcsicmp(a.filename().c_str(), b.filename().c_str()) < 0;
         });
         for (const auto& path : files) {
+            if (target == apple && _wcsicmp(path.filename().c_str(), L"Chooser") == 0)
+                continue;
             if (apple_items.size() >= 128)
                 break;
             Item item;
@@ -3702,6 +3707,7 @@ menu()
                 AppendMenuW(target, MF_STRING, id, path.filename().c_str());
         }
     };
+    AppendMenuW(apple, MF_STRING, afp_chooser_command, L"Chooser");
     populate(apple, romaw_folder / L"System Folder/Apple Menu Items", 0);
     auto panels = CreatePopupMenu();
     auto panel_path = romaw_folder / L"System Folder/Control Panels";
@@ -4732,6 +4738,12 @@ void command(FolderWindow& f, unsigned id)
             message(f.window, L"Disk image types registered.\n\n"
                               L"To change an existing default, choose ROMAW in Windows Open with or Default apps.");
         }
+        break;
+    case afp_chooser_command:
+        if (ROMlib_finder_afp_chooser(f.window))
+            for (auto* folder : folders)
+                if (folder->desktop)
+                    refresh(*folder);
         break;
     case about_system_command:
         show_about_system();

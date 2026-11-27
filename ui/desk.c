@@ -20,6 +20,7 @@
 /* Forward declarations in DeskMgr.h (DO NOT DELETE THIS LINE) */
 
 #include "rsys/common.h"
+#include "finder/image_volumes.h"
 #include "rsys/mactcp.h"
 #include "rsys/desk.h"
 #include "rsys/systemwindow.h"
@@ -55,6 +56,12 @@ P1(PUBLIC pascal trap, INTEGER, OpenDeskAcc, Str255, acc) /* IMI-440 */
 
     if (EqualString(acc, about_box_menu_name_pstr, TRUE, TRUE)) {
         do_about_box();
+        retval = 0;
+        goto done;
+    }
+
+    if (EqualString(acc, (StringPtr)"\007Chooser", FALSE, TRUE)) {
+        ROMlib_finder_afp_chooser(NULL);
         retval = 0;
         goto done;
     }

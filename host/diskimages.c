@@ -33,6 +33,7 @@
 #include "OSEvent.h"
 #include "rsys/hfs.h"
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
 #include "rsys/fileicon.h"
 #include "rsys/notmac.h"
 #include "rsys/hostdialog.h"
@@ -135,6 +136,8 @@ OSErr ROMlib_image_sync(int fd, uint32 offset)
 
 int ROMlib_image_volume_kind(const HVCB* volume)
 {
+    if (ROMlib_afp_is_volume((const VCB*)volume))
+        return 2;
     if (volume->vcbCTRef) {
         int fd = ((const VCBExtra*)volume)->u.hfs.fd;
         for (ImageMount* p = mounted; p; p = p->next)
@@ -173,19 +176,21 @@ int ROMlib_finder_image_volume(uint32_t index, FinderImageVolume* result)
     if (!result)
         return 0;
     memset(result, 0, sizeof *result);
+    ROMlib_afp_sync_mount();
     for (HVCB* volume = (HVCB*)PPR(VCBQHdr.qHead); volume; volume = (HVCB*)PPR(volume->qLink)) {
         if (!ROMlib_image_volume_kind(volume))
             continue;
         DrvQExtra* drive = ROMlib_dqbydrive(CW(volume->vcbDrvNum));
-        if (!drive || !drive->devicename)
+        if (!ROMlib_afp_is_volume((VCB*)volume) && (!drive || !drive->devicename))
             continue;
         if (index--)
             continue;
-        snprintf(result->source, sizeof result->source, "%s", (char*)drive->devicename);
+        if (!ROMlib_afp_volume_source((VCB*)volume, result->source, sizeof result->source))
+            snprintf(result->source, sizeof result->source, "%s", (char*)drive->devicename);
         unsigned length = MIN(volume->vcbVN[0], sizeof result->name - 1);
         memcpy(result->name, volume->vcbVN + 1, length);
         result->reference = CW(volume->vcbVRefNum);
-        result->partition = CW(drive->partition);
+        result->partition = drive ? CW(drive->partition) : 0;
         result->read_only = (CW(volume->vcbAtrb) & 0x8080) != 0;
         result->total_bytes = (uint64_t)(uint16_t)CW(volume->vcbNmAlBlks) * (uint32_t)CL(volume->vcbAlBlkSiz);
         result->free_bytes = (uint64_t)(uint16_t)CW(volume->vcbFreeBks) * (uint32_t)CL(volume->vcbAlBlkSiz);
@@ -964,8 +969,8 @@ static OSErr image_desktop_write(ImageDesktopFiles* source, const void* data, si
 /* Hold the File Manager's writable fork while validating and publishing the
  * edit. A failed write restores the original bytes before releasing it. */
 int16_t ROMlib_finder_image_replace_fork(int16_t reference, uint32_t parent, const char* name, uint32_t id,
-                                       int resource, const void* before, uint32_t before_size,
-                                       const void* after, uint32_t after_size)
+                                         int resource, const void* before, uint32_t before_size, const void* after,
+                                         uint32_t after_size)
 {
     OSErr error = ROMlib_finder_image_check_mutable(reference, parent, name, id);
     ImageDesktopFiles fork = {0};

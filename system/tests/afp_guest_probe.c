@@ -12,6 +12,7 @@
   Copyright and Legal notices: See COPYING.
 ===================================================================+*/
 #include <Files.h>
+#include <Gestalt.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +29,25 @@ static void check(int passed, const char* message)
     failures += !passed;
 }
 
+static short find_macintosh(void)
+{
+    short volume = 0;
+    for (short index = 1; index < 128; ++index) {
+        ParamBlockRec info = {0};
+        Str255 name;
+        info.volumeParam.ioVolIndex = index;
+        info.volumeParam.ioNamePtr = name;
+        if (PBGetVInfoSync(&info))
+            break;
+        long kind;
+        uint32_t selector = 0x45560000 | (uint16_t)info.volumeParam.ioVRefNum;
+        if (name[0] == 9 && !memcmp(name + 1, "Macintosh", 9) && !Gestalt(selector, &kind) && kind == 2)
+            volume = info.volumeParam.ioVRefNum;
+    }
+    return volume;
+}
+
+#ifndef AFP_SHARED_CONSUMER
 static short volume_mount(ParamBlockRec* block)
 {
     register void* a0 __asm__("a0") = block;
@@ -36,26 +56,39 @@ static short volume_mount(ParamBlockRec* block)
     return d0;
 }
 
+#endif
+
 int main(void)
 {
+#ifndef AFP_SHARED_CONSUMER
     unsigned char record[48] = {
         [1] = 48,   [2] = 'a',  [3] = 'f',  [4] = 'p',  [5] = 'm',  [7] = 0x80, [17] = 30,  [25] = 1,
         [29] = 40,  [30] = 9,   [31] = 'M', [32] = 'a', [33] = 'c', [34] = 'i', [35] = 'n', [36] = 't',
         [37] = 'o', [38] = 's', [39] = 'h', [41] = 1,   [42] = 6,   [43] = 1,   [44] = 10,  [47] = 114,
     };
+#endif
     Str255 path = "\pD:Source:ROMAW:build:mactcp:afp-guest-mount-results.txt";
     HCreate(0, 0, path, 'MTPr', 'TEXT');
     if (HOpen(0, 0, path, fsRdWrPerm, &report))
         return 1;
     SetEOF(report, 0);
 
+    short volume = 0;
+    short error;
+#ifdef AFP_SHARED_CONSUMER
+    volume = find_macintosh();
+    error = volume ? 0 : -35;
+    check(!error, "independent ROMAW process discovered the Chooser mount");
+#else
+    short existing = find_macintosh();
     ParamBlockRec mount = {0};
     mount.ioParam.ioBuffer = (Ptr)record;
-    short error = volume_mount(&mount);
-    short volume = mount.ioParam.ioVRefNum;
+    error = volume_mount(&mount);
+    volume = mount.ioParam.ioVRefNum;
     char mount_result[100];
     sprintf(mount_result, "PBVolumeMount registers the AFP volume (error %d, reference %d)", error, volume);
     check(!error && volume < 0, mount_result);
+#endif
     if (!error) {
         Str255 name;
         ParamBlockRec info = {0};
@@ -93,7 +126,10 @@ int main(void)
             break;
         }
         check(read_file, "browse the AFP catalog and read a real file byte");
-        check(!UnmountVol(0, volume), "unmount the AFP volume");
+#ifndef AFP_SHARED_CONSUMER
+        if (existing != volume)
+            check(!UnmountVol(0, volume), "unmount the AFP volume");
+#endif
     }
     char footer[80];
     long bytes = sprintf(footer, "failures=%u checks=%u\n", failures, checks);

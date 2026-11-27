@@ -17,6 +17,7 @@
 
 /* Folder-based desk accessories and classic control-panel hosting. */
 #include "rsys/common.h"
+#include "finder/image_volumes.h"
 #include "rsys/everything.h"
 #include "rsys/desk.h"
 #include "rsys/prefpanel.h"
@@ -194,6 +195,15 @@ void ROMlib_desk_menu_setup(MenuHandle menu)
     if (apple_menu)
         ROMlib_desk_menu_forget(apple_menu);
     apple_menu = menu;
+    Str255 name;
+    BOOLEAN has_chooser = FALSE;
+    for (INTEGER item = 1; item <= CountMItems(menu); ++item) {
+        GetItem(menu, item, name);
+        if (EqualString(name, (StringPtr)"\007Chooser", FALSE, TRUE))
+            has_chooser = TRUE;
+    }
+    if (!has_chooser)
+        AppendMenu(menu, (StringPtr)"\007Chooser");
     names = NewHandle(0);
     if (!names)
         return;
@@ -234,6 +244,11 @@ ROMlib_desk_menu_select(LONGINT selection)
     Str255 name;
     if (apple_menu && (selection >> 16) == CW(HxX(apple_menu, menuID))) {
         GetItem(apple_menu, item, name);
+        if (EqualString(name, (StringPtr)"\007Chooser", FALSE, TRUE)) {
+            HiliteMenu(0);
+            ROMlib_finder_afp_chooser(NULL);
+            return TRUE;
+        }
         if (!EqualString(name, (StringPtr)ROMAW_PREFS_MENU_NAME, TRUE, TRUE))
             return FALSE;
         HiliteMenu(0);

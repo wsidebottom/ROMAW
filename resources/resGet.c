@@ -21,7 +21,6 @@
 
 #include "rsys/common.h"
 #include "ResourceMgr.h"
-#include "rsys/afp_catalog.h"
 #include "FileMgr.h"
 #include "rsys/resource.h"
 #include "MemoryMgr.h"
@@ -389,11 +388,8 @@ P2(PUBLIC pascal trap, Handle, Get1Resource, ResType, typ, /* IMIV-16 */
         return NULL;
     }
     ROMlib_setreserr(ROMlib_maptypidtop(map, typ, id, &rr));
-    if (ResErr == noErr) {
+    if (ResErr == noErr)
         retval = ROMlib_mgetres(map, rr);
-        if (typ == TICK("PACK") && id == -4096 && retval && STARH(retval))
-            ROMlib_afp_install_chooser_entry(retval);
-    }
     else {
         warn_resource_not_found(typ, id);
         retval = NULL;
@@ -500,9 +496,6 @@ P1(PUBLIC pascal trap, void, LoadResource, Handle volatile, res)
             SetResLoad(TRUE);
             ROMlib_mgetres(map, rr);
             ResLoad = save_resload;
-            if (ResErr == CWC(noErr) && CL(tr->rtyp) == TICK("PACK") && CW(rr->rid) == -4096 &&
-                STARH(res))
-                ROMlib_afp_install_chooser_entry(res);
         }
     }
 

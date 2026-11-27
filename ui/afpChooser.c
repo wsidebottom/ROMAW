@@ -1,319 +1,391 @@
 /*+===================================================================
   File:      afpChooser.c
 
-  Summary:   Connect Chooser's AppleShare IP action to native AFP.
+  Summary:   Native AFP over TCP server discovery and volume selection.
 
   Classes:   None.
 
-  Functions: ROMlib_afp_install_chooser_entry.
+  Functions: ROMlib_finder_afp_chooser.
 
-  Origin:    ROMAW native replacement for the AppleShare IP connect selector.
+  Origin:    ROMAW AFP integration.
 
   Copyright and Legal notices: See COPYING.
 ===================================================================+*/
-#include "rsys/common.h"
-#include "ControlMgr.h"
-#include "DialogMgr.h"
-#include "MemoryMgr.h"
-#include "OSUtil.h"
-#include "EditionMgr.h"
-#include "QuickDraw.h"
-#include "WindowMgr.h"
-#include "rsys/afp_catalog.h"
-#include "rsys/file.h"
+#define UNICODE
+#define _UNICODE
+#include <winsock2.h>
+#include <windows.h>
+#include <windns.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <wchar.h>
+#include "rsys/host_afp.h"
+#include "rsys/configprefs.h"
 #include "rsys/host_mactcp.h"
-#include "rsys/host_names.h"
-#include "rsys/mactcp.h"
-#include "rsys/system_error.h"
+#include "rsys/user_profile.h"
+#include "finder/image_volumes.h"
 
-static void word(unsigned char* bytes, unsigned value)
+#define NELEM(a) (sizeof(a) / sizeof((a)[0]))
+
+enum { servers_id = 100, address_id, connect_id, volumes_id, server_limit = 64 };
+
+static const wchar_t service[] = L"_afpovertcp._tcp.local";
+static SRWLOCK server_lock = SRWLOCK_INIT;
+static wchar_t servers[server_limit][256];
+static unsigned server_count;
+static unsigned server_revision;
+static HMODULE dns_module;
+static DNS_SERVICE_CANCEL browse_cancel;
+static DNS_STATUS(WINAPI* resolve_service)(PDNS_SERVICE_RESOLVE_REQUEST, PDNS_SERVICE_CANCEL);
+static VOID(WINAPI* free_instance)(PDNS_SERVICE_INSTANCE);
+static VOID(WINAPI* free_records)(PDNS_RECORD, DNS_FREE_TYPE);
+
+static VOID WINAPI browse_result(DWORD status, PVOID context, PDNS_RECORD records)
 {
-    bytes[0] = value >> 8;
-    bytes[1] = value;
-}
-
-static unsigned char* dialog_item(unsigned char* p, unsigned type, unsigned left, unsigned top, unsigned right,
-                                  unsigned bottom, const char* label)
-{
-    memset(p, 0, 4);
-    word(p + 4, top);
-    word(p + 6, left);
-    word(p + 8, bottom);
-    word(p + 10, right);
-    size_t length = strlen(label);
-    p[12] = type;
-    p[13] = length;
-    memcpy(p + 14, label, length);
-    if (length & 1)
-        p[14 + length] = 0;
-    return p + 14 + ((length + 1) & ~1);
-}
-
-static int read_text(DialogPtr dialog, INTEGER number, char output[256])
-{
-    INTEGER type;
-    HIDDEN_Handle item;
-    Rect bounds;
-    Str255 text;
-    GetDItem(dialog, number, &type, &item, &bounds);
-    if (!STARH(&item))
-        return 0;
-    GetIText(MR(HIDDEN_RAW(item)), text);
-    int length = ROMlib_mac_name_to_utf8((const char*)text + 1, text[0], output, 256);
-    if (length <= 0)
-        return 0;
-    while (length && (unsigned char)output[length - 1] <= ' ')
-        output[--length] = 0;
-    return length > 0;
-}
-
-static Handle item_handle(DialogPtr dialog, INTEGER number)
-{
-    INTEGER type;
-    HIDDEN_Handle item;
-    Rect bounds;
-    GetDItem(dialog, number, &type, &item, &bounds);
-    return MR(HIDDEN_RAW(item));
-}
-
-static void text_item(DialogPtr dialog, INTEGER number, const char* text)
-{
-    Str255 label;
-    size_t length = MIN(strlen(text), 255);
-    label[0] = length;
-    memcpy(label + 1, text, length);
-    SetIText(item_handle(dialog, number), label);
-}
-
-enum { browser_rows = 8 };
-
-static OSErr browser_page(DialogPtr dialog, INTEGER volume, uint32 directory, unsigned first,
-                          uint32 folders[browser_rows], uint32* parent, BOOLEAN* next)
-{
-    CInfoPBRec info = {0};
-    Str255 name;
-    info.dirInfo.ioVRefNum = CW(volume);
-    info.dirInfo.ioDrDirID = CL(directory);
-    info.dirInfo.ioFDirIndex = CWC(-1);
-    FIELD_ASSIGN_RAW(info.dirInfo.ioNamePtr, RM((StringPtr)name));
-    OSErr error = PBGetCatInfo(&info, FALSE);
-    if (error)
-        return error;
-    *parent = CL(info.dirInfo.ioDrParID);
-    char heading[260] = "Folder: ";
-    memcpy(heading + 8, name + 1, MIN(name[0], sizeof heading - 9));
-    heading[8 + MIN(name[0], sizeof heading - 9)] = 0;
-    text_item(dialog, 5, heading);
-
-    for (unsigned i = 0; i <= browser_rows; ++i) {
-        if (first + i > 32767)
-            error = fnfErr;
-        else {
-            memset(&info, 0, sizeof info);
-            info.hFileInfo.ioVRefNum = CW(volume);
-            info.hFileInfo.ioDirID = CL(directory);
-            info.hFileInfo.ioFDirIndex = CW(first + i);
-            FIELD_ASSIGN_RAW(info.hFileInfo.ioNamePtr, RM((StringPtr)name));
-            error = PBGetCatInfo(&info, FALSE);
-        }
-        if (error && error != fnfErr)
-            return error;
-        if (i == browser_rows) {
-            *next = !error;
-            break;
-        }
-        ControlHandle control = (ControlHandle)item_handle(dialog, 6 + i);
-        folders[i] = 0;
-        if (error) {
-            HideControl(control);
-            continue;
-        }
-        int is_folder = !!(info.hFileInfo.ioFlAttrib & ATTRIB_ISADIR);
-        if (is_folder)
-            folders[i] = CL(info.dirInfo.ioDrDirID);
-        Str255 title;
-        const char* prefix = is_folder ? "Folder: " : "File: ";
-        unsigned prefix_size = strlen(prefix), size = MIN(name[0], 53);
-        title[0] = prefix_size + size;
-        memcpy(title + 1, prefix, prefix_size);
-        memcpy(title + 1 + prefix_size, name + 1, size);
-        SetCTitle(control, title);
-        HiliteControl(control, is_folder ? 0 : 255);
-        ShowControl(control);
-    }
-    HiliteControl((ControlHandle)item_handle(dialog, 2), *parent >= 2 ? 0 : 255);
-    HiliteControl((ControlHandle)item_handle(dialog, 3), first > 1 ? 0 : 255);
-    HiliteControl((ControlHandle)item_handle(dialog, 4), *next ? 0 : 255);
-    return noErr;
-}
-
-static void browse_volume(INTEGER volume)
-{
-    unsigned char data[512];
-    word(data, 4 + browser_rows);
-    unsigned char* p = data + 2;
-    p = dialog_item(p, 4, 265, 224, 333, 246, "Done");
-    p = dialog_item(p, 4, 16, 224, 81, 246, "Up");
-    p = dialog_item(p, 4, 89, 224, 161, 246, "Previous");
-    p = dialog_item(p, 4, 169, 224, 239, 246, "Next");
-    p = dialog_item(p, 136, 16, 12, 333, 33, "Mounted AFP volume");
-    for (unsigned i = 0; i < browser_rows; ++i)
-        p = dialog_item(p, 4, 16, 38 + 22 * i, 333, 58 + 22 * i, "");
-    Handle items = NewHandle(p - data);
-    if (!items)
-        return;
-    memcpy(STARH(items), data, p - data);
-    Rect bounds;
-    SetRect(&bounds, 130, 80, 480, 336);
-    HIDDEN_GrafPtr saved;
-    GetPort(&saved);
-    DialogPtr dialog =
-        NewDialog(NULL, &bounds, (StringPtr) "\021Browse AFP Volume", TRUE, dBoxProc, (WindowPtr)-1, FALSE, 0, items);
-    if (!dialog) {
-        DisposHandle(items);
-        return;
-    }
-    SetPort((GrafPtr)dialog);
-    uint32 directory = 2;
-    unsigned first = 1;
-    for (;;) {
-        uint32 folders[browser_rows], parent;
-        BOOLEAN next;
-        OSErr error = browser_page(dialog, volume, directory, first, folders, &parent, &next);
-        if (error) {
-            char message[96];
-            snprintf(message, sizeof message, "AFP directory could not be listed (error %d).", error);
-            system_error(message, 0, "OK", NULL, NULL, NULL, NULL, NULL);
-            break;
-        }
-        INTEGER item = 0;
-        ModalDialog(NULL, &item);
-        item = CW(item);
-        if (item == 1)
-            break;
-        if (item == 2 && parent >= 2) {
-            directory = parent;
-            first = 1;
-        }
-        else if (item == 3 && first > 1)
-            first -= browser_rows;
-        else if (item == 4 && next)
-            first += browser_rows;
-        else if (item >= 6 && item < 6 + browser_rows && folders[item - 6]) {
-            directory = folders[item - 6];
-            first = 1;
-        }
-    }
-    DisposDialog(dialog);
-    SetPort(MR(HIDDEN_RAW(saved)));
-}
-
-static OSErr connect_dialog(void)
-{
-    unsigned char data[256];
-    word(data, 5);
-    unsigned char* p = data + 2;
-    p = dialog_item(p, 4, 245, 112, 330, 134, "Mount");
-    p = dialog_item(p, 4, 148, 112, 233, 134, "Cancel");
-    p = dialog_item(p, 136, 16, 17, 106, 35, "Server");
-    p = dialog_item(p, 16, 110, 15, 329, 36, "");
-    p = dialog_item(p, 136, 16, 55, 106, 75, "Volume");
-    p = dialog_item(p, 16, 110, 54, 329, 76, "");
-    Handle items = NewHandle(p - data);
-    if (!items)
-        return memFullErr;
-    memcpy(STARH(items), data, p - data);
-    Rect bounds;
-    SetRect(&bounds, 130, 120, 476, 268);
-    HIDDEN_GrafPtr previous;
-    GetPort(&previous);
-    DialogPtr dialog =
-        NewDialog(NULL, &bounds, (StringPtr) "\016AFP Connection", TRUE, dBoxProc, (WindowPtr)-1, FALSE, 0, items);
-    if (!dialog) {
-        DisposHandle(items);
-        return memFullErr;
-    }
-    SetPort((GrafPtr)dialog);
-    SelIText(dialog, 4, 0, 32767);
-    INTEGER reference = 0;
-    OSErr result = userCanceledErr;
-    for (;;) {
-        INTEGER item = 0;
-        ModalDialog(NULL, &item);
-        if (CW(item) == 2)
-            break;
-        if (CW(item) != 1)
-            continue;
-        char server[256], volume[256];
-        if (!read_text(dialog, 4, server) || !read_text(dialog, 6, volume)) {
-            SysBeep(1);
-            continue;
-        }
-        uint32 addresses[4];
-        char canonical[255];
-        result = host_mactcp_resolver_open();
-        if (!result) {
-            result = host_mactcp_resolve(server, addresses, canonical);
-            host_mactcp_resolver_close();
-        }
-        if (!result) {
-            result = ROMlib_afp_register_volume(addresses[0], 548, volume, &reference);
-            if (result == fnfErr) {
-                system_error("The AFP server could not find that volume. Check its name and try again.", 0, "OK", NULL,
-                             NULL, NULL, NULL, NULL);
-                SetPort((GrafPtr)dialog);
+    (void)context;
+    if (status == ERROR_SUCCESS) {
+        AcquireSRWLockExclusive(&server_lock);
+        for (PDNS_RECORD record = records; record; record = record->pNext) {
+            if (record->wType != DNS_TYPE_PTR || !record->pName || _wcsicmp(record->pName, service) ||
+                !record->Data.PTR.pNameHost)
                 continue;
+            const wchar_t* name = record->Data.PTR.pNameHost;
+            if (wcslen(name) >= 256)
+                continue;
+            unsigned i = 0;
+            while (i < server_count && _wcsicmp(servers[i], name))
+                ++i;
+            if (!record->dwTtl && i < server_count) {
+                memmove(servers + i, servers + i + 1, (--server_count - i) * sizeof servers[0]);
+                ++server_revision;
+            }
+            else if (record->dwTtl && i == server_count && server_count < server_limit) {
+                wcscpy(servers[server_count++], name);
+                ++server_revision;
             }
         }
-        if (!result)
-            break;
-        char error[110];
-        snprintf(error, sizeof error, "AFP could not mount the requested volume (error %d).", result);
-        system_error(error, 0, "OK", NULL, NULL, NULL, NULL, NULL);
-        SetPort((GrafPtr)dialog);
+        ReleaseSRWLockExclusive(&server_lock);
     }
-    DisposDialog(dialog);
-    SetPort(MR(HIDDEN_RAW(previous)));
+    if (records)
+        free_records(records, DnsFreeRecordList);
+}
+
+static void start_discovery(void)
+{
+    if (dns_module)
+        return;
+    dns_module = LoadLibraryW(L"dnsapi.dll");
+    if (!dns_module)
+        return;
+    DNS_STATUS(WINAPI * browse_service)(PDNS_SERVICE_BROWSE_REQUEST, PDNS_SERVICE_CANCEL);
+    browse_service = (void*)GetProcAddress(dns_module, "DnsServiceBrowse");
+    resolve_service = (void*)GetProcAddress(dns_module, "DnsServiceResolve");
+    free_instance = (void*)GetProcAddress(dns_module, "DnsServiceFreeInstance");
+    free_records = (void*)GetProcAddress(dns_module, "DnsFree");
+    if (browse_service && resolve_service && free_instance && free_records) {
+        static DNS_SERVICE_BROWSE_REQUEST request;
+        request.Version = DNS_QUERY_REQUEST_VERSION1;
+        request.QueryName = service;
+        request.pBrowseCallback = browse_result;
+        browse_service(&request, &browse_cancel);
+    }
+}
+
+struct resolution {
+    LONG users;
+    HANDLE ready;
+    DNS_SERVICE_CANCEL cancel;
+    DNS_SERVICE_RESOLVE_REQUEST request;
+    wchar_t name[256];
+    uint32_t address;
+    uint16_t port;
+};
+
+static void release_resolution(struct resolution* result)
+{
+    if (!InterlockedDecrement(&result->users)) {
+        CloseHandle(result->ready);
+        free(result);
+    }
+}
+
+static VOID WINAPI resolved(DWORD status, PVOID context, PDNS_SERVICE_INSTANCE instance)
+{
+    struct resolution* result = context;
+    if (status == ERROR_SUCCESS && instance && instance->ip4Address) {
+        result->address = ntohl(*instance->ip4Address);
+        result->port = instance->wPort;
+    }
+    if (instance)
+        free_instance(instance);
+    SetEvent(result->ready);
+    release_resolution(result);
+}
+
+static int resolve_advertisement(const wchar_t* name, uint32_t* address, uint16_t* port)
+{
+    struct resolution* result = calloc(1, sizeof *result);
     if (!result)
-        browse_volume(reference);
-    return result;
+        return 0;
+    result->ready = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!result->ready) {
+        free(result);
+        return 0;
+    }
+    result->users = 2;
+    wcscpy(result->name, name);
+    result->request.Version = DNS_QUERY_REQUEST_VERSION1;
+    result->request.QueryName = result->name;
+    result->request.pResolveCompletionCallback = resolved;
+    result->request.pQueryContext = result;
+    int success = 0;
+    if (resolve_service(&result->request, &result->cancel) != DNS_REQUEST_PENDING)
+        release_resolution(result);
+    else if (WaitForSingleObject(result->ready, 2000) == WAIT_OBJECT_0) {
+        *address = result->address;
+        *port = result->port;
+        success = *address && *port;
+    }
+    release_resolution(result);
+    return success;
 }
 
-static syn68k_addr_t chooser_connect(syn68k_addr_t address, void* context)
+struct chooser {
+    wchar_t previous[256];
+    wchar_t server_names[server_limit][256];
+    unsigned revision;
+    uint32_t address;
+    uint16_t port;
+    romaw_afp_volume_list volumes;
+};
+
+static void update_servers(HWND dialog, struct chooser* state)
 {
-    (void)address;
-    (void)context;
-    /* The patch is a JSR. Its synthetic return identifies this movable CODE
-       handle without storing a host pointer to the resource contents. */
-    uint32 resume = POPADDR();
-    if (READUW(EM_A7 + 22) != 19)
-        return resume - 20 + 0x5ae6;
-    OSErr result = connect_dialog();
-    WRITEUW(EM_A7 + 24, result == noErr ? 0 : -1);
-    EM_D0 = result == noErr ? 0 : -1;
-    uint32 target = POPADDR();
-    EM_A7 += 20;
-    return target;
+    HWND list = GetDlgItem(dialog, servers_id);
+    AcquireSRWLockShared(&server_lock);
+    unsigned revision = server_revision;
+    unsigned count = server_count;
+    if (state->revision != revision)
+        memcpy(state->server_names, servers, count * sizeof servers[0]);
+    ReleaseSRWLockShared(&server_lock);
+    if (state->revision == revision)
+        return;
+    state->revision = revision;
+    SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    if (state->previous[0])
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)state->previous);
+    for (unsigned i = 0; i < count; ++i) {
+        wchar_t label[256];
+        wcscpy(label, state->server_names[i]);
+        wchar_t* suffix = wcsstr(label, L"._afpovertcp.");
+        if (suffix)
+            *suffix = 0;
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)label);
+    }
 }
 
-void ROMlib_afp_install_chooser_entry(Handle resource)
+static int resolve_address(wchar_t* input, uint32_t* address, uint16_t* port)
 {
-    /* AppleShare IP 3.7.4: PACK -4096 branches past its 14-byte
-       descriptor into the dispatcher. Preserve the descriptor and all
-       non-connect selectors. Other releases keep their original code. */
-    static const unsigned char signature[] = {
-        0x60, 0x0e, 0x00, 0x4d, 'P',  'A',  'C',  'K',  0xf0, 0x00,
-        0x00, 0x0e, 0x1f, 0x0a, 0x78, 0x00, 0x4e, 0xfa, 0x5a, 0xd4,
-    };
-    unsigned char* bytes = (unsigned char*)STARH(resource);
-    if (GetHandleSize(resource) != 45590 || !bytes || memcmp(bytes, signature, sizeof signature))
+    *port = 548;
+    wchar_t* separator = wcschr(input, L':');
+    if (separator) {
+        wchar_t* end;
+        unsigned long number = wcstoul(separator + 1, &end, 10);
+        if (*end || !number || number > 65535)
+            return 0;
+        *separator = 0;
+        *port = number;
+    }
+    char host[256], canonical[255];
+    uint32_t addresses[4];
+    if (!input[0] || !WideCharToMultiByte(CP_UTF8, 0, input, -1, host, sizeof host, NULL, NULL) ||
+        host_mactcp_resolver_open())
+        return 0;
+    int error = host_mactcp_resolve(host, addresses, canonical);
+    host_mactcp_resolver_close();
+    if (error)
+        return 0;
+    *address = addresses[0];
+    return 1;
+}
+
+static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
+{
+    HWND volumes = GetDlgItem(dialog, volumes_id);
+    SendMessageW(volumes, LB_RESETCONTENT, 0, 0);
+    EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
+    wchar_t address[256];
+    GetDlgItemTextW(dialog, address_id, address, NELEM(address));
+    LRESULT row = SendDlgItemMessageW(dialog, servers_id, LB_GETCURSEL, 0, 0);
+    int remembered = state->previous[0] != 0;
+    int connected;
+    if (choose_row && row >= remembered)
+        connected = resolve_advertisement(state->server_names[row - remembered], &state->address, &state->port);
+    else {
+        if (choose_row && row == 0)
+            wcscpy(address, state->previous);
+        connected = resolve_address(address, &state->address, &state->port);
+    }
+    if (!connected) {
+        MessageBoxW(dialog, L"Enter a server name or IPv4 address, optionally followed by a port.", L"Chooser",
+                    MB_OK | MB_ICONWARNING);
         return;
-    static syn68k_addr_t callback;
-    if (!callback)
-        callback = callback_install(chooser_connect, NULL);
-    if (!callback || callback >= 0x8000)
+    }
+    wchar_t endpoint[64];
+    uint32_t ip = state->address;
+    swprintf(endpoint, NELEM(endpoint), L"%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+             state->port);
+    SetDlgItemTextW(dialog, address_id, endpoint);
+    int32_t error;
+    romaw_afp_session* session = romaw_afp_connect(state->address, state->port, &error);
+    if (session) {
+        error = romaw_afp_list_volumes(session, &state->volumes);
+        romaw_afp_close(session);
+    }
+    if (error || !state->volumes.count) {
+        MessageBoxW(dialog,
+                    error ? L"Could not list volumes on this AFP server as a guest."
+                          : L"This server offers no volumes to guests.",
+                    L"Chooser", MB_OK | MB_ICONWARNING);
         return;
-    word(bytes + 16, 0x4eb8);
-    word(bytes + 18, callback);
-    ROMlib_destroy_blocks(US_TO_SYN68K(bytes + 16), 4, TRUE);
+    }
+    for (unsigned i = 0; i < state->volumes.count; ++i) {
+        wchar_t name[256];
+        if (MultiByteToWideChar(CP_UTF8, 0, state->volumes.items[i].name, -1, name, NELEM(name))) {
+            LRESULT index = SendMessageW(volumes, LB_ADDSTRING, 0, (LPARAM)name);
+            if (index >= 0)
+                SendMessageW(volumes, LB_SETITEMDATA, index, i);
+        }
+    }
+    if (SendMessageW(volumes, LB_GETCOUNT, 0, 0) > 0) {
+        SendMessageW(volumes, LB_SETCURSEL, 0, 0);
+        EnableWindow(GetDlgItem(dialog, IDOK), TRUE);
+    }
+}
+
+static void control(HWND dialog, const wchar_t* type, const wchar_t* title, DWORD style, DWORD edge, int id, int x,
+                    int y, int width, int height)
+{
+    RECT r = {x, y, x + width, y + height};
+    MapDialogRect(dialog, &r);
+    HWND window = CreateWindowExW(edge, type, title, WS_CHILD | WS_VISIBLE | style, r.left, r.top, r.right - r.left,
+                                  r.bottom - r.top, dialog, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
+    SendMessageW(window, WM_SETFONT, SendMessageW(dialog, WM_GETFONT, 0, 0), TRUE);
+}
+
+static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    struct chooser* state = (void*)GetWindowLongPtrW(dialog, DWLP_USER);
+    if (message == WM_INITDIALOG) {
+        state = (void*)lparam;
+        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
+        control(dialog, L"STATIC", L"AFP over TCP servers", 0, 0, -1, 8, 8, 130, 10);
+        control(dialog, L"STATIC", L"Volumes", 0, 0, -1, 158, 8, 130, 10);
+        control(dialog, L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
+                servers_id, 8, 20, 142, 86);
+        control(dialog, L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
+                volumes_id, 158, 20, 142, 86);
+        control(dialog, L"STATIC", L"Server address", 0, 0, -1, 8, 113, 62, 12);
+        control(dialog, L"EDIT", state->previous, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, address_id, 72, 110,
+                169, 15);
+        SendDlgItemMessageW(dialog, address_id, EM_LIMITTEXT, 255, 0);
+        control(dialog, L"BUTTON", L"Connect", WS_TABSTOP, 0, connect_id, 248, 110, 52, 15);
+        control(dialog, L"BUTTON", L"Mount", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 188, 135, 52, 16);
+        control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 248, 135, 52, 16);
+        EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
+        update_servers(dialog, state);
+        SetTimer(dialog, 1, 400, NULL);
+        return TRUE;
+    }
+    if (message == WM_TIMER) {
+        update_servers(dialog, state);
+        return TRUE;
+    }
+    if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wparam) == IDCANCEL)) {
+        EndDialog(dialog, 0);
+        return TRUE;
+    }
+    if (message != WM_COMMAND)
+        return FALSE;
+    if (LOWORD(wparam) == connect_id || (LOWORD(wparam) == servers_id && HIWORD(wparam) == LBN_SELCHANGE)) {
+        list_volumes(dialog, state, LOWORD(wparam) == servers_id);
+        return TRUE;
+    }
+    if (LOWORD(wparam) != IDOK && !(LOWORD(wparam) == volumes_id && HIWORD(wparam) == LBN_DBLCLK))
+        return FALSE;
+    LRESULT row = SendDlgItemMessageW(dialog, volumes_id, LB_GETCURSEL, 0, 0);
+    if (row < 0)
+        return TRUE;
+    LRESULT index = SendDlgItemMessageW(dialog, volumes_id, LB_GETITEMDATA, row, 0);
+    if (index < 0 || index >= state->volumes.count)
+        return TRUE;
+    int publish_error;
+    int error = ROMlib_finder_mount_afp(state->address, state->port, state->volumes.items[index].name, &publish_error);
+    if (error) {
+        MessageBoxW(dialog, L"The selected AFP volume could not be mounted.", L"Chooser", MB_OK | MB_ICONWARNING);
+        return TRUE;
+    }
+    if (publish_error)
+        MessageBoxW(dialog, L"The volume mounted here, but could not be shared with other ROMAW processes.", L"Chooser",
+                    MB_OK | MB_ICONWARNING);
+    char path[4096], endpoint[64];
+    uint32_t ip = state->address;
+    snprintf(endpoint, sizeof endpoint, "%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+             state->port);
+    if (romaw_profile_path("AFP Mount.ini", path, sizeof path, NULL, 0))
+        config_prefs_set(path, "AFP", "Last Server", endpoint);
+    EndDialog(dialog, 1);
+    return TRUE;
+}
+
+int ROMlib_finder_afp_chooser(void* owner)
+{
+    struct chooser* state = calloc(1, sizeof *state);
+    if (!state)
+        return 0;
+    state->revision = (unsigned)-1;
+    char path[4096], endpoint[64] = {0};
+    if (romaw_profile_path("AFP Mount.ini", path, sizeof path, NULL, 0)) {
+        config_prefs_get(path, "AFP", "Last Server", endpoint, sizeof endpoint);
+        MultiByteToWideChar(CP_UTF8, 0, endpoint, -1, state->previous, NELEM(state->previous));
+    }
+    start_discovery();
+    if (!owner)
+        owner = GetActiveWindow();
+
+    enum { style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT };
+
+    _Alignas(DWORD) static const WORD template_words[] = {style & 0xffff,
+                                                          (DWORD)style >> 16,
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          308,
+                                                          159,
+                                                          0,
+                                                          0,
+                                                          'C',
+                                                          'h',
+                                                          'o',
+                                                          'o',
+                                                          's',
+                                                          'e',
+                                                          'r',
+                                                          0,
+                                                          9,
+                                                          'S',
+                                                          'e',
+                                                          'g',
+                                                          'o',
+                                                          'e',
+                                                          ' ',
+                                                          'U',
+                                                          'I',
+                                                          0};
+    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandleW(NULL), (const DLGTEMPLATE*)template_words, owner,
+                                             chooser_dialog, (LPARAM)state);
+    free(state);
+    return result == 1;
 }

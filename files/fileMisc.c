@@ -34,6 +34,7 @@
 
 #include "rsys/hfs.h"
 #include "rsys/file.h"
+#include "rsys/afp_catalog.h"
 #include "rsys/notmac.h"
 #include "rsys/stdfile.h"
 #include "rsys/string.h"
@@ -1032,6 +1033,7 @@ A0(PUBLIC, void, ROMlib_fileinit) /* INTERNAL */
 #endif
 
     {
+        ROMlib_afp_sync_mount();
         size_t length = strlen(ROMlib_userdir);
         char* map = malloc(length + sizeof "/ROMAW.ftm");
         if (map) {

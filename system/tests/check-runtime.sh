@@ -17,9 +17,9 @@ check=${1:---list}
 if [ "$#" -gt 0 ]; then shift; fi
 case "$check" in
   --list | list)
-    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'mactcp-guest' 'mactcp-ppc' 'afp-guest' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
+    printf '%s\n' '24bit-memory' 'application-instance' 'browser-compat' 'callback-width' 'config-prefs' 'cooperative-context' 'ecf-unit' 'guest-abi' 'guest-pointer' 'mactcp' 'mactcp-guest' 'mactcp-ppc' 'afp-guest' 'afp-shared-guest' 'quit' 'robustness' 'native-preferences' 'sdl-preferences' 'syserr'
     ;;
-  afp-guest)
+  afp-guest | afp-shared-guest)
     (
       set -euo pipefail
       root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -27,10 +27,15 @@ case "$check" in
       retro68=${RETRO68_PREFIX:-/home/william/retro68-toolchain}
       out="$root/build/mactcp"
       name=AFPMountProbe
+      flags=()
+      if [ "$check" = afp-shared-guest ]; then
+        name=AFPSharedProbe
+        flags+=(-DAFP_SHARED_CONSUMER)
+      fi
       report="$out/afp-guest-mount-results.txt"
       mkdir -p "$out"
       cd "$root"
-      "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 system/tests/afp_guest_probe.c -o "$out/$name.code.bin"
+      "$retro68/bin/m68k-apple-macos-gcc" -std=gnu11 -O1 "${flags[@]}" system/tests/afp_guest_probe.c -o "$out/$name.code.bin"
       "$retro68/bin/Rez" "$retro68/m68k-apple-macos/RIncludes/Retro68APPL.r" \
         -I"$retro68/m68k-apple-macos/RIncludes" --copy "$out/$name.code.bin" \
         -o "$out/$name.bin" -t APPL -c MTPr --cc "$out/%$name"

@@ -8,18 +8,23 @@
   Functions: ROMlib_afp_catalog_index, ROMlib_afp_file_error, ROMlib_afp_is_volume,
              ROMlib_afp_register_volume, ROMlib_afp_mounted_catalog, ROMlib_afp_is_fork, ROMlib_afp_open,
              ROMlib_afp_read, ROMlib_afp_close_fork, ROMlib_afp_set_position, ROMlib_afp_unmount,
-             ROMlib_afp_volume_mount, ROMlib_afp_open_wd.
+             ROMlib_afp_volume_mount, ROMlib_afp_open_wd, ROMlib_afp_publish_mount,
+             ROMlib_afp_sync_mount, ROMlib_afp_volume_source, ROMlib_finder_mount_afp.
 
   Origin:    ROMAW bridge between AFP catalog records and classic parameter blocks.
 
   Copyright and Legal notices: See COPYING.
 ===================================================================+*/
 #include "rsys/common.h"
+#include "finder/image_volumes.h"
 #include "FileMgr.h"
 #include "MemoryMgr.h"
 #include "OSUtil.h"
 #include "rsys/hfs.h"
 #include "rsys/afp_catalog.h"
+#include "rsys/configprefs.h"
+#include "rsys/user_profile.h"
+#include "ToolboxEvent.h"
 #include "rsys/file.h"
 #include "rsys/host_names.h"
 #include "rsys/mactcp.h"
@@ -146,6 +151,7 @@ static struct {
     uint16 remote_id;
     uint32 address;
     uint16 port;
+    char name[256];
 } afp_mounts[afp_mount_limit];
 
 static int mount_index(const VCB* volume)
@@ -219,6 +225,7 @@ OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, 
     afp_mounts[slot].remote_id = remote_id;
     afp_mounts[slot].address = address;
     afp_mounts[slot].port = port;
+    memcpy(afp_mounts[slot].name, name, bytes + 1);
     Enqueue((QElemPtr)mounted, &VCBQHdr);
     *reference = CW(mounted->vcb.vcbVRefNum);
     return noErr;
@@ -423,7 +430,10 @@ OSErr ROMlib_afp_open_wd(VCB* volume, uint32 directory, WDPBPtr pb)
     return ROMlib_mkwd(pb, (HVCB*)volume, entry.node_id, CL(pb->ioWDProcID));
 }
 
-OSErr ROMlib_afp_unmount(VCB* volume)
+static int profile_mount_file(char path[4096]);
+static void mount_key(unsigned slot, char key[280]);
+
+static OSErr unmount(VCB* volume, BOOLEAN publish)
 {
     int mount = mount_index(volume);
     if (mount < 0)
@@ -431,6 +441,14 @@ OSErr ROMlib_afp_unmount(VCB* volume)
     for (unsigned i = 0; i < NFCB; ++i)
         if (afp_forks[i].fcb && afp_forks[i].mount == mount)
             return fBsyErr;
+
+    if (publish) {
+        char path[4096], expected[280], remembered[280];
+        mount_key(mount, expected);
+        if (profile_mount_file(path) && config_prefs_get(path, "AFP", "Mount", remembered, sizeof remembered) &&
+            !strcmp(expected, remembered) && !config_prefs_set(path, "AFP", "Mount", NULL))
+            return ioErr;
+    }
 
     /* Remove local visibility even when the remote side has disconnected. */
     int32 result = romaw_afp_close_volume(afp_mounts[mount].session, afp_mounts[mount].remote_id);
@@ -450,6 +468,11 @@ OSErr ROMlib_afp_unmount(VCB* volume)
     memset(&afp_mounts[mount], 0, sizeof afp_mounts[mount]);
     DisposPtr((Ptr)volume);
     return ROMlib_afp_file_error(result);
+}
+
+OSErr ROMlib_afp_unmount(VCB* volume)
+{
+    return unmount(volume, TRUE);
 }
 
 static uint16 mount_word(const unsigned char* data)
@@ -523,4 +546,88 @@ OSErr ROMlib_afp_volume_mount(ParmBlkPtr pb, BOOLEAN async)
     }
 done:
     FAKEASYNC(pb, async, error);
+}
+
+static int profile_mount_file(char path[4096])
+{
+    return romaw_profile_path("AFP Mount.ini", path, 4096, NULL, 0);
+}
+
+static void mount_key(unsigned slot, char key[280])
+{
+    snprintf(key, 280, "%08lx:%u:%s", (unsigned long)afp_mounts[slot].address, afp_mounts[slot].port,
+             afp_mounts[slot].name);
+}
+
+OSErr ROMlib_afp_publish_mount(INTEGER reference)
+{
+    int slot = mount_index((VCB*)ROMlib_vcbbyvrn(reference));
+    if (slot < 0)
+        return nsvErr;
+    char path[4096], key[280];
+    mount_key(slot, key);
+    if (!profile_mount_file(path) || !config_prefs_set(path, "AFP", "Mount", key))
+        return ioErr;
+    return noErr;
+}
+
+void ROMlib_afp_sync_mount(void)
+{
+    static uint32 poll_at;
+    static int polled;
+    static INTEGER shared_reference;
+    static char shared_key[280];
+    uint32 now = TickCount();
+    if (polled && (int32)(now - poll_at) < 0)
+        return;
+    polled = 1;
+    poll_at = now + 120;
+    char path[4096], key[280] = {0};
+    if (!profile_mount_file(path))
+        return;
+    config_prefs_get(path, "AFP", "Mount", key, sizeof key);
+    if (shared_reference) {
+        VCB* current = (VCB*)ROMlib_vcbbyvrn(shared_reference);
+        if (ROMlib_afp_is_volume(current)) {
+            if (!strcmp(key, shared_key))
+                return;
+            if (unmount(current, FALSE) == fBsyErr)
+                return;
+        }
+        shared_reference = 0;
+    }
+    if (!key[0])
+        return;
+    unsigned long address;
+    unsigned port;
+    int offset = 0;
+    if (sscanf(key, "%8lx:%5u:%n", &address, &port, &offset) != 2 || offset < 11 || !address || !port || port > 65535 ||
+        !key[offset] || strlen(key + offset) > 255)
+        return;
+    INTEGER reference;
+    if (ROMlib_afp_register_volume(address, port, key + offset, &reference)) {
+        poll_at = now + 600;
+        return;
+    }
+    shared_reference = reference;
+    strcpy(shared_key, key);
+}
+
+BOOLEAN ROMlib_afp_volume_source(const VCB* volume, char* source, size_t capacity)
+{
+    int slot = mount_index(volume);
+    if (slot < 0)
+        return FALSE;
+    uint32 ip = afp_mounts[slot].address;
+    snprintf(source, capacity, "afp://%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+             afp_mounts[slot].port);
+    return TRUE;
+}
+
+int ROMlib_finder_mount_afp(uint32_t address, uint16_t port, const char* name, int* publish_error)
+{
+    INTEGER volume;
+    OSErr error = ROMlib_afp_register_volume(address, port, name, &volume);
+    *publish_error = error ? noErr : ROMlib_afp_publish_mount(volume);
+    return error;
 }

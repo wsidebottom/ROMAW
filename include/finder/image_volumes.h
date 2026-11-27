@@ -51,6 +51,9 @@ int16_t ROMlib_finder_image_memory(int16_t reference, uint32_t parent, const cha
 
 /* Indexed volume snapshot: one on success, zero at the end. UI thread only. */
 int ROMlib_finder_image_volume(uint32_t index, FinderImageVolume* result);
+/* Opens the AFP Chooser on the UI thread. Returns one after mounting a volume. */
+int ROMlib_finder_afp_chooser(void* owner);
+int ROMlib_finder_mount_afp(uint32_t address, uint16_t port, const char* name, int* publish_error);
 /* Borrowed source path and requested access mode for each live selection. */
 const char* ROMlib_finder_image_mount(uint32_t index, int* mode);
 /* One-based catalog index; -1 queries the directory itself. Macintosh OSErr. */

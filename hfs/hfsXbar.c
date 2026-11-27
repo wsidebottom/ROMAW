@@ -90,6 +90,7 @@ PRIVATE BOOLEAN hfsvol(ioParam* pb)
 
 PRIVATE BOOLEAN hfsIvol(volumeParam* pb) /* potentially Indexed vol */
 {
+    ROMlib_afp_sync_mount();
     BOOLEAN retval;
     HVCB* vcbp;
 
