@@ -29,4 +29,5 @@ OSErr ROMlib_afp_set_position(ioParam* pb);
 OSErr ROMlib_afp_unmount(VCB* volume);
 OSErr ROMlib_afp_volume_mount(ParmBlkPtr pb, BOOLEAN async);
 OSErr ROMlib_afp_open_wd(VCB* volume, uint32 directory, WDPBPtr pb);
+void ROMlib_afp_install_chooser_entry(Handle resource);
 #endif

@@ -42,6 +42,7 @@ evidence; they are not distributed with ROMAW.
 - [Finder guest resource procedures](../finder/guest/README.md)
 - [Native resource inventory, embedded hooks and validation](native-code-resources.md)
 - [MacTCP](mactcp.md): Windows transport, resolver, ownership, reference evidence and regression checks.
+- [AFP in Chooser](afp-chooser.md): mount and browse a guest-accessible AFP share.
 - [Shared classic UI](../classic-ui/README.md) and [QuickDraw host adapter](../windows/README.md)
 - [Icons and host metadata](../finder-metadata/README.md)
 - [Disk-image support and limits](../disk-images/README.md)

@@ -216,7 +216,7 @@ text_sources = text/font.c text/iu.c text/script.c text/string.c text/fontIMVI.c
   text/intl_resource.c include/rsys/intl_resource.h
 host_sources = host/slash.c host/trash.c host/diskimages.c host/macinfo.c host/fauxdbm.c host/application_instance.c
 display_sources = display/refresh.c display/autorefresh.c display/redrawscreen.c
-ui_sources = ui/desk.c ui/deskfiles.c ui/aboutbox.c ui/licensetext.c ui/preferences.c ui/balloon.c \
+ui_sources = ui/afpChooser.c ui/desk.c ui/deskfiles.c ui/aboutbox.c ui/licensetext.c ui/preferences.c ui/balloon.c \
   ui/color_wheel_bits.c ui/icon.c ui/appearance.c
 diagnostic_sources = diagnostics/dump.c diagnostics/trapname.c diagnostics/syserr.c diagnostics/syserr_procedures.c diagnostics/desperate.c \
   diagnostics/error.c diagnostics/system_error.c

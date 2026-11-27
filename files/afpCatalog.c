@@ -35,18 +35,24 @@ OSErr ROMlib_afp_file_error(int32 result)
         return dskFulErr;
     case -5009:
         return eofErr;
-    case -5016:
-        return tmfoErr;
-    case -5018:
+    case -5010:
+        return fBsyErr;
+    case -5017:
         return dupFNErr;
-    case -5019:
+    case -5018:
         return fnfErr;
-    case -5023:
+    case -5019:
         return paramErr;
+    case -5023:
+        return permErr;
+    case -5026:
+        return tmfoErr;
+    case -5029:
+        return dirNFErr;
     case -5031:
         return wPrErr;
     case -5034:
-        return dirNFErr;
+        return fnfErr;
     default:
         return ioErr;
     }
