@@ -95,3 +95,18 @@ The fixture reports translation/restoration time separately. The optional
 translation. Disk caching can remove warm translation work; it does not make
 the same emitted instruction sequence execute faster. These fixtures do not
 establish application performance or complete interactive compatibility.
+
+## Buffered-victim arbitration validation (2026-11-27)
+
+The mapped victim-snoop/FPU regression runs 64 cases per process through
+checked/native CPU and memory combinations. It covers the post-fill grant,
+snoop-modified dirty writeback data, normal and faulted pushes, guest PD cleanup,
+RTE and T1 trace delivery. Cold execution emits one native body; a separate warm
+process loads it without compilation. The fixture is registered in both the MMU
+and AOT groups.
+
+Full cold/warm validation and the rebuilt/staged ROMAW bundle pass with the CPU
+identity recorded in `build/68040-victim-output/68040-victim-source-audit.json`.
+The two cache-state changes produce a new identity; previous cache entries
+cannot be reused as code for this layout. See the latest
+[68040 checkpoint](68040-status.md) for the remaining CPU integration work.

@@ -5,7 +5,51 @@ existing integer core. This is not yet a complete MC68040 implementation.
 ROMAW's FPU capability reporting remains unchanged until instruction,
 exception and saved-state compatibility are validated together.
 
-## Latest validated bundle: physical snoop lowering (2026-11-27)
+## Latest validated bundle: buffered-victim arbitration (2026-11-27)
+
+Source checkpoints `2a0ed97f` and `db140772` expose a dirty replacement
+buffer during a board-controlled grant after data fill and before writeback.
+Snoops may supply, sink or invalidate that buffer. The eventual push uses the
+updated dirty selection and bytes, or is cancelled after invalidation. Ordinary
+recursive cache accesses remain rejected. The acquired CPU read is retained;
+a copyback store does not overwrite a master's subsequently sunk bytes.
+
+The reference matrix passes 80,736 cases in optimized Windows and ASan/UBSan
+builds. All 22 emitted kernel groups pass on both Windows and Linux x64 ABIs,
+including 238,752 buffer cases per ABI. Both images verify 47 closed roots with
+no imports, and the independently generated Windows image matches the CPU
+archive. The exact buffer fixture rejects the preceding accepted checked and
+emitted archive.
+
+A mapped 64-case matrix covers FPU reads/stores, normal and failed pushes,
+checked/native CPU and memory combinations, guest PD cleanup/RTE and all trace
+settings. Captured PD retains snoop-modified bytes; the handler preserves the CT
+trace PC. Its cold AOT process emits one body and its warm process loads it with
+zero compilation. Full cache, FPU, MMU, flat MOVE16, saved-state/FPSP and cold/warm
+AOT groups pass. The existing mapped AOT recovery retains 3,618,920 cases per
+process and 1,262,191 warm hits with zero compilation.
+
+The 66-file bundle at `build/68040-victim-stage/bin` is promoted to
+`build/68040-current/bin`, with its prior bundle retained at
+`build/68040-pre-victim-bin-20261127`. The audit at
+`build/68040-victim-output/68040-victim-source-audit.json` verifies 179 CPU
+inputs, 167 fixtures and four identical archives. Application base is
+`2a0ed97fc4d2a88d461d080ee536efa1e7adc1da`; CPU build ID is
+`d3adceb90f85bb207ca475dc162a406aa65ca155d2a82df1b10484f720646e79`; archive SHA256 is
+`d1d75ae29cb9058427efed126bee33e335802a5ef0a6c9379b695ea559aa78cc`.
+Help, Browser and 68K Speedometer startup pass,
+with 30,944/77,161 native entries and null checkpoints;
+Speedometer makes one FPU query. These are startup smokes, not broad application
+compatibility tests.
+
+The goal remains active. Source-miss compound descriptor pushes, further
+locked/active-stack/double-fault continuations, physical instruction prefetch,
+partial external transactions, and remaining FPU busy/FPSP, encoding and
+special-value audits remain open. This grant boundary does not implement
+preemption within a line burst or pin-level timing. Full 68040 and ROMAW-wide
+paged Toolbox compatibility remain unproven.
+
+## Previous validated bundle: physical snoop lowering (2026-11-27)
 
 Source checkpoint `d2397f65` adds accepted external-master snoops to the
 physical cache and mapped-memory bindings, with packet and typed native roots.
