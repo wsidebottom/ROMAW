@@ -41,6 +41,7 @@ evidence; they are not distributed with ROMAW.
 - [Native Finder](../finder/README.md) and [reference audit](../finder/REFERENCE_AUDIT.md)
 - [Finder guest resource procedures](../finder/guest/README.md)
 - [Native resource inventory, embedded hooks and validation](native-code-resources.md)
+- [MacTCP](mactcp.md): Windows transport, resolver, ownership, reference evidence and regression checks.
 - [Shared classic UI](../classic-ui/README.md) and [QuickDraw host adapter](../windows/README.md)
 - [Icons and host metadata](../finder-metadata/README.md)
 - [Disk-image support and limits](../disk-images/README.md)

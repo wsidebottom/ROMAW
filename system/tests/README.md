@@ -160,7 +160,7 @@ packet options and summary display separately through the staged application.
 
 The same MacTCP host suite now covers nonblocking TCP and UDP port ranges.
 `bash system/tests/check-runtime.sh mactcp-guest /absolute/path/to/ROMAW.exe`
-builds and runs two Retro68 applications on Windows. The driver/ICMP/DNR probe
+builds and runs four Retro68 applications on Windows. The driver/ICMP/DNR probe
 checks public parameter-block and callback ABIs; the stream probe checks TCP and
 UDP controls, real destination metadata, no-copy ownership, Pascal notifications,
 orderly close/abort, status tables and four queued maximum-length TCP sends.
@@ -175,3 +175,11 @@ a DNR probe for every selector, wide and packed-short selector layouts, optional
 Hosts initialization, malformed inputs, CNAME cycles, reentrant cache enumeration,
 asynchronous result delivery and close/reopen with abandoned workers.
 Custom Hosts fixtures are generated from original text under build/mactcp.
+
+The driver lifecycle fixture tests a failing original DRVR initializer, native
+fallback and reopen. Stream checks also cover both ULP timeout actions under real
+socket backpressure, and the ICMP probe checks KillIO and independent DNR ownership.
+Run `bash system/tests/check-runtime.sh mactcp-ppc /absolute/path/to/ROMAW.exe`
+for PowerPC C completion and Pascal notification checks in interpreter and JIT
+modes. See [the MacTCP contract](../../docs/mactcp.md) for ownership and Windows
+stack boundaries.
