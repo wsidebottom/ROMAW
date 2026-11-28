@@ -14,6 +14,7 @@
 #include "rsys/common.h"
 #include "ControlMgr.h"
 #include "DialogMgr.h"
+#include "FontMgr.h"
 #include "ListMgr.h"
 #include "MemoryMgr.h"
 #include "OSUtil.h"
@@ -248,6 +249,16 @@ void ROMlib_afp_classic_chooser(void)
     if (!dialog)
         goto done;
     SetPort((GrafPtr)dialog);
+    TextFont(geneva);
+    TextSize(12);
+    FontInfo font;
+    GetFontInfo(&font);
+    TEHandle address_text = DIALOG_TEXTH(dialog);
+    TE_TX_FONT_X(address_text) = CWC(geneva);
+    TE_TX_SIZE_X(address_text) = CWC(12);
+    TE_FONT_ASCENT_X(address_text) = font.ascent;
+    TE_LINE_HEIGHT_X(address_text) = CW(CW(font.ascent) + CW(font.descent) + CW(font.leading));
+    TECalText(address_text);
     struct chooser_lists lists = {new_list(dialog, 13, 156), new_list(dialog, 186, 329), NewRgn()};
     if (!lists.servers || !lists.volumes || !lists.redraw)
         goto close_dialog;
