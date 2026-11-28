@@ -164,7 +164,8 @@ static void redraw_volumes(struct chooser_lists* lists)
     int x = CW(view.left) + 4;
     int height = Hx(list, cellSize.v);
     for (int row = first; row < limit; ++row) {
-        if (!lists->entries || !ROMlib_finder_afp_mounted(lists->address, lists->port, lists->entries->items[row].name))
+        if (!lists->entries ||
+            !ROMlib_finder_afp_reference(lists->address, lists->port, lists->entries->items[row].name))
             continue;
         int y = CW(view.top) + (row - first) * height + 4;
         if (y + 8 > CW(view.bottom))
@@ -283,6 +284,7 @@ static struct {
     struct chooser_lists lists;
     char servers[server_limit][256];
     romaw_afp_volume_list volumes;
+    romaw_afp_session* account;
     unsigned remembered, server_count;
     uint32 address, discover_until, next_discovery;
     uint16 port;
@@ -302,6 +304,7 @@ void ROMlib_afp_classic_close(void)
     if (!dialog)
         return;
     chooser.dialog = NULL;
+    romaw_afp_close(chooser.account);
     if (chooser.lists.servers) {
         LDispose(chooser.lists.servers);
         DisposHandle((Handle)chooser.lists.servers);
@@ -428,6 +431,9 @@ static void connect_server(int from_list)
             name[0] = 0;
     }
 
+    romaw_afp_close(chooser.account);
+    chooser.account = NULL;
+    chooser.address = 0;
     chooser.volumes.count = 0;
     int32 error = ROMAW_AFP_TRANSPORT_ERROR;
     if (ROMlib_afp_chooser_endpoint(name, advertised, &chooser.address, &chooser.port)) {
@@ -447,6 +453,64 @@ static void connect_server(int from_list)
              error                   ? "Could not list volumes on that AFP server."
              : chooser.volumes.count ? "Select a volume to mount."
                                      : "No guest volumes.");
+}
+
+static void activate_mount_button(DialogPtr dialog)
+{
+    int selected = selected_row(chooser.lists.volumes);
+    Str255 label;
+    const char* title = selected < 0 && chooser.address ? "Log In..." : "Mount";
+    mac_label(title, label, 15);
+    SetCTitle((ControlHandle)item_handle(dialog, mount_button), label);
+    enable(dialog, mount_button, selected >= 0 || chooser.address);
+}
+
+static void mount_selected(DialogPtr dialog)
+{
+    if (!chooser.address)
+        return;
+    int selected = selected_row(chooser.lists.volumes);
+    char name[256] = {0};
+    if (selected >= 0 && (unsigned)selected < chooser.volumes.count)
+        strcpy(name, chooser.volumes.items[selected].name);
+    if (name[0] && ROMlib_finder_afp_reference(chooser.address, chooser.port, name)) {
+        set_text(dialog, status_label, "Volume is already mounted.");
+        return;
+    }
+    if (!chooser.account) {
+        int method = ROMlib_afp_chooser_login(NULL, chooser.address, chooser.port, &chooser.account);
+        if (method == 2 && chooser.account) {
+            if (romaw_afp_list_volumes(chooser.account, &chooser.volumes)) {
+                romaw_afp_close(chooser.account);
+                chooser.account = NULL;
+                set_text(dialog, status_label, "Could not list the account's AFP volumes.");
+                return;
+            }
+            show_volumes(&chooser.lists, &chooser.volumes, chooser.address, chooser.port);
+            unsigned row = 0;
+            while (row < chooser.volumes.count && strcmp(name, chooser.volumes.items[row].name))
+                ++row;
+            if (row == chooser.volumes.count) {
+                set_text(dialog, status_label,
+                         chooser.volumes.count ? "Select an AFP volume." : "This account has no AFP volumes.");
+                return;
+            }
+        }
+        else if (method != 1)
+            return;
+    }
+    if (!name[0]) {
+        set_text(dialog, status_label, "No guest volume is available to mount.");
+        return;
+    }
+    int publish_error = 0;
+    int error = chooser.account ? ROMlib_finder_mount_afp_session(chooser.address, chooser.port, name, &chooser.account)
+                                : ROMlib_finder_mount_afp(chooser.address, chooser.port, name, &publish_error);
+    set_text(dialog, status_label,
+             error           ? "The selected AFP volume could not be mounted."
+             : publish_error ? "Mounted here. Could not share with other ROMAW apps."
+                             : "Volume mounted.");
+    redraw_volumes(&chooser.lists);
 }
 
 void ROMlib_afp_classic_event(EventRecord* event)
@@ -492,28 +556,17 @@ void ROMlib_afp_classic_event(EventRecord* event)
         refresh_servers();
     else if (action == connect_button || action == server_list_hit)
         connect_server(action == server_list_hit);
-    else if (action == volume_list_hit || action == mount_button) {
+    else if (action == mount_button)
+        mount_selected(dialog);
+    else if (action == volume_list_hit) {
         int selected = selected_row(chooser.lists.volumes);
         if (selected >= 0 && (unsigned)selected < chooser.volumes.count) {
-            const char* name = chooser.volumes.items[selected].name;
-            if (action == mount_button) {
-                int publish_error;
-                if (ROMlib_finder_mount_afp(chooser.address, chooser.port, name, &publish_error))
-                    set_text(dialog, status_label, "The selected AFP volume could not be mounted.");
-                else if (publish_error)
-                    set_text(dialog, status_label, "Mounted here. Could not share with other ROMAW apps.");
-                else
-                    set_text(dialog, status_label, "Volume mounted.");
-                redraw_volumes(&chooser.lists);
-            }
-            else {
-                char status[280];
-                snprintf(status, sizeof status, "Selected: %s", name);
-                set_text(dialog, status_label, status);
-            }
+            char status[280];
+            snprintf(status, sizeof status, "Selected: %s", chooser.volumes.items[selected].name);
+            set_text(dialog, status_label, status);
         }
     }
-    enable(dialog, mount_button, selected_row(chooser.lists.volumes) >= 0);
+    activate_mount_button(dialog);
     SetPort(previous);
     if (action == cancel_button)
         ROMlib_afp_classic_close();

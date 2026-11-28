@@ -290,6 +290,15 @@ if [[ -f "$prefix/bin/SDL.dll" ]] && ! cmp -s "$prefix/bin/SDL.dll" "$stage/SDL.
   cp "$prefix/bin/SDL.dll" "$stage/SDL.dll"
 fi
 mkdir -p "$stage/licenses"
+for crypto_root in "${OPENSSL_WINDOWS_PREFIX:-}" "$prefix" /mingw64 /mnt/c/msys64/mingw64; do
+  [[ -n "$crypto_root" && -f "$crypto_root/bin/libcrypto-3-x64.dll" &&
+    -f "$crypto_root/share/licenses/openssl/LICENSE" ]] || continue
+  if ! cmp -s "$crypto_root/bin/libcrypto-3-x64.dll" "$stage/libcrypto-3-x64.dll"; then
+    cp "$crypto_root/bin/libcrypto-3-x64.dll" "$stage/libcrypto-3-x64.dll"
+  fi
+  cp "$crypto_root/share/licenses/openssl/LICENSE" "$stage/licenses/openssl.txt"
+  break
+done
 cp "$workspace/syn68k/third_party/mame/LICENSE" "$stage/licenses/mame-fpu.txt"
 cp "$workspace/syn68k/third_party/fpsp040/README" "$stage/licenses/motorola-fpsp.txt"
 cp "$workspace/disk-images/third_party/7zip/DOC/License.txt" "$stage/licenses/7zip.txt"

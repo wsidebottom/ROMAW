@@ -9,7 +9,7 @@
              ROMlib_afp_register_volume, ROMlib_afp_mounted_catalog, ROMlib_afp_is_fork, ROMlib_afp_open,
              ROMlib_afp_read, ROMlib_afp_close_fork, ROMlib_afp_set_position, ROMlib_afp_unmount,
              ROMlib_afp_volume_mount, ROMlib_afp_open_wd, ROMlib_afp_publish_mount,
-             ROMlib_afp_sync_mount, ROMlib_afp_volume_source, ROMlib_finder_afp_mounted, ROMlib_finder_mount_afp.
+             ROMlib_afp_sync_mount, ROMlib_afp_volume_source, ROMlib_finder_is_afp, ROMlib_finder_afp_reference, ROMlib_finder_mount_afp, ROMlib_finder_mount_afp_session.
 
   Origin:    ROMAW bridge between AFP catalog records and classic parameter blocks.
 
@@ -168,7 +168,22 @@ BOOLEAN ROMlib_afp_is_volume(const VCB* volume)
     return mount_index(volume) >= 0;
 }
 
-OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, INTEGER* reference)
+static struct {
+    filecontrolblock* fcb;
+    unsigned mount;
+    uint16 remote_ref;
+} afp_forks[NFCB];
+
+static int mount_has_forks(unsigned slot)
+{
+    for (unsigned i = 0; i < NFCB; ++i)
+        if (afp_forks[i].fcb && afp_forks[i].mount == slot)
+            return 1;
+    return 0;
+}
+
+static OSErr register_volume(uint32 address, uint16 port, const char* name, INTEGER* reference,
+                             romaw_afp_session** supplied)
 {
     char mac_name[256];
     size_t bytes = strlen(name);
@@ -188,6 +203,19 @@ OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, 
         }
         if (address == afp_mounts[i].address && port == afp_mounts[i].port && mounted->vcb.vcbVN[0] == length &&
             !memcmp(mounted->vcb.vcbVN + 1, mac_name, length)) {
+            if (supplied) {
+                if (!*supplied || mount_has_forks(i))
+                    return fBsyErr;
+                uint16 remote_id;
+                int32 result = romaw_afp_open_volume(*supplied, name, &remote_id);
+                if (result)
+                    return ROMlib_afp_file_error(result);
+                romaw_afp_close_volume(afp_mounts[i].session, afp_mounts[i].remote_id);
+                romaw_afp_close(afp_mounts[i].session);
+                afp_mounts[i].session = *supplied;
+                afp_mounts[i].remote_id = remote_id;
+                *supplied = NULL;
+            }
             *reference = CW(mounted->vcb.vcbVRefNum);
             return noErr;
         }
@@ -198,19 +226,21 @@ OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, 
     /* Classic volume references distinguish volumes with the same label.
        A local disk named Macintosh must not prevent mounting a remote one. */
     int32 error;
-    romaw_afp_session* session = romaw_afp_connect(address, port, &error);
+    romaw_afp_session* session = supplied ? *supplied : romaw_afp_connect(address, port, &error);
     if (!session)
         return ROMlib_afp_file_error(error);
     uint16 remote_id;
     error = romaw_afp_open_volume(session, name, &remote_id);
     if (error) {
-        romaw_afp_close(session);
+        if (!supplied)
+            romaw_afp_close(session);
         return ROMlib_afp_file_error(error);
     }
     VCBExtra* mounted = (VCBExtra*)NewPtrSysClear(sizeof *mounted);
     if (!mounted) {
         romaw_afp_close_volume(session, remote_id);
-        romaw_afp_close(session);
+        if (!supplied)
+            romaw_afp_close(session);
         return memFullErr;
     }
 
@@ -227,7 +257,44 @@ OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, 
     afp_mounts[slot].port = port;
     memcpy(afp_mounts[slot].name, name, bytes + 1);
     Enqueue((QElemPtr)mounted, &VCBQHdr);
+    if (supplied)
+        *supplied = NULL;
     *reference = CW(mounted->vcb.vcbVRefNum);
+    return noErr;
+}
+
+OSErr ROMlib_afp_register_volume(uint32 address, uint16 port, const char* name, INTEGER* reference)
+{
+    return register_volume(address, port, name, reference, NULL);
+}
+
+int ROMlib_finder_mount_afp_session(uint32_t address, uint16_t port, const char* name, romaw_afp_session** session)
+{
+    INTEGER reference;
+    return register_volume(address, port, name, &reference, session);
+}
+
+/* Keep the same File Manager volume reference when an idle DSI session expires.
+   Open forks have session-specific IDs and must be closed before reconnecting. */
+static OSErr reconnect_catalog(unsigned slot)
+{
+    if (!romaw_afp_guest_session(afp_mounts[slot].session))
+        return ioErr;
+    if (mount_has_forks(slot))
+        return ioErr;
+    int32 error;
+    romaw_afp_session* session = romaw_afp_connect(afp_mounts[slot].address, afp_mounts[slot].port, &error);
+    if (!session)
+        return ROMlib_afp_file_error(error);
+    uint16 remote_id;
+    error = romaw_afp_open_volume(session, afp_mounts[slot].name, &remote_id);
+    if (error) {
+        romaw_afp_close(session);
+        return ROMlib_afp_file_error(error);
+    }
+    romaw_afp_close(afp_mounts[slot].session);
+    afp_mounts[slot].session = session;
+    afp_mounts[slot].remote_id = remote_id;
     return noErr;
 }
 
@@ -237,8 +304,14 @@ OSErr ROMlib_afp_mounted_catalog(VCB* volume, uint32 directory, CInfoPBPtr pb)
     if (slot < 0)
         return nsvErr;
     INTEGER index = CW(pb->hFileInfo.ioFDirIndex);
-    if (index > 0)
-        return ROMlib_afp_catalog_index(afp_mounts[slot].session, afp_mounts[slot].remote_id, directory, pb);
+    if (index > 0) {
+        OSErr error = ROMlib_afp_catalog_index(afp_mounts[slot].session, afp_mounts[slot].remote_id, directory, pb);
+        if (error != ioErr || romaw_afp_connected(afp_mounts[slot].session))
+            return error;
+        error = reconnect_catalog(slot);
+        return error ? error
+                     : ROMlib_afp_catalog_index(afp_mounts[slot].session, afp_mounts[slot].remote_id, directory, pb);
+    }
     char path[1024];
     int length = index < 0 ? 0 : encode_path(PPR(pb->hFileInfo.ioNamePtr), path, &directory);
     if (length < 0)
@@ -250,14 +323,15 @@ OSErr ROMlib_afp_mounted_catalog(VCB* volume, uint32 directory, CInfoPBPtr pb)
     romaw_afp_entry entry;
     int32 result =
         romaw_afp_lookup(afp_mounts[slot].session, afp_mounts[slot].remote_id, directory, path, length, &entry);
+    if (result == ROMAW_AFP_TRANSPORT_ERROR && !romaw_afp_connected(afp_mounts[slot].session)) {
+        OSErr error = reconnect_catalog(slot);
+        if (error)
+            return error;
+        result =
+            romaw_afp_lookup(afp_mounts[slot].session, afp_mounts[slot].remote_id, directory, path, length, &entry);
+    }
     return result ? ROMlib_afp_file_error(result) : copy_catalog(&entry, pb);
 }
-
-static struct {
-    filecontrolblock* fcb;
-    unsigned mount;
-    uint16 remote_ref;
-} afp_forks[NFCB];
 
 static int fork_slot(INTEGER reference)
 {
@@ -564,6 +638,8 @@ OSErr ROMlib_afp_publish_mount(INTEGER reference)
     int slot = mount_index((VCB*)ROMlib_vcbbyvrn(reference));
     if (slot < 0)
         return nsvErr;
+    if (!romaw_afp_guest_session(afp_mounts[slot].session))
+        return permErr;
     char path[4096], key[280];
     mount_key(slot, key);
     if (!profile_mount_file(path) || !config_prefs_set(path, "AFP", "Mount", key))
@@ -588,10 +664,11 @@ void ROMlib_afp_sync_mount(void)
     config_prefs_get(path, "AFP", "Mount", key, sizeof key);
     if (shared_reference) {
         VCB* current = (VCB*)ROMlib_vcbbyvrn(shared_reference);
-        if (ROMlib_afp_is_volume(current)) {
+        int slot = mount_index(current);
+        if (slot >= 0) {
             if (!strcmp(key, shared_key))
                 return;
-            if (unmount(current, FALSE) == fBsyErr)
+            if (romaw_afp_guest_session(afp_mounts[slot].session) && unmount(current, FALSE) == fBsyErr)
                 return;
         }
         shared_reference = 0;
@@ -624,12 +701,17 @@ BOOLEAN ROMlib_afp_volume_source(const VCB* volume, char* source, size_t capacit
     return TRUE;
 }
 
-int ROMlib_finder_afp_mounted(uint32_t address, uint16_t port, const char* name)
+int ROMlib_finder_is_afp(int16_t reference)
+{
+    return ROMlib_afp_is_volume((VCB*)ROMlib_vcbbyvrn(reference));
+}
+
+int16_t ROMlib_finder_afp_reference(uint32_t address, uint16_t port, const char* name)
 {
     for (unsigned i = 0; i < afp_mount_limit; ++i)
         if (afp_mounts[i].volume && afp_mounts[i].address == address && afp_mounts[i].port == port &&
             !strcmp(afp_mounts[i].name, name))
-            return 1;
+            return CW(afp_mounts[i].volume->vcb.vcbVRefNum);
     return 0;
 }
 

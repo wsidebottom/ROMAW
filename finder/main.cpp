@@ -6,7 +6,7 @@
   Classes:   Declared: DriveMetadata, Item, FolderWindow, FolderCallback, Operation, InfoData, ClipboardView, SuitcaseView;
              Used: Copies, History, DesktopIcons, DragImage, Search, HostClipboard.
 
-  Functions: romaw_finder_main, ROMlib_finder_style_afp_chooser. UI command handlers and window procedures have internal linkage.
+  Functions: romaw_finder_main, ROMlib_finder_style_afp_chooser, ROMlib_finder_open_afp. UI command handlers and window procedures have internal linkage.
 
   Origin:    Existing Executor native Finder frontend; reference artwork and behavior originate in finder7.
 
@@ -82,9 +82,13 @@ using namespace finder;
 extern "C" void ROMlib_finder_style_afp_chooser(void* dialog)
 {
     auto window = static_cast<HWND>(dialog);
+    if (!classic::text_font())
+        classic::initialize(font_chicago, sizeof font_chicago, font_geneva, sizeof font_geneva);
     classic::style_dialog(window);
-    if (auto edit = FindWindowExW(window, nullptr, L"Edit", nullptr))
+    for (HWND edit = nullptr; (edit = FindWindowExW(window, edit, L"Edit", nullptr));)
         classic::style_text_control(edit, true);
+    for (HWND list = nullptr; (list = FindWindowExW(window, list, L"ListBox", nullptr));)
+        classic::style_listbox(list);
 }
 
 namespace {
@@ -171,6 +175,7 @@ struct Item {
     uint32_t image_id = 2, image_parent = 1;
     std::string image_name;
     std::wstring image_stamp;
+    bool afp = false;
     std::string image_application;
     uint32_t image_application_parent = 0;
     unsigned outline_depth = 0;
@@ -606,7 +611,7 @@ item_icon(Item& item)
     unsigned label = (item.mac.flags >> 1) & 7;
     auto key = item_icon_key(item);
     auto found = icon_cache.find(key);
-    auto version = (item.special == 1 ? (item.drive_metadata ? item.drive_metadata->stamp : L"pending")
+    auto version = (item.afp ? L"AFP" : item.special == 1 ? (item.drive_metadata ? item.drive_metadata->stamp : L"pending")
                                       : icon_source_stamp(item.path, item.folder)) +
                    L"#" + std::to_wstring(desktop_icons ? desktop_icons->generation() : 0);
     if (item.image_volume)
@@ -626,12 +631,12 @@ item_icon(Item& item)
     FinderIcon data{};
     if (item.special == 4 && ROMlib_finder_image_volume_icon(item.image_volume, &data))
         result = icon(data, label);
-    if (!result && item.image_volume && item.special != 4 &&
+    if (!result && item.image_volume && !item.afp && item.special != 4 &&
         ROMlib_finder_image_icon(item.image_volume, item.folder ? item.image_id : item.image_parent,
                                  item.image_name.c_str(), item.folder, item.mac.flags, item.mac.type, item.mac.creator,
                                  &data))
         result = icon(data, label);
-    if (!result && item.image_volume && !item.image_application.empty() &&
+    if (!result && item.image_volume && !item.afp && !item.image_application.empty() &&
         ROMlib_finder_image_icon(item.image_volume, item.image_application_parent, item.image_application.c_str(),
                                  false, 0, item.mac.type, item.mac.creator, &data))
         result = icon(data, label);
@@ -1149,6 +1154,7 @@ void refresh(FolderWindow& f)
         item.name = image_text(entry.name);
         item.image_name = entry.name;
         item.image_volume = volume;
+        item.afp = ROMlib_finder_is_afp(volume);
         item.image_id = entry.id;
         item.image_parent = entry.parent;
         item.folder = entry.directory;
@@ -1169,10 +1175,17 @@ void refresh(FolderWindow& f)
             FinderImageEntry entry{};
             int16_t error = ROMlib_finder_image_entry(f.image_volume, directory, index, &entry);
             if (error) {
-                if (error != -43 && directory == f.image_directory)
-                    message(f.window,
-                            L"Cannot read this image directory (Macintosh error " + std::to_wstring(error) + L").",
-                            MB_ICONERROR);
+                if (error != -43 && directory == f.image_directory) {
+                    bool afp = ROMlib_finder_is_afp(f.image_volume);
+                    std::wstring text;
+                    if (afp && error == -54)
+                        text = L"The AFP server denied access to this folder.";
+                    else
+                        text = (afp ? L"Cannot read this AFP folder (Macintosh error "
+                                    : L"Cannot read this image directory (Macintosh error ") +
+                               std::to_wstring(error) + L").";
+                    message(f.window, text, MB_ICONERROR);
+                }
                 break;
             }
             append_catalog(key / std::to_wstring(entry.id), f.image_volume, entry);
@@ -1242,6 +1255,10 @@ void refresh(FolderWindow& f)
     for (auto& item : f.items) {
         if (!item.image_volume || item.special)
             continue;
+        if (item.afp) {
+            prepare_item(item);
+            continue;
+        }
         auto creator_key = std::make_pair(item.image_volume, item.mac.creator);
         if (!item.folder && item.mac.kind == FINDER_CLASSIC_DOCUMENT && checked_creators.insert(creator_key).second) {
             FinderImageEntry application{};
@@ -6865,7 +6882,9 @@ void open_folder(const fs::path& input, std::shared_ptr<Search> search, int16_t 
     classic::WaitingCursor waiting;
     auto path = fs::absolute(input).lexically_normal();
     for (auto* f : folders)
-        if (!search && !f->search && !f->desktop && _wcsicmp(f->path.c_str(), path.c_str()) == 0) {
+        if (!search && !f->search && !f->desktop && !f->closing &&
+            (image_volume ? f->image_volume == image_volume && f->image_directory == image_directory
+                          : !f->image_volume && _wcsicmp(f->path.c_str(), path.c_str()) == 0)) {
             ShowWindow(f->window, IsIconic(f->window) ? SW_RESTORE : SW_SHOW);
             // Folder frames are children of the ROMAW host. Activate through
             // the classic window manager, then let WM_SETFOCUS select this
@@ -6954,6 +6973,23 @@ void open_folder(const fs::path& input, std::shared_ptr<Search> search, int16_t 
     classic::activate(w);
     SetFocus(w);
 }
+}
+
+extern "C" int ROMlib_finder_open_afp(int16_t reference)
+{
+    FinderImageVolume volume{};
+    for (uint32_t index = 0; ROMlib_finder_image_volume(index, &volume); ++index) {
+        if (volume.reference != reference)
+            continue;
+        try {
+            open_folder(image_volume_key(volume), nullptr, reference, 2, image_text(volume.name));
+            return 1;
+        }
+        catch (const std::exception&) {
+            return 0;
+        }
+    }
+    return 0;
 }
 
 // Run the native desktop after shared Toolbox initialization; restore the session

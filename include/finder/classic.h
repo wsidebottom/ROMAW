@@ -144,6 +144,7 @@ void replace_icon(HICON previous, HICON replacement);
 void style_progress(HWND window);
 void style_dialog(HWND window);
 void style_list(HWND window);
+void style_listbox(HWND window);
 // Anchor the resource pattern to desktop coordinates through partial repaints.
 // Installed subclasses own their brushes until their windows are destroyed.
 void style_desktop(HWND window);
