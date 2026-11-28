@@ -129,6 +129,15 @@ def main():
             check=True,
         )
         shared = ctypes.CDLL(str(library))
+        volume_lookup = shared.finder_volume_icon
+        volume_lookup.argtypes = [ctypes.c_uint, ctypes.POINTER(Icon)]
+        volume_lookup.restype = ctypes.c_int
+        local = Icon()
+        assert volume_lookup(1, ctypes.byref(local)) == 1  # FINDER_VOLUME_LOCAL
+        drive = (ROOT / "bitmaps/mount_drive_win.icns").read_bytes()
+        assert local.present == 63 and bytes(local.planes) == b"".join(
+            builder.family_resource(drive, kind) for kind in (b"ICN#", b"ics#", b"icl4", b"icl8", b"ics4", b"ics8")
+        )
         lookup = shared.finder_image_extension_icon
         lookup.argtypes = [ctypes.c_char_p, ctypes.POINTER(Icon)]
         lookup.restype = ctypes.c_int

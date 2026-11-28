@@ -79,7 +79,7 @@ def generate(output):
         "-3974_preferencesFolderIconResource.icns",
         "-3968_fontsFolderIconResource.icns",
         "-3973_extensionsFolderIconResource.icns",
-        "-3995_genericHardDiskIconResource.icns",
+        "mount_drive_win.icns",
         "-3972_FileServerIconResource.icns",
         "-3998_floppyIconResource.icns",
         "-3987_CDROMIconResource.icns",
