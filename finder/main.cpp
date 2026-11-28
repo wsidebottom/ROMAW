@@ -633,8 +633,12 @@ item_icon(Item& item)
     HICON previous = found == icon_cache.end() ? nullptr : found->second;
     HICON result = nullptr;
     FinderIcon data{};
-    if (item.special == 4 && ROMlib_finder_image_volume_icon(item.image_volume, &data))
-        result = icon(data, label);
+    if (item.special == 4) {
+        if (ROMlib_finder_image_volume_icon(item.image_volume, &data))
+            result = icon(data, label);
+        if (!result && ROMlib_finder_is_afp(item.image_volume))
+            result = asset_icon(afp_mount_asset, label);
+    }
     if (!result && item.afp && item.folder && !item.special && (item.mac.flags & 0x400) &&
         ROMlib_finder_image_custom_icon(item.image_volume, item.image_id, item.image_name.c_str(), true, &data))
         result = icon(data, label);

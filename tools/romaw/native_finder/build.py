@@ -150,9 +150,12 @@ def main():
     names.append(ROOT / "bitmaps/-3984_fullTrashIconResource.icns")
     chooser_asset = len(names)
     names.append(ROOT / "bitmaps/chooser.icns")
+    afp_mount_asset = len(names)
+    names.append(ROOT / "bitmaps/mount_afp.icns")
     assets = [
         f"static constexpr unsigned full_trash_asset = {full_trash_asset};",
         f"static constexpr unsigned chooser_asset = {chooser_asset};",
+        f"static constexpr unsigned afp_mount_asset = {afp_mount_asset};",
     ]
     unique_assets = {}
     asset_indices = []
