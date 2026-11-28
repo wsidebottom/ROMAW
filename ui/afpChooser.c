@@ -366,7 +366,7 @@ static INT_PTR CALLBACK login_dialog(HWND dialog, UINT message, WPARAM wparam, L
         control(dialog, L"STATIC", L"User name", 0, 0, -1, 12, 45, 82, 20);
         control(dialog, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 0, username_id, 94, 42, 209, 21);
         control(dialog, L"STATIC", L"Password", 0, 0, -1, 12, 74, 82, 20);
-        control(dialog, L"EDIT", L"", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP, 0, password_id, 94, 41,
+        control(dialog, L"EDIT", L"", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP, 0, password_id, 94, 71,
                 209, 21);
         SendDlgItemMessageW(dialog, username_id, EM_LIMITTEXT, 255, 0);
         SendDlgItemMessageW(dialog, password_id, EM_LIMITTEXT, 255, 0);

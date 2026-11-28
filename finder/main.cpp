@@ -620,6 +620,8 @@ item_icon(Item& item)
         version += L"#image-" + std::to_wstring(item.image_volume) + L"#" +
                    std::to_wstring(item.image_application_parent) + L"#" +
                    std::to_wstring(std::hash<std::string>{}(item.image_application));
+    if (item.afp)
+        version += L"#" + std::to_wstring(item.mac.flags) + L"#" + std::to_wstring(item.details.modified);
     if (item.special == 4)
         version += L"#source-" + item.image_stamp;
     if (item.special == 3) {
@@ -632,6 +634,9 @@ item_icon(Item& item)
     HICON result = nullptr;
     FinderIcon data{};
     if (item.special == 4 && ROMlib_finder_image_volume_icon(item.image_volume, &data))
+        result = icon(data, label);
+    if (!result && item.afp && item.folder && !item.special && (item.mac.flags & 0x400) &&
+        ROMlib_finder_image_custom_icon(item.image_volume, item.image_id, item.image_name.c_str(), true, &data))
         result = icon(data, label);
     if (!result && item.image_volume && !item.afp && item.special != 4 &&
         ROMlib_finder_image_icon(item.image_volume, item.folder ? item.image_id : item.image_parent,
