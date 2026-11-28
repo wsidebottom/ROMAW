@@ -55,7 +55,12 @@ int ROMlib_finder_image_volume(uint32_t index, FinderImageVolume* result);
 void* ROMlib_finder_afp_chooser(void* owner);
 int ROMlib_finder_afp_message(void* message);
 void ROMlib_finder_style_afp_chooser(void* dialog);
-int ROMlib_finder_afp_mounted(uint32_t address, uint16_t port, const char* name);
+int16_t ROMlib_finder_afp_reference(uint32_t address, uint16_t port, const char* name);
+int ROMlib_finder_open_afp(int16_t reference);
+int ROMlib_finder_is_afp(int16_t reference);
+struct romaw_afp_session;
+int ROMlib_finder_mount_afp_session(uint32_t address, uint16_t port, const char* name,
+                                  struct romaw_afp_session** session);
 int ROMlib_finder_mount_afp(uint32_t address, uint16_t port, const char* name, int* publish_error);
 /* Borrowed source path and requested access mode for each live selection. */
 const char* ROMlib_finder_image_mount(uint32_t index, int* mode);

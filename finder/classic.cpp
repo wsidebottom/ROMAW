@@ -23,7 +23,7 @@
              finder::classic::paint_icon_view, finder::classic::paint_list_scrollbars, finder::classic::paint_window_chrome,
              finder::classic::redraw_menu_bar, finder::classic::replace_icon, finder::classic::scrollbar_window,
              finder::classic::small_font, finder::classic::style_checkbox, finder::classic::style_desktop, finder::classic::style_dialog,
-             finder::classic::set_menu_caption, finder::classic::style_list, finder::classic::style_menu,
+             finder::classic::set_menu_caption, finder::classic::style_list, finder::classic::style_listbox, finder::classic::style_menu,
              finder::classic::track_context_menu,
              finder::classic::style_progress,
              finder::classic::system_font, finder::classic::text_font, finder::classic::translate_menu_key,
@@ -1943,6 +1943,11 @@ struct ScrollbarLayout {
     bool enabled = false;
 };
 
+static bool scroll_listbox(HWND window)
+{
+    return GetPropW(window, L"FinderClassicListBox") != nullptr;
+}
+
 ScrollbarLayout scrollbar_layout(HWND w, bool vertical)
 {
     RECT window, client;
@@ -1960,6 +1965,15 @@ ScrollbarLayout scrollbar_layout(HWND w, bool vertical)
     bool present = (GetWindowLongPtrW(w, GWL_STYLE) & (vertical ? WS_VSCROLL : WS_HSCROLL)) != 0;
     if (!GetScrollInfo(w, vertical ? SB_VERT : SB_HORZ, &bar.info))
         present = false;
+    if (vertical && scroll_listbox(w)) {
+        int count = int(SendMessageW(w, LB_GETCOUNT, 0, 0));
+        int row = int(SendMessageW(w, LB_GETITEMHEIGHT, 0, 0));
+        bar.info.nMin = 0;
+        bar.info.nMax = std::max(0, count - 1);
+        bar.info.nPage = row > 0 ? std::max(1L, (client.bottom - client.top) / row) : 1;
+        bar.info.nPos = std::max<LRESULT>(0, SendMessageW(w, LB_GETTOPINDEX, 0, 0));
+        present = count > 0;
+    }
     auto maximum =
         std::max<long long>(bar.info.nMin, static_cast<long long>(bar.info.nMax) - std::max(1u, bar.info.nPage) + 1);
     bar.enabled = present && maximum > bar.info.nMin;
@@ -2013,6 +2027,10 @@ scroll_pointer(HWND w, POINT client)
 // Convert the list view's row/column scroll units to LVM_SCROLL pixel units.
 void scroll_to(HWND w, bool vertical, int position)
 {
+    if (scroll_listbox(w)) {
+        SendMessageW(w, LB_SETTOPINDEX, position, 0);
+        return;
+    }
     auto bar = scrollbar_layout(w, vertical);
     long long delta = static_cast<long long>(position) - bar.info.nPos;
     auto view = ListView_GetView(w);
@@ -2037,7 +2055,14 @@ void repeat_scroll(HWND w, const ScrollTracking& tracking)
                : tracking.action == SB_LINEDOWN ? PtInRect(&bar.last, tracking.pointer)
                : tracking.action == SB_PAGEUP   ? before
                                                 : after;
-    if (act)
+    if (act && scroll_listbox(w)) {
+        int page = bar.info.nPage;
+        int delta = tracking.action == SB_LINEUP     ? -1
+                    : tracking.action == SB_LINEDOWN ? 1
+                    : tracking.action == SB_PAGEUP   ? -page : page;
+        scroll_to(w, true, std::clamp(bar.info.nPos + delta, 0, std::max(0, bar.info.nMax - page + 1)));
+    }
+    else if (act)
         SendMessageW(w, tracking.vertical ? WM_VSCROLL : WM_HSCROLL, tracking.action, 0);
 }
 
@@ -2148,7 +2173,8 @@ void draw_scrollbars(HWND w, HDC dc)
     // The list view owns every client pixel, including its optimized scroll
     // copies. Restrict all chrome drawing to the surrounding nonclient gutters.
     ExcludeClipRect(dc, client.left, client.top, client.right, client.bottom);
-    if (quickdraw_graphics) {
+    const bool listbox = scroll_listbox(w);
+    if (quickdraw_graphics && !listbox) {
         HWND parent = GetParent(w);
         RECT bounds;
         GetWindowRect(parent, &bounds);
@@ -2158,6 +2184,8 @@ void draw_scrollbars(HWND w, HDC dc)
         }
     }
     for (bool vertical : {true, false}) {
+        if (listbox && !vertical)
+            continue;
         auto bar = scrollbar_layout(w, vertical);
         fill(dc, bar.area, scroll_light);
         if (bar.enabled && scrollbar_track) {
@@ -2198,6 +2226,11 @@ void draw_scrollbars(HWND w, HDC dc)
         else
             bevel.top = bevel.bottom - 1;
         fill(dc, bevel, RGB(238, 238, 238));
+    }
+    if (listbox) {
+        frame(dc, RECT{0, 0, window.right - window.left, window.bottom - window.top}, RGB(0, 0, 0));
+        RestoreDC(dc, saved);
+        return;
     }
     // The grow resource contains a 14px tile and transparent padding. Place
     // that tile inside the top/left rules; the document owns the far edges.
@@ -2328,7 +2361,7 @@ LRESULT CALLBACK list_style_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
         }
     }
     // The model owns only content; the sibling owns both nonclient gutters.
-    if (msg == WM_NCCALCSIZE)
+    if (msg == WM_NCCALCSIZE && !scroll_listbox(w))
         return 0;
     if (msg == WM_NCPAINT) {
         paint_scrollbars(w);
@@ -2414,10 +2447,14 @@ LRESULT CALLBACK list_style_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
         GetWindowRect(scrollbar_surface(w), &window);
         POINT point{GET_X_LPARAM(lp) - window.left, GET_Y_LPARAM(lp) - window.top};
         for (bool vertical : {true, false}) {
+            if (!vertical && scroll_listbox(w))
+                break;
             auto bar = scrollbar_layout(w, vertical);
             if (PtInRect(&bar.area, point))
                 return vertical ? HTVSCROLL : HTHSCROLL;
         }
+        if (scroll_listbox(w))
+            return result;
         // The list owns the grow tile's pixels, but only its decorated parent
         // can resize the folder. Native hit testing returns HTNOWHERE here
         // when the list has no scroll ranges, leaving a painted but dead grip.
@@ -2431,7 +2468,7 @@ LRESULT CALLBACK list_style_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
     }
     if (msg == WM_NCMOUSEMOVE || msg == WM_PAINT || msg == WM_SIZE || msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL ||
         msg == WM_HSCROLL || msg == WM_VSCROLL || msg == LVM_SCROLL || msg == LVM_ENSUREVISIBLE ||
-        msg == WM_WINDOWPOSCHANGED || msg == WM_ENABLE || msg == WM_CAPTURECHANGED)
+        msg == WM_WINDOWPOSCHANGED || msg == LB_SETTOPINDEX || msg == LB_RESETCONTENT || msg == LB_ADDSTRING || msg == WM_ENABLE || msg == WM_CAPTURECHANGED)
         paint_scrollbars(w);
     if (msg == WM_NCDESTROY) {
         auto host = scrollbar_hosts.find(w);
@@ -2442,6 +2479,7 @@ LRESULT CALLBACK list_style_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
         HWND parent = GetParent(w);
         if (reinterpret_cast<HWND>(GetPropW(parent, zoom_list_property)) == w)
             RemovePropW(parent, zoom_list_property);
+        RemovePropW(w, L"FinderClassicListBox");
         RemoveWindowSubclass(w, list_style_proc, 3);
     }
     return result;
@@ -3393,6 +3431,15 @@ void style_list(HWND w)
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     if (GetWindowLongPtrW(w, GWL_STYLE) & WS_VISIBLE)
         ShowWindow(host, SW_SHOWNOACTIVATE);
+}
+
+void style_listbox(HWND window)
+{
+    load_scrollbar_art();
+    if (!SetPropW(window, L"FinderClassicListBox", reinterpret_cast<HANDLE>(1)))
+        return;
+    if (!SetWindowSubclass(window, list_style_proc, 3, 0))
+        RemovePropW(window, L"FinderClassicListBox");
 }
 
 // Keep native icon/selection rendering, but give background erasure a stable

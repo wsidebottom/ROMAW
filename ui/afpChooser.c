@@ -6,7 +6,7 @@
   Classes:   None.
 
   Functions: ROMlib_finder_afp_chooser, ROMlib_finder_afp_message, ROMlib_afp_chooser_services,
-             ROMlib_afp_chooser_endpoint, ROMlib_afp_chooser_remembered.
+             ROMlib_afp_chooser_endpoint, ROMlib_afp_chooser_remembered, ROMlib_afp_chooser_login.
 
   Origin:    ROMAW AFP integration.
 
@@ -28,7 +28,7 @@
 
 #define NELEM(a) (sizeof(a) / sizeof((a)[0]))
 
-enum { servers_id = 100, address_id, connect_id, volumes_id, status_id, refresh_id, server_limit = 64 };
+enum { servers_id = 100, address_id, connect_id, volumes_id, status_id, refresh_id, account_id, server_limit = 64 };
 
 static const wchar_t service[] = L"_afpovertcp._tcp.local";
 static SRWLOCK server_lock = SRWLOCK_INIT;
@@ -157,6 +157,7 @@ struct chooser {
     unsigned revision;
     uint32_t address;
     uint16_t port;
+    romaw_afp_session* account;
     romaw_afp_volume_list volumes;
 };
 
@@ -244,12 +245,56 @@ void ROMlib_afp_chooser_remembered(char* endpoint, unsigned capacity)
         config_prefs_get(path, "AFP", "Last Server", endpoint, capacity);
 }
 
-static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
+static int selected_volume(HWND dialog, const struct chooser* state)
+{
+    LRESULT row = SendDlgItemMessageW(dialog, volumes_id, LB_GETCURSEL, 0, 0);
+    if (row < 0)
+        return -1;
+    LRESULT index = SendDlgItemMessageW(dialog, volumes_id, LB_GETITEMDATA, row, 0);
+    return index >= 0 && index < state->volumes.count ? (int)index : -1;
+}
+
+static void update_action(HWND dialog, const struct chooser* state)
+{
+    int index = selected_volume(dialog, state);
+    int mounted =
+        index >= 0 && ROMlib_finder_afp_reference(state->address, state->port, state->volumes.items[index].name);
+    SetDlgItemTextW(dialog, IDOK,
+                    mounted && !state->account    ? L"Open"
+                    : index < 0 && state->address ? L"Log In..."
+                                                  : L"Mount");
+    EnableWindow(GetDlgItem(dialog, IDOK), index >= 0 || state->address);
+    EnableWindow(GetDlgItem(dialog, account_id), state->address != 0);
+}
+
+static void show_volumes(HWND dialog, struct chooser* state)
 {
     HWND volumes = GetDlgItem(dialog, volumes_id);
     SendMessageW(volumes, LB_RESETCONTENT, 0, 0);
+    for (unsigned i = 0; i < state->volumes.count; ++i) {
+        wchar_t name[256];
+        if (MultiByteToWideChar(CP_UTF8, 0, state->volumes.items[i].name, -1, name, NELEM(name))) {
+            LRESULT index = SendMessageW(volumes, LB_ADDSTRING, 0, (LPARAM)name);
+            if (index >= 0)
+                SendMessageW(volumes, LB_SETITEMDATA, index, i);
+        }
+    }
+    if (SendMessageW(volumes, LB_GETCOUNT, 0, 0) > 0) {
+        SendMessageW(volumes, LB_SETCURSEL, 0, 0);
+        update_action(dialog, state);
+    }
+}
+
+static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
+{
+    HWND volumes = GetDlgItem(dialog, volumes_id);
+    romaw_afp_close(state->account);
+    state->account = NULL;
+    state->address = 0;
+    SendMessageW(volumes, LB_RESETCONTENT, 0, 0);
     EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
     SetDlgItemTextW(dialog, status_id, L"");
+    update_action(dialog, state);
     wchar_t address[256];
     GetDlgItemTextW(dialog, address_id, address, NELEM(address));
     LRESULT row = SendDlgItemMessageW(dialog, servers_id, LB_GETCURSEL, 0, 0);
@@ -279,22 +324,11 @@ static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
     }
     if (error || !state->volumes.count) {
         SetDlgItemTextW(dialog, status_id,
-                        error ? L"Could not list AFP volumes as a guest."
-                              : L"This AFP server offers no guest volumes.");
+                        error ? L"Guest access unavailable. Try Log In." : L"No guest volumes. Try Log In.");
+        update_action(dialog, state);
         return;
     }
-    for (unsigned i = 0; i < state->volumes.count; ++i) {
-        wchar_t name[256];
-        if (MultiByteToWideChar(CP_UTF8, 0, state->volumes.items[i].name, -1, name, NELEM(name))) {
-            LRESULT index = SendMessageW(volumes, LB_ADDSTRING, 0, (LPARAM)name);
-            if (index >= 0)
-                SendMessageW(volumes, LB_SETITEMDATA, index, i);
-        }
-    }
-    if (SendMessageW(volumes, LB_GETCOUNT, 0, 0) > 0) {
-        SendMessageW(volumes, LB_SETCURSEL, 0, 0);
-        EnableWindow(GetDlgItem(dialog, IDOK), TRUE);
-    }
+    show_volumes(dialog, state);
 }
 
 static void control(HWND dialog, const wchar_t* type, const wchar_t* title, DWORD style, DWORD edge, int id, int x,
@@ -303,6 +337,128 @@ static void control(HWND dialog, const wchar_t* type, const wchar_t* title, DWOR
     HWND window = CreateWindowExW(edge, type, title, WS_CHILD | WS_VISIBLE | style, x, y, width, height, dialog,
                                   (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(window, WM_SETFONT, SendMessageW(dialog, WM_GETFONT, 0, 0), TRUE);
+}
+
+enum { username_id = 300, password_id, guest_id };
+
+struct login {
+    HWND anchor;
+    uint32_t address;
+    uint16_t port;
+    romaw_afp_session* session;
+};
+
+static INT_PTR CALLBACK login_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    struct login* prompt = (void*)GetWindowLongPtrW(dialog, DWLP_USER);
+    if (message == WM_INITDIALOG) {
+        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
+        control(dialog, L"STATIC", L"User name", 0, 0, -1, 12, 15, 82, 20);
+        control(dialog, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 0, username_id, 94, 12, 209, 21);
+        control(dialog, L"STATIC", L"Password", 0, 0, -1, 12, 44, 82, 20);
+        control(dialog, L"EDIT", L"", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP, 0, password_id, 94, 41,
+                209, 21);
+        SendDlgItemMessageW(dialog, username_id, EM_LIMITTEXT, 255, 0);
+        SendDlgItemMessageW(dialog, password_id, EM_LIMITTEXT, 255, 0);
+        control(dialog, L"STATIC", L"", 0, 0, status_id, 12, 67, 294, 24);
+        control(dialog, L"BUTTON", L"Continue as Guest", WS_TABSTOP, 0, guest_id, 12, 99, 140, 24);
+        control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 160, 99, 68, 24);
+        control(dialog, L"BUTTON", L"Log In", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 236, 99, 72, 24);
+        SendMessageW(dialog, DM_SETDEFID, IDOK, 0);
+        ROMlib_finder_style_afp_chooser(dialog);
+        RECT parent, window, client;
+        GetWindowRect(dialog, &window);
+        GetClientRect(dialog, &client);
+        int width = window.right - window.left - client.right + 320;
+        int height = window.bottom - window.top - client.bottom + 135;
+        if (!GetWindowRect(((struct login*)lparam)->anchor, &parent))
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &parent, 0);
+        SetWindowPos(dialog, NULL, (parent.left + parent.right - width) / 2, (parent.top + parent.bottom - height) / 2,
+                     width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+        return TRUE;
+    }
+    if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wparam) == IDCANCEL)) {
+        SetDlgItemTextW(dialog, password_id, L"");
+        EndDialog(dialog, 0);
+        return TRUE;
+    }
+    if (message != WM_COMMAND)
+        return FALSE;
+    if (LOWORD(wparam) == guest_id) {
+        SetDlgItemTextW(dialog, password_id, L"");
+        EndDialog(dialog, guest_id);
+        return TRUE;
+    }
+    if (LOWORD(wparam) != IDOK || !prompt)
+        return FALSE;
+    wchar_t user_text[256], password_text[256];
+    char user[256], password[256];
+    GetDlgItemTextW(dialog, username_id, user_text, NELEM(user_text));
+    GetDlgItemTextW(dialog, password_id, password_text, NELEM(password_text));
+    int valid =
+        user_text[0] &&
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, user_text, -1, user, sizeof user, NULL, NULL) &&
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, password_text, -1, password, sizeof password, NULL, NULL);
+    SetDlgItemTextW(dialog, password_id, L"");
+    SecureZeroMemory(password_text, sizeof password_text);
+    if (valid) {
+        int32_t error;
+        prompt->session = romaw_afp_connect_account(prompt->address, prompt->port, user, password, &error);
+    }
+    SecureZeroMemory(password, sizeof password);
+    if (prompt->session)
+        EndDialog(dialog, IDOK);
+    else
+        SetDlgItemTextW(dialog, status_id,
+                        valid ? L"AFP sign-in failed. Check your account or try Guest."
+                              : L"Enter a user name and password.");
+    return TRUE;
+}
+
+int ROMlib_afp_chooser_login(void* owner, uint32_t address, uint16_t port, romaw_afp_session** account)
+{
+    *account = NULL;
+    HWND anchor = owner ? owner : GetActiveWindow();
+    HWND modal_owner = GetAncestor(anchor, GA_ROOT);
+    struct login login = {anchor, address, port, NULL};
+
+    enum { style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT };
+
+    _Alignas(DWORD) static const WORD description[] = {style & 0xffff,
+                                                       (DWORD)style >> 16,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       180,
+                                                       76,
+                                                       0,
+                                                       0,
+                                                       'A',
+                                                       'F',
+                                                       'P',
+                                                       ' ',
+                                                       'L',
+                                                       'o',
+                                                       'g',
+                                                       'i',
+                                                       'n',
+                                                       0,
+                                                       9,
+                                                       'S',
+                                                       'e',
+                                                       'g',
+                                                       'o',
+                                                       'e',
+                                                       ' ',
+                                                       'U',
+                                                       'I',
+                                                       0};
+    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandleW(NULL), (const DLGTEMPLATE*)description, modal_owner,
+                                             login_dialog, (LPARAM)&login);
+    *account = login.session;
+    return result == IDOK ? 2 : result == guest_id ? 1 : 0;
 }
 
 static void draw_list_row(const struct chooser* state, const DRAWITEMSTRUCT* row)
@@ -315,7 +471,7 @@ static void draw_list_row(const struct chooser* state, const DRAWITEMSTRUCT* row
         return;
     int volume = row->CtlID == volumes_id;
     if (volume && row->itemData < state->volumes.count &&
-        ROMlib_finder_afp_mounted(state->address, state->port, state->volumes.items[row->itemData].name)) {
+        ROMlib_finder_afp_reference(state->address, state->port, state->volumes.items[row->itemData].name)) {
         int x = row->rcItem.left + 4;
         int y = row->rcItem.top + 4;
         RECT monitor = {x, y, x + 9, y + 6};
@@ -358,6 +514,8 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
                 22);
         SendDlgItemMessageW(dialog, address_id, EM_LIMITTEXT, 255, 0);
         control(dialog, L"BUTTON", L"Connect", WS_TABSTOP, 0, connect_id, 265, 165, 80, 22);
+        control(dialog, L"BUTTON", L"Log In...", WS_TABSTOP, 0, account_id, 103, 216, 67, 22);
+        EnableWindow(GetDlgItem(dialog, account_id), FALSE);
         control(dialog, L"BUTTON", L"Refresh", WS_TABSTOP, 0, refresh_id, 12, 216, 88, 22);
         control(dialog, L"BUTTON", L"Mount", WS_TABSTOP, 0, IDOK, 265, 216, 80, 22);
         control(dialog, L"BUTTON", L"Close", WS_TABSTOP, 0, IDCANCEL, 174, 216, 80, 22);
@@ -378,6 +536,10 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
         return TRUE;
     }
     if (message == WM_NCDESTROY) {
+        if (state) {
+            romaw_afp_close(state->account);
+            state->account = NULL;
+        }
         RemovePropW(dialog, L"FinderWhite");
         chooser_window = NULL;
         return FALSE;
@@ -387,6 +549,7 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
             state->revision = (unsigned)-1;
         update_servers(dialog, state);
         InvalidateRect(GetDlgItem(dialog, volumes_id), NULL, FALSE);
+        update_action(dialog, state);
         return TRUE;
     }
     if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wparam) == IDCANCEL)) {
@@ -399,17 +562,64 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
         list_volumes(dialog, state, LOWORD(wparam) == servers_id);
         return TRUE;
     }
-    if (LOWORD(wparam) != IDOK && !(LOWORD(wparam) == volumes_id && HIWORD(wparam) == LBN_DBLCLK))
+    if (LOWORD(wparam) == volumes_id && HIWORD(wparam) == LBN_SELCHANGE) {
+        update_action(dialog, state);
+        return TRUE;
+    }
+    int force_account = LOWORD(wparam) == account_id;
+    if (!force_account && LOWORD(wparam) != IDOK && !(LOWORD(wparam) == volumes_id && HIWORD(wparam) == LBN_DBLCLK))
         return FALSE;
-    LRESULT row = SendDlgItemMessageW(dialog, volumes_id, LB_GETCURSEL, 0, 0);
-    if (row < 0)
+    int index = selected_volume(dialog, state);
+    if (!state->address)
         return TRUE;
-    LRESULT index = SendDlgItemMessageW(dialog, volumes_id, LB_GETITEMDATA, row, 0);
-    if (index < 0 || index >= state->volumes.count)
+    char name[256] = {0};
+    if (index >= 0)
+        strcpy(name, state->volumes.items[index].name);
+    int16_t reference = name[0] ? ROMlib_finder_afp_reference(state->address, state->port, name) : 0;
+    if (reference && !state->account && !force_account) {
+        if (!ROMlib_finder_open_afp(reference))
+            SetDlgItemTextW(dialog, status_id, L"The mounted volume could not be opened.");
         return TRUE;
-    int publish_error;
-    int error = ROMlib_finder_mount_afp(state->address, state->port, state->volumes.items[index].name, &publish_error);
+    }
+    if (!state->account || force_account) {
+        romaw_afp_session* session;
+        int choice = ROMlib_afp_chooser_login(dialog, state->address, state->port, &session);
+        if (choice == 2 && session) {
+            romaw_afp_close(state->account);
+            state->account = session;
+        }
+        if (choice == 2 && state->account) {
+            if (romaw_afp_list_volumes(state->account, &state->volumes)) {
+                romaw_afp_close(state->account);
+                state->account = NULL;
+                SetDlgItemTextW(dialog, status_id, L"Could not list the account's volumes.");
+                return TRUE;
+            }
+            show_volumes(dialog, state);
+            unsigned row = 0;
+            while (row < state->volumes.count && strcmp(state->volumes.items[row].name, name))
+                ++row;
+            if (force_account || row == state->volumes.count) {
+                SetDlgItemTextW(dialog, status_id,
+                                state->volumes.count ? L"Select a volume to mount."
+                                                     : L"This account has no AFP volumes.");
+                return TRUE;
+            }
+        }
+        else if (choice == 1 && (force_account || !name[0])) {
+            list_volumes(dialog, state, 0);
+            return TRUE;
+        }
+        else if (choice != 1)
+            return TRUE;
+    }
+    if (!name[0])
+        return TRUE;
+    int publish_error = 0;
+    int error = state->account ? ROMlib_finder_mount_afp_session(state->address, state->port, name, &state->account)
+                               : ROMlib_finder_mount_afp(state->address, state->port, name, &publish_error);
     InvalidateRect(GetDlgItem(dialog, volumes_id), NULL, FALSE);
+    update_action(dialog, state);
     SetDlgItemTextW(dialog, status_id,
                     error           ? L"The selected AFP volume could not be mounted."
                     : publish_error ? L"Mounted here. Could not share with other ROMAW apps."
