@@ -162,7 +162,7 @@ def main():
     incompatible = (
         ("Keyboard Layout", b"kfil", "Keyboard files are not compatible with ROMAW."),
         ("Printer Driver", b"PRER", "Printer files are not compatible with ROMAW."),
-        ("Chooser Driver", b"RDEV", "Chooser files need to be put into the Extensions folder and may not work with ROMAW."),
+        ("Chooser Driver", b"RDEV", "Chooser items don't work with ROMAW."),
     )
     for name, type_code, _ in incompatible:
         (verify / name).touch()

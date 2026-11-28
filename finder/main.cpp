@@ -6,7 +6,7 @@
   Classes:   Declared: DriveMetadata, Item, FolderWindow, FolderCallback, Operation, InfoData, ClipboardView, SuitcaseView;
              Used: Copies, History, DesktopIcons, DragImage, Search, HostClipboard.
 
-  Functions: romaw_finder_main; UI command handlers and window procedures have internal linkage.
+  Functions: romaw_finder_main, ROMlib_finder_style_afp_chooser. UI command handlers and window procedures have internal linkage.
 
   Origin:    Existing Executor native Finder frontend; reference artwork and behavior originate in finder7.
 
@@ -78,6 +78,11 @@ extern "C" {
 
 static_assert(sizeof(void*) == 8, "Finder requires Windows x64");
 using namespace finder;
+
+extern "C" void ROMlib_finder_style_afp_chooser(void* dialog)
+{
+    classic::style_dialog(static_cast<HWND>(dialog));
+}
 
 namespace {
 enum Command {
@@ -2572,7 +2577,7 @@ void open_item(HWND owner, Item item)
         return;
     }
     if (!item.folder && item.mac.type == 0x52444556) { // 'RDEV'
-        message(owner, L"Chooser files need to be put into the Extensions folder and may not work with ROMAW.",
+        message(owner, L"Chooser items don't work with ROMAW.",
                 MB_ICONWARNING);
         return;
     }
