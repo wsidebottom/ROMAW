@@ -422,7 +422,7 @@ int ROMlib_afp_chooser_login(void* owner, uint32_t address, uint16_t port, romaw
     HWND modal_owner = GetAncestor(anchor, GA_ROOT);
     struct login login = {anchor, address, port, NULL};
 
-    enum { style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT };
+    enum { style = WS_POPUP | WS_BORDER | DS_CENTER | DS_SETFONT };
 
     _Alignas(DWORD) static const WORD description[] = {style & 0xffff,
                                                        (DWORD)style >> 16,
