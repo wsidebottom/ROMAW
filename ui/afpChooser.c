@@ -352,31 +352,57 @@ static INT_PTR CALLBACK login_dialog(HWND dialog, UINT message, WPARAM wparam, L
 {
     struct login* prompt = (void*)GetWindowLongPtrW(dialog, DWLP_USER);
     if (message == WM_INITDIALOG) {
+        prompt = (struct login*)lparam;
         SetWindowLongPtrW(dialog, DWLP_USER, lparam);
-        control(dialog, L"STATIC", L"User name", 0, 0, -1, 12, 15, 82, 20);
-        control(dialog, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 0, username_id, 94, 12, 209, 21);
-        control(dialog, L"STATIC", L"Password", 0, 0, -1, 12, 44, 82, 20);
+        SetPropW(dialog, L"FinderWhite", (HANDLE)1);
+        char server[256];
+        wchar_t name[256], heading[280];
+        uint32_t ip = prompt->address;
+        if (!romaw_afp_server_name(ip, prompt->port, server) ||
+            !MultiByteToWideChar(10000, 0, server, -1, name, NELEM(name)))
+            swprintf(name, NELEM(name), L"%u.%u.%u.%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255);
+        swprintf(heading, NELEM(heading), L"AFP Login to %ls", name);
+        control(dialog, L"STATIC", heading, SS_NOPREFIX | SS_ENDELLIPSIS, 0, -1, 15, 13, 290, 20);
+        control(dialog, L"STATIC", L"User name", 0, 0, -1, 12, 45, 82, 20);
+        control(dialog, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 0, username_id, 94, 42, 209, 21);
+        control(dialog, L"STATIC", L"Password", 0, 0, -1, 12, 74, 82, 20);
         control(dialog, L"EDIT", L"", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP, 0, password_id, 94, 41,
                 209, 21);
         SendDlgItemMessageW(dialog, username_id, EM_LIMITTEXT, 255, 0);
         SendDlgItemMessageW(dialog, password_id, EM_LIMITTEXT, 255, 0);
-        control(dialog, L"STATIC", L"", 0, 0, status_id, 12, 67, 294, 24);
-        control(dialog, L"BUTTON", L"Continue as Guest", WS_TABSTOP, 0, guest_id, 12, 99, 140, 24);
-        control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 160, 99, 68, 24);
-        control(dialog, L"BUTTON", L"Log In", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 236, 99, 72, 24);
+        control(dialog, L"STATIC", L"", 0, 0, status_id, 12, 97, 294, 24);
+        control(dialog, L"BUTTON", L"Continue as Guest", WS_TABSTOP, 0, guest_id, 12, 129, 140, 24);
+        control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 160, 129, 68, 24);
+        control(dialog, L"BUTTON", L"Log In", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 236, 129, 72, 24);
         SendMessageW(dialog, DM_SETDEFID, IDOK, 0);
         ROMlib_finder_style_afp_chooser(dialog);
         RECT parent, window, client;
         GetWindowRect(dialog, &window);
         GetClientRect(dialog, &client);
         int width = window.right - window.left - client.right + 320;
-        int height = window.bottom - window.top - client.bottom + 135;
-        if (!GetWindowRect(((struct login*)lparam)->anchor, &parent))
+        int height = window.bottom - window.top - client.bottom + 165;
+        if (!GetWindowRect(prompt->anchor, &parent))
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &parent, 0);
         SetWindowPos(dialog, NULL, (parent.left + parent.right - width) / 2, (parent.top + parent.bottom - height) / 2,
                      width, height, SWP_NOACTIVATE | SWP_NOZORDER);
         return TRUE;
     }
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(dialog, &paint);
+        RECT bounds;
+        GetClientRect(dialog, &bounds);
+        HBRUSH ink = GetStockObject(BLACK_BRUSH);
+        FrameRect(dc, &bounds, ink);
+        InflateRect(&bounds, -1, -1);
+        FrameRect(dc, &bounds, ink);
+        InflateRect(&bounds, -3, -3);
+        FrameRect(dc, &bounds, ink);
+        EndPaint(dialog, &paint);
+        return TRUE;
+    }
+    if (message == WM_NCDESTROY)
+        RemovePropW(dialog, L"FinderWhite");
     if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wparam) == IDCANCEL)) {
         SetDlgItemTextW(dialog, password_id, L"");
         EndDialog(dialog, 0);
@@ -422,7 +448,7 @@ int ROMlib_afp_chooser_login(void* owner, uint32_t address, uint16_t port, romaw
     HWND modal_owner = GetAncestor(anchor, GA_ROOT);
     struct login login = {anchor, address, port, NULL};
 
-    enum { style = WS_POPUP | WS_BORDER | DS_CENTER | DS_SETFONT };
+    enum { style = WS_POPUP | WS_CLIPCHILDREN | DS_CENTER | DS_SETFONT };
 
     _Alignas(DWORD) static const WORD description[] = {style & 0xffff,
                                                        (DWORD)style >> 16,

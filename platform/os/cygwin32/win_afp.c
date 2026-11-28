@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: romaw_afp_connect, romaw_afp_connect_account, romaw_afp_guest_session, romaw_afp_connected, romaw_afp_close, romaw_afp_command,
+  Functions: romaw_afp_server_name, romaw_afp_connect, romaw_afp_connect_account, romaw_afp_guest_session, romaw_afp_connected, romaw_afp_close, romaw_afp_command,
              romaw_afp_open_volume, romaw_afp_close_volume, romaw_afp_list_volumes,
              romaw_afp_enumerate, romaw_afp_lookup, romaw_afp_open_read_fork, romaw_afp_read_fork, romaw_afp_close_fork.
 
@@ -623,18 +623,36 @@ failed:
     return INVALID_SOCKET;
 }
 
-static int32_t advertised_methods(uint32_t address, uint16_t port, unsigned* methods)
+static int32_t server_status(uint32_t address, uint16_t port, unsigned char reply[4096], unsigned* received)
 {
-    *methods = 0;
     romaw_afp_session status = {0};
     status.socket = open_peer(address, port);
     if (status.socket == INVALID_SOCKET)
         return ROMAW_AFP_TRANSPORT_ERROR;
-    unsigned char reply[4096];
-    unsigned received;
-    int32_t result = exchange(&status, 3, NULL, 0, reply, sizeof reply, &received);
+    int32_t result = exchange(&status, 3, NULL, 0, reply, 4096, received);
     if (status.socket != INVALID_SOCKET)
         closesocket(status.socket);
+    return result;
+}
+
+int romaw_afp_server_name(uint32_t address, uint16_t port, char name[256])
+{
+    unsigned char reply[4096];
+    unsigned received;
+    if (host_mactcp_resolver_open() || server_status(address, port, reply, &received) || received < 11 || !reply[10] ||
+        reply[10] > received - 11)
+        return 0;
+    memcpy(name, reply + 11, reply[10]);
+    name[reply[10]] = 0;
+    return 1;
+}
+
+static int32_t advertised_methods(uint32_t address, uint16_t port, unsigned* methods)
+{
+    *methods = 0;
+    unsigned char reply[4096];
+    unsigned received;
+    int32_t result = server_status(address, port, reply, &received);
     if (result)
         return result;
     if (received < 6)

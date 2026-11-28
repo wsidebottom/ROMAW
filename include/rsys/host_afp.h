@@ -57,6 +57,8 @@ int32_t romaw_afp_close_fork(romaw_afp_session* session, uint16_t fork);
 romaw_afp_session* romaw_afp_connect_account(uint32_t address, uint16_t port, const char* user, const char* password,
                                               int32_t* error);
 int romaw_afp_guest_session(const romaw_afp_session* session);
+/* Pascal server name decoded to a NUL-terminated MacRoman string. */
+int romaw_afp_server_name(uint32_t address, uint16_t port, char name[256]);
 int romaw_afp_connected(const romaw_afp_session* session);
 void romaw_afp_close(romaw_afp_session* session);
 
