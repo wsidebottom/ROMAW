@@ -64,21 +64,22 @@ static DialogPtr new_chooser(void)
     unsigned char data[768];
     word(data, status_label - 1);
     unsigned char* p = data + 2;
-    p = item(p, 4, 265, 209, 80, 22, "Mount");
-    p = item(p, 4, 174, 209, 80, 22, "Cancel");
+    p = item(p, 4, 265, 216, 80, 22, "Mount");
+    p = item(p, 4, 174, 216, 80, 22, "Cancel");
     p = item(p, 4, 265, 167, 80, 22, "Connect");
-    p = item(p, 4, 12, 209, 88, 22, "Refresh");
+    p = item(p, 4, 12, 216, 88, 22, "Refresh");
     p = item(p, 136, 12, 9, 161, 20, "AFP over TCP servers");
     p = item(p, 136, 185, 9, 160, 20, "Volumes");
     p = item(p, 136, 12, 169, 91, 19, "Server address");
     p = item(p, 16, 103, 167, 154, 21, "");
-    p = item(p, 136, 12, 188, 333, 19, "");
+    /* TextEdit draws a frame three pixels outside the edit item. */
+    p = item(p, 136, 12, 195, 333, 19, "");
     Handle items = NewHandle(p - data);
     if (!items)
         return NULL;
     memcpy(STARH(items), data, p - data);
     Rect bounds;
-    SetRect(&bounds, 136, 80, 494, 323);
+    SetRect(&bounds, 136, 80, 494, 330);
     DialogPtr dialog =
         NewDialog(NULL, &bounds, (StringPtr) "\007Chooser", TRUE, movableDBoxProc, (WindowPtr)-1, FALSE, 0, items);
     if (!dialog)
