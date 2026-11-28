@@ -52,6 +52,7 @@ extern "C" {
 #include <commdlg.h>
 #include <iomanip>
 #include <functional>
+#include <fstream>
 #include <cstring>
 #include <map>
 #include <tuple>
@@ -278,6 +279,7 @@ std::map<fs::path, std::shared_ptr<DriveMetadata>> drive_metadata;
 std::map<fs::path, std::shared_ptr<DriveMetadata>> drive_snapshots;
 std::set<fs::path> published_drives;
 std::vector<HANDLE> children;
+std::vector<std::unique_ptr<TransferStaging>> afp_open_files;
 FolderWindow* current_folder = nullptr;
 
 bool live_folder(FolderWindow* folder)
@@ -1256,6 +1258,11 @@ void refresh(FolderWindow& f)
         if (!item.image_volume || item.special)
             continue;
         if (item.afp) {
+            auto application = image_applications.find({item.image_volume, item.mac.creator});
+            if (item.mac.kind == FINDER_CLASSIC_DOCUMENT && item.mac.creator && application != image_applications.end()) {
+                item.image_application = application->second->image_name;
+                item.image_application_parent = application->second->image_parent;
+            }
             prepare_item(item);
             continue;
         }
@@ -2586,6 +2593,75 @@ void extract_items(HWND owner, const std::vector<Item>& items, ArchiveDestinatio
         show_operation(job, 0, {}, {}, std::move(extraction));
 }
 
+// Read through the live AFP mount, including mounts authenticated in this
+// process. The application receives ordinary files with their Macintosh forks.
+fs::path stage_afp_file(const TransferStaging& staging, int16_t volume, uint32_t parent, const std::string& name)
+{
+    FinderImageEntry catalog{};
+    if (ROMlib_finder_image_info(volume, parent, name.c_str(), &catalog) || catalog.directory)
+        throw std::runtime_error("Cannot find the file on this AFP volume.");
+    auto filename = image_text(catalog.name);
+    for (auto& character : filename)
+        if (character < 32 || wcschr(L"<>:\"/\\|?*", character))
+            character = L'_';
+    while (!filename.empty() && (filename.back() == L'.' || filename.back() == L' '))
+        filename.pop_back();
+    if (filename.empty())
+        filename = L"AFP file";
+    auto basename = filename.substr(0, filename.find(L'.'));
+    while (!basename.empty() && basename.back() == L' ')
+        basename.pop_back();
+    if (_wcsicmp(basename.c_str(), L"CON") == 0 || _wcsicmp(basename.c_str(), L"PRN") == 0 ||
+        _wcsicmp(basename.c_str(), L"AUX") == 0 || _wcsicmp(basename.c_str(), L"NUL") == 0 ||
+        (basename.size() == 4 && (!_wcsnicmp(basename.c_str(), L"COM", 3) || !_wcsnicmp(basename.c_str(), L"LPT", 3))))
+        filename.insert(0, L"AFP ");
+    auto target = unique_item(staging.path, filename);
+    auto copy_fork = [&](std::ofstream& output, bool resource, uint32_t length) {
+        if (!length)
+            return;
+        int16_t fork;
+        if (ROMlib_finder_image_open_source_fork(volume, parent, name.c_str(), resource, &fork))
+            throw std::runtime_error("Cannot open the AFP file fork.");
+        std::array<char, 65536> buffer;
+        int16_t error = 0;
+        while (length && output) {
+            auto chunk = std::min<uint32_t>(length, buffer.size());
+            error = ROMlib_finder_image_read(fork, buffer.data(), chunk);
+            if (error)
+                break;
+            output.write(buffer.data(), chunk);
+            length -= chunk;
+        }
+        int16_t close_error = ROMlib_finder_image_close_fork(fork);
+        if (error || close_error || length)
+            throw std::runtime_error("Cannot read the complete AFP file fork.");
+    };
+    std::ofstream data(target, std::ios::binary);
+    copy_fork(data, false, catalog.data_size);
+    data.close();
+    if (!data)
+        throw std::runtime_error("Cannot save a local copy of the AFP file.");
+
+    // AppleDouble v2 with Finder information followed by the resource fork.
+    unsigned char header[82] = {0, 5, 22, 7, 0, 2, 0, 0};
+    header[25] = 2;
+    header[29] = 9;
+    header[33] = 50;
+    header[37] = 32;
+    header[41] = 2;
+    header[45] = sizeof header;
+    for (unsigned i = 0; i < 4; ++i)
+        header[46 + i] = catalog.resource_size >> (24 - 8 * i);
+    std::copy_n(catalog.finder_info, 32, header + 50);
+    std::ofstream metadata(target.parent_path() / (L"._" + target.filename().wstring()), std::ios::binary);
+    metadata.write(reinterpret_cast<const char*>(header), sizeof header);
+    copy_fork(metadata, true, catalog.resource_size);
+    metadata.close();
+    if (!metadata)
+        throw std::runtime_error("Cannot save the AFP file's Macintosh metadata.");
+    return target;
+}
+
 void open_item(HWND owner, Item item)
 {
     if (!item.folder && item.mac.type == 0x6b66696c) { // 'kfil'
@@ -2599,6 +2675,28 @@ void open_item(HWND owner, Item item)
     if (!item.folder && item.mac.type == 0x52444556) { // 'RDEV'
         message(owner, L"Chooser items don't work with ROMAW.",
                 MB_ICONWARNING);
+        return;
+    }
+    if (item.afp && !item.folder && !archive_kind(item) && !is_mac_suitcase(item.mac) &&
+        !is_standalone_font(item.mac.type) && !is_sound_file(item)) {
+        classic::WaitingCursor waiting;
+        auto staging = std::make_unique<TransferStaging>();
+        auto volume = item.image_volume;
+        item.path = stage_afp_file(*staging, volume, item.image_parent, item.image_name);
+        item.image_volume = 0;
+        item.afp = false;
+        if (item.mac.kind == FINDER_CLASSIC_DOCUMENT && !item.image_application.empty()) {
+            auto document = item.path;
+            item.path = stage_afp_file(*staging, volume, item.image_application_parent, item.image_application);
+            item.mac.kind = FINDER_CLASSIC_APPLICATION;
+            afp_open_files.push_back(std::move(staging));
+            launch(owner, item, {document});
+            return;
+        }
+        if (item.mac.kind == FINDER_CLASSIC_DOCUMENT && !item.mac.creator)
+            item.mac.kind = 0;
+        afp_open_files.push_back(std::move(staging));
+        open_item(owner, std::move(item));
         return;
     }
     if (archive_kind(item)) {
