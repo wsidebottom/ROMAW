@@ -70,6 +70,7 @@
 #include "rsys/aboutbox.h"
 #include "rsys/system_error.h"
 #include "rsys/vdriver.h"
+#include "rsys/dirtyrect.h"
 #include "rsys/notmac.h"
 #include "rsys/version.h"
 #include "rsys/romaw.h"
@@ -1879,14 +1880,17 @@ out:
             tempi = CW(tempi);
             MENUCALL(mChooseMsg, mh, &r, tempp, &tempi);
             tempi = CW(tempi);
-            if (MenuFlash) {
-                for (i = 0; i < Cx(MenuFlash); i++) {
+            const INTEGER flash_count = Cx(MenuFlash);
+            if (flash_count > 0) {
+                for (i = 0; i < flash_count; i++) {
+                    dirty_rect_update_screen();
                     Delay(3L, (LONGINT*)0);
                     PORT_TX_FACE_X(MR(wmgr_port)) = (Style)CB(0);
                     PORT_TX_FONT_X(MR(wmgr_port)) = CWC(0);
                     tempi = CW(tempi);
                     MENUCALL(mChooseMsg, mh, &r, pt, &tempi);
                     tempi = CW(tempi);
+                    dirty_rect_update_screen();
                     Delay(3L, (LONGINT*)0);
                     PORT_TX_FACE_X(MR(wmgr_port)) = (Style)CB(0);
                     PORT_TX_FONT_X(MR(wmgr_port)) = CWC(0);
@@ -1894,6 +1898,7 @@ out:
                     MENUCALL(mChooseMsg, mh, &r, tempp, &tempi);
                     tempi = CW(tempi);
                 }
+                dirty_rect_update_screen();
                 Delay(3L, (LONGINT*)0);
             }
         }

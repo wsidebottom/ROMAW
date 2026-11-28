@@ -1249,7 +1249,7 @@ PRIVATE void reset_low_globals(void)
     SEvtEnb = 0;
     HIDDEN_RAW_SET(MenuList_H, 0);
     MBarEnable = 0;
-    MenuFlash = 0;
+    MenuFlash = CW((SPMisc2 >> 2) & 3);
     TheMenu = 0;
     HIDDEN_RAW_SET(MBarHook_H, 0);
     HIDDEN_RAW_SET(MenuHook_H, 0);
