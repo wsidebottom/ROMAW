@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_finder_afp_chooser.
+  Functions: ROMlib_finder_afp_chooser, ROMlib_afp_chooser_services,
+             ROMlib_afp_chooser_endpoint, ROMlib_afp_chooser_remembered.
 
   Origin:    ROMAW AFP integration.
 
@@ -209,6 +210,37 @@ static int resolve_address(wchar_t* input, uint32_t* address, uint16_t* port)
     return 1;
 }
 
+unsigned ROMlib_afp_chooser_services(char names[][256], unsigned capacity)
+{
+    start_discovery();
+    AcquireSRWLockShared(&server_lock);
+    unsigned count = 0;
+    for (unsigned i = 0; i < server_count && count < capacity; ++i)
+        if (WideCharToMultiByte(CP_UTF8, 0, servers[i], -1, names[count], sizeof names[count], NULL, NULL))
+            ++count;
+    ReleaseSRWLockShared(&server_lock);
+    return count;
+}
+
+int ROMlib_afp_chooser_endpoint(const char* name, int advertised, uint32_t* address, uint16_t* port)
+{
+    wchar_t wide[256];
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide, NELEM(wide)))
+        return 0;
+    return advertised ? resolve_service && resolve_advertisement(wide, address, port)
+                      : resolve_address(wide, address, port);
+}
+
+void ROMlib_afp_chooser_remembered(char* endpoint, unsigned capacity)
+{
+    char path[4096];
+    if (!capacity)
+        return;
+    endpoint[0] = 0;
+    if (romaw_profile_path("AFP Mount.ini", path, sizeof path, NULL, 0))
+        config_prefs_get(path, "AFP", "Last Server", endpoint, capacity);
+}
+
 static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
 {
     HWND volumes = GetDlgItem(dialog, volumes_id);
@@ -293,6 +325,7 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
         control(dialog, L"BUTTON", L"Mount", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 188, 135, 52, 16);
         control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 248, 135, 52, 16);
         EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
+        ROMlib_finder_style_afp_chooser(dialog);
         update_servers(dialog, state);
         SetTimer(dialog, 1, 400, NULL);
         return TRUE;
@@ -328,12 +361,6 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
     if (publish_error)
         MessageBoxW(dialog, L"The volume mounted here, but could not be shared with other ROMAW processes.", L"Chooser",
                     MB_OK | MB_ICONWARNING);
-    char path[4096], endpoint[64];
-    uint32_t ip = state->address;
-    snprintf(endpoint, sizeof endpoint, "%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
-             state->port);
-    if (romaw_profile_path("AFP Mount.ini", path, sizeof path, NULL, 0))
-        config_prefs_set(path, "AFP", "Last Server", endpoint);
     EndDialog(dialog, 1);
     return TRUE;
 }
@@ -344,11 +371,9 @@ int ROMlib_finder_afp_chooser(void* owner)
     if (!state)
         return 0;
     state->revision = (unsigned)-1;
-    char path[4096], endpoint[64] = {0};
-    if (romaw_profile_path("AFP Mount.ini", path, sizeof path, NULL, 0)) {
-        config_prefs_get(path, "AFP", "Last Server", endpoint, sizeof endpoint);
-        MultiByteToWideChar(CP_UTF8, 0, endpoint, -1, state->previous, NELEM(state->previous));
-    }
+    char endpoint[64];
+    ROMlib_afp_chooser_remembered(endpoint, sizeof endpoint);
+    MultiByteToWideChar(CP_UTF8, 0, endpoint, -1, state->previous, NELEM(state->previous));
     start_discovery();
     if (!owner)
         owner = GetActiveWindow();

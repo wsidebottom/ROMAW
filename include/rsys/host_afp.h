@@ -55,4 +55,9 @@ int32_t romaw_afp_read_fork(romaw_afp_session* session, uint16_t fork, uint32_t 
                             unsigned* received);
 int32_t romaw_afp_close_fork(romaw_afp_session* session, uint16_t fork);
 void romaw_afp_close(romaw_afp_session* session);
+
+unsigned ROMlib_afp_chooser_services(char names[][256], unsigned capacity);
+int ROMlib_afp_chooser_endpoint(const char* name, int advertised, uint32_t* address, uint16_t* port);
+void ROMlib_afp_chooser_remembered(char* endpoint, unsigned capacity);
+void ROMlib_afp_classic_chooser(void);
 #endif

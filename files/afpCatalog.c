@@ -629,5 +629,12 @@ int ROMlib_finder_mount_afp(uint32_t address, uint16_t port, const char* name, i
     INTEGER volume;
     OSErr error = ROMlib_afp_register_volume(address, port, name, &volume);
     *publish_error = error ? noErr : ROMlib_afp_publish_mount(volume);
+    if (!error) {
+        char path[4096], endpoint[64];
+        snprintf(endpoint, sizeof endpoint, "%u.%u.%u.%u:%u", address >> 24, (address >> 16) & 255,
+                 (address >> 8) & 255, address & 255, port);
+        if (profile_mount_file(path))
+            config_prefs_set(path, "AFP", "Last Server", endpoint);
+    }
     return error;
 }

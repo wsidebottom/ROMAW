@@ -17,7 +17,7 @@
 
 /* Folder-based desk accessories and classic control-panel hosting. */
 #include "rsys/common.h"
-#include "finder/image_volumes.h"
+#include "rsys/host_afp.h"
 #include "rsys/everything.h"
 #include "rsys/desk.h"
 #include "rsys/prefpanel.h"
@@ -246,7 +246,7 @@ ROMlib_desk_menu_select(LONGINT selection)
         GetItem(apple_menu, item, name);
         if (EqualString(name, (StringPtr)"\007Chooser", FALSE, TRUE)) {
             HiliteMenu(0);
-            ROMlib_finder_afp_chooser(NULL);
+            ROMlib_afp_classic_chooser();
             return TRUE;
         }
         if (!EqualString(name, (StringPtr)ROMAW_PREFS_MENU_NAME, TRUE, TRUE))
