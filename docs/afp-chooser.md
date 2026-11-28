@@ -13,8 +13,10 @@ current shared mount. Chooser remembers the last server. Eject the share to
 remove the shared mount from the profile.
 
 In classic ROMAW apps, Chooser runs as a Macintosh Dialog Manager window with
-scrollable List Manager panes for servers and volumes.
-Finder uses its classic-styled desktop controls for the same AFP workflow.
+scrollable List Manager panes for servers and volumes. Chooser stays open
+while you use other windows. Close it with its close box or **Close**.
+Finder opens Chooser as a classic child window within its desktop. A small
+icon beside a volume identifies an existing mount.
 The built-in Chooser replaces the legacy desk accessory and AppleShare extensions. It requires no Apple resource files. Reference disassembly of the
 local Apple versions found the Chooser entry in DRVR 15 and AppleShare IP's
 connection dispatcher in PACK -4096. These were used to identify the legacy

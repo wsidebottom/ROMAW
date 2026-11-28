@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_finder_afp_chooser, ROMlib_afp_chooser_services,
+  Functions: ROMlib_finder_afp_chooser, ROMlib_finder_afp_message, ROMlib_afp_chooser_services,
              ROMlib_afp_chooser_endpoint, ROMlib_afp_chooser_remembered.
 
   Origin:    ROMAW AFP integration.
@@ -28,7 +28,7 @@
 
 #define NELEM(a) (sizeof(a) / sizeof((a)[0]))
 
-enum { servers_id = 100, address_id, connect_id, volumes_id, server_limit = 64 };
+enum { servers_id = 100, address_id, connect_id, volumes_id, status_id, refresh_id, server_limit = 64 };
 
 static const wchar_t service[] = L"_afpovertcp._tcp.local";
 static SRWLOCK server_lock = SRWLOCK_INIT;
@@ -160,6 +160,9 @@ struct chooser {
     romaw_afp_volume_list volumes;
 };
 
+static struct chooser finder_chooser;
+static HWND chooser_window;
+
 static void update_servers(HWND dialog, struct chooser* state)
 {
     HWND list = GetDlgItem(dialog, servers_id);
@@ -246,6 +249,7 @@ static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
     HWND volumes = GetDlgItem(dialog, volumes_id);
     SendMessageW(volumes, LB_RESETCONTENT, 0, 0);
     EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
+    SetDlgItemTextW(dialog, status_id, L"");
     wchar_t address[256];
     GetDlgItemTextW(dialog, address_id, address, NELEM(address));
     LRESULT row = SendDlgItemMessageW(dialog, servers_id, LB_GETCURSEL, 0, 0);
@@ -259,8 +263,7 @@ static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
         connected = resolve_address(address, &state->address, &state->port);
     }
     if (!connected) {
-        MessageBoxW(dialog, L"Enter a server name or IPv4 address, optionally followed by a port.", L"Chooser",
-                    MB_OK | MB_ICONWARNING);
+        SetDlgItemTextW(dialog, status_id, L"Enter a server name or IPv4 address.");
         return;
     }
     wchar_t endpoint[64];
@@ -275,10 +278,9 @@ static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
         romaw_afp_close(session);
     }
     if (error || !state->volumes.count) {
-        MessageBoxW(dialog,
-                    error ? L"Could not list volumes on this AFP server as a guest."
-                          : L"This server offers no volumes to guests.",
-                    L"Chooser", MB_OK | MB_ICONWARNING);
+        SetDlgItemTextW(dialog, status_id,
+                        error ? L"Could not list AFP volumes as a guest."
+                              : L"This AFP server offers no guest volumes.");
         return;
     }
     for (unsigned i = 0; i < state->volumes.count; ++i) {
@@ -298,11 +300,41 @@ static void list_volumes(HWND dialog, struct chooser* state, int choose_row)
 static void control(HWND dialog, const wchar_t* type, const wchar_t* title, DWORD style, DWORD edge, int id, int x,
                     int y, int width, int height)
 {
-    RECT r = {x, y, x + width, y + height};
-    MapDialogRect(dialog, &r);
-    HWND window = CreateWindowExW(edge, type, title, WS_CHILD | WS_VISIBLE | style, r.left, r.top, r.right - r.left,
-                                  r.bottom - r.top, dialog, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
+    HWND window = CreateWindowExW(edge, type, title, WS_CHILD | WS_VISIBLE | style, x, y, width, height, dialog,
+                                  (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(window, WM_SETFONT, SendMessageW(dialog, WM_GETFONT, 0, 0), TRUE);
+}
+
+static void draw_list_row(const struct chooser* state, const DRAWITEMSTRUCT* row)
+{
+    int selected = (row->itemState & ODS_SELECTED) != 0;
+    HBRUSH ink = GetStockObject(selected ? WHITE_BRUSH : BLACK_BRUSH);
+    HBRUSH paper = GetStockObject(selected ? BLACK_BRUSH : WHITE_BRUSH);
+    FillRect(row->hDC, &row->rcItem, paper);
+    if (row->itemID == (UINT)-1)
+        return;
+    int volume = row->CtlID == volumes_id;
+    if (volume && row->itemData < state->volumes.count &&
+        ROMlib_finder_afp_mounted(state->address, state->port, state->volumes.items[row->itemData].name)) {
+        int x = row->rcItem.left + 4;
+        int y = row->rcItem.top + 4;
+        RECT monitor = {x, y, x + 9, y + 6};
+        RECT stand = {x + 1, y + 7, x + 8, y + 8};
+        FillRect(row->hDC, &monitor, ink);
+        InflateRect(&monitor, -1, -1);
+        FillRect(row->hDC, &monitor, paper);
+        FillRect(row->hDC, &stand, ink);
+    }
+    wchar_t text[256];
+    if (SendMessageW(row->hwndItem, LB_GETTEXT, row->itemID, (LPARAM)text) == LB_ERR)
+        return;
+    HGDIOBJ old = SelectObject(row->hDC, (HFONT)SendMessageW(row->hwndItem, WM_GETFONT, 0, 0));
+    SetBkMode(row->hDC, TRANSPARENT);
+    SetTextColor(row->hDC, selected ? RGB(255, 255, 255) : RGB(0, 0, 0));
+    RECT label = row->rcItem;
+    label.left += volume ? 18 : 5;
+    DrawTextW(row->hDC, text, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+    SelectObject(row->hDC, old);
 }
 
 static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam)
@@ -311,31 +343,54 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
     if (message == WM_INITDIALOG) {
         state = (void*)lparam;
         SetWindowLongPtrW(dialog, DWLP_USER, lparam);
-        control(dialog, L"STATIC", L"AFP over TCP servers", 0, 0, -1, 8, 8, 130, 10);
-        control(dialog, L"STATIC", L"Volumes", 0, 0, -1, 158, 8, 130, 10);
-        control(dialog, L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
-                servers_id, 8, 20, 142, 86);
-        control(dialog, L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
-                volumes_id, 158, 20, 142, 86);
-        control(dialog, L"STATIC", L"Server address", 0, 0, -1, 8, 113, 62, 12);
-        control(dialog, L"EDIT", state->previous, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, address_id, 72, 110,
-                169, 15);
+        control(dialog, L"STATIC", L"AFP over TCP servers", 0, 0, -1, 12, 9, 161, 20);
+        control(dialog, L"STATIC", L"Volumes", 0, 0, -1, 185, 9, 160, 20);
+        control(dialog, L"LISTBOX", L"",
+                WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_DISABLENOSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT |
+                    LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+                0, servers_id, 12, 30, 161, 122);
+        control(dialog, L"LISTBOX", L"",
+                WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_DISABLENOSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT |
+                    LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+                0, volumes_id, 185, 30, 160, 122);
+        control(dialog, L"STATIC", L"Server", 0, 0, -1, 12, 169, 91, 19);
+        control(dialog, L"EDIT", state->previous, WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 0, address_id, 103, 165, 154,
+                22);
         SendDlgItemMessageW(dialog, address_id, EM_LIMITTEXT, 255, 0);
-        control(dialog, L"BUTTON", L"Connect", WS_TABSTOP, 0, connect_id, 248, 110, 52, 15);
-        control(dialog, L"BUTTON", L"Mount", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, IDOK, 188, 135, 52, 16);
-        control(dialog, L"BUTTON", L"Cancel", WS_TABSTOP, 0, IDCANCEL, 248, 135, 52, 16);
+        control(dialog, L"BUTTON", L"Connect", WS_TABSTOP, 0, connect_id, 265, 165, 80, 22);
+        control(dialog, L"BUTTON", L"Refresh", WS_TABSTOP, 0, refresh_id, 12, 216, 88, 22);
+        control(dialog, L"BUTTON", L"Mount", WS_TABSTOP, 0, IDOK, 265, 216, 80, 22);
+        control(dialog, L"BUTTON", L"Close", WS_TABSTOP, 0, IDCANCEL, 174, 216, 80, 22);
+        control(dialog, L"STATIC", L"Select a server or enter its address.", 0, 0, status_id, 12, 195, 333, 19);
         EnableWindow(GetDlgItem(dialog, IDOK), FALSE);
+        SetPropW(dialog, L"FinderWhite", (HANDLE)1);
         ROMlib_finder_style_afp_chooser(dialog);
         update_servers(dialog, state);
         SetTimer(dialog, 1, 400, NULL);
         return TRUE;
     }
-    if (message == WM_TIMER) {
+    if (message == WM_MEASUREITEM && (wparam == volumes_id || wparam == servers_id)) {
+        ((MEASUREITEMSTRUCT*)lparam)->itemHeight = 15;
+        return TRUE;
+    }
+    if (state && message == WM_DRAWITEM && (wparam == volumes_id || wparam == servers_id)) {
+        draw_list_row(state, (const DRAWITEMSTRUCT*)lparam);
+        return TRUE;
+    }
+    if (message == WM_NCDESTROY) {
+        RemovePropW(dialog, L"FinderWhite");
+        chooser_window = NULL;
+        return FALSE;
+    }
+    if (message == WM_TIMER || (message == WM_COMMAND && LOWORD(wparam) == refresh_id)) {
+        if (message == WM_COMMAND)
+            state->revision = (unsigned)-1;
         update_servers(dialog, state);
+        InvalidateRect(GetDlgItem(dialog, volumes_id), NULL, FALSE);
         return TRUE;
     }
     if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wparam) == IDCANCEL)) {
-        EndDialog(dialog, 0);
+        DestroyWindow(dialog);
         return TRUE;
     }
     if (message != WM_COMMAND)
@@ -354,22 +409,30 @@ static INT_PTR CALLBACK chooser_dialog(HWND dialog, UINT message, WPARAM wparam,
         return TRUE;
     int publish_error;
     int error = ROMlib_finder_mount_afp(state->address, state->port, state->volumes.items[index].name, &publish_error);
-    if (error) {
-        MessageBoxW(dialog, L"The selected AFP volume could not be mounted.", L"Chooser", MB_OK | MB_ICONWARNING);
-        return TRUE;
-    }
-    if (publish_error)
-        MessageBoxW(dialog, L"The volume mounted here, but could not be shared with other ROMAW processes.", L"Chooser",
-                    MB_OK | MB_ICONWARNING);
-    EndDialog(dialog, 1);
+    InvalidateRect(GetDlgItem(dialog, volumes_id), NULL, FALSE);
+    SetDlgItemTextW(dialog, status_id,
+                    error           ? L"The selected AFP volume could not be mounted."
+                    : publish_error ? L"Mounted here. Could not share with other ROMAW apps."
+                                    : L"Volume mounted.");
     return TRUE;
 }
 
-int ROMlib_finder_afp_chooser(void* owner)
+int ROMlib_finder_afp_message(void* message)
 {
-    struct chooser* state = calloc(1, sizeof *state);
-    if (!state)
-        return 0;
+    MSG* msg = message;
+    return chooser_window && (msg->hwnd == chooser_window || IsChild(chooser_window, msg->hwnd)) &&
+           IsDialogMessageW(chooser_window, msg);
+}
+
+void* ROMlib_finder_afp_chooser(void* owner)
+{
+    if (chooser_window) {
+        BringWindowToTop(chooser_window);
+        SetFocus(GetDlgItem(chooser_window, address_id));
+        return chooser_window;
+    }
+    struct chooser* state = &finder_chooser;
+    memset(state, 0, sizeof *state);
     state->revision = (unsigned)-1;
     char endpoint[64];
     ROMlib_afp_chooser_remembered(endpoint, sizeof endpoint);
@@ -378,7 +441,7 @@ int ROMlib_finder_afp_chooser(void* owner)
     if (!owner)
         owner = GetActiveWindow();
 
-    enum { style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT };
+    enum { style = WS_CHILD | WS_CLIPSIBLINGS | WS_CAPTION | WS_SYSMENU | DS_SETFONT };
 
     _Alignas(DWORD) static const WORD template_words[] = {style & 0xffff,
                                                           (DWORD)style >> 16,
@@ -388,7 +451,7 @@ int ROMlib_finder_afp_chooser(void* owner)
                                                           0,
                                                           0,
                                                           308,
-                                                          159,
+                                                          167,
                                                           0,
                                                           0,
                                                           'C',
@@ -409,8 +472,16 @@ int ROMlib_finder_afp_chooser(void* owner)
                                                           'U',
                                                           'I',
                                                           0};
-    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandleW(NULL), (const DLGTEMPLATE*)template_words, owner,
-                                             chooser_dialog, (LPARAM)state);
-    free(state);
-    return result == 1;
+    chooser_window = CreateDialogIndirectParamW(GetModuleHandleW(NULL), (const DLGTEMPLATE*)template_words, owner,
+                                                chooser_dialog, (LPARAM)state);
+    if (chooser_window) {
+        RECT workspace = {0};
+        GetClientRect(owner, &workspace);
+        const int width = 362, height = 271;
+        int x = workspace.right > width ? (workspace.right - width) / 2 : 0;
+        int y = workspace.bottom > height ? (workspace.bottom - height) / 2 : 0;
+        SetWindowPos(chooser_window, HWND_TOP, x, y, width, height, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetFocus(GetDlgItem(chooser_window, address_id));
+    }
+    return chooser_window;
 }

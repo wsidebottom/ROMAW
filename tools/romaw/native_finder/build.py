@@ -148,7 +148,12 @@ def main():
     # Append rather than shifting the established document/label/notice slots.
     full_trash_asset = len(names)
     names.append(ROOT / "bitmaps/-3984_fullTrashIconResource.icns")
-    assets = [f"static constexpr unsigned full_trash_asset = {full_trash_asset};"]
+    chooser_asset = len(names)
+    names.append(ROOT / "bitmaps/chooser.icns")
+    assets = [
+        f"static constexpr unsigned full_trash_asset = {full_trash_asset};",
+        f"static constexpr unsigned chooser_asset = {chooser_asset};",
+    ]
     unique_assets = {}
     asset_indices = []
     for i, name in enumerate(names):

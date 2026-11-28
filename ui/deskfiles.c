@@ -17,7 +17,6 @@
 
 /* Folder-based desk accessories and classic control-panel hosting. */
 #include "rsys/common.h"
-#include "rsys/host_afp.h"
 #include "rsys/everything.h"
 #include "rsys/desk.h"
 #include "rsys/prefpanel.h"

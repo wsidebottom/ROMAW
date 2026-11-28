@@ -5,7 +5,8 @@
 
   Classes:   None.
 
-  Functions: ROMlib_afp_classic_chooser.
+  Functions: ROMlib_afp_classic_chooser, ROMlib_afp_classic_close, ROMlib_afp_classic_event,
+             ROMlib_afp_classic_idle, ROMlib_afp_classic_edit.
 
   Origin:    ROMAW AFP integration.
 
@@ -22,8 +23,11 @@
 #include "WindowMgr.h"
 #include "finder/image_volumes.h"
 #include "rsys/host_afp.h"
+#include "rsys/desk.h"
+#include "rsys/wind.h"
+#include "ToolboxEvent.h"
 #include "rsys/host_names.h"
-#include "rsys/system_error.h"
+#include "DeskMgr.h"
 
 enum {
     mount_button = 1,
@@ -65,7 +69,7 @@ static DialogPtr new_chooser(void)
     word(data, status_label - 1);
     unsigned char* p = data + 2;
     p = item(p, 4, 265, 216, 80, 22, "Mount");
-    p = item(p, 4, 174, 216, 80, 22, "Cancel");
+    p = item(p, 4, 174, 216, 80, 22, "Close");
     p = item(p, 4, 265, 167, 80, 22, "Connect");
     p = item(p, 4, 12, 216, 88, 22, "Refresh");
     p = item(p, 136, 12, 9, 161, 20, "AFP over TCP servers");
@@ -81,7 +85,7 @@ static DialogPtr new_chooser(void)
     Rect bounds;
     SetRect(&bounds, 136, 80, 494, 330);
     DialogPtr dialog =
-        NewDialog(NULL, &bounds, (StringPtr) "\007Chooser", TRUE, movableDBoxProc, (WindowPtr)-1, FALSE, 0, items);
+        NewDialog(NULL, &bounds, (StringPtr) "\007Chooser", TRUE, noGrowDocProc, (WindowPtr)-1, TRUE, 0, items);
     if (!dialog)
         DisposHandle(items);
     return dialog;
@@ -118,6 +122,9 @@ struct chooser_lists {
     ListHandle servers;
     ListHandle volumes;
     RgnHandle redraw;
+    const romaw_afp_volume_list* entries;
+    uint32 address;
+    uint16 port;
 };
 
 static void enable(DialogPtr dialog, INTEGER number, int available)
@@ -145,6 +152,31 @@ static void redraw_list(ListHandle list, RgnHandle redraw)
     FrameRect(&border);
     SetRectRgn(redraw, CW(border.left), CW(border.top), CW(border.right) + 16, CW(border.bottom));
     LUpdate(redraw, list);
+}
+
+static void redraw_volumes(struct chooser_lists* lists)
+{
+    ListHandle list = lists->volumes;
+    redraw_list(list, lists->redraw);
+    Rect view = HxX(list, rView);
+    int first = Hx(list, visible.top);
+    int limit = MIN(Hx(list, visible.bottom), Hx(list, dataBounds.bottom));
+    int x = CW(view.left) + 4;
+    int height = Hx(list, cellSize.v);
+    for (int row = first; row < limit; ++row) {
+        if (!lists->entries || !ROMlib_finder_afp_mounted(lists->address, lists->port, lists->entries->items[row].name))
+            continue;
+        int y = CW(view.top) + (row - first) * height + 4;
+        if (y + 8 > CW(view.bottom))
+            break;
+        Rect mark;
+        SetRect(&mark, x, y, x + 9, y + 6);
+        InvertRect(&mark);
+        SetRect(&mark, x + 1, y + 7, x + 8, y + 8);
+        InvertRect(&mark);
+        SetRect(&mark, x + 1, y + 1, x + 8, y + 5);
+        InvertRect(&mark);
+    }
 }
 
 static void begin_rows(ListHandle list, unsigned count)
@@ -178,13 +210,17 @@ static void show_servers(struct chooser_lists* lists, char servers[][256], unsig
     redraw_list(lists->servers, lists->redraw);
 }
 
-static void show_volumes(struct chooser_lists* lists, const romaw_afp_volume_list* volumes)
+static void show_volumes(struct chooser_lists* lists, const romaw_afp_volume_list* volumes, uint32 address, uint16 port)
 {
+    lists->entries = volumes;
+    lists->address = address;
+    lists->port = port;
     begin_rows(lists->volumes, volumes->count);
-    for (unsigned i = 0; i < volumes->count; ++i)
+    for (unsigned i = 0; i < volumes->count; ++i) {
         set_row(lists->volumes, i, volumes->items[i].name);
+    }
     LDoDraw(TRUE, lists->volumes);
-    redraw_list(lists->volumes, lists->redraw);
+    redraw_volumes(lists);
 }
 
 static int selected_row(ListHandle list)
@@ -200,7 +236,7 @@ static BOOLEAN list_event(DialogPtr dialog, EventRecord* event, INTEGER* action,
         HIDDEN_DialogPtr updated;
         DialogSelect(event, &updated, action);
         redraw_list(lists->servers, lists->redraw);
-        redraw_list(lists->volumes, lists->redraw);
+        redraw_volumes(lists);
         *action = 0;
         return TRUE;
     }
@@ -208,7 +244,7 @@ static BOOLEAN list_event(DialogPtr dialog, EventRecord* event, INTEGER* action,
         return FALSE;
     HIDDEN_WindowPtr window;
     Point where = {CW(event->where.v), CW(event->where.h)};
-    if (FindWindow(where, &window) != inContent || MR(HIDDEN_RAW(window)) != (WindowPtr)dialog)
+    if (FindWindow(where, &window) != inSysWindow || MR(HIDDEN_RAW(window)) != (WindowPtr)dialog)
         return FALSE;
     where = event->where;
     GlobalToLocal(&where);
@@ -227,6 +263,8 @@ static BOOLEAN list_event(DialogPtr dialog, EventRecord* event, INTEGER* action,
         }
         int before = selected_row(list);
         BOOLEAN double_click = LClick(where, CW(event->modifiers), list);
+        if (i == 1)
+            redraw_volumes(lists);
         if (inside && i == 1 && double_click && selected_row(list) >= 0)
             *action = CWC(mount_button);
         else if (inside && (i == 1 || selected_row(list) != before))
@@ -238,17 +276,64 @@ static BOOLEAN list_event(DialogPtr dialog, EventRecord* event, INTEGER* action,
     return FALSE;
 }
 
-void ROMlib_afp_classic_chooser(void)
-{
-    enum { server_limit = 64 };
+enum { server_limit = 64 };
 
-    char(*servers)[256] = calloc(server_limit, sizeof *servers);
-    romaw_afp_volume_list* volumes = calloc(1, sizeof *volumes);
-    HIDDEN_GrafPtr previous;
-    GetPort(&previous);
-    DialogPtr dialog = servers && volumes ? new_chooser() : NULL;
+static struct {
+    DialogPtr dialog;
+    struct chooser_lists lists;
+    char servers[server_limit][256];
+    romaw_afp_volume_list volumes;
+    unsigned remembered, server_count;
+    uint32 address, discover_until, next_discovery;
+    uint16 port;
+} chooser;
+
+static void refresh_servers(void)
+{
+    unsigned count = chooser.remembered + ROMlib_afp_chooser_services(chooser.servers + chooser.remembered,
+                                                                      server_limit - chooser.remembered);
+    chooser.server_count = count;
+    show_servers(&chooser.lists, chooser.servers, count);
+}
+
+void ROMlib_afp_classic_close(void)
+{
+    DialogPtr dialog = chooser.dialog;
     if (!dialog)
-        goto done;
+        return;
+    chooser.dialog = NULL;
+    if (chooser.lists.servers) {
+        LDispose(chooser.lists.servers);
+        DisposHandle((Handle)chooser.lists.servers);
+    }
+    if (chooser.lists.volumes) {
+        LDispose(chooser.lists.volumes);
+        DisposHandle((Handle)chooser.lists.volumes);
+    }
+    if (chooser.lists.redraw)
+        DisposeRgn(chooser.lists.redraw);
+    if (thePort == (GrafPtr)dialog) {
+        HIDDEN_GrafPtr manager;
+        GetWMgrPort(&manager);
+        SetPort(MR(HIDDEN_RAW(manager)));
+    }
+    DisposDialog(dialog);
+    memset(&chooser, 0, sizeof chooser);
+}
+
+int16 ROMlib_afp_classic_chooser(void)
+{
+    if (chooser.dialog) {
+        SelectWindow((WindowPtr)chooser.dialog);
+        return ROMLIB_CHOOSER_REFNUM;
+    }
+    GrafPtr previous = thePort;
+    DialogPtr dialog = new_chooser();
+    if (!dialog)
+        return 0;
+    chooser.dialog = dialog;
+    WINDOW_KIND_X(dialog) = CWC(ROMLIB_CHOOSER_REFNUM);
+    SEvtEnb = TRUE;
     SetPort((GrafPtr)dialog);
     TextFont(geneva);
     TextSize(12);
@@ -260,107 +345,176 @@ void ROMlib_afp_classic_chooser(void)
     TE_FONT_ASCENT_X(address_text) = font.ascent;
     TE_LINE_HEIGHT_X(address_text) = CW(CW(font.ascent) + CW(font.descent) + CW(font.leading));
     TECalText(address_text);
-    struct chooser_lists lists = {new_list(dialog, 13, 156), new_list(dialog, 186, 329), NewRgn()};
-    if (!lists.servers || !lists.volumes || !lists.redraw)
-        goto close_dialog;
-    ROMlib_afp_chooser_remembered(servers[0], sizeof servers[0]);
-    unsigned remembered = servers[0][0] != 0;
-    unsigned server_count = remembered + ROMlib_afp_chooser_services(servers + remembered, server_limit - remembered);
-    if (server_count == remembered) {
-        LONGINT ticks;
-        Delay(24, &ticks);
-        server_count = remembered + ROMlib_afp_chooser_services(servers + remembered, server_limit - remembered);
+    chooser.lists = (struct chooser_lists){new_list(dialog, 13, 156), new_list(dialog, 186, 329), NewRgn()};
+    if (!chooser.lists.servers || !chooser.lists.volumes || !chooser.lists.redraw) {
+        SetPort(previous);
+        ROMlib_afp_classic_close();
+        return 0;
     }
-    set_text(dialog, address_field, remembered ? servers[0] : "");
+    ROMlib_afp_chooser_remembered(chooser.servers[0], sizeof chooser.servers[0]);
+    chooser.remembered = chooser.servers[0][0] != 0;
+    set_text(dialog, address_field, chooser.servers[0]);
     set_text(dialog, status_label, "Select a server or enter its address.");
     SelIText(dialog, address_field, 0, 32767);
-    show_servers(&lists, servers, server_count);
-    show_volumes(&lists, volumes);
-    uint32 address = 0;
-    uint16 port = 0;
-    for (;;) {
-        enable(dialog, mount_button, selected_row(lists.volumes) >= 0);
-        INTEGER action;
-        ROMlib_run_filtered_modal_dialog(dialog, list_event, &lists, &action);
-        action = CW(action);
-        if (action == cancel_button)
-            break;
-        if (action == rescan_button) {
-            server_count = remembered + ROMlib_afp_chooser_services(servers + remembered, server_limit - remembered);
-            show_servers(&lists, servers, server_count);
+    refresh_servers();
+    chooser.next_discovery = TickCount() + 24;
+    chooser.discover_until = TickCount() + 180;
+    HxX(chooser.lists.volumes, indent.h) = CWC(18);
+    show_volumes(&chooser.lists, &chooser.volumes, chooser.address, chooser.port);
+    enable(dialog, mount_button, FALSE);
+    SetPort(previous);
+    return ROMLIB_CHOOSER_REFNUM;
+}
+
+void ROMlib_afp_classic_idle(void)
+{
+    DialogPtr dialog = chooser.dialog;
+    if (!dialog || FrontWindow() != (WindowPtr)dialog)
+        return;
+    GrafPtr previous = thePort;
+    SetPort((GrafPtr)dialog);
+    TEIdle(DIALOG_TEXTH(dialog));
+    uint32 now = TickCount();
+    if (chooser.discover_until && (int32)(now - chooser.next_discovery) >= 0) {
+        if (selected_row(chooser.lists.servers) < 0)
+            refresh_servers();
+        chooser.next_discovery = now + 24;
+        if ((int32)(now - chooser.discover_until) >= 0)
+            chooser.discover_until = 0;
+    }
+    SetPort(previous);
+}
+
+BOOLEAN ROMlib_afp_classic_edit(INTEGER command)
+{
+    DialogPtr dialog = chooser.dialog;
+    if (!dialog)
+        return FALSE;
+    switch (command) {
+    case cutCmd:
+        DlgCut(dialog);
+        break;
+    case copyCmd:
+        DlgCopy(dialog);
+        break;
+    case pasteCmd:
+        DlgPaste(dialog);
+        break;
+    case clearCmd:
+        DlgDelete(dialog);
+        break;
+    default:
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void connect_server(int from_list)
+{
+    DialogPtr dialog = chooser.dialog;
+    char name[768] = {0};
+    int advertised = FALSE;
+    if (from_list) {
+        int index = selected_row(chooser.lists.servers);
+        if (index < 0 || (unsigned)index >= chooser.server_count)
+            return;
+        strcpy(name, chooser.servers[index]);
+        advertised = (unsigned)index >= chooser.remembered;
+    }
+    else {
+        Str255 text;
+        GetIText(item_handle(dialog, address_field), text);
+        if (ROMlib_mac_name_to_utf8((const char*)text + 1, text[0], name, sizeof name) < 0)
+            name[0] = 0;
+    }
+
+    chooser.volumes.count = 0;
+    int32 error = ROMAW_AFP_TRANSPORT_ERROR;
+    if (ROMlib_afp_chooser_endpoint(name, advertised, &chooser.address, &chooser.port)) {
+        char endpoint[64];
+        uint32 address = chooser.address;
+        snprintf(endpoint, sizeof endpoint, "%u.%u.%u.%u:%u", address >> 24, (address >> 16) & 255,
+                 (address >> 8) & 255, address & 255, chooser.port);
+        set_text(dialog, address_field, endpoint);
+        romaw_afp_session* session = romaw_afp_connect(address, chooser.port, &error);
+        if (session) {
+            error = romaw_afp_list_volumes(session, &chooser.volumes);
+            romaw_afp_close(session);
         }
-        else if (action == connect_button || action == server_list_hit) {
-            char name[768] = {0};
-            int advertised = FALSE;
-            if (action == connect_button) {
-                Str255 text;
-                GetIText(item_handle(dialog, address_field), text);
-                if (ROMlib_mac_name_to_utf8((const char*)text + 1, text[0], name, sizeof name) < 0)
-                    name[0] = 0;
+    }
+    show_volumes(&chooser.lists, &chooser.volumes, chooser.address, chooser.port);
+    set_text(dialog, status_label,
+             error                   ? "Could not list volumes on that AFP server."
+             : chooser.volumes.count ? "Select a volume to mount."
+                                     : "No guest volumes.");
+}
+
+void ROMlib_afp_classic_event(EventRecord* event)
+{
+    DialogPtr dialog = chooser.dialog;
+    if (!dialog)
+        return;
+    GrafPtr previous = thePort;
+    SetPort((GrafPtr)dialog);
+    INTEGER action = 0;
+    if (event->what == CWC(activateEvt)) {
+        BOOLEAN active = (CW(event->modifiers) & activeFlag) != 0;
+        LActivate(active, chooser.lists.servers);
+        LActivate(active, chooser.lists.volumes);
+        redraw_volumes(&chooser.lists);
+    }
+    if (event->what == CWC(keyDown) || event->what == CWC(autoKey)) {
+        unsigned key = CL(event->message) & 255;
+        if (CW(event->modifiers) & cmdKey) {
+            if (key == 'w')
+                action = CWC(cancel_button);
+            else if (key == 'x')
+                ROMlib_afp_classic_edit(cutCmd);
+            else if (key == 'c')
+                ROMlib_afp_classic_edit(copyCmd);
+            else if (key == 'v')
+                ROMlib_afp_classic_edit(pasteCmd);
+            if (!action) {
+                SetPort(previous);
+                return;
+            }
+        }
+        else if (key == '\r' || key == 3)
+            action = selected_row(chooser.lists.volumes) >= 0 ? CWC(mount_button) : CWC(connect_button);
+    }
+    if (!action && !list_event(dialog, event, &action, &chooser.lists)) {
+        HIDDEN_DialogPtr target;
+        if (!DialogSelect(event, &target, &action))
+            action = 0;
+    }
+    action = CW(action);
+    if (action == rescan_button)
+        refresh_servers();
+    else if (action == connect_button || action == server_list_hit)
+        connect_server(action == server_list_hit);
+    else if (action == volume_list_hit || action == mount_button) {
+        int selected = selected_row(chooser.lists.volumes);
+        if (selected >= 0 && (unsigned)selected < chooser.volumes.count) {
+            const char* name = chooser.volumes.items[selected].name;
+            if (action == mount_button) {
+                int publish_error;
+                if (ROMlib_finder_mount_afp(chooser.address, chooser.port, name, &publish_error))
+                    set_text(dialog, status_label, "The selected AFP volume could not be mounted.");
+                else if (publish_error)
+                    set_text(dialog, status_label, "Mounted here. Could not share with other ROMAW apps.");
+                else
+                    set_text(dialog, status_label, "Volume mounted.");
+                redraw_volumes(&chooser.lists);
             }
             else {
-                int index = selected_row(lists.servers);
-                if (index < 0 || (unsigned)index >= server_count)
-                    continue;
-                strcpy(name, servers[index]);
-                advertised = (unsigned)index >= remembered;
-            }
-            volumes->count = 0;
-            int32 error = ROMAW_AFP_TRANSPORT_ERROR;
-            if (ROMlib_afp_chooser_endpoint(name, advertised, &address, &port)) {
-                char endpoint[64];
-                snprintf(endpoint, sizeof endpoint, "%u.%u.%u.%u:%u", address >> 24, (address >> 16) & 255,
-                         (address >> 8) & 255, address & 255, port);
-                set_text(dialog, address_field, endpoint);
-                romaw_afp_session* session = romaw_afp_connect(address, port, &error);
-                if (session) {
-                    error = romaw_afp_list_volumes(session, volumes);
-                    romaw_afp_close(session);
-                }
-            }
-            show_volumes(&lists, volumes);
-            set_text(dialog, status_label,
-                     error            ? "Could not list volumes on that AFP server."
-                     : volumes->count ? "Select a volume to mount."
-                                      : "No guest volumes.");
-        }
-        else if (action == volume_list_hit) {
-            int selected = selected_row(lists.volumes);
-            if (selected >= 0) {
                 char status[280];
-                snprintf(status, sizeof status, "Selected: %s", volumes->items[selected].name);
+                snprintf(status, sizeof status, "Selected: %s", name);
                 set_text(dialog, status_label, status);
             }
         }
-        else if (action == mount_button) {
-            int selected = selected_row(lists.volumes);
-            if (selected < 0)
-                continue;
-            int publish_error;
-            if (ROMlib_finder_mount_afp(address, port, volumes->items[selected].name, &publish_error)) {
-                set_text(dialog, status_label, "The selected AFP volume could not be mounted.");
-                continue;
-            }
-            if (publish_error)
-                system_error("AFP mounted here, but could not be shared with other ROMAW processes.", 0, "OK", NULL,
-                             NULL, NULL, NULL, NULL);
-            break;
-        }
     }
-close_dialog:
-    if (lists.servers) {
-        LDispose(lists.servers);
-        DisposHandle((Handle)lists.servers);
-    }
-    if (lists.volumes) {
-        LDispose(lists.volumes);
-        DisposHandle((Handle)lists.volumes);
-    }
-    if (lists.redraw)
-        DisposeRgn(lists.redraw);
-    DisposDialog(dialog);
-    SetPort(MR(HIDDEN_RAW(previous)));
-done:
-    free(volumes);
-    free(servers);
+    enable(dialog, mount_button, selected_row(chooser.lists.volumes) >= 0);
+    SetPort(previous);
+    if (action == cancel_button)
+        ROMlib_afp_classic_close();
 }
