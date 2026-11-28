@@ -5,7 +5,7 @@
 
   Classes:   None.
 
-  Functions: ROMlib_run_filtered_modal_dialog, ROMlib_run_internal_modal_dialog, ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask, ROMlib_SetDialogTimeout,
+  Functions: ROMlib_run_internal_modal_dialog, ROMlib_SetModalDialogEventMask, ROMlib_GetModalDialogEventMask, ROMlib_SetDialogTimeout,
              ROMlib_GetDialogTimeout, BEEPER, DlgCopy, DlgCut, DlgDelete, DlgPaste, ROMlib_drawiptext,
              dialog_draw_item, get_item_style_info.
 
@@ -252,8 +252,7 @@ static boolean_t dialog_timeout_filter(ROMlib_window_metadata* metadata, const E
     return TRUE;
 }
 
-static void modal_dialog(DialogPeek dp, ProcPtr fp, INTEGER* item, BOOLEAN internal,
-                         ROMlib_native_modal_filter filter, void* context)
+static void modal_dialog(DialogPeek dp, ProcPtr fp, INTEGER* item, BOOLEAN internal)
 {
     /*
    * The code used to save thePort and restore it at the end of the
@@ -304,8 +303,7 @@ static void modal_dialog(DialogPeek dp, ProcPtr fp, INTEGER* item, BOOLEAN inter
                 if (mousedown_p)
                     mousedown_where = _FindWindow(whereunswapped, &temp_wp);
 
-                if ((filter && filter((DialogPtr)dp, &evt, item, context)) ||
-                    CALLMODALPROC((DialogPtr)dp, &evt, item, fp2) ||
+                if (CALLMODALPROC((DialogPtr)dp, &evt, item, fp2) ||
                     dialog_timeout_filter(ROMlib_window_get_metadata((DialogPtr)dp), &evt, item)) {
                     /* #### not sure what this means */
                     /* above callpascal might need to be `& 0xF0' */
@@ -327,18 +325,13 @@ static void modal_dialog(DialogPeek dp, ProcPtr fp, INTEGER* item, BOOLEAN inter
 
 void ROMlib_run_internal_modal_dialog(DialogPtr dialog, ProcPtr fp, INTEGER* item)
 {
-    modal_dialog((DialogPeek)dialog, fp, item, TRUE, NULL, NULL);
-}
-
-void ROMlib_run_filtered_modal_dialog(DialogPtr dialog, ROMlib_native_modal_filter filter, void* context, INTEGER* item)
-{
-    modal_dialog((DialogPeek)dialog, NULL, item, TRUE, filter, context);
+    modal_dialog((DialogPeek)dialog, fp, item, TRUE);
 }
 
 P2(PUBLIC pascal trap, void, ModalDialog, ProcPtr, fp, /* IMI-415 */
    INTEGER*, item)
 {
-    modal_dialog((DialogPeek)FrontWindow(), fp, item, FALSE, NULL, NULL);
+    modal_dialog((DialogPeek)FrontWindow(), fp, item, FALSE);
 }
 
 P1(PUBLIC pascal trap, BOOLEAN, IsDialogEvent, /* IMI-416 */

@@ -20,7 +20,6 @@
 /* Forward declarations in DeskMgr.h (DO NOT DELETE THIS LINE) */
 
 #include "rsys/common.h"
-#include "rsys/host_afp.h"
 #include "rsys/mactcp.h"
 #include "rsys/desk.h"
 #include "rsys/systemwindow.h"
@@ -61,8 +60,7 @@ P1(PUBLIC pascal trap, INTEGER, OpenDeskAcc, Str255, acc) /* IMI-440 */
     }
 
     if (EqualString(acc, (StringPtr)"\007Chooser", FALSE, TRUE)) {
-        ROMlib_afp_classic_chooser();
-        retval = 0;
+        retval = ROMlib_afp_classic_chooser();
         goto done;
     }
 
@@ -89,7 +87,10 @@ done:
 
 P1(PUBLIC pascal trap, void, CloseDeskAcc, INTEGER, rn)
 {
-    CloseDriver(rn);
+    if (rn == ROMLIB_CHOOSER_REFNUM)
+        ROMlib_afp_classic_close();
+    else
+        CloseDriver(rn);
 }
 
 P2(PUBLIC pascal trap, void, SystemClick, EventRecord*, evp, WindowPtr, wp)
@@ -107,7 +108,10 @@ P2(PUBLIC pascal trap, void, SystemClick, EventRecord*, evp, WindowPtr, wp)
             switch (val) {
             case wInContent:
                 if (WINDOW_HILITED_X(wp)) {
-                    accessory_event(WINDOW_KIND(wp), evp);
+                    if (WINDOW_KIND(wp) == ROMLIB_CHOOSER_REFNUM)
+                        ROMlib_afp_classic_event(evp);
+                    else
+                        accessory_event(WINDOW_KIND(wp), evp);
                 }
                 else
                     SelectWindow(wp);
@@ -142,6 +146,8 @@ P1(PUBLIC pascal trap, BOOLEAN, SystemEdit, INTEGER, editcmd)
     BOOLEAN retval;
 
     wp = (WindowPeek)FrontWindow();
+    if (wp && WINDOW_KIND(wp) == ROMLIB_CHOOSER_REFNUM)
+        return ROMlib_afp_classic_edit(editcmd);
     if (!wp)
         retval = FALSE;
     else if ((retval = WINDOW_KIND(wp) < 0))
@@ -155,6 +161,7 @@ P1(PUBLIC pascal trap, BOOLEAN, SystemEdit, INTEGER, editcmd)
 P0(PUBLIC pascal trap, void, SystemTask)
 {
     ROMlib_mactcp_poll();
+    ROMlib_afp_classic_idle();
     DCtlHandle dctlh;
     INTEGER i;
 
@@ -201,6 +208,8 @@ P1(PUBLIC pascal trap, BOOLEAN, SystemEvent, EventRecord*, evp)
             return TRUE;
     }
 
+    if (evp->what == CWC(nullEvent))
+        ROMlib_afp_classic_idle();
     if (ROMlib_system_window_event(evp))
         return TRUE;
     if (SEvtEnb) {
@@ -234,6 +243,10 @@ P1(PUBLIC pascal trap, BOOLEAN, SystemEvent, EventRecord*, evp)
         }
         if (wp) {
             rn = WINDOW_KIND(wp);
+            if (rn == ROMLIB_CHOOSER_REFNUM) {
+                ROMlib_afp_classic_event(evp);
+                return TRUE;
+            }
             if ((retval = rn < 0)) {
                 dctlh = rntodctlh(rn);
                 if (Hx(dctlh, dCtlEMask) & (1 << CW(evp->what))) {

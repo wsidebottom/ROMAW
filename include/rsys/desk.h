@@ -15,6 +15,7 @@
 
 #if !defined(_RSYS_DESK_H_)
 #define _RSYS_DESK_H_
+#include "EventMgr.h"
 #include "FileMgr.h"
 #include "MenuMgr.h"
 
@@ -25,8 +26,13 @@
  * $Id: desk.h 63 2004-12-24 18:19:43Z ctm $
  */
 
-enum { DESK_ACC_MIN = 12, DESK_ACC_MAX = 31 };
+enum { DESK_ACC_MIN = 12, DESK_ACC_MAX = 31, ROMLIB_CHOOSER_REFNUM = -32768 };
 
+extern int16 ROMlib_afp_classic_chooser(void);
+extern void ROMlib_afp_classic_close(void);
+extern void ROMlib_afp_classic_event(EventRecord* event);
+extern void ROMlib_afp_classic_idle(void);
+extern BOOLEAN ROMlib_afp_classic_edit(INTEGER command);
 extern void ROMlib_desk_folder_names(Handle names);
 extern void ROMlib_desk_menu_setup(MenuHandle menu);
 extern void ROMlib_desk_menu_forget(MenuHandle menu);

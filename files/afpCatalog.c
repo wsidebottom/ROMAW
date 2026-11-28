@@ -9,7 +9,7 @@
              ROMlib_afp_register_volume, ROMlib_afp_mounted_catalog, ROMlib_afp_is_fork, ROMlib_afp_open,
              ROMlib_afp_read, ROMlib_afp_close_fork, ROMlib_afp_set_position, ROMlib_afp_unmount,
              ROMlib_afp_volume_mount, ROMlib_afp_open_wd, ROMlib_afp_publish_mount,
-             ROMlib_afp_sync_mount, ROMlib_afp_volume_source, ROMlib_finder_mount_afp.
+             ROMlib_afp_sync_mount, ROMlib_afp_volume_source, ROMlib_finder_afp_mounted, ROMlib_finder_mount_afp.
 
   Origin:    ROMAW bridge between AFP catalog records and classic parameter blocks.
 
@@ -622,6 +622,15 @@ BOOLEAN ROMlib_afp_volume_source(const VCB* volume, char* source, size_t capacit
     snprintf(source, capacity, "afp://%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
              afp_mounts[slot].port);
     return TRUE;
+}
+
+int ROMlib_finder_afp_mounted(uint32_t address, uint16_t port, const char* name)
+{
+    for (unsigned i = 0; i < afp_mount_limit; ++i)
+        if (afp_mounts[i].volume && afp_mounts[i].address == address && afp_mounts[i].port == port &&
+            !strcmp(afp_mounts[i].name, name))
+            return 1;
+    return 0;
 }
 
 int ROMlib_finder_mount_afp(uint32_t address, uint16_t port, const char* name, int* publish_error)

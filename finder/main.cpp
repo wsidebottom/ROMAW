@@ -81,7 +81,10 @@ using namespace finder;
 
 extern "C" void ROMlib_finder_style_afp_chooser(void* dialog)
 {
-    classic::style_dialog(static_cast<HWND>(dialog));
+    auto window = static_cast<HWND>(dialog);
+    classic::style_dialog(window);
+    if (auto edit = FindWindowExW(window, nullptr, L"Edit", nullptr))
+        classic::style_text_control(edit, true);
 }
 
 namespace {
@@ -3713,6 +3716,7 @@ menu()
         }
     };
     AppendMenuW(apple, MF_STRING, afp_chooser_command, L"Chooser");
+    classic::menu_icon(afp_chooser_command, asset_icon(chooser_asset));
     populate(apple, romaw_folder / L"System Folder/Apple Menu Items", 0);
     auto panels = CreatePopupMenu();
     auto panel_path = romaw_folder / L"System Folder/Control Panels";
@@ -4745,10 +4749,8 @@ void command(FolderWindow& f, unsigned id)
         }
         break;
     case afp_chooser_command:
-        if (ROMlib_finder_afp_chooser(f.window))
-            for (auto* folder : folders)
-                if (folder->desktop)
-                    refresh(*folder);
+        if (auto chooser = static_cast<HWND>(ROMlib_finder_afp_chooser(desktop)))
+            classic::activate(chooser);
         break;
     case about_system_command:
         show_about_system();
@@ -7055,7 +7057,7 @@ extern "C" int romaw_finder_main(void)
         }
         MSG msg;
         while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-            if (classic::translate_menu_key(msg))
+            if (ROMlib_finder_afp_message(&msg) || classic::translate_menu_key(msg))
                 continue;
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
