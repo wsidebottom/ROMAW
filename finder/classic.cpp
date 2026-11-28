@@ -1535,6 +1535,9 @@ LRESULT CALLBACK chrome_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, D
         if ((frame_tracking.count(captured) || window_drag.window == captured) && IsChild(w, captured))
             SendMessageW(captured, WM_CANCELMODE, 0, 0);
     }
+    const bool titleless_dialog = (GetWindowLongPtrW(w, GWL_STYLE) & (WS_POPUP | WS_CAPTION)) == (WS_POPUP | WS_BORDER);
+    if (titleless_dialog && (msg == WM_NCCALCSIZE || msg == WM_NCHITTEST || msg == WM_NCPAINT || msg == WM_NCACTIVATE))
+        return DefSubclassProc(w, msg, wp, lp);
     if (window_drag.window == w) {
         if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) {
             POINT pointer{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
